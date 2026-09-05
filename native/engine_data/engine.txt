@@ -1,0 +1,20 @@
+# Native engine UI settings
+window.title=Novel Script
+window.width=960
+window.height=680
+font.path=C:/Windows/Fonts/meiryo.ttc
+font.size=24
+dialog.x=30
+dialog.y=250
+dialog.width=900
+dialog.height=180
+dialog.padding=25
+dialog.speaker_y=7
+dialog.text_y=50
+dialog.speaker_x=82
+dialog.text_x=60
+dialog.speaker_size=30
+dialog.text_size=24
+dialog.text_color=30,45,70,255
+dialog.background_color=0,0,0,220
+dialog.background_image=ui/dialogue_box.bmp

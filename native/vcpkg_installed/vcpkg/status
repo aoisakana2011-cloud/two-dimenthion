@@ -1,0 +1,238 @@
+Package: vcpkg-cmake
+Version: 2025-08-07
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 51b14689b7d0c42e6652666673b39aa782e845056bce9181fd04427fe38e48ab
+Status: install ok installed
+
+Package: vcpkg-cmake-get-vars
+Version: 2025-05-29
+Depends: vcpkg-cmake
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 612f06c5e3ecaf0e7d873dcef99353304df56c0c7037235690eb7fc0b29565fb
+Status: install ok installed
+
+Package: vcpkg-tool-meson
+Version: 1.9.0
+Port-Version: 10
+Depends: vcpkg-cmake-get-vars
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 0a88b4c3b8b584918f2ccbbf628a1995378fd4093b546f4294940a5915f56a4a
+Description: Meson build system
+Status: install ok installed
+
+Package: pkgconf
+Version: 3.0.3
+Depends: vcpkg-tool-meson
+Architecture: x64-windows
+Multi-Arch: same
+Abi: acec06a13fc7fcd28f6e92b72d2fb194532521ba7d3f9106e7271a3efe34fe2e
+Description: pkgconf is a program which helps to configure compiler and linker flags for development libraries. It is similar to pkg-config from freedesktop.org.
+Status: install ok installed
+
+Package: vcpkg-pkgconfig-get-modules
+Version: 2024-04-03
+Depends: pkgconf
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 1c1e87a3345471f00061075ff3e1568cc9b6b9dc947a77021f929a168b855bdd
+Status: install ok installed
+
+Package: ffmpeg-bin2c
+Version: 9.0.1
+Depends: vcpkg-cmake
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 3b48b3a6294b92483df3b64f977cfc9d27e1f0cda00f437132e465965c13c721
+Description: Host tool bin2c for FFmpeg build
+Status: install ok installed
+
+Package: ffmpeg
+Version: 9.0.1
+Port-Version: 1
+Depends: ffmpeg-bin2c, vcpkg-cmake-get-vars, vcpkg-pkgconfig-get-modules
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 98fc21f8700f113effa571536aa1660ed09edddab9ac06659fc97fd6c0c645d7
+Description: A library to decode, encode, transcode, mux, demux, stream, filter and play pretty much anything that humans and machines have created.
+    FFmpeg is the leading multimedia framework, able to decode, encode, transcode, mux, demux, stream, filter and play pretty much anything that humans and machines have created. It supports the most obscure ancient formats up to the cutting edge. No matter if they were designed by some standards committee, the community or a corporation. It is also highly portable: FFmpeg compiles, runs, and passes our testing infrastructure FATE across Linux, Mac OS X, Microsoft Windows, the BSDs, Solaris, etc. under a wide variety of build environments, machine architectures, and configurations.
+Default-Features: avcodec, avdevice, avfilter, avformat, swresample, swscale
+Status: install ok installed
+
+Package: ffmpeg
+Feature: avcodec
+Architecture: x64-windows
+Multi-Arch: same
+Description: Build the avcodec library
+Status: install ok installed
+
+Package: ffmpeg
+Feature: avdevice
+Architecture: x64-windows
+Multi-Arch: same
+Description: Build the avdevice library
+Status: install ok installed
+
+Package: ffmpeg
+Feature: avfilter
+Architecture: x64-windows
+Multi-Arch: same
+Description: Build the avfilter library
+Status: install ok installed
+
+Package: ffmpeg
+Feature: avformat
+Architecture: x64-windows
+Multi-Arch: same
+Description: Build the avformat library
+Status: install ok installed
+
+Package: ffmpeg
+Feature: swresample
+Architecture: x64-windows
+Multi-Arch: same
+Description: Build the swresample library
+Status: install ok installed
+
+Package: ffmpeg
+Feature: swscale
+Architecture: x64-windows
+Multi-Arch: same
+Description: Build the swscale library
+Status: install ok installed
+
+Package: vcpkg-cmake-config
+Version: 2026-07-21
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 1f48f084041f6c221055646ca115f409fa716af0f14a2e571324abb47b2d3a0a
+Status: install ok installed
+
+Package: sdl3
+Version: 3.4.16
+Depends: vcpkg-cmake, vcpkg-cmake-config
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 3104b9d905dd7f90b0b56c9ad3ee1da9e93c09d48d9ff17791e13e6f0552f765
+Description: Simple DirectMedia Layer is a cross-platform development library designed to provide low level access to audio, keyboard, mouse, joystick, and graphics hardware via OpenGL and Direct3D.
+Status: install ok installed
+
+Package: sdl3-image
+Version: 3.4.4
+Port-Version: 1
+Depends: sdl3, vcpkg-cmake, vcpkg-cmake-config
+Architecture: x64-windows
+Multi-Arch: same
+Abi: dcd67388547630cedaa5cb5ccd2edd4b9f5cb7774716a3826a8d6f5c62bcfd0c
+Description: SDL_image is an image file loading library. It loads images as SDL surfaces and textures, and supports the following formats: AVIF, BMP, GIF, JPEG, JPEG XL, LBM, PCX, PNG, PNM, TGA, TIFF, WEBP, XCF, XPM, XV
+Status: install ok installed
+
+Package: sdl3-mixer
+Version: 3.2.4
+Depends: sdl3, vcpkg-cmake, vcpkg-cmake-config
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 66b10e98edc1a52a189b2484da0fd662aee6bfc3538606b0a1c1ff266715290c
+Description: An audio mixer that supports various file formats for Simple Directmedia Layer.
+Status: install ok installed
+
+Package: zlib
+Version: 1.3.2
+Port-Version: 2
+Depends: vcpkg-cmake, vcpkg-cmake-config
+Architecture: x64-windows
+Multi-Arch: same
+Abi: e9c5827462e1100eb996b8c8b29ecf6c456ab9b9fecb8b1bf31b226b5dd90554
+Description: A compression library
+Status: install ok installed
+
+Package: libpng
+Version: 1.6.58
+Depends: vcpkg-cmake, vcpkg-cmake-config, zlib
+Architecture: x64-windows
+Multi-Arch: same
+Abi: d0b78f17e69ae0ecfddd79f4015f506e6b2fb31bec1d74fd0bbeb5c3f6c97095
+Description: libpng is a library implementing an interface for reading and writing PNG (Portable Network Graphics) format files
+Status: install ok installed
+
+Package: bzip2
+Version: 1.0.8
+Port-Version: 6
+Depends: vcpkg-cmake
+Architecture: x64-windows
+Multi-Arch: same
+Abi: afc196db5279eec8972f49217692ba3d2a538fa40b9a28a5ba7e6006484e1c50
+Description: bzip2 is a freely available, patent free, high-quality data compressor. It typically compresses files to within 10% to 15% of the best available techniques (the PPM family of statistical compressors), whilst being around twice as fast at compression and six times faster at decompression.
+Default-Features: tool
+Status: install ok installed
+
+Package: bzip2
+Feature: tool
+Architecture: x64-windows
+Multi-Arch: same
+Description: Builds bzip2 executable
+Status: install ok installed
+
+Package: brotli
+Version: 1.2.0
+Depends: vcpkg-cmake, vcpkg-cmake-config
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 247d15754d5bb90b2d0fb7ea28075d86a2c600cd6f09df6892172218914bbf86
+Description: a generic-purpose lossless compression algorithm that compresses data using a combination of a modern variant of the LZ77 algorithm, Huffman coding and 2nd order context modeling.
+Status: install ok installed
+
+Package: freetype
+Version: 2.14.3
+Depends: vcpkg-cmake, vcpkg-cmake-config
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 62fa836b2c33f94594a751e079084e8cd95a85fca26c43e572380ec2f7b96902
+Description: A library to render fonts.
+Default-Features: brotli, bzip2, png, zlib
+Status: install ok installed
+
+Package: freetype
+Feature: brotli
+Depends: brotli
+Architecture: x64-windows
+Multi-Arch: same
+Description: Support decompression of WOFF2 streams
+Status: install ok installed
+
+Package: freetype
+Feature: bzip2
+Depends: bzip2
+Architecture: x64-windows
+Multi-Arch: same
+Description: Support bzip2 compressed fonts.
+Status: install ok installed
+
+Package: freetype
+Feature: png
+Depends: libpng
+Architecture: x64-windows
+Multi-Arch: same
+Description: Support PNG compressed OpenType embedded bitmaps.
+Status: install ok installed
+
+Package: freetype
+Feature: zlib
+Depends: zlib
+Architecture: x64-windows
+Multi-Arch: same
+Description: Use zlib instead of internal library for DEFLATE
+Status: install ok installed
+
+Package: sdl3-ttf
+Version: 3.2.2
+Port-Version: 1
+Depends: freetype, sdl3, vcpkg-cmake, vcpkg-cmake-config
+Architecture: x64-windows
+Multi-Arch: same
+Abi: 98e2bcc0f7585b712e92cba061f8e1f5713209e53f6752edc5eb27ee70a23caa
+Description: A library for rendering TrueType fonts with SDL
+Status: install ok installed
+

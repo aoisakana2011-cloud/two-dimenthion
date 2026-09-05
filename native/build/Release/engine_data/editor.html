@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><title>Engine UI Settings</title>
+<style>body{font:14px sans-serif;background:#18202b;color:#eee;max-width:700px;margin:30px auto}label{display:flex;justify-content:space-between;margin:10px 0}input{width:130px}button{padding:8px 20px}</style>
+<h1>エンジンUI設定</h1><p>文字欄の位置・サイズ・文字色を調整します。</p>
+<form id="f"></form><button id="save">保存</button><pre id="out"></pre>
+<script>
+const keys=['dialog.x','dialog.y','dialog.width','dialog.height','dialog.speaker_y','dialog.text_y','dialog.text_color','dialog.background_image','font.path','font.size','window.width','window.height'];
+const f=document.querySelector('#f'); keys.forEach(k=>{const l=document.createElement('label');l.textContent=k;const i=document.createElement('input');i.name=k;l.append(i);f.append(l)});
+fetch('/api/engine-settings').then(r=>r.json()).then(x=>keys.forEach(k=>f.elements[k].value=x[k]||''));
+save.onclick=async()=>{const settings=Object.fromEntries(keys.map(k=>[k,f.elements[k].value]));const r=await fetch('/api/engine-settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(settings)});out.textContent=r.ok?'保存しました':'保存に失敗しました'};
+</script>

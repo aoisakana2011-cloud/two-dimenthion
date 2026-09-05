@@ -1,0 +1,4 @@
+N:/native/build/CMakeFiles/novel_player.dir
+N:/native/build/CMakeFiles/check_image.dir
+N:/native/build/CMakeFiles/ALL_BUILD.dir
+N:/native/build/CMakeFiles/ZERO_CHECK.dir

@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.25)
+project(novel_script_native LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+find_package(SDL3 CONFIG REQUIRED)
+find_package(SDL3_ttf CONFIG REQUIRED)
+find_package(SDL3_image CONFIG REQUIRED)
+find_package(SDL3_mixer CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+add_executable(novel_player main.cpp)
+add_executable(check_image check_image.cpp)
+target_link_libraries(novel_player PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf SDL3_image::SDL3_image SDL3_mixer::SDL3_mixer nlohmann_json::nlohmann_json)
+target_link_libraries(check_image PRIVATE SDL3::SDL3 SDL3_image::SDL3_image)
+add_custom_command(TARGET novel_player POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+  "${CMAKE_CURRENT_SOURCE_DIR}/engine_data"
+  "$<TARGET_FILE_DIR:novel_player>/engine_data")
