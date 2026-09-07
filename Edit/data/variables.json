@@ -1,0 +1,295 @@
+{
+  "$schema": "./variables.schema.json",
+  "variables": [
+    {
+      "name": "e",
+      "type": "int",
+      "scope": "global",
+      "definedIn": "global",
+      "definitions": [],
+      "references": [],
+      "mutable": true
+    },
+    {
+      "name": "title",
+      "type": "str",
+      "scope": "global",
+      "definedIn": "global",
+      "definitions": [
+        {
+          "scope": "global",
+          "container": "global",
+          "line": 20,
+          "column": 1,
+          "kind": "definition",
+          "file": "main.tds"
+        }
+      ],
+      "references": [],
+      "mutable": true
+    },
+    {
+      "name": "day",
+      "type": "int",
+      "scope": "global",
+      "definedIn": "global",
+      "definitions": [
+        {
+          "scope": "global",
+          "container": "global",
+          "line": 21,
+          "column": 1,
+          "kind": "definition",
+          "file": "main.tds"
+        }
+      ],
+      "references": [
+        {
+          "scope": "scene",
+          "container": "main",
+          "line": 68,
+          "column": 10,
+          "kind": "expression",
+          "file": "main.tds"
+        },
+        {
+          "scope": "scene",
+          "container": "main",
+          "line": 79,
+          "column": 9,
+          "kind": "expression",
+          "file": "main.tds"
+        },
+        {
+          "scope": "scene",
+          "container": "main",
+          "kind": "assignment",
+          "line": 80,
+          "column": 9,
+          "file": "main.tds"
+        },
+        {
+          "scope": "scene",
+          "container": "main",
+          "line": 80,
+          "column": 15,
+          "kind": "expression",
+          "file": "main.tds"
+        }
+      ],
+      "mutable": true
+    },
+    {
+      "name": "flags",
+      "type": "int",
+      "scope": "global",
+      "definedIn": "global",
+      "definitions": [
+        {
+          "scope": "global",
+          "container": "global",
+          "line": 22,
+          "column": 1,
+          "kind": "definition",
+          "file": "main.tds"
+        }
+      ],
+      "references": [
+        {
+          "scope": "local",
+          "container": "main:choice1",
+          "kind": "assignment",
+          "line": 57,
+          "column": 11,
+          "file": "main.tds"
+        },
+        {
+          "scope": "local",
+          "container": "main:choice1",
+          "line": 57,
+          "column": 19,
+          "kind": "expression",
+          "file": "main.tds"
+        },
+        {
+          "scope": "scene",
+          "container": "main",
+          "line": 64,
+          "column": 6,
+          "kind": "expression",
+          "file": "main.tds"
+        }
+      ],
+      "mutable": true
+    },
+    {
+      "name": "game_version",
+      "type": "str",
+      "scope": "global",
+      "definedIn": "global",
+      "definitions": [
+        {
+          "scope": "global",
+          "container": "global",
+          "line": 23,
+          "column": 1,
+          "kind": "definition",
+          "file": "main.tds"
+        }
+      ],
+      "references": [
+        {
+          "scope": "scene",
+          "container": "main",
+          "line": 85,
+          "column": 16,
+          "kind": "interpolation",
+          "file": "main.tds"
+        }
+      ],
+      "mutable": true
+    },
+    {
+      "name": "player",
+      "type": {
+        "kind": "struct",
+        "name": "Player"
+      },
+      "scope": "global",
+      "definedIn": "global",
+      "definitions": [
+        {
+          "scope": "global",
+          "container": "global",
+          "line": 24,
+          "column": 1,
+          "kind": "definition",
+          "file": "main.tds"
+        }
+      ],
+      "references": [
+        {
+          "scope": "function",
+          "container": "add_affection",
+          "line": 27,
+          "column": 7,
+          "kind": "expression",
+          "file": "main.tds"
+        },
+        {
+          "scope": "function",
+          "container": "add_affection",
+          "line": 27,
+          "column": 26,
+          "kind": "expression",
+          "file": "main.tds"
+        },
+        {
+          "scope": "function",
+          "container": "ending_text",
+          "line": 31,
+          "column": 6,
+          "kind": "expression",
+          "file": "main.tds"
+        },
+        {
+          "scope": "local",
+          "container": "main:choice1",
+          "line": 56,
+          "column": 11,
+          "kind": "expression",
+          "file": "main.tds"
+        },
+        {
+          "scope": "local",
+          "container": "main:choice1",
+          "line": 56,
+          "column": 30,
+          "kind": "expression",
+          "file": "main.tds"
+        },
+        {
+          "scope": "scene",
+          "container": "main",
+          "line": 64,
+          "column": 21,
+          "kind": "expression",
+          "file": "main.tds"
+        },
+        {
+          "scope": "scene",
+          "container": "main",
+          "line": 83,
+          "column": 7,
+          "kind": "expression",
+          "file": "main.tds"
+        },
+        {
+          "scope": "scene",
+          "container": "main",
+          "line": 83,
+          "column": 26,
+          "kind": "expression",
+          "file": "main.tds"
+        },
+        {
+          "scope": "scene",
+          "container": "evening",
+          "line": 97,
+          "column": 6,
+          "kind": "expression",
+          "file": "main.tds"
+        }
+      ],
+      "mutable": true
+    },
+    {
+      "name": "value",
+      "type": "int",
+      "scope": "function",
+      "definedIn": "add_affection",
+      "definitions": [
+        {
+          "scope": "function",
+          "container": "add_affection",
+          "file": "main.tds"
+        }
+      ],
+      "references": [
+        {
+          "scope": "function",
+          "container": "add_affection",
+          "line": 27,
+          "column": 45,
+          "kind": "expression",
+          "file": "main.tds"
+        }
+      ],
+      "mutable": true
+    },
+    {
+      "name": "i",
+      "type": "int",
+      "scope": "local",
+      "definedIn": "main:for3",
+      "definitions": [
+        {
+          "scope": "local",
+          "container": "main:for3",
+          "file": "main.tds"
+        }
+      ],
+      "references": [
+        {
+          "scope": "local",
+          "container": "main:for3",
+          "line": 77,
+          "column": 18,
+          "kind": "interpolation",
+          "file": "main.tds"
+        }
+      ],
+      "mutable": true
+    }
+  ]
+}

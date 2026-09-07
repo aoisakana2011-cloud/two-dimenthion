@@ -1,0 +1,4 @@
+C:/Users/Owner/Desktop/Novel Editer/native/build-audit/CMakeFiles/novel_player.dir
+C:/Users/Owner/Desktop/Novel Editer/native/build-audit/CMakeFiles/check_image.dir
+C:/Users/Owner/Desktop/Novel Editer/native/build-audit/CMakeFiles/ALL_BUILD.dir
+C:/Users/Owner/Desktop/Novel Editer/native/build-audit/CMakeFiles/ZERO_CHECK.dir

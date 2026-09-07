@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>.tds / Edit</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">.tds</div>
+          <div>
+            <div class="brand-name">SCENARIO WORKSPACE</div>
+          </div>
+        </div>
+        <div class="topbar-center"><span class="live-dot"></span> ローカル編集環境</div>
+        <div class="topbar-right">
+          <div id="status" class="status-chip" role="status"><span class="status-dot"></span>準備中</div>
+          <span class="version">v0.1</span>
+        </div>
+      </header>
+
+      <div class="app-grid">
+        <aside class="sidebar">
+          <section class="side-section scenes-section">
+            <div class="section-heading">
+              <div><span class="eyebrow">EXPLORER</span><h2>プロジェクト</h2></div><a class="flow-link" href="/flow.html">Scene Flow</a>
+            </div>
+            <label class="sr-only" for="scene-list">保存済みシーン</label>
+            <div class="project-heading"><span class="eyebrow">PROJECT FILES</span><a class="flow-link" href="/flow.html">Scene Flow</a></div>
+            <div id="file-tree" class="scene-tree file-tree" role="tree" aria-label="プロジェクトファイル"></div>
+            <div id="file-info" class="file-info">ファイルを右クリックすると情報を表示</div>
+            <div class="storage-note"><span class="folder-icon">▱</span> Edit / scenes</div>
+          </section>
+
+          <section class="side-section insert-section is-collapsed">
+            <div class="section-heading insert-heading"><div><span class="eyebrow">COMMANDS</span><h2>予測入力</h2></div><button id="insert-toggle" class="insert-toggle" type="button" aria-expanded="false" title="コマンドをすべて表示"><span class="insert-toggle-label">展開</span><span class="insert-toggle-chevron" aria-hidden="true"></span></button></div>
+            <p class="side-copy">ボタンの続きは候補から選択</p>
+            <div class="insert-grid">
+              <button class="command-predict" data-predict="char " data-shortcut="1"><span class="command-icon purple">C</span><span>char<small>キャラクター</small></span></button>
+              <button class="command-predict" data-predict="say " data-shortcut="2"><span class="command-icon blue">S</span><span>say<small>セリフ</small></span></button>
+              <button class="command-predict" data-predict="bgm " data-shortcut="3"><span class="command-icon orange">B</span><span>bgm<small>BGM</small></span></button>
+              <button class="command-predict" data-predict="play se " data-shortcut="4"><span class="command-icon green">SE</span><span>se<small>効果音</small></span></button>
+              <button class="command-predict" data-predict="choice " data-shortcut="5"><span class="command-icon cyan">?</span><span>chc<small>選択肢</small></span></button>
+              <button class="command-predict" data-predict="if " data-shortcut="6"><span class="command-icon yellow">?</span><span>if<small>条件分岐</small></span></button>
+              <button class="command-predict" data-predict="for " data-shortcut="7"><span class="command-icon pink">↻</span><span>for<small>ループ</small></span></button>
+              <button class="command-predict" data-predict="asset "><span class="command-icon orange">A</span><span>asset<small>その他の素材</small></span></button>
+              <button class="command-predict insert-optional" data-predict="fn "><span class="command-icon pink">ƒ</span><span>fn<small>関数</small></span></button>
+              <button class="command-predict insert-optional" data-predict="goto "><span class="command-icon white">→</span><span>goto<small>シーン移動</small></span></button>
+            </div>
+            <button id="reload-catalog" class="catalog-button"><span>↻</span> 素材候補を再読込</button>
+          </section>
+
+          <section class="inspector-card validation-card">
+            <pre id="result" aria-label="検証結果"></pre>
+          </section>
+
+          <div class="sidebar-footer">文字入力で候補を絞り込み　<span class="shortcut-key">ENTER</span> 一致候補を確定</div>
+        </aside>
+
+        <main class="editor-panel">
+          <div class="editor-group">
+          <div class="editor-tabs-bar">
+            <div id="editor-tabs" class="editor-tabs" role="tablist" aria-label="開いているファイル"></div>
+          </div>
+          <div class="document-bar">
+            <div class="document-title"><span class="file-icon">▤</span><label class="sr-only" for="scene-name">ファイル名</label><input id="scene-name" value="chapter1.novel" autocomplete="off" spellcheck="false"><span class="dirty-mark" title="未保存"></span></div>
+            <div class="document-actions"><span class="save-hint"><kbd>Ctrl</kbd><span>+</span><kbd>S</kbd> すべて保存</span><button id="validate" class="validate-button"><span>✓</span> 検証・コンパイル</button><button id="play" class="save-button">▶ 再生</button><button id="save" class="save-button" title="左右で開いているファイルをすべて保存">すべて保存</button></div>
+          </div>
+          <div class="editor-meta"><span>SCENE SCRIPT</span><span class="meta-separator">/</span><span>UTF-8</span><span class="meta-spacer"></span><span>直接入力モード</span></div>
+          <div class="editor-wrap">
+            <div id="line-numbers" aria-hidden="true">1</div>
+            <pre id="highlight" aria-hidden="true"></pre><textarea id="editor" aria-label="シナリオ本文" spellcheck="false" placeholder="# ここからシナリオを書く&#10;say narrator &quot;こんにちは&quot;"></textarea>
+            <div id="minimap" aria-label="コードミニマップ" role="scrollbar" tabindex="0"><pre id="minimap-content"></pre><span id="minimap-viewport"></span></div><div id="suggestions" role="listbox" aria-label="入力候補" hidden></div>
+          </div>
+          <div class="editor-footer"><span><i class="footer-led"></i> 編集可能</span><span>候補が1件に絞られると表示 / <kbd>Enter</kbd> で確定</span></div>
+          </div>
+          <div id="split-group" class="split-group" hidden>
+            <div id="split-resizer" class="split-resizer" role="separator" aria-label="分割幅を変更" aria-orientation="vertical" aria-valuemin="25" aria-valuemax="75" aria-valuenow="50" tabindex="0"></div>
+            <div class="split-bar"><div id="split-tabs" class="editor-tabs split-tabs" role="tablist" aria-label="右ペインのタブ"></div><div class="split-actions"><button id="close-split" type="button" aria-label="分割を閉じる">×</button></div></div>
+            <iframe id="split-frame" title="分割エディタ" loading="lazy"></iframe>
+          </div>
+        </main>
+
+      </div>
+    </div>
+    <style>.scenes-section>.section-heading{display:none}.project-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.project-heading .flow-link{margin-left:auto}</style><script src="/editor.js"></script>
+  </body>
+</html>

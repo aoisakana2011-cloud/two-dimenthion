@@ -1,6 +1,6 @@
 ^N:\NATIVE\CMAKELISTS.TXT
 setlocal
-"C:\Program Files\CMake\bin\cmake.exe" -SN:/native -BN:/native/build --check-stamp-file N:/native/build/CMakeFiles/generate.stamp
+"C:\Program Files\CMake\bin\cmake.exe" -SN:/native "-BC:/Users/Owner/Desktop/Novel Editer/native/build" --check-stamp-file "C:/Users/Owner/Desktop/Novel Editer/native/build/CMakeFiles/generate.stamp"
 if %errorlevel% neq 0 goto :cmEnd
 :cmEnd
 endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone

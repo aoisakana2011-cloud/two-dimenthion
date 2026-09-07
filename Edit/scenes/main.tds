@@ -1,0 +1,106 @@
+# Twilight Letter - サンプルノベルゲーム
+
+asset bg school = "assets/bg/school.jpg"
+asset bg night = "assets/bg/night.jpg"
+asset bgm morning = "assets/bgm/morning.ogg"
+asset bgm calm = "assets/bgm/calm.ogg"
+asset se door = "assets/se/door.wav"
+
+character ayase {
+  normal = "assets/char/ayase/normal.png"
+  smile = "assets/char/ayase/smile.png"
+  sad = "assets/char/ayase/sad.png"
+}
+
+struct Player {
+  name: str
+  affection: int
+}
+
+str title = "夕暮れの手紙"
+int day = 1
+int flags = 0
+const str game_version = "1.0"
+Player player = { "name": "あなた", "affection": 0 }
+
+fn add_affection(value: int) -> none {
+  set player.affection = player.affection + value
+}
+
+fn ending_text() -> str {
+  if player.affection >= 3 {
+    return "笑顔のエンディング"
+  }
+  return "静かなエンディング"
+}
+
+scene main {
+  bg school
+  bgm morning
+  show char ayase center normal
+  play se door
+
+  say ayase {
+    "おはよう。"
+    "今日も来てくれたんだね。"
+  }
+  say {
+    "これは、放課後の小さな物語。"
+    "選んだ言葉が、明日の景色を変えていく。"
+  }
+
+  say ayase "{player.name}、少しだけ相談してもいい？"
+  choice "どう答える？" {
+    "もちろん" {
+      say ayase "ありがとう。"
+      set player.affection = player.affection + 1
+      set flags = flags + 1
+    }
+    "今日は急いでいる" {
+      say ayase "そっか。また明日ね。"
+    }
+  }
+
+  if flags == 1 and player.affection > 0 {
+    char ayase center smile
+    say ayase "少し安心したよ。"
+    add_affection(1)
+  } elif day > 1 {
+    say narrator "昨日の記憶がふとよみがえった。"
+  } else {
+    char ayase center sad
+    say ayase "無理をさせちゃったかな。"
+  }
+
+  say narrator "好感度を確認します。"
+  for i from 1 to 2 {
+    say narrator "確認 {i} 回目"
+  }
+  while day < 2 {
+    set day = day + 1
+  }
+
+  set player.affection = player.affection + 1
+  say narrator "現在の好感度は {player.affection}。"
+  say narrator "バージョン {game_version}"
+  wait 500
+  effect fade black 500
+  goto evening
+}
+
+scene evening {
+  bg night
+  bgm calm
+  show char ayase center smile
+  say ayase "夕暮れの空、きれいだね。"
+
+  if player.affection >= 3 {
+    say ayase "また明日も、一緒に帰ろう。"
+  } else {
+    say ayase "今日はここまで。またいつか。"
+  }
+
+  say narrator "{ending_text()}"
+  hide char ayase
+  clear bg
+}

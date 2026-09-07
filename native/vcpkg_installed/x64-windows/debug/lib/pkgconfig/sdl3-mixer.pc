@@ -8,7 +8,7 @@ Description: mixer library for Simple DirectMedia Layer
 Version: 3.2.4
 Requires: sdl3 >= 3.4.0
 Libs: "-L${libdir}" -lSDL3_mixer
-Requires.private: 
+Requires.private: vorbisfile flac libmpg123
 Libs.private: 
 Cflags: "-I${includedir}"
 

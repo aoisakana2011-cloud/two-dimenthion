@@ -29,8 +29,8 @@ set(SDL3_mixer_FOUND               ON)
 
 set(SDLMIXER_VENDORED              OFF)
 
-set(SDLMIXER_FLAC                  FALSE)
-set(SDLMIXER_FLAC_LIBFLAC          FALSE)
+set(SDLMIXER_FLAC                  TRUE)
+set(SDLMIXER_FLAC_LIBFLAC          TRUE)
 set(SDLMIXER_FLAC_DRFLAC           FALSE)
 
 set(SDLMIXER_GME                   FALSE)
@@ -39,9 +39,9 @@ set(SDLMIXER_MOD                   FALSE)
 set(SDLMIXER_MOD_XMP               FALSE)
 set(SDLMIXER_MOD_XMP_LITE          )
 
-set(SDLMIXER_MP3                   FALSE)
+set(SDLMIXER_MP3                   TRUE)
 set(SDLMIXER_MP3_DRMP3             FALSE)
-set(SDLMIXER_MP3_MPG123            FALSE)
+set(SDLMIXER_MP3_MPG123            TRUE)
 
 set(SDLMIXER_MIDI                  )
 set(SDLMIXER_MIDI_FLUIDSYNTH       FALSE)
@@ -52,7 +52,7 @@ set(SDLMIXER_OPUS                  FALSE)
 set(SDLMIXER_VORBIS                TRUE)
 set(SDLMIXER_VORBIS_STB            TRUE)
 set(SDLMIXER_VORBIS_TREMOR         FALSE)
-set(SDLMIXER_VORBIS_VORBISFILE     FALSE)
+set(SDLMIXER_VORBIS_VORBISFILE     TRUE)
 
 set(SDLMIXER_WAVE                  TRUE)
 

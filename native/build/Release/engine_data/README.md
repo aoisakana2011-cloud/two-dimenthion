@@ -18,4 +18,7 @@ dialog.background_image = ui/dialogue_box.png
 `font.path` にはWindowsのシステムフォント、またはこのフォルダーからの
 相対パスを指定できます。
 
-配置は `engine.txt` を直接編集します。文字色は黒系で固定しています。
+配置は `engine.txt` を直接編集します。`dialog.text_color` と
+`dialog.background_color` は `R,G,B,A`（各0〜255）で指定します。
+`font.size` は基本サイズで、`dialog.speaker_size`・`dialog.text_size` を
+指定した場合は、それぞれのサイズを優先します。

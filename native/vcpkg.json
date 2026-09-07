@@ -4,8 +4,8 @@
   "dependencies": [
     "sdl3",
     "sdl3-ttf",
-    "sdl3-image",
-    "sdl3-mixer",
+    { "name": "sdl3-image", "features": ["png", "jpeg", "webp"] },
+    { "name": "sdl3-mixer", "features": ["libflac", "libvorbis", "mpg123"] },
     "ffmpeg",
     "nlohmann-json"
   ]

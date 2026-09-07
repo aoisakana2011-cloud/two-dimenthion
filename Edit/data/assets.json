@@ -1,0 +1,56 @@
+{
+  "$schema": "./assets.schema.json",
+  "assets": [
+    {
+      "type": "bg",
+      "name": "school",
+      "path": "assets/bg/school.jpg",
+      "definedIn": "main.tds"
+    },
+    {
+      "type": "bg",
+      "name": "night",
+      "path": "assets/bg/night.jpg",
+      "definedIn": "main.tds"
+    },
+    {
+      "type": "bgm",
+      "name": "morning",
+      "path": "assets/bgm/morning.ogg",
+      "definedIn": "main.tds"
+    },
+    {
+      "type": "bgm",
+      "name": "calm",
+      "path": "assets/bgm/calm.ogg",
+      "definedIn": "main.tds"
+    },
+    {
+      "type": "se",
+      "name": "door",
+      "path": "assets/se/door.wav",
+      "definedIn": "main.tds"
+    },
+    {
+      "type": "char",
+      "name": "ayase",
+      "pose": "normal",
+      "path": "assets/char/ayase/normal.png",
+      "definedIn": "main.tds"
+    },
+    {
+      "type": "char",
+      "name": "ayase",
+      "pose": "smile",
+      "path": "assets/char/ayase/smile.png",
+      "definedIn": "main.tds"
+    },
+    {
+      "type": "char",
+      "name": "ayase",
+      "pose": "sad",
+      "path": "assets/char/ayase/sad.png",
+      "definedIn": "main.tds"
+    }
+  ]
+}

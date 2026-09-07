@@ -1,0 +1,5 @@
+# first/test
+say narrator "hello"
+include functions.tds
+int e = a(1)
+say narrator "{e}"

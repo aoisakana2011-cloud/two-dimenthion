@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["assets"],
+  "properties": {
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "name", "path", "definedIn"],
+        "properties": {
+          "type": { "enum": ["bg", "char", "bgm", "se", "voice", "image", "video"] },
+          "name": { "type": "string" },
+          "pose": { "type": "string" },
+          "path": { "type": "string", "pattern": "^assets/" },
+          "definedIn": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+# Novel Script asset catalog syntax
+#
+# This file documents the catalog format. Do not put project asset names here.
+# The catalog is optional editor metadata; the script remains the source of truth.
+#
+# Asset entry:
+#   <asset_type> <identifier> = asset/<relative_path>
+#
+# Character pose entry:
+#   character <character_identifier>.<pose_identifier> = asset/<relative_path>
+#
+# Supported asset types:
+#   bg, char, bgm, se, voice, image, video
+#
+# Editor-only candidate groups:
+#   <group> = <identifier>, <identifier>, ...
+#
+# Display positions:
+#   position = left, center, right
+#
+# The path after '=' must be explicit and must begin with asset/.

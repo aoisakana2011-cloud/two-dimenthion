@@ -26,11 +26,12 @@ C:/Program Files/CMake/share/cmake-4.2/Modules/Platform/Windows-MSVC-CXX.cmake
 C:/Program Files/CMake/share/cmake-4.2/Modules/Platform/Windows-MSVC.cmake
 C:/Program Files/CMake/share/cmake-4.2/Modules/Platform/Windows.cmake
 C:/Program Files/CMake/share/cmake-4.2/Modules/Platform/WindowsPaths.cmake
+C:/Program Files/CMake/share/cmake-4.2/Modules/SelectLibraryConfigurations.cmake
+C:/Users/Owner/Desktop/Novel Editer/native/build/CMakeFiles/4.2.3/CMakeCXXCompiler.cmake
+C:/Users/Owner/Desktop/Novel Editer/native/build/CMakeFiles/4.2.3/CMakeRCCompiler.cmake
+C:/Users/Owner/Desktop/Novel Editer/native/build/CMakeFiles/4.2.3/CMakeSystem.cmake
 N:/native/.vcpkg/scripts/buildsystems/vcpkg.cmake
 N:/native/CMakeLists.txt
-N:/native/build/CMakeFiles/4.2.3/CMakeCXXCompiler.cmake
-N:/native/build/CMakeFiles/4.2.3/CMakeRCCompiler.cmake
-N:/native/build/CMakeFiles/4.2.3/CMakeSystem.cmake
 N:/native/build/vcpkg_installed/x64-windows/share/SDL3_image/SDL3_image-shared-targets-debug.cmake
 N:/native/build/vcpkg_installed/x64-windows/share/SDL3_image/SDL3_image-shared-targets-release.cmake
 N:/native/build/vcpkg_installed/x64-windows/share/SDL3_image/SDL3_image-shared-targets.cmake
@@ -41,6 +42,8 @@ N:/native/build/vcpkg_installed/x64-windows/share/SDL3_mixer/SDL3_mixer-shared-t
 N:/native/build/vcpkg_installed/x64-windows/share/SDL3_mixer/SDL3_mixer-shared-targets.cmake
 N:/native/build/vcpkg_installed/x64-windows/share/SDL3_mixer/SDL3_mixerConfig.cmake
 N:/native/build/vcpkg_installed/x64-windows/share/SDL3_mixer/SDL3_mixerConfigVersion.cmake
+N:/native/build/vcpkg_installed/x64-windows/share/ffmpeg/FindFFMPEG.cmake
+N:/native/build/vcpkg_installed/x64-windows/share/ffmpeg/vcpkg-cmake-wrapper.cmake
 N:/native/build/vcpkg_installed/x64-windows/share/nlohmann_json/nlohmann_jsonConfig.cmake
 N:/native/build/vcpkg_installed/x64-windows/share/nlohmann_json/nlohmann_jsonConfigVersion.cmake
 N:/native/build/vcpkg_installed/x64-windows/share/nlohmann_json/nlohmann_jsonTargets.cmake

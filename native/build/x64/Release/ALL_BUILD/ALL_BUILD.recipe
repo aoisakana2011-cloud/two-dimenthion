@@ -2,16 +2,16 @@
 <Project>
   <ProjectOutputs>
     <ProjectOutput>
-      <FullPath>N:\native\build\x64\Release\ZERO_CHECK</FullPath>
+      <FullPath>C:\Users\Owner\Desktop\Novel Editer\native\build\x64\Release\ZERO_CHECK</FullPath>
     </ProjectOutput>
     <ProjectOutput>
-      <FullPath>N:\native\build\Release\check_image.exe</FullPath>
+      <FullPath>C:\Users\Owner\Desktop\Novel Editer\native\build\Release\check_image.exe</FullPath>
     </ProjectOutput>
     <ProjectOutput>
-      <FullPath>N:\native\build\Release\novel_player.exe</FullPath>
+      <FullPath>C:\Users\Owner\Desktop\Novel Editer\native\build\Release\novel_player.exe</FullPath>
     </ProjectOutput>
     <ProjectOutput>
-      <FullPath>N:\native\build\x64\Release\ALL_BUILD</FullPath>
+      <FullPath>C:\Users\Owner\Desktop\Novel Editer\native\build\x64\Release\ALL_BUILD</FullPath>
     </ProjectOutput>
   </ProjectOutputs>
   <ContentFiles />

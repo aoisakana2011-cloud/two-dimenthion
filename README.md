@@ -39,8 +39,18 @@ const program = compile(ast);
 ## ネイティブプレイヤー用パッケージ
 
 ```powershell
-npm.cmd run pack -- Edit/scenes/main.novel build/main.nsp.json
+npm.cmd run pack -- Edit/scenes/main.tds build/main.nsp.json
 ```
 
 生成された `.nsp.json` をネイティブプレイヤーへ渡して実行します。
+
+`goto ending` は同一ファイル内のsceneへ、`goto next.tds` または
+`goto first/next.tds` はプロジェクトの `Edit/scenes/` を基準とする別ファイルへ移動します。
+packは遷移先も収集し、素材の存在とパスを検証して出力先へコピーします。
+ファイルをまたいでも同名のグローバル変数の値は維持されます。
+
+回帰テストは `npm.cmd test` で実行します。ネイティブの比較テストも実行する場合は、
+`NOVEL_NATIVE_EXE` 環境変数にビルドした `novel_player.exe` の絶対パスを指定します。
+実ブラウザー検証は `test/browser-check.cjs`、SDLとFFmpegを含む検証は
+`test/native-smoke.cjs` です。後者ではFFmpegの実行ファイルもPATHに必要です。
 # two-dimenthion

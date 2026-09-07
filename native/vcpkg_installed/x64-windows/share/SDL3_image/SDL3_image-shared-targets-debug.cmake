@@ -9,7 +9,7 @@ set(CMAKE_IMPORT_FILE_VERSION 1)
 set_property(TARGET SDL3_image::SDL3_image-shared APPEND PROPERTY IMPORTED_CONFIGURATIONS DEBUG)
 set_target_properties(SDL3_image::SDL3_image-shared PROPERTIES
   IMPORTED_IMPLIB_DEBUG "${_IMPORT_PREFIX}/debug/lib/SDL3_image.lib"
-  IMPORTED_LINK_DEPENDENT_LIBRARIES_DEBUG "SDL3::SDL3-shared"
+  IMPORTED_LINK_DEPENDENT_LIBRARIES_DEBUG "SDL3::SDL3-shared;WebP::webp;WebP::webpdemux;WebP::libwebpmux"
   IMPORTED_LOCATION_DEBUG "${_IMPORT_PREFIX}/debug/bin/SDL3_image.dll"
   )
 

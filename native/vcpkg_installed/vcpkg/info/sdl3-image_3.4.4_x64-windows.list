@@ -19,6 +19,7 @@ x64-windows/lib/pkgconfig/
 x64-windows/lib/pkgconfig/sdl3-image.pc
 x64-windows/share/
 x64-windows/share/SDL3_image/
+x64-windows/share/SDL3_image/Findwebp.cmake
 x64-windows/share/SDL3_image/SDL3_image-shared-targets-debug.cmake
 x64-windows/share/SDL3_image/SDL3_image-shared-targets-release.cmake
 x64-windows/share/SDL3_image/SDL3_image-shared-targets.cmake

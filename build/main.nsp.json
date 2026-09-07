@@ -1,0 +1,249 @@
+{
+  "format": "novel-script-package",
+  "version": 1,
+  "source": "main.tds",
+  "program": {
+    "version": 2,
+    "assets": [],
+    "characters": [
+      {
+        "kind": "character",
+        "name": "aoi",
+        "poses": [],
+        "line": 1,
+        "column": 1
+      }
+    ],
+    "globals": [
+      {
+        "op": "goto",
+        "scene": "first/test.tds"
+      }
+    ],
+    "functions": [],
+    "scenes": [],
+    "variables": [
+      {
+        "name": "e",
+        "type": "int",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [],
+        "references": [],
+        "mutable": true
+      }
+    ]
+  },
+  "files": {
+    "main.tds": {
+      "version": 2,
+      "assets": [],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "aoi",
+          "poses": [],
+          "line": 1,
+          "column": 1
+        }
+      ],
+      "globals": [
+        {
+          "op": "goto",
+          "scene": "first/test.tds"
+        }
+      ],
+      "functions": [],
+      "scenes": [],
+      "variables": [
+        {
+          "name": "e",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "first/test.tds": {
+      "version": 2,
+      "assets": [],
+      "characters": [],
+      "globals": [
+        {
+          "op": "command",
+          "name": "say",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "narrator",
+              "line": 2,
+              "column": 1
+            },
+            {
+              "kind": "literal",
+              "value": "hello",
+              "line": 2,
+              "column": 14
+            }
+          ]
+        },
+        {
+          "op": "declare",
+          "type": "int",
+          "name": "e",
+          "initial": {
+            "kind": "call",
+            "name": "a",
+            "args": [
+              {
+                "kind": "literal",
+                "value": 1,
+                "line": 4,
+                "column": 11
+              }
+            ]
+          }
+        },
+        {
+          "op": "command",
+          "name": "say",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "narrator",
+              "line": 5,
+              "column": 1
+            },
+            {
+              "kind": "literal",
+              "value": "{e}",
+              "line": 5,
+              "column": 14
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "scenes": [],
+      "variables": [
+        {
+          "name": "e",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 4,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 5,
+              "column": 14,
+              "kind": "interpolation"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "i",
+          "type": "int",
+          "scope": "function",
+          "definedIn": "a",
+          "definitions": [
+            {
+              "scope": "function",
+              "container": "a"
+            }
+          ],
+          "references": [
+            {
+              "scope": "function",
+              "container": "a",
+              "line": 4,
+              "column": 10,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        }
+      ],
+      "includes": [
+        "functions.tds"
+      ]
+    },
+    "functions.tds": {
+      "version": 2,
+      "assets": [],
+      "characters": [],
+      "globals": [],
+      "functions": [
+        {
+          "op": "function",
+          "name": "a",
+          "returnType": "int",
+          "params": [
+            {
+              "name": "i",
+              "type": "int"
+            }
+          ],
+          "body": [
+            {
+              "op": "return",
+              "value": {
+                "kind": "load",
+                "name": "i"
+              }
+            }
+          ]
+        }
+      ],
+      "scenes": [],
+      "variables": [
+        {
+          "name": "e",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "i",
+          "type": "int",
+          "scope": "function",
+          "definedIn": "a",
+          "definitions": [
+            {
+              "scope": "function",
+              "container": "a"
+            }
+          ],
+          "references": [
+            {
+              "scope": "function",
+              "container": "a",
+              "line": 4,
+              "column": 10,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    }
+  }
+}

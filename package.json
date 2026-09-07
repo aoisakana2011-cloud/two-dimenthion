@@ -1,0 +1,15 @@
+{
+  "name": "novel-script",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test test/*.test.js",
+    "editor": "npm run build && node Edit/server.js",
+    "pack": "npm run build && node tools/pack.js",
+    "native": "node tools/native.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,749 @@
+{
+  "format": "novel-script-package",
+  "version": 1,
+  "source": "main.tds",
+  "program": {
+    "version": 2,
+    "assets": [
+      {
+        "kind": "asset",
+        "type": "bg",
+        "name": "school",
+        "path": "assets\\bg\\mori.jpg",
+        "line": 1,
+        "column": 1
+      },
+      {
+        "kind": "asset",
+        "type": "char",
+        "name": "aokami",
+        "path": "assets\\char\\aokami.png",
+        "line": 2,
+        "column": 1
+      }
+    ],
+    "characters": [],
+    "globals": [
+      {
+        "op": "command",
+        "name": "bg",
+        "args": [
+          {
+            "kind": "literal",
+            "value": "school",
+            "line": 3,
+            "column": 4
+          }
+        ]
+      },
+      {
+        "op": "declare",
+        "type": "int",
+        "name": "j",
+        "initial": {
+          "kind": "literal",
+          "value": 0,
+          "line": 4,
+          "column": 9
+        }
+      },
+      {
+        "op": "choice",
+        "prompt": {
+          "kind": "literal",
+          "value": "please",
+          "line": 5,
+          "column": 8
+        },
+        "options": [
+          {
+            "label": {
+              "kind": "literal",
+              "value": "a",
+              "line": 6,
+              "column": 3
+            },
+            "body": [
+              {
+                "op": "set",
+                "target": {
+                  "kind": "load",
+                  "name": "j"
+                },
+                "value": {
+                  "kind": "literal",
+                  "value": 2,
+                  "line": 7,
+                  "column": 11
+                }
+              }
+            ]
+          },
+          {
+            "label": {
+              "kind": "literal",
+              "value": "b",
+              "line": 9,
+              "column": 3
+            },
+            "body": []
+          }
+        ]
+      },
+      {
+        "op": "command",
+        "name": "say",
+        "args": [
+          {
+            "kind": "literal",
+            "value": "narrator",
+            "line": 13,
+            "column": 1
+          },
+          {
+            "kind": "literal",
+            "value": "{j}",
+            "line": 13,
+            "column": 14
+          }
+        ]
+      },
+      {
+        "op": "if",
+        "condition": {
+          "kind": "binary",
+          "operator": "==",
+          "left": {
+            "kind": "load",
+            "name": "j"
+          },
+          "right": {
+            "kind": "literal",
+            "value": 2,
+            "line": 14,
+            "column": 9
+          }
+        },
+        "body": [
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator",
+                "line": 15,
+                "column": 3
+              },
+              {
+                "kind": "literal",
+                "value": "hello",
+                "line": 15,
+                "column": 16
+              }
+            ]
+          }
+        ],
+        "elseIf": [],
+        "otherwise": [
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator",
+                "line": 18,
+                "column": 3
+              },
+              {
+                "kind": "literal",
+                "value": "miss",
+                "line": 18,
+                "column": 16
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "functions": [],
+    "scenes": [],
+    "instructions": [
+      {
+        "op": "command",
+        "name": "bg",
+        "args": [
+          {
+            "kind": "literal",
+            "value": "school",
+            "line": 3,
+            "column": 4
+          }
+        ]
+      },
+      {
+        "op": "declare",
+        "type": "int",
+        "name": "j",
+        "initial": {
+          "kind": "literal",
+          "value": 0,
+          "line": 4,
+          "column": 9
+        }
+      },
+      {
+        "op": "choice",
+        "prompt": {
+          "kind": "literal",
+          "value": "please",
+          "line": 5,
+          "column": 8
+        },
+        "options": [
+          {
+            "label": {
+              "kind": "literal",
+              "value": "a",
+              "line": 6,
+              "column": 3
+            },
+            "body": [
+              {
+                "op": "set",
+                "target": {
+                  "kind": "load",
+                  "name": "j"
+                },
+                "value": {
+                  "kind": "literal",
+                  "value": 2,
+                  "line": 7,
+                  "column": 11
+                }
+              }
+            ]
+          },
+          {
+            "label": {
+              "kind": "literal",
+              "value": "b",
+              "line": 9,
+              "column": 3
+            },
+            "body": []
+          }
+        ]
+      },
+      {
+        "op": "command",
+        "name": "say",
+        "args": [
+          {
+            "kind": "literal",
+            "value": "narrator",
+            "line": 13,
+            "column": 1
+          },
+          {
+            "kind": "literal",
+            "value": "{j}",
+            "line": 13,
+            "column": 14
+          }
+        ]
+      },
+      {
+        "op": "if",
+        "condition": {
+          "kind": "binary",
+          "operator": "==",
+          "left": {
+            "kind": "load",
+            "name": "j"
+          },
+          "right": {
+            "kind": "literal",
+            "value": 2,
+            "line": 14,
+            "column": 9
+          }
+        },
+        "body": [
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator",
+                "line": 15,
+                "column": 3
+              },
+              {
+                "kind": "literal",
+                "value": "hello",
+                "line": 15,
+                "column": 16
+              }
+            ]
+          }
+        ],
+        "elseIf": [],
+        "otherwise": [
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator",
+                "line": 18,
+                "column": 3
+              },
+              {
+                "kind": "literal",
+                "value": "miss",
+                "line": 18,
+                "column": 16
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "variables": [
+      {
+        "name": "i",
+        "type": "int",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [],
+        "references": [],
+        "mutable": true
+      },
+      {
+        "name": "a",
+        "type": "int",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [],
+        "references": [],
+        "mutable": true
+      },
+      {
+        "name": "j",
+        "type": "int",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [
+          {
+            "scope": "global",
+            "container": "global",
+            "line": 4,
+            "column": 1,
+            "kind": "definition"
+          }
+        ],
+        "references": [
+          {
+            "scope": "local",
+            "container": "global:choice1",
+            "kind": "assignment",
+            "line": 7,
+            "column": 7
+          },
+          {
+            "scope": "global",
+            "container": "global",
+            "line": 13,
+            "column": 14,
+            "kind": "interpolation"
+          },
+          {
+            "scope": "global",
+            "container": "global",
+            "line": 14,
+            "column": 4,
+            "kind": "expression"
+          }
+        ],
+        "mutable": true
+      }
+    ]
+  },
+  "files": {
+    "main.tds": {
+      "version": 2,
+      "assets": [
+        {
+          "kind": "asset",
+          "type": "bg",
+          "name": "school",
+          "path": "assets\\bg\\mori.jpg",
+          "line": 1,
+          "column": 1
+        },
+        {
+          "kind": "asset",
+          "type": "char",
+          "name": "aokami",
+          "path": "assets\\char\\aokami.png",
+          "line": 2,
+          "column": 1
+        }
+      ],
+      "characters": [],
+      "globals": [
+        {
+          "op": "command",
+          "name": "bg",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "school",
+              "line": 3,
+              "column": 4
+            }
+          ]
+        },
+        {
+          "op": "declare",
+          "type": "int",
+          "name": "j",
+          "initial": {
+            "kind": "literal",
+            "value": 0,
+            "line": 4,
+            "column": 9
+          }
+        },
+        {
+          "op": "choice",
+          "prompt": {
+            "kind": "literal",
+            "value": "please",
+            "line": 5,
+            "column": 8
+          },
+          "options": [
+            {
+              "label": {
+                "kind": "literal",
+                "value": "a",
+                "line": 6,
+                "column": 3
+              },
+              "body": [
+                {
+                  "op": "set",
+                  "target": {
+                    "kind": "load",
+                    "name": "j"
+                  },
+                  "value": {
+                    "kind": "literal",
+                    "value": 2,
+                    "line": 7,
+                    "column": 11
+                  }
+                }
+              ]
+            },
+            {
+              "label": {
+                "kind": "literal",
+                "value": "b",
+                "line": 9,
+                "column": 3
+              },
+              "body": []
+            }
+          ]
+        },
+        {
+          "op": "command",
+          "name": "say",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "narrator",
+              "line": 13,
+              "column": 1
+            },
+            {
+              "kind": "literal",
+              "value": "{j}",
+              "line": 13,
+              "column": 14
+            }
+          ]
+        },
+        {
+          "op": "if",
+          "condition": {
+            "kind": "binary",
+            "operator": "==",
+            "left": {
+              "kind": "load",
+              "name": "j"
+            },
+            "right": {
+              "kind": "literal",
+              "value": 2,
+              "line": 14,
+              "column": 9
+            }
+          },
+          "body": [
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator",
+                  "line": 15,
+                  "column": 3
+                },
+                {
+                  "kind": "literal",
+                  "value": "hello",
+                  "line": 15,
+                  "column": 16
+                }
+              ]
+            }
+          ],
+          "elseIf": [],
+          "otherwise": [
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator",
+                  "line": 18,
+                  "column": 3
+                },
+                {
+                  "kind": "literal",
+                  "value": "miss",
+                  "line": 18,
+                  "column": 16
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "scenes": [],
+      "instructions": [
+        {
+          "op": "command",
+          "name": "bg",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "school",
+              "line": 3,
+              "column": 4
+            }
+          ]
+        },
+        {
+          "op": "declare",
+          "type": "int",
+          "name": "j",
+          "initial": {
+            "kind": "literal",
+            "value": 0,
+            "line": 4,
+            "column": 9
+          }
+        },
+        {
+          "op": "choice",
+          "prompt": {
+            "kind": "literal",
+            "value": "please",
+            "line": 5,
+            "column": 8
+          },
+          "options": [
+            {
+              "label": {
+                "kind": "literal",
+                "value": "a",
+                "line": 6,
+                "column": 3
+              },
+              "body": [
+                {
+                  "op": "set",
+                  "target": {
+                    "kind": "load",
+                    "name": "j"
+                  },
+                  "value": {
+                    "kind": "literal",
+                    "value": 2,
+                    "line": 7,
+                    "column": 11
+                  }
+                }
+              ]
+            },
+            {
+              "label": {
+                "kind": "literal",
+                "value": "b",
+                "line": 9,
+                "column": 3
+              },
+              "body": []
+            }
+          ]
+        },
+        {
+          "op": "command",
+          "name": "say",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "narrator",
+              "line": 13,
+              "column": 1
+            },
+            {
+              "kind": "literal",
+              "value": "{j}",
+              "line": 13,
+              "column": 14
+            }
+          ]
+        },
+        {
+          "op": "if",
+          "condition": {
+            "kind": "binary",
+            "operator": "==",
+            "left": {
+              "kind": "load",
+              "name": "j"
+            },
+            "right": {
+              "kind": "literal",
+              "value": 2,
+              "line": 14,
+              "column": 9
+            }
+          },
+          "body": [
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator",
+                  "line": 15,
+                  "column": 3
+                },
+                {
+                  "kind": "literal",
+                  "value": "hello",
+                  "line": 15,
+                  "column": 16
+                }
+              ]
+            }
+          ],
+          "elseIf": [],
+          "otherwise": [
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator",
+                  "line": 18,
+                  "column": 3
+                },
+                {
+                  "kind": "literal",
+                  "value": "miss",
+                  "line": 18,
+                  "column": 16
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "variables": [
+        {
+          "name": "i",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "a",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "j",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 4,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "local",
+              "container": "global:choice1",
+              "kind": "assignment",
+              "line": 7,
+              "column": 7
+            },
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 13,
+              "column": 14,
+              "kind": "interpolation"
+            },
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 14,
+              "column": 4,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        }
+      ]
+    }
+  }
+}

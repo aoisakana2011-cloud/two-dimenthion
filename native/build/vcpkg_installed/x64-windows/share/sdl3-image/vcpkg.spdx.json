@@ -3,13 +3,13 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "documentNamespace": "https://spdx.org/spdxdocs/sdl3-image-x64-windows-3.4.4#1-7108e2f8-2af6-4ec4-a106-e460f2e16c3b",
-  "name": "sdl3-image:x64-windows@3.4.4#1 dcd67388547630cedaa5cb5ccd2edd4b9f5cb7774716a3826a8d6f5c62bcfd0c",
+  "documentNamespace": "https://spdx.org/spdxdocs/sdl3-image-x64-windows-3.4.4#1-2ae76894-0156-4486-8c44-a6c4d215696e",
+  "name": "sdl3-image:x64-windows@3.4.4#1 8e77981f131a0ffc6e3e9595536d0cdbc9894aecf1a8c13983742327fadcdb82",
   "creationInfo": {
     "creators": [
       "Tool: vcpkg-2026-07-27-98d7cb0cf1f4686a3e43aa5672b6230c1d56bce8"
     ],
-    "created": "2026-09-04T16:45:38Z"
+    "created": "2026-09-05T23:01:33Z"
   },
   "relationships": [
     {
@@ -141,6 +141,11 @@
       "spdxElementId": "SPDXRef-binary",
       "relationshipType": "CONTAINS",
       "relatedSpdxElement": "SPDXRef-binary-file-18"
+    },
+    {
+      "spdxElementId": "SPDXRef-binary",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-binary-file-19"
     }
   ],
   "packages": [
@@ -166,7 +171,7 @@
     {
       "name": "sdl3-image:x64-windows",
       "SPDXID": "SPDXRef-binary",
-      "versionInfo": "dcd67388547630cedaa5cb5ccd2edd4b9f5cb7774716a3826a8d6f5c62bcfd0c",
+      "versionInfo": "8e77981f131a0ffc6e3e9595536d0cdbc9894aecf1a8c13983742327fadcdb82",
       "downloadLocation": "NONE",
       "licenseConcluded": "Zlib",
       "licenseDeclared": "NOASSERTION",
@@ -255,7 +260,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "9ccd435919eace91cea3381bbe08b31d452c413fbe9e98d1fa8541254fc55b82"
+          "checksumValue": "e998d24f74210dff2771552783f22585c862a2623f094a3069c3ba782860cadf"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -267,7 +272,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "7194acf555f4da3827344ebbb6c4afc79aa36b5f87e0907b71521b3894ca99c5"
+          "checksumValue": "f13f8c441bda56724a57b26d534954e4c8788cd218b3cb7e535d119bfe011905"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -291,7 +296,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "4e5d70a7741c52879d92dbe335a5f45462171ce0a8c8dbd625a0864d0ba59568"
+          "checksumValue": "ab506b46f2a5e58dbab2fb26d8f765a35d905e5cdfc6a66fd561fd9e3b3793bc"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -303,7 +308,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "ad1c7878475cb1e36cc9c08fdb7f92f04c670151cc1480c6f7b429df4fd63ff0"
+          "checksumValue": "bf5b3241d268c190bf6eb286ba8b2c05f657a2c43093245d333ac6c1036f0d51"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -315,7 +320,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "e63514d73d7d9a58873daaee1522ecf7bad52ed3fa8ccf69a767865e752bc9f8"
+          "checksumValue": "0ec6d40af565a2d840a05293842cb96e3f601c3111bc0ad18aefe0fce0e396c4"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -351,7 +356,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "db500116c9eddd6c394177bdfc3afe2072845148ba8b46bc3422839844a27a14"
+          "checksumValue": "9ddaf489792d937e3d2f5dd9b8a160a5fd2a2fc611cfb0d431f36102a161b079"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -418,12 +423,24 @@
       "copyrightText": "NOASSERTION"
     },
     {
-      "fileName": "./share/SDL3_image/SDL3_image-shared-targets-debug.cmake",
+      "fileName": "./share/SDL3_image/Findwebp.cmake",
       "SPDXID": "SPDXRef-binary-file-14",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "8c68f0840af58d67651fe6eea94faac4ca3bb56c581435530107c0e0216a8d18"
+          "checksumValue": "31cd876b3fe4c86f9358f2971a98da705ef2bd9ad3fb03af010b8bfddce081fb"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "fileName": "./share/SDL3_image/SDL3_image-shared-targets-debug.cmake",
+      "SPDXID": "SPDXRef-binary-file-15",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "2bb93ad734dc60d4cbfbf3c0f09f84ac9a408ba6ef85febe95bf41a77c07172a"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -431,11 +448,11 @@
     },
     {
       "fileName": "./share/SDL3_image/SDL3_image-shared-targets-release.cmake",
-      "SPDXID": "SPDXRef-binary-file-15",
+      "SPDXID": "SPDXRef-binary-file-16",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "f7586b7046536bb652ef48bc70447ceb451a36eb2ef8bd9644e3fcd757b0f413"
+          "checksumValue": "6da1930b29381b8bf2525b2eafe9f41a4db3998fa33fc5c8739597b574e94a4a"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -443,7 +460,7 @@
     },
     {
       "fileName": "./share/SDL3_image/SDL3_image-shared-targets.cmake",
-      "SPDXID": "SPDXRef-binary-file-16",
+      "SPDXID": "SPDXRef-binary-file-17",
       "checksums": [
         {
           "algorithm": "SHA256",
@@ -455,11 +472,11 @@
     },
     {
       "fileName": "./share/SDL3_image/SDL3_imageConfig.cmake",
-      "SPDXID": "SPDXRef-binary-file-17",
+      "SPDXID": "SPDXRef-binary-file-18",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "6fb2cef36a62fba3cd19ed452f576ac4e3df10ef41c548c1b0458cffaf1c4038"
+          "checksumValue": "0e107c35ed74796174ed5fbeb92ea2e586793065f3781cd2202834c28e34362e"
         }
       ],
       "licenseConcluded": "NOASSERTION",
@@ -467,7 +484,7 @@
     },
     {
       "fileName": "./share/SDL3_image/SDL3_imageConfigVersion.cmake",
-      "SPDXID": "SPDXRef-binary-file-18",
+      "SPDXID": "SPDXRef-binary-file-19",
       "checksums": [
         {
           "algorithm": "SHA256",

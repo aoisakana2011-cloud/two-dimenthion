@@ -1,0 +1,189 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+  </PropertyGroup>
+  <PropertyGroup>
+    <ResolveNugetPackages>false</ResolveNugetPackages>
+  </PropertyGroup>
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="MinSizeRel|x64">
+      <Configuration>MinSizeRel</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="RelWithDebInfo|x64">
+      <Configuration>RelWithDebInfo</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{26BA0052-1960-30F5-87D4-FDD2A9CC6289}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <Platform>x64</Platform>
+    <ProjectName>ALL_BUILD</ProjectName>
+    <VCProjectUpgraderObjectName>NoUpgrade</VCProjectUpgraderObjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Utility</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Utility</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'" Label="Configuration">
+    <ConfigurationType>Utility</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'" Label="Configuration">
+    <ConfigurationType>Utility</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <_ProjectFileVersion>10.0.20506.1</_ProjectFileVersion>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Midl>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Midl>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
+    <Midl>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
+    <Midl>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\Owner\Desktop\Novel Editer\native\CMakeLists.txt">
+      <UseUtf8Encoding>Always</UseUtf8Encoding>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Building Custom Rule C:/Users/Owner/Desktop/Novel Editer/native/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" "-SC:/Users/Owner/Desktop/Novel Editer/native" "-BC:/Users/Owner/Desktop/Novel Editer/native/build-audit" --check-stamp-file "C:/Users/Owner/Desktop/Novel Editer/native/build-audit/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeDependentOption.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeFindDependencyMacro.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FeatureSummary.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FindPkgConfig.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Linker\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Linker\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\SelectLibraryConfigurations.cmake;C:\Users\Owner\Desktop\Novel Editer\native\.vcpkg\scripts\buildsystems\vcpkg.cmake;C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\4.2.3\CMakeCXXCompiler.cmake;C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\4.2.3\CMakeRCCompiler.cmake;C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\4.2.3\CMakeSystem.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_image-shared-targets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_image-shared-targets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_image-shared-targets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_imageConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_imageConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixer-shared-targets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixer-shared-targets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixer-shared-targets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixerConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixerConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\ffmpeg\FindFFMPEG.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\ffmpeg\vcpkg-cmake-wrapper.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\nlohmann_json\nlohmann_jsonConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\nlohmann_json\nlohmann_jsonConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\nlohmann_json\nlohmann_jsonTargets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3Config.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3ConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3headersTargets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3sharedTargets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3sharedTargets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3sharedTargets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttf-shared-targets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttf-shared-targets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttf-shared-targets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttfConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttfConfigVersion.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Building Custom Rule C:/Users/Owner/Desktop/Novel Editer/native/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" "-SC:/Users/Owner/Desktop/Novel Editer/native" "-BC:/Users/Owner/Desktop/Novel Editer/native/build-audit" --check-stamp-file "C:/Users/Owner/Desktop/Novel Editer/native/build-audit/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeDependentOption.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeFindDependencyMacro.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FeatureSummary.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FindPkgConfig.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Linker\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Linker\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\SelectLibraryConfigurations.cmake;C:\Users\Owner\Desktop\Novel Editer\native\.vcpkg\scripts\buildsystems\vcpkg.cmake;C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\4.2.3\CMakeCXXCompiler.cmake;C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\4.2.3\CMakeRCCompiler.cmake;C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\4.2.3\CMakeSystem.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_image-shared-targets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_image-shared-targets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_image-shared-targets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_imageConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_imageConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixer-shared-targets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixer-shared-targets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixer-shared-targets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixerConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixerConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\ffmpeg\FindFFMPEG.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\ffmpeg\vcpkg-cmake-wrapper.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\nlohmann_json\nlohmann_jsonConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\nlohmann_json\nlohmann_jsonConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\nlohmann_json\nlohmann_jsonTargets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3Config.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3ConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3headersTargets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3sharedTargets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3sharedTargets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3sharedTargets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttf-shared-targets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttf-shared-targets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttf-shared-targets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttfConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttfConfigVersion.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">Building Custom Rule C:/Users/Owner/Desktop/Novel Editer/native/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" "-SC:/Users/Owner/Desktop/Novel Editer/native" "-BC:/Users/Owner/Desktop/Novel Editer/native/build-audit" --check-stamp-file "C:/Users/Owner/Desktop/Novel Editer/native/build-audit/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeDependentOption.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeFindDependencyMacro.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FeatureSummary.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FindPkgConfig.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Linker\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Linker\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\SelectLibraryConfigurations.cmake;C:\Users\Owner\Desktop\Novel Editer\native\.vcpkg\scripts\buildsystems\vcpkg.cmake;C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\4.2.3\CMakeCXXCompiler.cmake;C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\4.2.3\CMakeRCCompiler.cmake;C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\4.2.3\CMakeSystem.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_image-shared-targets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_image-shared-targets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_image-shared-targets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_imageConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_imageConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixer-shared-targets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixer-shared-targets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixer-shared-targets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixerConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixerConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\ffmpeg\FindFFMPEG.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\ffmpeg\vcpkg-cmake-wrapper.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\nlohmann_json\nlohmann_jsonConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\nlohmann_json\nlohmann_jsonConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\nlohmann_json\nlohmann_jsonTargets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3Config.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3ConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3headersTargets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3sharedTargets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3sharedTargets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3sharedTargets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttf-shared-targets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttf-shared-targets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttf-shared-targets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttfConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttfConfigVersion.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">Building Custom Rule C:/Users/Owner/Desktop/Novel Editer/native/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" "-SC:/Users/Owner/Desktop/Novel Editer/native" "-BC:/Users/Owner/Desktop/Novel Editer/native/build-audit" --check-stamp-file "C:/Users/Owner/Desktop/Novel Editer/native/build-audit/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeDependentOption.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeFindDependencyMacro.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FeatureSummary.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\FindPkgConfig.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Linker\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Linker\MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-4.2\Modules\SelectLibraryConfigurations.cmake;C:\Users\Owner\Desktop\Novel Editer\native\.vcpkg\scripts\buildsystems\vcpkg.cmake;C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\4.2.3\CMakeCXXCompiler.cmake;C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\4.2.3\CMakeRCCompiler.cmake;C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\4.2.3\CMakeSystem.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_image-shared-targets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_image-shared-targets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_image-shared-targets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_imageConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_image\SDL3_imageConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixer-shared-targets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixer-shared-targets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixer-shared-targets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixerConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\SDL3_mixer\SDL3_mixerConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\ffmpeg\FindFFMPEG.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\ffmpeg\vcpkg-cmake-wrapper.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\nlohmann_json\nlohmann_jsonConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\nlohmann_json\nlohmann_jsonConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\nlohmann_json\nlohmann_jsonTargets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3Config.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3ConfigVersion.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3headersTargets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3sharedTargets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3sharedTargets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3\SDL3sharedTargets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttf-shared-targets-debug.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttf-shared-targets-release.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttf-shared-targets.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttfConfig.cmake;C:\Users\Owner\Desktop\Novel Editer\native\vcpkg_installed\x64-windows\share\sdl3_ttf\SDL3_ttfConfigVersion.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Users\Owner\Desktop\Novel Editer\native\build-audit\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">false</LinkObjects>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+  </ItemGroup>
+  <ItemGroup />
+  <ItemGroup>
+    <ProjectReference Include="C:\Users\Owner\Desktop\Novel Editer\native\build-audit\ZERO_CHECK.vcxproj">
+      <Project>{B98D9080-C243-3013-823D-82FA0C9C769E}</Project>
+      <Name>ZERO_CHECK</Name>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\Owner\Desktop\Novel Editer\native\build-audit\check_image.vcxproj">
+      <Project>{7534D9EB-62CB-305F-8EB7-A3923AA94005}</Project>
+      <Name>check_image</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\Owner\Desktop\Novel Editer\native\build-audit\novel_player.vcxproj">
+      <Project>{3AD8583D-8BF4-3920-953D-FC51A4EF1614}</Project>
+      <Name>novel_player</Name>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>
