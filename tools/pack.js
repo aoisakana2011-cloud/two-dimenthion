@@ -4,10 +4,14 @@ const path = require('node:path');
 const { compileProject, sceneFile, inside, assetPaths, gotos } = require('./project');
 const { parse } = require('../dist');
 const { inferValueType } = require('../dist/checker/type-checker');
+const { projectLayout, projectOption, layoutForInput, entryFile, positionalArguments } = require('./project-layout');
 
 async function projectGlobalVariables(scenesRoot) {
   const table = new Map();
+  table.readonlyNames = new Set();
   const owners = new Map();
+  const characterOwners = new Map();
+  const characters = new Map();
   const declarationsByFile = new Map();
   const scripts = [];
   async function visit(directory) {
@@ -19,12 +23,22 @@ async function projectGlobalVariables(scenesRoot) {
         const relative = path.relative(scenesRoot, file).replaceAll('\\', '/');
         scripts.push({ script, file: relative });
         declarationsByFile.set(relative, new Set(script.globals.filter(statement => statement.kind === 'declare').map(statement => statement.name)));
+        for (const character of script.characters) {
+          if (characterOwners.has(character.name)) throw new Error(`キャラクター '${character.name}' は複数ファイルで宣言されています`);
+          characterOwners.set(character.name, relative);
+          characters.set(character.name, {
+            poses: new Set(character.poses.map(pose => pose.name)),
+            fields: Object.fromEntries(character.properties.map(property => [property.name, property.value.kind === 'literal' && typeof property.value.value === 'string' ? 'str' : 'int'])),
+            definition: character,
+          });
+        }
         for (const statement of script.globals) {
           if (statement.kind !== 'declare') continue;
           if (statement.type === 'infer') continue;
           const owner = owners.get(statement.name);
           if (owner) throw new Error(`変数 '${statement.name}' は '${owner}' で既に宣言されています。'${relative}' では set を使用してください`);
           table.set(statement.name, statement.type);
+          if (statement.constant) table.readonlyNames.add(statement.name);
           owners.set(statement.name, relative);
         }
       }
@@ -46,61 +60,31 @@ async function projectGlobalVariables(scenesRoot) {
     }
     if (!progress) throw lastError || new Error('Unable to infer global variable types');
   }
-  return { table, declarationsByFile };
+  return { table, declarationsByFile, scripts, characters, characterOwners };
 }
 
-function variableContract(program) {
-  const declared = new Set();
-  const required = new Set();
-  for (const variable of program.variables || []) {
-    if (variable.scope !== 'global') continue;
-    const definitions = variable.definitions || [];
-    const references = variable.references || [];
-    const globalDefinitions = definitions.filter((loc) => loc.scope === 'global');
-    if (globalDefinitions.length) declared.add(variable.name);
-    const firstDefinition = Math.min(...globalDefinitions.map((loc) => loc.line ?? Number.MAX_SAFE_INTEGER));
-    if (references.some((loc) => !globalDefinitions.length || (loc.scope === 'global' && (loc.line ?? 1) < firstDefinition))) required.add(variable.name);
-  }
-  return { declared, required };
-}
-
-function validateVariableFlow(files, entry) {
-  const pending = [{ file: entry, defined: new Set() }];
-  const visited = new Set();
-  while (pending.length) {
-    const state = pending.pop();
-    const key = `${state.file}\0${[...state.defined].sort().join('\0')}`;
-    if (visited.has(key)) continue;
-    visited.add(key);
-    const program = files[state.file];
-    if (!program) throw new Error(`遷移先 '${state.file}' がパッケージに含まれていません`);
-    const { declared, required } = variableContract(program);
-    const missing = [...required].filter((name) => !state.defined.has(name));
-    if (missing.length) throw new Error(`シーン '${state.file}' で初期化前のグローバル変数を参照しています: ${missing.join(', ')}`);
-    const nextDefined = new Set([...state.defined, ...declared]);
-    const local = new Set(program.scenes.map((scene) => scene.name));
-    for (const target of gotos([...program.globals, ...program.scenes.flatMap((scene) => scene.instructions)])) {
-      if (!local.has(target)) pending.push({ file: sceneFile(target), defined: nextDefined });
-    }
-  }
-}
+const { validateVariableFlow } = require('./variable-flow');
 async function pack(input, output, roots = {}) {
-  const scenesRoot = roots.scenesRoot || path.resolve(__dirname, '../Edit/scenes');
-  const assetsRoot = roots.assetsRoot || path.resolve(__dirname, '../Edit/assets');
-  const { table: globalVariables, declarationsByFile } = await projectGlobalVariables(scenesRoot);
-  const files = Object.create(null), pending = [path.relative(scenesRoot, path.resolve(input)).replaceAll('\\', '/')];
-  const entry = pending[0];
+  const layout = roots.projectRoot ? projectLayout(roots.projectRoot) : (!roots.scenesRoot || !roots.assetsRoot) ? layoutForInput(input) : null;
+  const scenesRoot = roots.scenesRoot || layout.scenesRoot;
+  const assetsRoot = roots.assetsRoot || layout.assetsRoot;
+  const { table: globalVariables, declarationsByFile, scripts, characters, characterOwners } = await projectGlobalVariables(scenesRoot);
+  const files = Object.create(null);
+  const entry = path.relative(scenesRoot, path.resolve(input)).replaceAll('\\', '/');
+  const pending = scripts.map(({ file }) => file);
+  if (!pending.includes(entry)) throw new Error(`開始ファイル '${entry}' が見つかりません`);
   while (pending.length) {
     const file = pending.pop();
     if (Object.hasOwn(files, file)) continue;
     const source = await fs.readFile(await inside(scenesRoot, file), 'utf8');
     const localScript = parse(source);
     const visibleGlobals = new Map(globalVariables);
+    visibleGlobals.readonlyNames = globalVariables.readonlyNames;
     for (const name of declarationsByFile.get(file) || []) visibleGlobals.delete(name);
-    const p = await compileProject(source, assetsRoot, scenesRoot, visibleGlobals);
-    const localFunctions = new Set(localScript.functions.map((fn) => fn.name));
-    p.functions = p.functions.filter((fn) => localFunctions.has(fn.name));
-    p.includes = localScript.includes;
+    const visibleCharacters = new Map(characters);
+    for (const [name, owner] of characterOwners) if (owner === file) visibleCharacters.delete(name);
+    const p = await compileProject(source, assetsRoot, scenesRoot, visibleGlobals, visibleCharacters);
+    p.includes = []; // Each packaged program already contains its resolved includes.
     files[file] = p;
     for (const include of localScript.includes) pending.push(sceneFile(include));
     const local = new Set(p.scenes.map(s => s.name));
@@ -108,13 +92,16 @@ async function pack(input, output, roots = {}) {
   }
   validateVariableFlow(files, entry);
   const entryGlobals = new Map(globalVariables);
+  entryGlobals.readonlyNames = globalVariables.readonlyNames;
   for (const name of declarationsByFile.get(entry) || []) entryGlobals.delete(name);
-  const program = await compileProject(await fs.readFile(await inside(scenesRoot, entry), 'utf8'), assetsRoot, scenesRoot, entryGlobals);
+  const entryCharacters = new Map(characters);
+  for (const [name, owner] of characterOwners) if (owner === entry) entryCharacters.delete(name);
+  const program = await compileProject(await fs.readFile(await inside(scenesRoot, entry), 'utf8'), assetsRoot, scenesRoot, entryGlobals, entryCharacters);
   const destination = path.resolve(output);
   for (const asset of new Set(Object.values(files).flatMap(assetPaths))) {
-    const relative = asset.replace(/^assets[\\/]/, '').replaceAll('\\', '/');
+    const relative = asset.replace(/^assets?[\\/]/, '').replaceAll('\\', '/');
     const source = await inside(assetsRoot, relative);
-    const target = path.resolve(path.dirname(destination), 'assets', relative);
+    const target = path.resolve(path.dirname(destination), 'asset', relative);
     await fs.mkdir(path.dirname(target), { recursive: true });
     if (path.resolve(source) !== target) await fs.copyFile(source, target);
   }
@@ -125,7 +112,10 @@ async function pack(input, output, roots = {}) {
 }
 module.exports = { pack, validateVariableFlow };
 if (require.main === module) {
-  const input = process.argv[2] || 'Edit/scenes/main.tds';
-  const output = process.argv[3] || 'build/main.nsp.json';
-  pack(input, output).then(() => console.log(`Packed ${input} -> ${output}`)).catch(e => { console.error(`Pack failed: ${e.message}`); process.exitCode = 1; });
+  const args = process.argv.slice(2), positional = positionalArguments(args);
+  const selected = projectOption(args);
+  const layout = selected ? projectLayout(selected) : positional[0] ? layoutForInput(positional[0]) : projectLayout();
+  const input = positional[0] || entryFile(layout);
+  const output = positional[1] || path.join(layout.buildRoot, path.basename(input, path.extname(input)) + '.nsp.json');
+  pack(input, output, { projectRoot: layout.projectRoot }).then(() => console.log(`Packed ${input} -> ${output}`)).catch(e => { console.error(`Pack failed: ${e.message}`); process.exitCode = 1; });
 }

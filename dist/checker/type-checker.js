@@ -28,19 +28,38 @@ function sameType(left, right) {
         return left === right;
     return left.kind === right.kind && (left.kind === 'dict' ? left.value === right.value : left.name === right.name);
 }
+const characterTypeName = (name) => `character:${name}`;
+const characterInfo = (value) => value instanceof Set ? { poses: value, fields: {} } : value;
+function characterPropertyType(expression) {
+    if (expression.kind === 'literal')
+        return typeof expression.value === 'string' ? 'str' : (typeof expression.value === 'number' || typeof expression.value === 'bigint') ? 'int' : undefined;
+    if (expression.kind === 'unary' && (expression.operator === '+' || expression.operator === '-'))
+        return characterPropertyType(expression.value) === 'int' ? 'int' : undefined;
+    return undefined;
+}
 function interpolationNames(value) {
-    return [...value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)].map((match) => match[1]);
+    return [...value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\}/g)].map((match) => match[1]);
 }
 function getLocStr(node, file = 'current') {
     return `line ${node?.line ?? 1}`;
 }
-function expressionType(expression, variables, ctx) {
+function expressionType(expression, variables, ctx, expected) {
     const loc = getLocStr(expression, ctx.file);
     if (expression.kind === 'literal') {
         if (typeof expression.value === 'string') {
-            for (const name of interpolationNames(expression.value)) {
-                if (!variables.has(name))
+            for (const path of interpolationNames(expression.value)) {
+                const [name, ...fields] = path.split('.');
+                let current = variables.get(name);
+                if (!current)
                     throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 補間対象の変数 '${name}' が未定義です`);
+                for (const field of fields) {
+                    if (!current || typeof current === 'string' || current.kind !== 'struct')
+                        throw new TypeCheckError(`${loc}: 補間対象 '${path}' の '${field}' はフィールド参照できません`);
+                    const next = ctx.structs.get(current.name)?.[field];
+                    if (!next)
+                        throw new TypeCheckError(`${loc}: 補間対象 '${path}' にフィールド '${field}' はありません`);
+                    current = next;
+                }
             }
             return 'str';
         }
@@ -125,10 +144,15 @@ function expressionType(expression, variables, ctx) {
     }
     if (expression.kind === 'dict') {
         const types = expression.entries.map((entry) => expressionType(entry.value, variables, ctx));
+        if (expected && typeof expected !== 'string') {
+            if (expected.kind === 'struct')
+                return { kind: 'dict', value: 'int' }; // Fields are checked against the struct declaration below.
+            if (types.some((type) => type !== expected.value))
+                throw new TypeCheckError(`${loc}: 辞書の値の型は ${expected.value} に統一してください`);
+            return expected;
+        }
         if (!types.length)
             return { kind: 'dict', value: 'int' };
-        if (types.length > 1 && types.some((t) => t !== types[0]))
-            return { kind: 'dict', value: 'str' };
         if (types.some((t) => typeof t !== 'string' || (t !== 'int' && t !== 'str') || t !== types[0])) {
             throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 辞書の値の型は統一してください`);
         }
@@ -155,7 +179,7 @@ function expressionType(expression, variables, ctx) {
             throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 関数 '${expression.name}' の引数の個数が一致しません (期待: ${fn.params.length}, 実際: ${expression.args.length})`);
         }
         for (let i = 0; i < fn.params.length; i++) {
-            const argType = expressionType(expression.args[i], variables, ctx);
+            const argType = expressionType(expression.args[i], variables, ctx, fn.params[i].type);
             if (!sameType(fn.params[i].type, argType)) {
                 throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 関数 '${expression.name}' の第 ${i + 1} 引数の型が一致しません`);
             }
@@ -233,6 +257,36 @@ function checkCommand(name, args, variables, ctx, locStr) {
             break;
         }
         case 'show': {
+            const poseReference = args.length ? /^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(getArgStr(0)) : null;
+            if (poseReference) {
+                if (args.length < 2)
+                    throw new TypeCheckError(`${locStr}: show は show <character>.<pose> <position> で指定してください`);
+                const [, charName, pose] = poseReference;
+                const pos = getArgStr(1);
+                if (!['left', 'center', 'right'].includes(pos))
+                    throw new TypeCheckError(`${locStr}: 不正な表示位置 '${pos}' です`);
+                const charDef = ctx.characters.get(charName);
+                if (!charDef)
+                    throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
+                if (!charDef.has(pose))
+                    throw new TypeCheckError(`${locStr}: キャラクター '${charName}' にポーズ '${pose}' はありません`);
+                checkFade(args.slice(2), variables, ctx, locStr);
+                break;
+            }
+            if (args.length >= 5 && getArgStr(1) === 'at' && getArgStr(3) === 'pose') {
+                const charName = getArgStr(0);
+                const pos = getArgStr(2);
+                const pose = getArgStr(4);
+                if (!['left', 'center', 'right'].includes(pos))
+                    throw new TypeCheckError(`${locStr}: 不正な表示位置 '${pos}' です`);
+                const charDef = ctx.characters.get(charName);
+                if (!charDef)
+                    throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
+                if (!charDef.has(pose))
+                    throw new TypeCheckError(`${locStr}: キャラクター '${charName}' にポーズ '${pose}' はありません`);
+                checkFade(args.slice(5), variables, ctx, locStr);
+                break;
+            }
             if (args.length < 2)
                 throw new TypeCheckError(`${locStr}: コマンド 'show' の引数が不足しています`);
             const targetKind = getArgStr(0);
@@ -285,6 +339,13 @@ function checkCommand(name, args, variables, ctx, locStr) {
             break;
         }
         case 'hide': {
+            if (args.length && getArgStr(0) !== 'char') {
+                const charName = getArgStr(0);
+                if (!ctx.characters.has(charName))
+                    throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
+                checkFade(args.slice(1), variables, ctx, locStr);
+                break;
+            }
             if (args.length < 2 || getArgStr(0) !== 'char')
                 throw new TypeCheckError(`${locStr}: hide は hide char <name> で指定してください`);
             const charName = getArgStr(1);
@@ -339,219 +400,247 @@ function checkCommand(name, args, variables, ctx, locStr) {
         default: throw new TypeCheckError(`${locStr}: 未知の命令 '${name}' です`);
     }
 }
+function exitsBlock(statements) {
+    return statements.some((statement) => statement.kind === 'return' || statement.kind === 'goto' ||
+        (statement.kind === 'if' && statement.otherwise.length > 0 && exitsBlock(statement.body) && statement.elseIf.every((branch) => exitsBlock(branch.body)) && exitsBlock(statement.otherwise)));
+}
 function checkStatements(statements, variables, ctx, options) {
     for (const statement of statements) {
         const locStr = getLocStr(statement, ctx.file);
-        if (statement.kind === 'declare') {
-            if (!options.allowDeclaration) {
-                throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): scene 直下での変数宣言は禁止されています（選択肢ブロック内またはグローバルで宣言してください）`);
-            }
-            const duplicateLocal = ctx.locals?.has(statement.name) || false;
-            const shadowsScenarioVariable = variables.has(statement.name) && !ctx.currentFunction;
-            if (duplicateLocal || shadowsScenarioVariable) {
-                throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 変数 '${statement.name}' は既に宣言されています。再宣言せず set を使用してください`);
-            }
-            if (statement.initial) {
-                const actual = expressionType(statement.initial, variables, ctx);
-                if (typeof statement.type !== 'string' && statement.type.kind === 'struct') {
-                    const fields = ctx.structs.get(statement.type.name);
-                    if (!fields)
-                        throw new TypeCheckError(`${locStr}: 未定義のstruct '${statement.type.name}' です`);
-                    if (statement.initial.kind !== 'dict')
-                        throw new TypeCheckError(`${locStr}: struct の初期値はフィールド付きオブジェクトで指定してください`);
-                    const keys = new Set(statement.initial.entries.map((e) => e.key));
-                    for (const [field, fieldType] of Object.entries(fields)) {
-                        const entry = statement.initial.entries.find((e) => e.key === field);
-                        if (!entry)
-                            throw new TypeCheckError(`${locStr}: struct '${statement.type.name}' のフィールド '${field}' が不足しています`);
-                        if (expressionType(entry.value, variables, ctx) !== fieldType)
-                            throw new TypeCheckError(`${locStr}: フィールド '${field}' の型が一致しません`);
+        try {
+            if (statement.kind === 'declare') {
+                if (!options.allowDeclaration) {
+                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): scene 直下での変数宣言は禁止されています（選択肢ブロック内またはグローバルで宣言してください）`);
+                }
+                const duplicateLocal = ctx.locals?.has(statement.name) || false;
+                const shadowsScenarioVariable = variables.has(statement.name) && !ctx.currentFunction;
+                if (duplicateLocal || shadowsScenarioVariable) {
+                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 変数 '${statement.name}' は既に宣言されています。再宣言せず set を使用してください`);
+                }
+                if (statement.initial) {
+                    const actual = expressionType(statement.initial, variables, ctx, statement.type === 'infer' ? undefined : statement.type);
+                    if (typeof statement.type !== 'string' && statement.type.kind === 'struct') {
+                        const fields = ctx.structs.get(statement.type.name);
+                        if (!fields)
+                            throw new TypeCheckError(`${locStr}: 未定義のstruct '${statement.type.name}' です`);
+                        if (statement.initial.kind !== 'dict')
+                            throw new TypeCheckError(`${locStr}: struct の初期値はフィールド付きオブジェクトで指定してください`);
+                        const keys = new Set(statement.initial.entries.map((e) => e.key));
+                        for (const [field, fieldType] of Object.entries(fields)) {
+                            const entry = statement.initial.entries.find((e) => e.key === field);
+                            if (!entry)
+                                throw new TypeCheckError(`${locStr}: struct '${statement.type.name}' のフィールド '${field}' が不足しています`);
+                            if (expressionType(entry.value, variables, ctx) !== fieldType)
+                                throw new TypeCheckError(`${locStr}: フィールド '${field}' の型が一致しません`);
+                        }
+                        for (const key of keys)
+                            if (!fields[key])
+                                throw new TypeCheckError(`${locStr}: struct '${statement.type.name}' にフィールド '${key}' はありません`);
                     }
-                    for (const key of keys)
-                        if (!fields[key])
-                            throw new TypeCheckError(`${locStr}: struct '${statement.type.name}' にフィールド '${key}' はありません`);
+                    if (statement.type === 'infer') {
+                        if (actual === 'bool' || actual === 'none') {
+                            throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): let '${statement.name}' の型を ${typeName(actual)} から推論できません`);
+                        }
+                        if (statement.initial.kind === 'dict' && statement.initial.entries.length === 0) {
+                            throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 空の辞書は型を推論できません。dict[int] または dict[str] を指定してください`);
+                        }
+                        statement.type = actual;
+                    }
+                    if ((typeof statement.type === 'string' || statement.type.kind === 'dict') && !sameType(statement.type, actual)) {
+                        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): ${statement.name} は ${typeName(statement.type)} ですが、${typeName(actual)} が代入されています`);
+                    }
                 }
                 if (statement.type === 'infer') {
-                    if (actual === 'bool' || actual === 'none') {
-                        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): let '${statement.name}' の型を ${typeName(actual)} から推論できません`);
+                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): let '${statement.name}' には初期値が必要です`);
+                }
+                variables.set(statement.name, statement.type);
+                ctx.readonly?.delete(statement.name);
+                if (statement.constant)
+                    ctx.readonly?.add(statement.name);
+                ctx.locals?.add(statement.name);
+            }
+            if (statement.kind === 'set') {
+                const expected = statement.target.kind === 'variable' ? variables.get(statement.target.name) : expressionType(statement.target, variables, ctx);
+                const exprType = expressionType(statement.value, variables, ctx, expected === 'bool' ? undefined : expected);
+                if (statement.target.kind === 'variable') {
+                    if (ctx.readonly?.has(statement.target.name)) {
+                        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): const 変数 '${statement.target.name}' は変更できません`);
                     }
-                    if (statement.initial.kind === 'dict' && statement.initial.entries.length === 0) {
-                        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 空の辞書は型を推論できません。dict[int] または dict[str] を指定してください`);
+                    const varType = variables.get(statement.target.name);
+                    if (!varType) {
+                        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 未定義の変数 '${statement.target.name}' への代入です`);
                     }
-                    statement.type = actual;
+                    if (!sameType(varType, exprType)) {
+                        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 変数 '${statement.target.name}' (${typeName(varType)}) に ${typeName(exprType)} は代入できません`);
+                    }
                 }
-                if ((typeof statement.type === 'string' || statement.type.kind === 'dict') && !sameType(statement.type, actual)) {
-                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): ${statement.name} は ${typeName(statement.type)} ですが、${typeName(actual)} が代入されています`);
+                else if (statement.target.kind === 'index') {
+                    if (statement.target.target.kind === 'variable' && ctx.readonly?.has(statement.target.target.name)) {
+                        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): const 変数 '${statement.target.target.name}' の要素は変更できません`);
+                    }
+                    const targetType = expressionType(statement.target.target, variables, ctx);
+                    const keyType = expressionType(statement.target.key, variables, ctx);
+                    if (typeof targetType !== 'string' && targetType.kind === 'struct' && statement.target.key.kind === 'literal' && typeof statement.target.key.value === 'string') {
+                        const fieldType = ctx.structs.get(targetType.name)?.[statement.target.key.value];
+                        if (!fieldType)
+                            throw new TypeCheckError(`${locStr}: struct フィールドが存在しません`);
+                        if (keyType !== 'str' || !sameType(fieldType, exprType))
+                            throw new TypeCheckError(`${locStr}: struct フィールドの型が一致しません`);
+                    }
+                    else {
+                        if (typeof targetType === 'string' || targetType.kind !== 'dict') {
+                            throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 代入対象は辞書型でなければなりません`);
+                        }
+                        if (keyType !== 'str') {
+                            throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 辞書のキーは str でなければなりません`);
+                        }
+                        if (!sameType(targetType.value, exprType)) {
+                            throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 辞書要素 (${targetType.value}) に ${typeName(exprType)} は代入できません`);
+                        }
+                    }
                 }
             }
-            if (statement.type === 'infer') {
-                throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): let '${statement.name}' には初期値が必要です`);
-            }
-            variables.set(statement.name, statement.type);
-            if (statement.constant)
-                ctx.readonly?.add(statement.name);
-            ctx.locals?.add(statement.name);
-        }
-        if (statement.kind === 'set') {
-            const exprType = expressionType(statement.value, variables, ctx);
-            if (statement.target.kind === 'variable') {
-                if (ctx.readonly?.has(statement.target.name)) {
-                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): const 変数 '${statement.target.name}' は変更できません`);
+            if (statement.kind === 'unset') {
+                if (statement.target.kind === 'variable') {
+                    throw new TypeCheckError(`${locStr}: unset は辞書要素を指定してください`);
                 }
-                const varType = variables.get(statement.target.name);
-                if (!varType) {
-                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 未定義の変数 '${statement.target.name}' への代入です`);
-                }
-                if (!sameType(varType, exprType)) {
-                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 変数 '${statement.target.name}' (${typeName(varType)}) に ${typeName(exprType)} は代入できません`);
+                else if (statement.target.kind === 'index') {
+                    if (statement.target.target.kind === 'variable' && ctx.readonly?.has(statement.target.target.name))
+                        throw new TypeCheckError(`${locStr}: const 変数 '${statement.target.target.name}' の要素は変更できません`);
+                    const targetType = expressionType(statement.target.target, variables, ctx);
+                    const keyType = expressionType(statement.target.key, variables, ctx);
+                    if (typeof targetType === 'string' || targetType.kind !== 'dict' || keyType !== 'str') {
+                        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): unset の対象が不正です`);
+                    }
                 }
             }
-            else if (statement.target.kind === 'index') {
-                if (statement.target.target.kind === 'variable' && ctx.readonly?.has(statement.target.target.name)) {
-                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): const 変数 '${statement.target.target.name}' の要素は変更できません`);
+            if (statement.kind === 'command') {
+                checkCommand(statement.name, statement.args, variables, ctx, locStr);
+            }
+            if (statement.kind === 'sayBlock') {
+                for (const line of statement.lines)
+                    checkCommand('say', [statement.speaker, line], variables, ctx, locStr);
+            }
+            if (statement.kind === 'if') {
+                checkCondition(statement.condition.expression, variables, ctx);
+                const baseNames = new Set(variables.keys());
+                const branchVariables = [];
+                const branchReadonly = [];
+                const checkBranch = (body) => {
+                    const branch = new Map(variables);
+                    const readonly = new Set(ctx.readonly);
+                    checkStatements(body, branch, { ...ctx, locals: ctx.locals ? new Set(ctx.locals) : undefined, readonly }, options);
+                    if (!exitsBlock(body)) {
+                        branchVariables.push(branch);
+                        branchReadonly.push(readonly);
+                    }
+                };
+                checkBranch(statement.body);
+                for (const branch of statement.elseIf) {
+                    checkCondition(branch.condition.expression, variables, ctx);
+                    checkBranch(branch.body);
                 }
-                const targetType = expressionType(statement.target.target, variables, ctx);
-                const keyType = expressionType(statement.target.key, variables, ctx);
-                if (typeof targetType !== 'string' && targetType.kind === 'struct' && statement.target.key.kind === 'literal' && typeof statement.target.key.value === 'string') {
-                    const fieldType = ctx.structs.get(targetType.name)?.[statement.target.key.value];
-                    if (!fieldType)
-                        throw new TypeCheckError(`${locStr}: struct フィールドが存在しません`);
-                    if (keyType !== 'str' || !sameType(fieldType, exprType))
-                        throw new TypeCheckError(`${locStr}: struct フィールドの型が一致しません`);
-                }
+                if (statement.otherwise.length)
+                    checkBranch(statement.otherwise);
                 else {
-                    if (typeof targetType === 'string' || targetType.kind !== 'dict') {
-                        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 代入対象は辞書型でなければなりません`);
-                    }
-                    if (keyType !== 'str') {
-                        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 辞書のキーは str でなければなりません`);
-                    }
-                    if (!sameType(targetType.value, exprType)) {
-                        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 辞書要素 (${targetType.value}) に ${typeName(exprType)} は代入できません`);
-                    }
+                    branchVariables.push(new Map(variables));
+                    branchReadonly.push(new Set(ctx.readonly));
                 }
-            }
-        }
-        if (statement.kind === 'unset') {
-            if (statement.target.kind === 'variable') {
-                throw new TypeCheckError(`${locStr}: unset は辞書要素を指定してください`);
-            }
-            else if (statement.target.kind === 'index') {
-                const targetType = expressionType(statement.target.target, variables, ctx);
-                const keyType = expressionType(statement.target.key, variables, ctx);
-                if (typeof targetType === 'string' || targetType.kind !== 'dict' || keyType !== 'str') {
-                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): unset の対象が不正です`);
-                }
-            }
-        }
-        if (statement.kind === 'command') {
-            checkCommand(statement.name, statement.args, variables, ctx, locStr);
-        }
-        if (statement.kind === 'sayBlock') {
-            for (const line of statement.lines)
-                checkCommand('say', [statement.speaker, line], variables, ctx, locStr);
-        }
-        if (statement.kind === 'if') {
-            checkCondition(statement.condition.expression, variables, ctx);
-            const baseNames = new Set(variables.keys());
-            const branchVariables = [];
-            const checkBranch = (body) => {
-                const branch = new Map(variables);
-                checkStatements(body, branch, { ...ctx, locals: ctx.locals ? new Set(ctx.locals) : undefined, readonly: ctx.readonly ? new Set(ctx.readonly) : undefined }, options);
-                branchVariables.push(branch);
-            };
-            checkBranch(statement.body);
-            for (const branch of statement.elseIf) {
-                checkCondition(branch.condition.expression, variables, ctx);
-                checkBranch(branch.body);
-            }
-            if (statement.otherwise.length)
-                checkBranch(statement.otherwise);
-            else
-                branchVariables.push(new Map(variables));
-            const candidates = [...branchVariables[0].keys()].filter((name) => !baseNames.has(name));
-            for (const name of candidates) {
-                const types = branchVariables.map((branch) => branch.get(name));
-                if (types.some((type) => type === undefined))
-                    continue;
-                if (types.some((type) => !sameType(types[0], type))) {
-                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 分岐ごとに変数 '${name}' の型が一致していません`);
-                }
-                variables.set(name, types[0]);
-                ctx.locals?.add(name);
-            }
-        }
-        if (statement.kind === 'for') {
-            const startType = expressionType(statement.start, variables, ctx);
-            const stopType = expressionType(statement.stop, variables, ctx);
-            const stepType = expressionType(statement.step, variables, ctx);
-            if (startType !== 'int' || stopType !== 'int' || stepType !== 'int') {
-                throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): for ループの範囲指定は int でなければなりません`);
-            }
-            const loopVars = new Map(variables);
-            loopVars.set(statement.name, 'int');
-            const loopLocals = new Set(ctx.locals || variables.keys());
-            loopLocals.add(statement.name);
-            checkStatements(statement.body, loopVars, { ...ctx, locals: loopLocals, readonly: ctx.readonly ? new Set(ctx.readonly) : undefined }, options);
-            for (const [name, type] of loopVars)
-                if (name !== statement.name && !variables.has(name)) {
-                    variables.set(name, type);
+                const candidates = [...(branchVariables[0]?.keys() || [])].filter((name) => !baseNames.has(name));
+                for (const name of candidates) {
+                    const types = branchVariables.map((branch) => branch.get(name));
+                    if (types.some((type) => type === undefined))
+                        continue;
+                    if (types.some((type) => !sameType(types[0], type))) {
+                        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 分岐ごとに変数 '${name}' の型が一致していません`);
+                    }
+                    variables.set(name, types[0]);
+                    if (branchReadonly.some((readonly) => readonly.has(name)))
+                        ctx.readonly?.add(name);
                     ctx.locals?.add(name);
                 }
-        }
-        if (statement.kind === 'while') {
-            checkCondition(statement.condition.expression, variables, ctx);
-            checkStatements(statement.body, new Map(variables), { ...ctx, locals: ctx.locals ? new Set(ctx.locals) : undefined, readonly: ctx.readonly ? new Set(ctx.readonly) : undefined }, options);
-        }
-        if (statement.kind === 'choice') {
-            if (!options.allowChoice) {
-                throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 関数内で choice は使用できません`);
             }
-            if (!statement.options.length)
-                throw new TypeCheckError(`${locStr}: choice には1つ以上の選択肢が必要です`);
-            if (statement.prompt) {
-                const promptType = expressionType(statement.prompt, variables, ctx);
-                if (promptType !== 'str')
-                    throw new TypeCheckError(`${locStr}: choice の質問文は str でなければなりません`);
+            if (statement.kind === 'for') {
+                const startType = expressionType(statement.start, variables, ctx);
+                const stopType = expressionType(statement.stop, variables, ctx);
+                const stepType = expressionType(statement.step, variables, ctx);
+                if (startType !== 'int' || stopType !== 'int' || stepType !== 'int') {
+                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): for ループの範囲指定は int でなければなりません`);
+                }
+                const loopVars = new Map(variables);
+                loopVars.set(statement.name, 'int');
+                const loopReadonly = new Set(ctx.readonly);
+                loopReadonly.delete(statement.name);
+                const loopLocals = new Set(ctx.locals || variables.keys());
+                loopLocals.add(statement.name);
+                checkStatements(statement.body, loopVars, { ...ctx, locals: loopLocals, readonly: loopReadonly }, options);
+                for (const [name, type] of loopVars)
+                    if (name !== statement.name && !variables.has(name)) {
+                        variables.set(name, type);
+                        ctx.locals?.add(name);
+                        if (loopReadonly.has(name))
+                            ctx.readonly?.add(name);
+                    }
             }
-            for (const option of statement.options) {
-                const labelType = expressionType(option.label, variables, ctx);
-                if (labelType !== 'str')
-                    throw new TypeCheckError(`${locStr}: 選択肢のラベルは str でなければなりません`);
-                // choice ブロック内では変数宣言を許可
-                checkStatements(option.body, new Map(variables), { ...ctx, locals: new Set(), readonly: ctx.readonly ? new Set(ctx.readonly) : undefined }, { ...options, allowDeclaration: true });
+            if (statement.kind === 'while') {
+                checkCondition(statement.condition.expression, variables, ctx);
+                checkStatements(statement.body, new Map(variables), { ...ctx, locals: ctx.locals ? new Set(ctx.locals) : undefined, readonly: ctx.readonly ? new Set(ctx.readonly) : undefined }, options);
             }
-        }
-        if (statement.kind === 'call') {
-            expressionType({ kind: 'call', name: statement.name, args: statement.args, line: statement.line, column: statement.column }, variables, ctx);
-        }
-        if (statement.kind === 'return') {
-            if (!options.allowReturn || !ctx.currentFunction) {
-                throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): return は関数内でのみ使用できます`);
+            if (statement.kind === 'choice') {
+                if (!options.allowChoice) {
+                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 関数内で choice は使用できません`);
+                }
+                if (!statement.options.length)
+                    throw new TypeCheckError(`${locStr}: choice には1つ以上の選択肢が必要です`);
+                if (statement.prompt) {
+                    const promptType = expressionType(statement.prompt, variables, ctx);
+                    if (promptType !== 'str')
+                        throw new TypeCheckError(`${locStr}: choice の質問文は str でなければなりません`);
+                }
+                for (const option of statement.options) {
+                    const labelType = expressionType(option.label, variables, ctx);
+                    if (labelType !== 'str')
+                        throw new TypeCheckError(`${locStr}: 選択肢のラベルは str でなければなりません`);
+                    // choice ブロック内では変数宣言を許可
+                    checkStatements(option.body, new Map(variables), { ...ctx, locals: new Set(), readonly: ctx.readonly ? new Set(ctx.readonly) : undefined }, { ...options, allowDeclaration: true });
+                }
             }
-            const expectedReturn = ctx.currentFunction.returnType;
-            if (expectedReturn === 'none') {
-                if (statement.value)
-                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): none 型の関数は値を返せません`);
+            if (statement.kind === 'call') {
+                expressionType({ kind: 'call', name: statement.name, args: statement.args, line: statement.line, column: statement.column }, variables, ctx);
             }
-            else {
-                if (!statement.value)
-                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 値を返す必要があります`);
-                const actualReturn = expressionType(statement.value, variables, ctx);
-                if (!sameType(expectedReturn, actualReturn)) {
-                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 戻り値の型が一致しません (期待: ${typeName(expectedReturn)}, 実際: ${typeName(actualReturn)})`);
+            if (statement.kind === 'return') {
+                if (!options.allowReturn || !ctx.currentFunction) {
+                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): return は関数内でのみ使用できます`);
+                }
+                const expectedReturn = ctx.currentFunction.returnType;
+                if (expectedReturn === 'none') {
+                    if (statement.value)
+                        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): none 型の関数は値を返せません`);
+                }
+                else {
+                    if (!statement.value)
+                        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 値を返す必要があります`);
+                    const actualReturn = expressionType(statement.value, variables, ctx, expectedReturn);
+                    if (!sameType(expectedReturn, actualReturn)) {
+                        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 戻り値の型が一致しません (期待: ${typeName(expectedReturn)}, 実際: ${typeName(actualReturn)})`);
+                    }
+                }
+            }
+            if (statement.kind === 'goto') {
+                if (!options.allowGoto) {
+                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 関数内で goto は使用できません`);
+                }
+                // 同一ファイル内シーンまたは外部ファイル
+                const target = statement.scene;
+                if (!target.includes('/') && !/\.(tds|txt)$/i.test(target) && !ctx.scenes.has(target)) {
+                    throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 存在しないシーン '${target}' への goto です`);
                 }
             }
         }
-        if (statement.kind === 'goto') {
-            if (!options.allowGoto) {
-                throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 関数内で goto は使用できません`);
-            }
-            // 同一ファイル内シーンまたは外部ファイル
-            const target = statement.scene;
-            if (!target.includes('/') && !/\.(tds|txt)$/i.test(target) && !ctx.scenes.has(target)) {
-                throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 存在しないシーン '${target}' への goto です`);
-            }
+        catch (error) {
+            if (!ctx.errors || !(error instanceof TypeCheckError))
+                throw error;
+            ctx.errors.push(error);
         }
     }
 }
@@ -593,6 +682,12 @@ function checkRecursion(functions) {
             }
             if (s.kind === 'command')
                 s.args.forEach(visitExpr);
+            if (s.kind === 'sayBlock') {
+                visitExpr(s.speaker);
+                s.lines.forEach(visitExpr);
+            }
+            if (s.kind === 'unset')
+                visitExpr(s.target);
             if (s.kind === 'if') {
                 visitExpr(s.condition.expression);
                 s.body.forEach(visitStmt);
@@ -645,7 +740,7 @@ function checkRecursion(functions) {
         }
     }
 }
-function checkTypes(script, file = 'current', externalGlobals = new Map(), externalCharacters = new Map()) {
+function checkTypes(script, file = 'current', externalGlobals = new Map(), externalCharacters = new Map(), errors) {
     // 1. 重複宣言チェック
     const declaredGlobals = new Set();
     const declaredFunctions = new Set();
@@ -653,72 +748,122 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
     const declaredStructs = new Set();
     const declaredCharacters = new Set(externalCharacters.keys());
     const declaredAssets = new Set();
-    for (const struct of script.structs) {
-        if (declaredStructs.has(struct.name))
-            throw new TypeCheckError(`${getLocStr(struct, file)}: struct '${struct.name}' が重複しています`);
-        declaredStructs.add(struct.name);
-        for (const [field, fieldType] of Object.entries(struct.fields)) {
-            if (fieldType !== 'int' && fieldType !== 'str')
-                throw new TypeCheckError(`${getLocStr(struct, file)}: struct フィールド '${field}' の型が不正です`);
+    const capture = (check) => {
+        try {
+            check();
         }
+        catch (error) {
+            if (!errors || !(error instanceof TypeCheckError))
+                throw error;
+            errors.push(error);
+        }
+    };
+    for (const name of externalCharacters.keys()) {
+        capture(() => {
+            if (externalGlobals.has(name))
+                throw new TypeCheckError(`character '${name}' とグローバル変数 '${name}' の名前が重複しています`);
+        });
+    }
+    for (const struct of script.structs) {
+        capture(() => {
+            if (declaredStructs.has(struct.name))
+                throw new TypeCheckError(`${getLocStr(struct, file)}: struct '${struct.name}' が重複しています`);
+            declaredStructs.add(struct.name);
+            for (const [field, fieldType] of Object.entries(struct.fields)) {
+                if (fieldType !== 'int' && fieldType !== 'str')
+                    throw new TypeCheckError(`${getLocStr(struct, file)}: struct フィールド '${field}' の型が不正です`);
+            }
+        });
     }
     for (const asset of script.assets) {
-        if (declaredAssets.has(asset.name)) {
-            throw new TypeCheckError(`${getLocStr(asset, file)}: アセット '${asset.name}' が重複して宣言されています`);
-        }
-        // パス検証 (項目23)
-        if (!validAssetPath(asset.path)) {
-            throw new TypeCheckError(`${getLocStr(asset, file)}: アセットパス '${asset.path}' はプロジェクト外を参照できません`);
-        }
-        const dotIdx = asset.path.lastIndexOf('.');
-        const ext = dotIdx >= 0 ? asset.path.slice(dotIdx).toLowerCase() : '';
-        const allowed = ALLOWED_EXTENSIONS[asset.type] || [];
-        if (!allowed.includes(ext)) {
-            throw new TypeCheckError(`${getLocStr(asset, file)}: アセット '${asset.name}' (${asset.type}) の拡張子 '${ext}' は不正です`);
-        }
-        declaredAssets.add(asset.name);
+        capture(() => {
+            if (declaredAssets.has(asset.name)) {
+                throw new TypeCheckError(`${getLocStr(asset, file)}: アセット '${asset.name}' が重複して宣言されています`);
+            }
+            // パス検証 (項目23)
+            if (!validAssetPath(asset.path)) {
+                throw new TypeCheckError(`${getLocStr(asset, file)}: アセットパス '${asset.path}' はプロジェクト外を参照できません`);
+            }
+            const dotIdx = asset.path.lastIndexOf('.');
+            const ext = dotIdx >= 0 ? asset.path.slice(dotIdx).toLowerCase() : '';
+            const allowed = ALLOWED_EXTENSIONS[asset.type] || [];
+            if (!allowed.includes(ext)) {
+                throw new TypeCheckError(`${getLocStr(asset, file)}: アセット '${asset.name}' (${asset.type}) の拡張子 '${ext}' は不正です`);
+            }
+            declaredAssets.add(asset.name);
+        });
     }
     for (const char of script.characters) {
-        if (declaredCharacters.has(char.name)) {
-            throw new TypeCheckError(`${getLocStr(char, file)}: キャラクター '${char.name}' が重複して宣言されています`);
-        }
-        declaredCharacters.add(char.name);
-        const poses = new Set();
-        for (const pose of char.poses) {
-            if (poses.has(pose.name)) {
-                throw new TypeCheckError(`${getLocStr(char, file)}: キャラクター '${char.name}' の表情 '${pose.name}' が重複しています`);
+        capture(() => {
+            if (externalGlobals.has(char.name))
+                throw new TypeCheckError(`${getLocStr(char, file)}: character '${char.name}' とグローバル変数 '${char.name}' の名前が重複しています`);
+            if (declaredCharacters.has(char.name)) {
+                throw new TypeCheckError(`${getLocStr(char, file)}: キャラクター '${char.name}' が重複して宣言されています`);
             }
-            if (!validAssetPath(pose.path)) {
-                throw new TypeCheckError(`${getLocStr(char, file)}: 表情パス '${pose.path}' はプロジェクト外を参照できません`);
+            declaredCharacters.add(char.name);
+            const properties = new Set();
+            for (const property of char.properties) {
+                if (properties.has(property.name))
+                    throw new TypeCheckError(`${getLocStr(property, file)}: キャラクター '${char.name}' のフィールド '${property.name}' が重複しています`);
+                if (!characterPropertyType(property.value))
+                    throw new TypeCheckError(`${getLocStr(property, file)}: キャラクターフィールド '${property.name}' は int または str の定数で指定してください`);
+                properties.add(property.name);
             }
-            if (!ALLOWED_EXTENSIONS.char.some(ext => pose.path.toLowerCase().endsWith(ext)))
-                throw new TypeCheckError(`表情 '${pose.name}' の拡張子が不正です`);
-            poses.add(pose.name);
-        }
+            const displayName = char.properties.find((property) => property.name === 'name');
+            if (!displayName || characterPropertyType(displayName.value) !== 'str')
+                throw new TypeCheckError(`${getLocStr(char, file)}: character '${char.name}' には str の name フィールドが必要です`);
+            const poses = new Set();
+            for (const pose of char.poses) {
+                if (poses.has(pose.name)) {
+                    throw new TypeCheckError(`${getLocStr(char, file)}: キャラクター '${char.name}' の表情 '${pose.name}' が重複しています`);
+                }
+                if (!validAssetPath(pose.path)) {
+                    throw new TypeCheckError(`${getLocStr(char, file)}: 表情パス '${pose.path}' はプロジェクト外を参照できません`);
+                }
+                if (!ALLOWED_EXTENSIONS.char.some(ext => pose.path.toLowerCase().endsWith(ext)))
+                    throw new TypeCheckError(`表情 '${pose.name}' の拡張子が不正です`);
+                poses.add(pose.name);
+            }
+        });
     }
     for (const fn of script.functions) {
-        if (declaredFunctions.has(fn.name)) {
-            throw new TypeCheckError(`${getLocStr(fn, file)}: 関数 '${fn.name}' が重複して宣言されています`);
-        }
-        declaredFunctions.add(fn.name);
+        capture(() => {
+            if (declaredFunctions.has(fn.name)) {
+                throw new TypeCheckError(`${getLocStr(fn, file)}: 関数 '${fn.name}' が重複して宣言されています`);
+            }
+            declaredFunctions.add(fn.name);
+        });
     }
     for (const sc of script.scenes) {
-        if (declaredScenes.has(sc.name)) {
-            throw new TypeCheckError(`${getLocStr(sc, file)}: シーン '${sc.name}' が重複して宣言されています`);
-        }
-        declaredScenes.add(sc.name);
+        capture(() => {
+            if (declaredScenes.has(sc.name)) {
+                throw new TypeCheckError(`${getLocStr(sc, file)}: シーン '${sc.name}' が重複して宣言されています`);
+            }
+            declaredScenes.add(sc.name);
+        });
     }
     // 2. 再帰検査
-    checkRecursion(script.functions);
+    capture(() => checkRecursion(script.functions));
     // 3. コンテキスト構築
     const globals = new Map(externalGlobals);
     const functions = new Map();
     const scenes = new Set(script.scenes.map((s) => s.name));
-    const characters = new Map(externalCharacters);
+    const characters = new Map();
     const assets = new Map();
     const structs = new Map(script.structs.map((s) => [s.name, s.fields]));
+    for (const [name, rawInfo] of externalCharacters) {
+        const info = characterInfo(rawInfo);
+        characters.set(name, info.poses);
+        structs.set(characterTypeName(name), info.fields);
+        globals.set(name, { kind: 'struct', name: characterTypeName(name) });
+    }
+    for (const character of script.characters) {
+        const fields = Object.fromEntries(character.properties.map((property) => [property.name, characterPropertyType(property.value)]));
+        characters.set(character.name, new Set(character.poses.map((pose) => pose.name)));
+        structs.set(characterTypeName(character.name), fields);
+        globals.set(character.name, { kind: 'struct', name: characterTypeName(character.name) });
+    }
     script.assets.forEach((a) => assets.set(a.name, { type: a.type, path: a.path, loc: a }));
-    script.characters.forEach((c) => characters.set(c.name, new Set(c.poses.map((p) => p.name))));
     script.functions.forEach((f) => functions.set(f.name, f));
     const ctx = {
         file,
@@ -729,32 +874,37 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
         assets,
         structs,
         externalGlobals: new Set(externalGlobals.keys()),
-        readonly: new Set(),
+        readonly: new Set([...externalGlobals.readonlyNames || []].filter((name) => externalGlobals.has(name))),
+        errors,
     };
     // グローバル文（変数宣言）の検証
     for (const stmt of script.globals) {
-        if (stmt.kind === 'declare') {
-            if (declaredGlobals.has(stmt.name)) {
-                throw new TypeCheckError(`${getLocStr(stmt, file)}: グローバル変数 '${stmt.name}' が重複して宣言されています`);
+        capture(() => {
+            if (stmt.kind === 'declare') {
+                if (declaredGlobals.has(stmt.name)) {
+                    throw new TypeCheckError(`${getLocStr(stmt, file)}: グローバル変数 '${stmt.name}' が重複して宣言されています`);
+                }
+                declaredGlobals.add(stmt.name);
             }
-            declaredGlobals.add(stmt.name);
-        }
+        });
     }
     const isImplicitScene = script.scenes.length === 0;
     checkStatements(script.globals, globals, ctx, { allowGoto: isImplicitScene, allowChoice: isImplicitScene, allowReturn: false, allowDeclaration: true });
     // 関数の検証
     for (const fn of script.functions) {
-        const fnVars = new Map(globals);
-        const paramNames = new Set();
-        for (const param of fn.params) {
-            if (paramNames.has(param.name)) {
-                throw new TypeCheckError(`${getLocStr(fn, file)}: 関数 '${fn.name}' の引数名 '${param.name}' が重複しています`);
+        capture(() => {
+            const fnVars = new Map(globals);
+            const paramNames = new Set();
+            for (const param of fn.params) {
+                if (paramNames.has(param.name)) {
+                    throw new TypeCheckError(`${getLocStr(fn, file)}: 関数 '${fn.name}' の引数名 '${param.name}' が重複しています`);
+                }
+                paramNames.add(param.name);
+                fnVars.set(param.name, param.type);
             }
-            paramNames.add(param.name);
-            fnVars.set(param.name, param.type);
-        }
-        const fnCtx = { ...ctx, currentFunction: fn, locals: paramNames };
-        checkStatements(fn.body, fnVars, { ...fnCtx, readonly: new Set(ctx.readonly) }, { allowGoto: false, allowChoice: false, allowReturn: true, allowDeclaration: true });
+            const fnCtx = { ...ctx, currentFunction: fn, locals: paramNames };
+            checkStatements(fn.body, fnVars, { ...fnCtx, readonly: new Set([...ctx.readonly || []].filter((name) => !paramNames.has(name))) }, { allowGoto: false, allowChoice: false, allowReturn: true, allowDeclaration: true });
+        });
     }
     // シーンの検証（scene直下での変数宣言は禁止）
     for (const scene of script.scenes) {

@@ -17,6 +17,7 @@ using Int = int64_t;
 inline Int integer(const std::string& s) {
     Int n{}; const char* first = s.data();
     if (!s.empty() && s[0] == '+') ++first;
+    if (first == s.data() + s.size() || (first != s.data() && (*first < '0' || *first > '9'))) throw std::runtime_error("Invalid int64 conversion: " + s);
     auto result = std::from_chars(first, s.data() + s.size(), n);
     if (result.ec != std::errc() || result.ptr != s.data() + s.size()) throw std::runtime_error("Invalid int64 conversion: " + s);
     return n;
@@ -76,10 +77,17 @@ public:
         if (readonlyGlobals.contains(name)) throw std::runtime_error("const variable cannot be changed: " + name);
     }
     std::string interpolate(const json& v) const {
-        const auto s = text(v); std::regex pattern(R"(\{([A-Za-z_][A-Za-z0-9_]*)\})");
+        const auto s = text(v); std::regex pattern(R"(\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\})");
         std::string out; size_t offset = 0;
         for (auto it = std::sregex_iterator(s.begin(), s.end(), pattern); it != std::sregex_iterator(); ++it) {
-            out += s.substr(offset, it->position() - offset) + text(get((*it)[1])); offset = it->position() + it->length();
+            const auto path = (*it)[1].str(); const auto dot = path.find('.');
+            json replacement = get(path.substr(0, dot)); size_t start = dot;
+            while (start != std::string::npos) {
+                const auto next = path.find('.', start + 1); const auto field = path.substr(start + 1, next - start - 1);
+                if (!replacement.is_object() || !replacement.contains(field)) throw std::runtime_error("Missing interpolation field: " + path);
+                replacement = replacement.at(field); start = next;
+            }
+            out += s.substr(offset, it->position() - offset) + text(replacement); offset = it->position() + it->length();
         }
         return out + s.substr(offset);
     }
@@ -173,8 +181,10 @@ public:
                     if (op == "unset") throw std::runtime_error("unset requires a dictionary element");
                     set(t.at("name"), value(c.at("value")));
                 } else {
-                    auto name = t.at("target").at("name").get<std::string>(); auto d = get(name); auto key = value(t.at("key")).get<std::string>();
-                    if (op == "set") d[key] = value(c.at("value"));
+                    auto name = t.at("target").at("name").get<std::string>();
+                    auto assigned = op == "set" ? value(c.at("value")) : json();
+                    auto key = value(t.at("key")).get<std::string>(); auto d = get(name);
+                    if (op == "set") d[key] = assigned;
                     else { if (!d.contains(key)) throw std::runtime_error("Missing dictionary key: " + key); d.erase(key); }
                     set(name, d);
                 }

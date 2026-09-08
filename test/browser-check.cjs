@@ -4,7 +4,7 @@ const { handleApi, serveStatic } = require('../Edit/server');
 const fs = require('node:fs/promises'), http = require('node:http'), path = require('node:path');
 const assert = require('node:assert/strict');
 (async () => {
-  const root = path.resolve(__dirname, '../Edit/assets');
+  const root = path.resolve(__dirname, '../Title/asset');
   const dir = await fs.mkdtemp(path.join(root, '__audit_'));
   const relative = path.basename(dir) + '/pixel.png';
   await fs.copyFile(path.resolve(__dirname, '../native/engine_data/ui/dialogue_box.png'), path.join(dir, 'pixel.png'));
@@ -24,19 +24,25 @@ const assert = require('node:assert/strict');
     });
     let source = `asset image first = "${relative}"
 asset image second = "${relative}"
-character hero { normal = "${relative}" }
-character friend { normal = "${relative}" }
+character hero {
+  name = "Hero"
+  pose normal = "${relative}"
+}
+character friend {
+  name = "Friend"
+  pose normal = "${relative}"
+}
 str result = str(9007199254740992 + 1)
 fn answer() -> int { int n = 7
 return n }
 show image first left
 show image second right
-show char hero left normal fade 10
-show char friend right normal
+show hero.normal left fade 10
+show friend.normal right
 clear image first
 clear char hero
 choice "choose" {
-"continue" { say none result + ":" + str(answer()) }
+"continue" { say hero result + ":" + str(answer()) }
 }`;
     await page.route('**/api/scene?*', route => route.fulfill({ json: { name: '__audit.tds', source } }));
     await page.goto(base + '/player.html?source=__audit.tds');
@@ -48,14 +54,32 @@ choice "choose" {
     assert.equal(await page.locator('#char-friend').count(), 1);
     await page.locator('.choice').click();
     await page.waitForFunction(() => document.querySelector('#text').textContent === '9007199254740993:7');
-    assert.equal(await page.locator('#speaker').textContent(), '');
+    assert.equal(await page.locator('#speaker').textContent(), 'Hero');
     await page.screenshot({ path: path.resolve(__dirname, '../build/browser-regression.png') });
+    const auditCases = require('./fixtures/audit-cases.json');
+    for (const [id, expression, expected] of [
+      ['loop', 'str(hits)', '1'],
+      ['condition_effect', 'str(result)', '1'],
+      ['argument_effect', 'str(result)', '1'],
+      ['dictionary_alias', 'str(result)', '1'],
+      ['dictionary_side_effect', 'str(d["y"])', '9'],
+      ['const_shadow', 'str(result)', '2'],
+    ]) {
+      source = auditCases[id].source + '\nsay narrator ' + expression;
+      await page.reload();
+      await page.waitForFunction(value => document.querySelector('#text').textContent === value, expected);
+      assert.equal(await page.locator('#speaker').textContent(), 'narrator', id);
+    }
+    const invalidConst = await page.request.post(base + '/api/validate', { data: { name: '__audit.tds', source: 'const dict[int] d = {"x":1}\nunset d["x"]' } });
+    const constReport = await invalidConst.json();
+    assert.equal(constReport.ok, false);
+    assert.ok(constReport.diagnostics.some(item => item.severity === 'error' && /const/.test(item.message)));
     source = 'choice { "bad" { int x = 1 / 0 } }';
     await page.reload(); await page.locator('.choice').click();
     await page.waitForFunction(() => document.querySelector('#speaker').textContent === 'PLAYER ERROR');
     assert.match(await page.locator('#text').textContent(), /除算/);
     assert.deepEqual(errors, []);
-    console.log('PASS browser: API BigInt round trip, image/character clear, fade, choice click, function call, error propagation');
+    console.log('PASS browser: API BigInt round trip, image/character clear, fade, choice click, function call, error propagation, audit runtime cases and const diagnostics');
   } finally {
     await browser?.close(); await new Promise(resolve => server.close(resolve));
     // dir was created with mkdtemp directly below the resolved assets root.

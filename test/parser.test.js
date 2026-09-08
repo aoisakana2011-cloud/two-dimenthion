@@ -8,8 +8,10 @@ test('parses and compiles assets, globals, characters, functions and scenes', ()
     asset bgm peaceful = "assets/bgm/peaceful.ogg"
     asset se door = "assets/se/door.wav"
     character heroine {
-      normal = "assets/chara/heroine/normal.png"
-      smile = "assets/chara/heroine/smile.png"
+      name = "Heroine"
+      affection = 0
+      pose normal = "assets/chara/heroine/normal.png"
+      pose smile = "assets/chara/heroine/smile.png"
     }
     int score = 0
     dict[int] stats = { "hp": 100 }
@@ -19,7 +21,7 @@ test('parses and compiles assets, globals, characters, functions and scenes', ()
     scene prologue {
       bg school
       bgm peaceful
-      show char heroine center normal
+      show heroine.normal center
       set stats["hp"] = stats["hp"] - 10
       say heroine "こんにちは"
       add_score(1)
@@ -27,6 +29,7 @@ test('parses and compiles assets, globals, characters, functions and scenes', ()
   `);
   assert.equal(script.assets.length, 3);
   assert.equal(script.characters[0].poses.length, 2);
+  assert.equal(script.characters[0].properties.length, 2);
   assert.equal(script.globals.length, 2);
   assert.equal(script.functions[0].name, 'add_score');
   assert.equal(script.scenes[0].name, 'prologue');
@@ -34,7 +37,8 @@ test('parses and compiles assets, globals, characters, functions and scenes', ()
   assert.equal(program.version, 2);
   assert.equal(program.scenes[0].instructions.length, 6);
   assert.equal(program.assets[1].type, 'bgm');
-  assert.deepEqual(program.variables.slice(0, 3).map((entry) => [entry.name, entry.scope, entry.definedIn]), [
+  assert.deepEqual(program.variables.slice(0, 4).map((entry) => [entry.name, entry.scope, entry.definedIn]), [
+    ['heroine', 'global', 'global'],
     ['score', 'global', 'global'],
     ['stats', 'global', 'global'],
     ['value', 'function', 'add_score'],
@@ -57,12 +61,59 @@ test('defaults shorthand say to narrator', () => {
 });
 
 test('parses consecutive say block lines', () => {
-  const script = parse('character ayase {}\nsay ayase {\n  "hello"\n  "ayasedesu"\n}');
+  const script = parse('character ayase { name = "Ayase" }\nsay ayase {\n  "hello"\n  "ayasedesu"\n}');
   const statement = script.globals[0];
   assert.equal(statement.kind, 'sayBlock');
   assert.equal(statement.speaker.value, 'ayase');
   assert.deepEqual(statement.lines.map((line) => line.value), ['hello', 'ayasedesu']);
-  assert.equal(compile(script).globals[0].op, 'sayBlock');
+  assert.equal(compile(script).globals[1].op, 'sayBlock');
+});
+
+test('character fields are typed runtime state with dotted interpolation', () => {
+  const script = parse(`
+    character ayase {
+      name = "綾瀬"
+      affection = 0
+      pose normal = "assets/char/ayase/normal.png"
+      pose smile = "assets/char/ayase/smile.png"
+    }
+    set ayase.affection = ayase.affection + 1
+    say ayase "{ayase.name}: {ayase.affection}"
+    show ayase.smile center
+    hide ayase
+  `);
+  assert.doesNotThrow(() => checkTypes(script));
+  assert.deepEqual(script.characters[0].properties.map((property) => property.name), ['name', 'affection']);
+  const program = compile(script);
+  assert.equal(program.globals[0].op, 'declare');
+  assert.equal(program.globals[0].name, 'ayase');
+  assert.deepEqual(program.globals.slice(-2).map((instruction) => instruction.args.map((arg) => arg.value)), [
+    ['ayase.smile', 'center'],
+    ['ayase'],
+  ]);
+  assert.throws(() => checkTypes(parse('character ayase {\nname = "A"\npose normal = "a.png"\n}\nshow ayase.missing center')), /ポーズ/);
+});
+
+test('character declarations require a string name and constant primitive fields', () => {
+  assert.throws(() => checkTypes(parse('character ayase { pose normal = "a.png" }')), /name/);
+  assert.throws(() => checkTypes(parse('character ayase { name = 1 }')), /str.*name/);
+  assert.throws(() => checkTypes(parse('character ayase {\nname = "A"\naffection = score\n}\nint score = 0')), /定数/);
+});
+
+test('reports independent type errors on later lines instead of stopping at the first', () => {
+  const diagnostics = analyzeScript(parse(`scene main {
+    bg missing
+    wait "bad"
+    show missing.normal nowhere
+    say missing "hello"
+  }`));
+  assert.deepEqual(diagnostics.filter((item) => item.severity === 'error').map((item) => item.line), [2, 3, 4, 5]);
+
+  const declarations = analyzeScript(parse('int first = "bad"\nint second = "also bad"'));
+  assert.deepEqual(declarations.filter((item) => item.severity === 'error').map((item) => item.line), [1, 2]);
+
+  const definitionAndBody = analyzeScript(parse('character hero {\npose normal = "a.png"\n}\nscene main {\nwait "bad"\n}'));
+  assert.deepEqual(definitionAndBody.filter((item) => item.severity === 'error').map((item) => item.line), [1, 5]);
 });
 
 test('parses and type-checks named structs with field access', () => {
@@ -127,12 +178,13 @@ test('preserves engine commands and scene transitions for the browser player', (
     asset se click = "assets/se/click.wav"
     asset voice hello = "assets/voice/hello.wav"
     character hero {
-      normal = "assets/chara/hero/normal.png"
+      name = "Hero"
+      pose normal = "assets/chara/hero/normal.png"
     }
     int route = 0
     scene start {
       bgm theme
-      show char hero center normal
+      show hero.normal center
       play se click
       play voice hello
       wait 100
@@ -349,6 +401,124 @@ test('analyzes constant if branches and unreachable statements', () => {
   assert.ok(diagnostics.some((item) => item.code === 'constant-condition' && item.severity === 'warning'));
   assert.ok(diagnostics.some((item) => item.code === 'unreachable-branch'));
   assert.ok(diagnostics.some((item) => item.code === 'unreachable-code'));
+});
+
+test('computes transitive scene reachability and excludes dead goto targets', () => {
+  const transitive = analyzeScript(parse(`
+    scene start { goto middle }
+    scene middle { goto ending }
+    scene ending { wait 1 }
+  `));
+  assert.equal(transitive.some((item) => item.code === 'unreachable-scene'), false);
+
+  for (const source of [
+    'scene start { if 1 == 2 { goto hidden } }\nscene hidden { wait 1 }',
+    'scene start { if 1 == 1 { wait 1 } else { goto hidden } }\nscene hidden { wait 1 }',
+    'scene start { while 1 == 2 { goto hidden } }\nscene hidden { wait 1 }',
+  ]) {
+    const diagnostics = analyzeScript(parse(source));
+    assert.ok(diagnostics.some((item) => item.code === 'unreachable-scene' && /hidden/.test(item.message)));
+  }
+});
+
+test('reports empty unreachable scenes and termination through for and while bodies', () => {
+  const empty = analyzeScript(parse('scene start { wait 1 }\nscene hidden {\n}'));
+  assert.ok(empty.some((item) => item.code === 'unreachable-scene' && item.line === 2));
+
+  const loop = analyzeScript(parse(`
+    scene start {
+      for i from 1 to 3 { goto ending }
+      wait 999
+    }
+    scene ending { wait 1 }
+  `));
+  assert.ok(loop.some((item) => item.code === 'unreachable-code' && item.line === 4));
+
+  const transfer = analyzeScript(parse('scene start { while 1 == 1 { goto ending } }\nscene ending { wait 1 }'));
+  assert.equal(transfer.some((item) => item.code === 'infinite-loop'), false);
+});
+
+test('does not treat repeated side-effectful conditions as duplicates', () => {
+  const diagnostics = analyzeScript(parse(`
+    int n = 0
+    fn tick() -> int { set n = n + 1
+      return n }
+    scene start {
+      if tick() == 2 { wait 1 } elif tick() == 2 { wait 2 }
+    }
+  `));
+  assert.equal(diagnostics.some((item) => item.code === 'duplicate-condition' || item.code === 'unreachable-code'), false);
+});
+
+test('propagates immutable constants and enclosing condition facts', () => {
+  const constants = analyzeScript(parse(`
+    const int route = 1
+    scene start {
+      if route == 1 { goto live } else { goto hidden }
+    }
+    scene live { wait 1 }
+    scene hidden { wait 1 }
+  `));
+  assert.ok(constants.some((item) => item.code === 'unreachable-scene' && /hidden/.test(item.message)));
+
+  const nested = analyzeScript(parse(`
+    int route = 0
+    scene start {
+      if route == 1 {
+        if route != 1 { goto hidden }
+      }
+    }
+    scene hidden { wait 1 }
+  `));
+  assert.ok(nested.some((item) => item.code === 'unreachable-scene' && /hidden/.test(item.message)));
+
+  const covered = analyzeScript(parse(`
+    int route = 0
+    scene start {
+      if route > 0 { wait 1 } elif route > 1 { goto hidden }
+    }
+    scene hidden { wait 1 }
+  `));
+  assert.ok(covered.some((item) => item.code === 'unreachable-branch'));
+  assert.ok(covered.some((item) => item.code === 'unreachable-scene' && /hidden/.test(item.message)));
+});
+
+test('does not analyze a short-circuited expression operand as executable', () => {
+  const diagnostics = analyzeScript(parse('scene start { if 1 == 2 and 10 / 0 == 1 { wait 1 } }'));
+  assert.equal(diagnostics.some((item) => item.code === 'division-by-zero'), false);
+});
+
+test('suppresses secondary control-flow warnings inside already unreachable code', () => {
+  const diagnostics = analyzeScript(parse('scene start { goto ending\n if 1 == 2 { wait 1 } }\nscene ending { wait 1 }'));
+  assert.ok(diagnostics.some((item) => item.code === 'unreachable-code'));
+  assert.equal(diagnostics.some((item) => item.code === 'constant-condition'), false);
+});
+
+test('reports the complete source range of an unreachable say block', () => {
+  const diagnostics = analyzeScript(parse('scene start {\n  goto ending\n  say narrator {\n    "first"\n    "second"\n  }\n}\nscene ending { wait 1 }'));
+  const unreachable = diagnostics.find((item) => item.code === 'unreachable-code' && item.line === 3);
+  assert.equal(unreachable.endLine, 6);
+});
+
+test('reports complete source ranges for unreachable control-flow blocks', () => {
+  const diagnostics = analyzeScript(parse(`scene start {
+  goto ending
+  choice "route" {
+    "one" { wait 1 }
+    "two" {
+      if 1 == 1 { wait 2 }
+    }
+  }
+  while 1 == 1 {
+    wait 3
+  }
+}
+scene ending { wait 1 }`));
+  const ranges = diagnostics
+    .filter((item) => item.code === 'unreachable-code')
+    .map((item) => [item.line, item.endLine]);
+  assert.ok(ranges.some(([line, endLine]) => line === 3 && endLine === 8));
+  assert.ok(ranges.some(([line, endLine]) => line === 9 && endLine === 11));
 });
 
 test('compiler removes an if branch decided by a propagated constant', () => {

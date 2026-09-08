@@ -15,7 +15,7 @@ const KEYWORDS = new Set([
   'scene', 'asset', 'character', 'int', 'str', 'dict', 'set', 'unset', 'say', 'bg', 'bgm', 'char', 'show', 'hide', 'image',
   'clear', 'play', 'effect', 'wait', 'if', 'elif', 'else', 'and', 'or', 'not', 'choice', 'for', 'from', 'to',
   'step', 'while', 'fn', 'return', 'goto', 'none', 'int', 'str', 'dict', 'async', 'blocking', 'voice', 'video',
-  'include', 'struct',
+  'include', 'struct', 'pose', 'at',
 ]);
 
 export class ParseError extends Error {
@@ -29,6 +29,7 @@ export class Parser {
   private current: Token;
   private readonly lexer: Lexer;
   private readonly buffered: Token[] = [];
+  private lastBlockEndLine = 1;
 
   constructor(private readonly source: string) {
     this.lexer = new Lexer(source);
@@ -97,24 +98,34 @@ export class Parser {
   private parseCharacter(): Character {
     const start = this.take();
     const name = this.expectIdentifier('Expected character name');
+    this.skipLines();
     this.expect('{');
-    const poses: Array<{ name: string; path: string }> = [];
+    const properties: Character['properties'] = [];
+    const poses: Character['poses'] = [];
     this.skipLines();
     while (!this.atValue('}')) {
-      const poseToken = this.current;
-      const pose = this.expectIdentifier('Expected pose name');
-      this.expect('=');
-      const path = this.expect('string', 'Character pose path must be a string').value;
-      poses.push({ name: pose, path });
+      const propertyToken = this.current;
+      if (this.atWord('pose')) {
+        this.take();
+        const pose = this.expectIdentifier('Expected pose name');
+        this.expect('=');
+        const path = this.expect('string', 'Character pose path must be a string').value;
+        poses.push({ name: pose, path, line: propertyToken.line, column: propertyToken.column });
+      } else {
+        const property = this.expectIdentifier('Expected character property or pose declaration');
+        this.expect('=');
+        properties.push({ name: property, value: this.parseExpression(), line: propertyToken.line, column: propertyToken.column });
+      }
       this.endLine();
       this.skipLines();
     }
-    this.take();
-    return { kind: 'character', name, poses, line: start.line, column: start.column };
+    const closing = this.take();
+    return { kind: 'character', name, properties, poses, line: start.line, column: start.column, endLine: closing.line };
   }
 
   private parseStruct(): StructDef {
     const start = this.take(); const name = this.expectIdentifier('Expected struct name');
+    this.skipLines();
     this.expect('{'); this.skipLines(); const fields: Record<string, PrimitiveType> = {};
     while (!this.atValue('}')) {
       const field = this.expectIdentifier('Expected field name'); this.expect(':');
@@ -168,6 +179,14 @@ export class Parser {
   }
 
   private peekToken(): Token { if (!this.buffered.length) this.buffered.push(this.lexer.next()); return this.buffered[0]; }
+  private peekContent(): Token {
+    let index = 0;
+    while (true) {
+      if (index === this.buffered.length) this.buffered.push(this.lexer.next());
+      if (this.buffered[index].type !== 'newline') return this.buffered[index];
+      index++;
+    }
+  }
 
   private parseStatement(): Statement {
     const token = this.current;
@@ -207,6 +226,7 @@ export class Parser {
       case 'if': {
         this.take();
         const first = { condition: this.parseCondition(), body: this.parseBraced() };
+        let endLine = this.lastBlockEndLine;
         const elseIf: Array<{ condition: Condition; body: Statement[] }> = [];
         let otherwise: Statement[] = [];
         this.skipLines();
@@ -214,14 +234,16 @@ export class Parser {
           if (this.atWord('elif')) {
             this.take();
             elseIf.push({ condition: this.parseCondition(), body: this.parseBraced() });
+            endLine = this.lastBlockEndLine;
             this.skipLines();
           } else {
             this.take();
             otherwise = this.parseBraced();
+            endLine = this.lastBlockEndLine;
             break;
           }
         }
-        return { kind: 'if', condition: first.condition, body: first.body, elseIf, otherwise, line: token.line, column: token.column };
+        return { kind: 'if', condition: first.condition, body: first.body, elseIf, otherwise, line: token.line, column: token.column, endLine };
       }
       case 'for': {
         this.take();
@@ -231,19 +253,23 @@ export class Parser {
         this.expectWordValue('to');
         const stop = this.parseExpression();
         const step = this.atWord('step') ? (this.take(), this.parseExpression()) : literal(1);
-        return { kind: 'for', name, start, stop, step, body: this.parseBraced(), line: token.line, column: token.column };
+        const body = this.parseBraced();
+        return { kind: 'for', name, start, stop, step, body, line: token.line, column: token.column, endLine: this.lastBlockEndLine };
       }
       case 'while': {
         this.take();
-        return { kind: 'while', condition: this.parseCondition(), body: this.parseBraced(), line: token.line, column: token.column };
+        const condition = this.parseCondition();
+        const body = this.parseBraced();
+        return { kind: 'while', condition, body, line: token.line, column: token.column, endLine: this.lastBlockEndLine };
       }
       case 'choice': {
         this.take();
+        this.skipLines();
         let prompt: Expr | undefined;
         if (!this.atValue('{')) {
           prompt = this.parseExpression();
         }
-        this.expect('{');
+        this.skipLines(); this.expect('{');
         const options: Array<{ label: Expr; body: Statement[] }> = [];
         this.skipLines();
         while (!this.atValue('}')) {
@@ -251,8 +277,8 @@ export class Parser {
           options.push({ label, body: this.parseBraced() });
           this.skipLines();
         }
-        this.take();
-        return { kind: 'choice', prompt, options, line: token.line, column: token.column };
+        const closing = this.take();
+        return { kind: 'choice', prompt, options, line: token.line, column: token.column, endLine: closing.line };
       }
       case 'return': {
         this.take();
@@ -264,26 +290,27 @@ export class Parser {
         if (this.current.type === 'string') {
           scene = this.take().value;
         } else {
-          scene = this.expectIdentifier('Expected scene name');
-          while (this.atValue('/') || this.atValue('.')) {
-            const sep = this.take().value;
-            const nextPart = this.expectWord('Expected scene path segment');
-            scene += `${sep}${nextPart}`;
-          }
+          while (!this.atLineEnd()) scene += this.take().value;
         }
+        if (!/^[A-Za-z0-9_][A-Za-z0-9_./-]*$/.test(scene) || scene.split('/').includes('..')) throw this.error('Invalid scene path');
         return { kind: 'goto', scene, line: token.line, column: token.column };
       }
       case 'say': {
         this.take();
+        this.skipLines();
         let speaker = 'narrator';
         let textExpr: Expr;
         if (this.atValue('{')) return this.parseSayBlock(token, { kind: 'literal', value: speaker, line: token.line, column: token.column });
-        if (this.current.type === 'string' || this.atValue('(')) {
+        if (this.current.type === 'string' || this.atValue('(') || (this.current.type === 'word' && (['+', '-', '[', '.'].includes(this.peekToken().value) || (this.peekToken().value === '(' && this.peekToken().offset === this.current.offset + this.current.value.length)) && !['narrator', 'none'].includes(this.current.value))) {
           textExpr = this.parseExpression();
         } else if (this.current.type === 'word') {
           const spkToken = this.current;
+          const block = this.peekContent().value === '{';
           this.take();
-          if (this.atLineEnd()) {
+          if (block) {
+            this.skipLines();
+            return this.parseSayBlock(token, { kind: 'literal', value: spkToken.value, line: spkToken.line, column: spkToken.column });
+          } else if (this.atLineEnd()) {
             textExpr = { kind: 'variable', name: spkToken.value, line: spkToken.line, column: spkToken.column };
           } else if (this.atValue('{')) {
             return this.parseSayBlock(token, { kind: 'literal', value: spkToken.value, line: spkToken.line, column: spkToken.column });
@@ -330,9 +357,9 @@ export class Parser {
       this.endLine();
       this.skipLines();
     }
-    this.take();
+    const closing = this.take();
     if (!lines.length) throw this.error('say ブロックには本文を1つ以上指定してください');
-    return { kind: 'sayBlock', speaker, lines, line: token.line, column: token.column };
+    return { kind: 'sayBlock', speaker, lines, line: token.line, column: token.column, endLine: closing.line };
   }
 
   private parseAssignable(): { kind: 'variable'; name: string; line?: number; column?: number } | { kind: 'index'; target: Expr; key: Expr; line?: number; column?: number } {
@@ -355,7 +382,12 @@ export class Parser {
     const args: Expr[] = [];
     while (!this.atLineEnd() && !this.atValue('}')) {
       const token = this.current;
-      if (token.type === 'word' && ['bg', 'bgm', 'char', 'show', 'hide', 'clear', 'play', 'effect'].includes(command)) {
+      if (command === 'show' && args.length === 0 && token.type === 'word' && this.peekToken().value === '.') {
+        this.take();
+        this.expect('.');
+        const pose = this.expectIdentifier('Expected character pose');
+        args.push({ kind: 'literal', value: `${token.value}.${pose}`, line: token.line, column: token.column });
+      } else if (token.type === 'word' && ['bg', 'bgm', 'char', 'show', 'hide', 'clear', 'play', 'effect'].includes(command)) {
         this.take();
         args.push({ kind: 'literal', value: token.value, line: token.line, column: token.column });
       } else {
@@ -561,7 +593,8 @@ export class Parser {
       this.endStatement(stmt);
       this.skipLines();
     }
-    this.take();
+    const closing = this.take();
+    this.lastBlockEndLine = closing.line;
     return body;
   }
 }

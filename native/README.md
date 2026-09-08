@@ -4,7 +4,7 @@
 検証済みの `.nsp.json` パッケージを使用します。
 
 ```powershell
-npm.cmd run pack -- Edit/scenes/main.tds build/main.nsp.json
+npm.cmd run pack -- Title/senario/main.tds build/main.nsp.json
 ```
 
 使用する主なライブラリ：
@@ -39,7 +39,7 @@ npm.cmd run native -- build/other.nsp.json
 古いビルドのDLLを新しい実行ファイルと混在させないでください。
 
 パッケージには遷移先ファイルのコンパイル結果も含まれます。
-素材はパッケージ横の `assets/` へコピーされます。
+素材はパッケージ横の `asset/` へコピーされます。
 整数は実行中も64bitで保持し、JSONで安全に表せない整数は
 `{"kind":"integer","value":"9007199254740993"}` の形式で渡します。
 既存パッケージは変更後の `npm.cmd run pack` で作り直してください。

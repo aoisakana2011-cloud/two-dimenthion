@@ -6,7 +6,7 @@ function url(type, name, pose) {
     const c = runtime.program?.characters?.find((x) => x.name === name);
     a = c?.poses?.find((x) => x.name === pose) || a;
   }
-  return a ? `/assets/${a.path.replace(/^assets[\\/]/, '').replaceAll('\\', '/')}` : name;
+  return a ? `/asset/${a.path.replace(/^assets?[\\/]/, '').replaceAll('\\', '/')}` : name;
 }
 
 async function media(type, name) {
@@ -66,17 +66,20 @@ async function applyEffect(type, color, ms = 500n) {
 async function command(c) {
   const a = c.args;
   const n = c.name;
-  const showChar = n === 'show' && a[0] === 'char';
+  const poseReference = n === 'show' && /^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(a[0]);
+  const canonicalShowChar = n === 'show' && a[1] === 'at' && a[3] === 'pose';
+  const showChar = n === 'show' && (a[0] === 'char' || canonicalShowChar || poseReference);
 
   if (n === 'bg') {
     const src = url('bg', a[0]);
     const preload = new Image(); preload.src = src; await preload.decode();
     $('background').style.backgroundImage = `url("${src}")`;
   } else if (n === 'char' || showChar) {
-    if (showChar) a.shift();
-    const charName = a[0];
-    const pos = a[1] || 'center';
-    const pose = a[2];
+    const offset = showChar && !canonicalShowChar ? 1 : 0;
+    const charName = poseReference ? poseReference[1] : a[offset];
+    const pos = poseReference ? a[1] : canonicalShowChar ? a[2] : a[offset + 1] || 'center';
+    const pose = poseReference ? poseReference[2] : canonicalShowChar ? a[4] : a[offset + 2];
+    const fadeOffset = poseReference ? 2 : canonicalShowChar ? 5 : offset + 3;
     const existing = $(`char-${charName}`);
     if (n === 'char' && !existing) {
       throw new Error(`キャラクター '${charName}' はまだ登場していません`);
@@ -86,11 +89,13 @@ async function command(c) {
     e.src = url('char', charName, pose);
     await e.decode();
     if (!e.parentNode) $('characters').append(e);
-    if (showChar && a[3] === 'fade') await fade(e, 0, 1, a[4]);
+    if (showChar && a[fadeOffset] === 'fade') await fade(e, 0, 1, a[fadeOffset + 1]);
   } else if (n === 'hide') {
-    const charName = a[0] === 'char' ? a[1] : a[0];
+    const legacy = a[0] === 'char';
+    const charName = legacy ? a[1] : a[0];
+    const fadeOffset = legacy ? 2 : 1;
     const e = $(`char-${charName}`);
-    if (e && a[2] === 'fade') await fade(e, 1, 0, a[3]);
+    if (e && a[fadeOffset] === 'fade') await fade(e, 1, 0, a[fadeOffset + 1]);
     e?.remove();
   } else if (n === 'clear') {
     const target = a[0];
@@ -138,7 +143,11 @@ const runtime = new NovelRuntime.Runtime({
   load: loadScene,
   async command(name, args, rt) {
     if (name === 'say') {
-      $('speaker').textContent = args[0] === 'none' ? '' : args[0];
+      let speaker = args[0] === 'none' ? '' : args[0];
+      if (speaker) {
+        try { speaker = rt.get(speaker)?.name || speaker; } catch {}
+      }
+      $('speaker').textContent = speaker;
       $('text').textContent = rt.text(args[1]);
       await new Promise(resolve => { $('next').onclick = () => { $('next').onclick = null; resolve(); }; });
     } else if (name === 'wait') {

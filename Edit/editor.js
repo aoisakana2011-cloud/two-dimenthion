@@ -1,4 +1,5 @@
 const editor = document.querySelector('#editor');
+const editorLineHeight = () => Number.parseFloat(getComputedStyle(editor).lineHeight) || 18.46;
 const sceneName = document.querySelector('#scene-name');
 const sceneList = document.querySelector('#scene-list');
 const result = document.querySelector('#result');
@@ -17,6 +18,9 @@ const editorTabs = document.querySelector('#editor-tabs');
 const documentActions = document.querySelector('.document-actions');
 document.querySelector('.topbar-right')?.prepend(documentActions);
 if (new URLSearchParams(location.search).get('embedded') === '1') document.documentElement.classList.add('embedded-editor');
+let currentProjectRoot = '';
+let pickerMode = 'open';
+let pickerPath = '';
 let catalog = {};
 let suggestions = [];
 let suggestionIndex = 0;
@@ -27,6 +31,7 @@ let suggestionRefreshId = 0;
 let validationTimer = null;
 let diagnosticText = '';
 let diagnostics = [];
+let fileInfoBase = '';
 let validationSequence = 0;
 let isDirty = false;
 let middleScroll = null;
@@ -37,6 +42,35 @@ let restoringHistory = false;
 const openTabs = [];
 const splitTabs = [];
 const fileLabel = (name) => String(name || '').replace(/[\\/]$/, '').split(/[\\/]/).pop();
+const valueTypeLabel = (type) => typeof type === 'string' ? type : type?.kind === 'struct' ? type.name || 'struct' : type?.kind === 'dict' ? `dict[${type.value}]` : type?.kind || '不明';
+const normalizedScenePath = (name) => String(name || '').replace(/^senario[\\/]/, '').replaceAll('\\', '/');
+const diagnosticForCurrentFile = (item) => !item.file || item.file === 'current' || normalizedScenePath(item.file) === normalizedScenePath(sceneName.value);
+const diagnosticLineRange = (item) => {
+  const start = Number(item.line) || 1;
+  const end = Math.max(start, Number(item.endLine) || start);
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+};
+const contiguousLineRanges = (lineNumbers, sourceLines = []) => {
+  const lines = [...new Set(lineNumbers)].sort((a, b) => a - b);
+  if (!lines.length) return [];
+  const ranges = [];
+  let start = lines[0], end = start;
+  for (const line of lines.slice(1)) {
+    const gapIsOnlySpacing = sourceLines.length && Array.from({ length: Math.max(0, line - end - 1) }, (_, index) => sourceLines[end + index]).every((text) => /^\s*(?:#.*|\/\/.*)?$/.test(text || ''));
+    if (line === end + 1 || gapIsOnlySpacing) end = line;
+    else { ranges.push({ start, end }); start = end = line; }
+  }
+  ranges.push({ start, end });
+  return ranges;
+};
+const lineRangeLabel = ({ start, end }) => start === end ? `${start} line` : `${start}-${end} line`;
+const unreachableSceneLines = (item, sourceLines) => {
+  const start = Math.max(1, Number(item.line) || 1);
+  const nextScene = sourceLines.findIndex((line, index) => index + 1 > start && /^\s*scene\s+[A-Za-z_][A-Za-z0-9_]*\s*\{/.test(line));
+  let end = nextScene < 0 ? sourceLines.length : nextScene;
+  while (end > start && /^\s*$/.test(sourceLines[end - 1] || '')) end--;
+  return Array.from({ length: Math.max(1, end - start + 1) }, (_, index) => start + index);
+};
 const variableTooltip = document.createElement('div');
 variableTooltip.className = 'variable-tooltip';
 variableTooltip.hidden = true;
@@ -110,7 +144,7 @@ function highlightSource(source) {
   }
 
   const significant = tokens.filter((token) => token.kind !== 'space' && token.kind !== 'comment');
-  const keywords = new Set(['scene', 'asset', 'character', 'struct', 'say', 'bg', 'bgm', 'char', 'show', 'hide', 'clear', 'play', 'wait', 'effect', 'const', 'set', 'unset', 'if', 'elif', 'else', 'and', 'or', 'not', 'for', 'from', 'to', 'step', 'while', 'choice', 'fn', 'return', 'goto', 'include']);
+  const keywords = new Set(['scene', 'asset', 'character', 'pose', 'struct', 'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'clear', 'play', 'wait', 'effect', 'const', 'set', 'unset', 'if', 'elif', 'else', 'and', 'or', 'not', 'for', 'from', 'to', 'step', 'while', 'choice', 'fn', 'return', 'goto', 'include']);
   const types = new Set(['int', 'str', 'none', 'dict']);
   const builtins = new Set(['narrator', 'left', 'center', 'right', 'fade', 'black', 'white', 'async', 'blocking', 'voice', 'video', 'image', 'se']);
   for (const token of significant) {
@@ -127,6 +161,7 @@ function highlightSource(source) {
   };
   wordAfter('scene', 'scene');
   wordAfter('character', 'asset');
+  wordAfter('pose', 'asset');
   wordAfter('fn', 'function');
   wordAfter('asset', 'keyword');
   const fnIndex = significant.findIndex((token) => token.kind === 'word' && token.value === 'fn');
@@ -161,7 +196,7 @@ function highlightSource(source) {
     if (token.value === ':' && significant[index + 1]?.kind === 'word' && types.has(significant[index + 1].value)) significant[index + 1].role = 'type';
   });
   const renderString = (token) => {
-    const value = escape(token.value).replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, '<span class="hl-interpolation">{$1}</span>');
+    const value = escape(token.value).replace(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\}/g, '<span class="hl-interpolation">{$1}</span>');
     return `<span class="hl-string${token.closed ? '' : ' hl-invalid'}">${value}</span>`;
   };
   return tokens.map((token) => {
@@ -176,7 +211,7 @@ function highlightSource(source) {
 }
 function updateHighlight() { if (!highlight) return; highlight.innerHTML = highlightSource(editor.value); }
 
-const KEYWORDS = ['scene', 'asset', 'character', 'struct', 'int', 'str', 'dict', 'const', 'say', 'bg', 'bgm', 'char', 'show', 'hide', 'clear', 'play', 'wait', 'effect', 'set', 'unset', 'if', 'elif', 'else', 'and', 'or', 'not', 'for', 'while', 'choice', 'fn', 'return', 'goto', 'include'];
+const KEYWORDS = ['scene', 'asset', 'character', 'pose', 'struct', 'int', 'str', 'dict', 'const', 'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'clear', 'play', 'wait', 'effect', 'set', 'unset', 'if', 'elif', 'else', 'and', 'or', 'not', 'for', 'while', 'choice', 'fn', 'return', 'goto', 'include'];
 
 function setStatus(message, kind = '') {
   if (kind !== 'error') document.querySelector('#runtime-error')?.remove();
@@ -231,7 +266,7 @@ async function refreshScenes(selected = '') {
     [...node.folders.entries()].sort().forEach(([name, child]) => {
       const folder = document.createElement('div'); folder.className = 'scene-folder'; folder.style.paddingLeft = `${depth * 14}px`; folder.textContent = `› ${name}`; parent.append(folder);
       const contents = document.createElement('div'); contents.className = 'scene-folder-contents'; parent.append(contents);
-      folder.onclick = () => { contents.hidden = !contents.hidden; folder.textContent = `${contents.hidden ? '›' : '⌄'} ${name}`; };
+      folder.onclick = () => { contents.hidden = !contents.hidden; if (folder.firstChild) folder.firstChild.nodeValue = `${contents.hidden ? '›' : '⌄'} ${name}`; };
       draw(child, contents, depth + 1);
     });
     node.files.sort((a, b) => a.name.localeCompare(b.name, 'ja')).forEach((file) => {
@@ -243,15 +278,22 @@ async function refreshScenes(selected = '') {
 }
 
 async function refreshFiles() {
-  const { files } = await request('/api/files');
-  const visible = files.filter((file) => /^scenes\//.test(file.path)).map((file) => ({ ...file, displayPath: file.path.replace(/^scenes\//, '') }));
+  const { files, title, projectRoot } = await request('/api/files');
+  if (projectRoot) currentProjectRoot = projectRoot;
+  document.querySelector('#project-title')?.replaceChildren(document.createTextNode(title || 'EXPLORER'));
+  const pathNote = document.querySelector('#project-path');
+  if (pathNote) {
+    pathNote.title = currentProjectRoot || '';
+    pathNote.replaceChildren(Object.assign(document.createElement('span'), { className: 'folder-icon', textContent: '▱' }), document.createTextNode(` ${currentProjectRoot || '作品フォルダー'}`));
+  }
+  const visible = files.map((file) => ({ ...file, displayPath: file.path }));
   const root = { folders: new Map(), files: [] };
   for (const file of visible) { const parts = file.displayPath.split('/'); let node = root; parts.forEach((part, index) => { if (index === parts.length - 1) { if (file.directory) { if (!node.folders.has(part)) node.folders.set(part, { folders: new Map(), files: [] }); } else node.files.push({ name: part, path: file.path }); } else { if (!node.folders.has(part)) node.folders.set(part, { folders: new Map(), files: [] }); node = node.folders.get(part); } }); }
   const expandedFolders = new Set([...fileTree.querySelectorAll('.scene-folder')].filter((folder) => folder.nextElementSibling && !folder.nextElementSibling.hidden).map((folder) => folder.textContent.replace(/[›⌄+]/g, '').trim()));
   fileTree.replaceChildren();
   const drawFile = (node, parent, depth = 0, folderPath = '') => {
     [...node.folders].sort().forEach(([name, child]) => {
-      const folder = document.createElement('div'); folder.className = 'scene-folder'; folder.style.paddingLeft = `${depth * 14}px`; folder.textContent = `› ${name}`; const path = folderPath ? `${folderPath}/${name}` : name; const contents = document.createElement('div'); contents.className = 'scene-folder-contents'; contents.hidden = true; folder.onclick = () => { contents.hidden = !contents.hidden; folder.textContent = `${contents.hidden ? '›' : '⌄'} ${name}`; }; folder.oncontextmenu = (event) => { event.preventDefault(); addSceneInUi(path).catch(showError); }; parent.append(folder, contents); drawFile(child, contents, depth + 1, path);
+      const folder = document.createElement('div'); folder.className = 'scene-folder'; folder.style.paddingLeft = `${depth * 14}px`; folder.textContent = `› ${name}`; const path = folderPath ? `${folderPath}/${name}` : name; const contents = document.createElement('div'); contents.className = 'scene-folder-contents'; contents.hidden = true; folder.onclick = () => { contents.hidden = !contents.hidden; if (folder.firstChild) folder.firstChild.nodeValue = `${contents.hidden ? '›' : '⌄'} ${name}`; }; folder.dataset.path = path; folder.oncontextmenu = (event) => { event.preventDefault(); if (/^senario(?:\/|$)/.test(path)) addSceneInUi(path).catch(showError); }; parent.append(folder, contents); drawFile(child, contents, depth + 1, path);
     });
     node.files.sort((a, b) => a.name.localeCompare(b.name, 'ja')).forEach((file) => {
       const item = document.createElement('div');
@@ -266,14 +308,15 @@ async function refreshFiles() {
         event.preventDefault();
         showFileInfo(file.path).catch(showError);
       };
-      if (/\.(tds|txt)$/i.test(file.path)) {
+      if (/^senario\/.*\.(tds|txt)$/i.test(file.path)) {
         openButton.title = 'クリック: 左で開く / Shift+クリック: 右へ移動';
         openButton.onclick = (event) => {
-          const name = file.path.replace(/^scenes\//, '');
+          const name = file.path.replace(/^senario\//, '');
           if (event.shiftKey) moveTabToRight(name).catch(showError);
           else openScene(name).catch(showError);
         };
       }
+      if (file.path.startsWith('asset/')) { openButton.title = '?????'; openButton.onclick = () => window.open('/' + file.path.split('/').map(encodeURIComponent).join('/'), '_blank', 'noopener'); }
       item.append(openButton);
       parent.append(item);
     });
@@ -301,7 +344,7 @@ async function refreshFiles() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path }),
         });
-        await forgetDeletedScene(path.replace(/^scenes\//, ''));
+        await forgetDeletedScene(path.replace(/^senario\//, ''));
         await refreshFiles();
         await refreshScenes();
       }
@@ -309,13 +352,14 @@ async function refreshFiles() {
     item.append(button);
   });
   fileTree.querySelectorAll('.scene-folder').forEach((folder) => {
+    if (!/^senario(?:\/|$)/.test(folder.dataset.path || '')) return;
     const button = document.createElement('button');
     button.className = 'tree-action';
     button.textContent = '+';
     button.title = 'ファイル追加';
     button.onclick = (event) => {
       event.stopPropagation();
-      const name = folder.textContent.replace(/^\S+\s*/, '').replace('+', '').trim();
+      const name = folder.dataset.path;
       addSceneInUi(name).catch(showError);
     };
     folder.append(button);
@@ -323,20 +367,37 @@ async function refreshFiles() {
 }
 
 async function showFileInfo(path) {
+  path = normalizedScenePath(path);
   const graph = await request('/api/scene-graph');
   const node = graph.nodes.find((item) => item.id === path);
-  const targets = graph.edges.filter((edge) => edge.from === path).map((edge) => edge.to);
-  const variables = (node?.variables || []).map((variable) => {
+  if (node?.error) {
+    if (normalizedScenePath(sceneName.value) === path) { fileInfoBase = '構文エラー'; fileInfo.textContent = fileInfoBase; }
+    return;
+  }
+  let targets = graph.edges.filter((edge) => edge.from === path).map((edge) => edge.to);
+  let variables = (node?.variables || []).map((variable) => {
     const definitions = (variable.definitions || []).length;
     const references = (variable.references || []).length;
-    return `${variable.name}: ${variable.type} (定義${definitions} / 参照${references})`;
+    const counts = definitions || references ? `（定義${definitions} / 参照${references}）` : '';
+    return `${variable.name}: ${valueTypeLabel(variable.type)}${counts}`;
   });
-  fileInfo.textContent = `goto: ${targets.length ? targets.join(', ') : 'なし'} / 変数: ${variables.length ? variables.join(', ') : 'なし'}`;
+  if ((!node || node.error) && fileInfo) {
+    try {
+      const scene = await request(`/api/scene?name=${encodeURIComponent(path)}`);
+      const source = String(scene.source || '');
+      targets = [...source.matchAll(/^\s*goto\s+(?:"([^"]+)"|([^\s]+))/gmi)].map((m) => m[1] || m[2]);
+      variables = [...source.matchAll(/^\s*(?:const\s+)?(int|str|dict)\s+([A-Za-z_][A-Za-z0-9_]*)/gmi)].map((m) => `${m[2]}: ${m[1]}`);
+    } catch { /* keep empty information */ }
+  }
+  const reachability = node?.reachable === false ? ' / 開始ファイルから到達不能' : '';
+  const text = `goto: ${targets.length ? targets.join(', ') : 'なし'} / 変数: ${variables.length ? variables.join(', ') : 'なし'}${reachability}`;
+  if (normalizedScenePath(sceneName.value) === path) { fileInfoBase = text; fileInfo.textContent = text; }
 }
 async function addSceneInUi(folder) {
+  folder = String(folder || '').replace(/^senario(?:\/|$)/, '');
   const name = await uiPrompt(`${folder} に追加するシーン名`, '');
   if (!name) return;
-  const path = `${folder}/${name.replace(/^\/+/, '')}`;
+  const path = [folder, name.replace(/^\/+/, '')].filter(Boolean).join('/');
   await request('/api/scene', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: path, source: `# ${path}\n` }) });
   await refreshFiles();
   await refreshScenes();
@@ -385,7 +446,7 @@ function completionContext() {
   if ((line.split('"').length - 1) % 2) return null;
 
   let start = end;
-  while (start > lineStart && !/[\s{}"=:><!+\-]/.test(source[start - 1])) start--;
+  while (start > lineStart && !/[\s{}"=:><!+\-.]/.test(source[start - 1])) start--;
   const prefix = source.slice(start, end);
   const words = source.slice(lineStart, start).trim().split(/\s+/).filter(Boolean);
   return { start, end, prefix, words, line };
@@ -411,7 +472,7 @@ function candidatesFor(context) {
   for (const m of editor.value.matchAll(/\bcharacter\s+([A-Za-z][A-Za-z0-9_-]*)\s*\{([^}]*)\}/g)) {
     const cName = m[1];
     if (!charDefs.has(cName)) charDefs.set(cName, new Set());
-    for (const pm of m[2].matchAll(/([A-Za-z][A-Za-z0-9_-]*)\s*=/g)) {
+    for (const pm of m[2].matchAll(/\bpose\s+([A-Za-z][A-Za-z0-9_-]*)\s*=/g)) {
       charDefs.get(cName).add(pm[1]);
     }
   }
@@ -439,12 +500,33 @@ function candidatesFor(context) {
     const plays = projectAssets.filter((a) => a.type === args[0]).map((a) => a.name);
     return [...new Set([...plays, ...(catalog[args[0]] || [])])];
   }
-  if (command === 'show' && args.length === 0) return ['char', 'image'];
+  if (command === 'show' && args.length === 0) return [...new Set([...charDefs.keys(), 'image'])];
+  if (command === 'show' && args.length === 1 && args[0].endsWith('.')) {
+    const poses = charDefs.get(args[0].slice(0, -1));
+    return poses && poses.size ? [...poses] : ['normal', 'smile', 'sad', 'angry'];
+  }
+  if (command === 'show' && args.length === 1 && args[0].includes('.')) return ['left', 'center', 'right'];
+  if (command === 'show' && args.length === 2 && args[0].includes('.')) return ['fade'];
+  if (command === 'show' && args[0] !== 'image' && args[0] !== 'char') {
+    if (args.length === 1) return ['at'];
+    if (args.length === 2) return ['left', 'center', 'right'];
+    if (args.length === 3) return ['pose'];
+    if (args.length === 4) {
+      const poses = charDefs.get(args[0]);
+      return poses && poses.size ? [...poses] : ['normal', 'smile', 'sad', 'angry'];
+    }
+    if (args.length === 5) return ['fade'];
+  }
   if (command === 'show' && args[0] === 'image' && args.length === 1) {
     const imgs = projectAssets.filter((a) => a.type === 'image').map((a) => a.name);
     return [...new Set([...imgs, ...(catalog.image || [])])];
   }
-  if (command === 'clear' || command === 'hide') return ['bg', 'bgm', 'char', 'image'];
+  if (command === 'hide') {
+    if (args.length === 0) return [...charDefs.keys()];
+    if (args.length === 1 && args[0] !== 'char') return ['fade'];
+    return args[0] === 'char' ? [...charDefs.keys()] : [];
+  }
+  if (command === 'clear') return ['bg', 'bgm', 'char', 'image'];
   if (command === 'goto') {
     const localScenes = [...editor.value.matchAll(/^\s*scene\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/gm)].map(match => match[1]);
     return [...new Set([...localScenes, ...sceneNames])];
@@ -500,7 +582,7 @@ async function updateSuggestions() {
   const line = editor.value.slice(0, editor.selectionStart).split('\n').length - 1;
   const column = editor.selectionStart - lineStart;
   suggestionBox.style.left = `${78 + column * 8.4}px`;
-  suggestionBox.style.top = `${21 + line * 23.8 - editor.scrollTop + 25}px`;
+  suggestionBox.style.top = `${21 + line * editorLineHeight() - editor.scrollTop + 25}px`;
   renderSuggestions();
 }
 
@@ -511,7 +593,7 @@ function hideVariableTooltip() {
 function showVariableTooltipLegacy(event) {
   const rect = editor.getBoundingClientRect();
   const style = getComputedStyle(editor);
-  const lineHeight = Number.parseFloat(style.lineHeight) || 23.8;
+  const lineHeight = Number.parseFloat(style.lineHeight) || editorLineHeight();
   const paddingLeft = Number.parseFloat(style.paddingLeft) || 25;
   const paddingTop = Number.parseFloat(style.paddingTop) || 21;
   const canvas = document.createElement('canvas');
@@ -536,7 +618,7 @@ function showVariableTooltipLegacy(event) {
     }
     const title = document.createElement('strong');
     title.className = 'variable-tooltip-title';
-    title.textContent = `${variable.name} : ${typeof variable.type === 'string' ? variable.type : `dict[${variable.type.value}]`}`;
+    title.textContent = `${variable.name} : ${valueTypeLabel(variable.type)}`;
     variableTooltip.append(title);
     const locationLine = (label, locations, kind) => {
       const lineElement = document.createElement('div');
@@ -564,7 +646,7 @@ function showVariableTooltipLegacy(event) {
 function showVariableTooltip(event) {
   const rect = editor.getBoundingClientRect();
   const style = getComputedStyle(editor);
-  const lineHeight = Number.parseFloat(style.lineHeight) || 23.8;
+  const lineHeight = Number.parseFloat(style.lineHeight) || editorLineHeight();
   const paddingLeft = Number.parseFloat(style.paddingLeft) || 25;
   const paddingTop = Number.parseFloat(style.paddingTop) || 21;
   const canvas = document.createElement('canvas');
@@ -583,20 +665,8 @@ function showVariableTooltip(event) {
   variableTooltip.replaceChildren();
   const title = document.createElement('strong');
   title.className = 'variable-tooltip-title';
-  title.textContent = `${variable.name} : ${typeof variable.type === 'string' ? variable.type : `dict[${variable.type.value}]`}`;
+  title.textContent = `${variable.name} : ${valueTypeLabel(variable.type)}`;
   variableTooltip.append(title);
-  const jumpToLocation = async (location) => {
-    const file = String(location.file || sceneName.value).replace(/^scenes[\\/]/, '');
-    await openScene(file);
-    const line = Math.max(1, Number(location.line) || 1);
-    const column = Math.max(0, Number(location.column) - 1 || 0);
-    const lineStart = editor.value.split(/\r?\n/).slice(0, line - 1).reduce((total, value) => total + value.length + 1, 0);
-    const caret = Math.min(editor.value.length, lineStart + column);
-    editor.focus();
-    editor.setSelectionRange(caret, caret);
-    editor.scrollTop = Math.max(0, (line - 1) * (Number.parseFloat(getComputedStyle(editor).lineHeight) || 23.8) - 70);
-    hideVariableTooltip();
-  };
   const addLocations = (label, locations) => {
     const heading = document.createElement('div');
     heading.className = 'variable-tooltip-heading';
@@ -633,7 +703,7 @@ function showVariableTooltip(event) {
 function showSyntaxTooltip(event) {
   const rect = editor.getBoundingClientRect();
   const style = getComputedStyle(editor);
-  const lineHeight = Number.parseFloat(style.lineHeight) || 23.8;
+  const lineHeight = Number.parseFloat(style.lineHeight) || editorLineHeight();
   const paddingLeft = Number.parseFloat(style.paddingLeft) || 25;
   const paddingTop = Number.parseFloat(style.paddingTop) || 21;
   const canvas = document.createElement('canvas');
@@ -690,7 +760,8 @@ function acceptSuggestion() {
   const source = editor.value;
   const following = source.slice(completionRange.end, completionRange.end + 1);
   const speakerCompletion = completionRange.words[0] === 'say' && completionRange.words.length === 1;
-  const insertion = speakerCompletion ? `${candidate} ""` : `${completionRange.insertLeadingSpace ? ' ' : ''}${candidate}${following && /\s/.test(following) ? '' : ' '}`;
+  const showCharacterCompletion = completionRange.words[0] === 'show' && completionRange.words.length === 1 && candidate !== 'image' && candidate !== 'char';
+  const insertion = speakerCompletion ? `${candidate} ""` : showCharacterCompletion ? `${candidate}.` : `${completionRange.insertLeadingSpace ? ' ' : ''}${candidate}${following && /\s/.test(following) ? '' : ' '}`;
   rememberUndo();
   editor.value = `${source.slice(0, completionRange.start)}${insertion}${source.slice(completionRange.end)}`;
   const caret = completionRange.start + (speakerCompletion ? candidate.length + 2 : insertion.length);
@@ -704,7 +775,7 @@ function acceptSuggestion() {
 async function openScene(name) {
   if (sceneName?.value && sceneName.value !== name && isDirty) await saveScene();
   const scene = await request(`/api/scene?name=${encodeURIComponent(name)}`);
-  localStorage.setItem('novel-editor-last-scene', scene.name);
+  localStorage.setItem(lastSceneKey(), scene.name);
   if (!openTabs.includes(scene.name)) openTabs.push(scene.name);
   sceneName.value = scene.name;
   editor.value = scene.source;
@@ -715,7 +786,38 @@ async function openScene(name) {
   result.textContent = '';
   setStatus(`${scene.name} を開きました`, 'ok');
   renderEditorTabs(scene.name);
+  showFileInfo(scene.name).catch(() => {});
   scheduleValidation();
+}
+
+async function jumpToLocation(location) {
+  const requestedFile = String(location.file || sceneName.value);
+  const file = requestedFile === 'current' ? sceneName.value : requestedFile.replace(/^senario[\\/]/, '');
+  if (file && normalizedScenePath(file) !== normalizedScenePath(sceneName.value)) await openScene(file);
+  const line = Math.max(1, Number(location.line) || 1);
+  const column = Math.max(0, Number(location.column) - 1 || 0);
+  const lineStart = editor.value.split(/\r?\n/).slice(0, line - 1).reduce((total, value) => total + value.length + 1, 0);
+  const caret = Math.min(editor.value.length, lineStart + column);
+  editor.focus();
+  editor.setSelectionRange(caret, caret);
+  editor.scrollTop = Math.max(0, (line - 1) * editorLineHeight() - 70);
+  hideVariableTooltip();
+}
+
+function renderDiagnosticResult(summary, entries) {
+  const heading = document.createElement('div');
+  heading.className = 'diagnostic-summary';
+  heading.textContent = summary;
+  result.replaceChildren(heading);
+  for (const entry of entries) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `diagnostic-link diagnostic-${entry.severity}`;
+    button.textContent = entry.text;
+    button.title = 'クリックして該当行へ移動';
+    button.addEventListener('click', () => jumpToLocation(entry.location).catch(showError));
+    result.append(button);
+  }
 }
 
 function renderEditorTabs(activeName = sceneName?.value) {
@@ -865,15 +967,18 @@ window.novelEditorApi = {
   scene: () => sceneName.value,
 };
 
-async function validate() {
+async function validate(providedReport = null) {
   const sequence = ++validationSequence;
-  setStatus('構文を検証中…');
-  const report = await request('/api/validate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: sceneName.value, source: editor.value }),
-  });
-  if (sequence !== validationSequence) return;
+  let report = providedReport;
+  if (!report) {
+    setStatus('構文を検証中…');
+    report = await request('/api/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: sceneName.value, source: editor.value }),
+    });
+    if (sequence !== validationSequence) return;
+  }
   diagnostics = Array.isArray(report.diagnostics) ? report.diagnostics : [];
   if (!diagnostics.length && !report.ok) {
     const message = String(report.error || '構文エラー');
@@ -883,17 +988,69 @@ async function validate() {
     const column = Number(message.match(/column\s+(\d+)/i)?.[1] || 1);
     diagnostics = [{ severity: 'error', code: 'error', line, column, message }];
   }
-  diagnosticText = diagnostics.map((item) => `${item.severity.toUpperCase()} ${item.code}  line ${item.line}:${item.column}  ${item.message}`).join('\n');
+  const sourceLines = editor.value.split(/\r?\n/);
+  const unreachableSceneSpans = diagnostics
+    .filter(diagnosticForCurrentFile)
+    .filter((item) => item.code === 'unreachable-scene')
+    .map((item) => unreachableSceneLines(item, sourceLines));
+  const displayedDiagnostics = [];
+  const unreachableGroups = new Map();
+  diagnostics.forEach((item, index) => {
+    if (String(item.code || '').startsWith('unreachable')) {
+      const lines = item.code === 'unreachable-scene' && diagnosticForCurrentFile(item)
+        ? unreachableSceneLines(item, sourceLines)
+        : diagnosticLineRange(item);
+      if (item.code !== 'unreachable-scene' && diagnosticForCurrentFile(item)
+        && unreachableSceneSpans.some((span) => lines.every((line) => line >= span[0] && line <= span.at(-1)))) return;
+      const key = JSON.stringify([item.severity, item.code, item.file || 'current', item.message]);
+      const group = unreachableGroups.get(key) || { item, lines: [], index };
+      group.lines.push(...lines);
+      unreachableGroups.set(key, group);
+      return;
+    }
+    displayedDiagnostics.push({
+      line: Number(item.line) || 1,
+      index,
+      severity: item.severity,
+      location: item,
+      text: `${item.severity.toUpperCase()} ${item.code}  ${diagnosticForCurrentFile(item) ? '' : `${item.file} `}line ${item.line}:${item.column}  ${item.message}`,
+    });
+  });
+  for (const group of unreachableGroups.values()) {
+    const groupSourceLines = diagnosticForCurrentFile(group.item) ? sourceLines : [];
+    for (const range of contiguousLineRanges(group.lines, groupSourceLines)) {
+      const item = group.item;
+      displayedDiagnostics.push({
+        line: range.start,
+        index: group.index,
+        severity: item.severity,
+        location: { ...item, line: range.start },
+        text: `${item.severity.toUpperCase()} ${item.code}  ${diagnosticForCurrentFile(item) ? '' : `${item.file} `}${lineRangeLabel(range)}  ${item.message}`,
+      });
+    }
+  }
+  diagnosticText = displayedDiagnostics.sort((left, right) => left.line - right.line || left.index - right.index).map((item) => item.text).join('\n');
   updateHighlight();
+  if (fileInfo) fileInfo.textContent = fileInfoBase;
+  const unreachableLines = [...unreachableGroups.values()].filter((group) => diagnosticForCurrentFile(group.item)).flatMap((group) => group.lines);
+  if (fileInfo && unreachableLines.length) {
+    const ranges = contiguousLineRanges(unreachableLines, sourceLines).map(lineRangeLabel);
+    fileInfo.textContent += `\n到達不能\n${ranges.join('\n')}`;
+  }
   if (report.ok) {
-    const warningCount = diagnostics.filter((item) => item.severity === 'warning').length;
-    const infoCount = diagnostics.filter((item) => item.severity === 'info').length;
-    result.textContent = warningCount || infoCount
-      ? `解析完了: エラー 0 / 警告 ${warningCount} / 情報 ${infoCount}\n${diagnosticText}`
-      : `問題ありません。\n文: ${report.statements}\nコンパイル命令: ${report.instructions}`;
-    setStatus(warningCount ? `警告が ${warningCount} 件あります` : '検証に成功しました', warningCount ? 'warning' : 'ok');
+    const warningCount = displayedDiagnostics.filter((item) => item.severity === 'warning').length;
+    const infoCount = displayedDiagnostics.filter((item) => item.severity === 'info').length;
+    const summary = report.build
+      ? `コンパイル完了: 全 ${report.fileCount} ファイル / エラー 0 / 警告 ${warningCount} / 情報 ${infoCount}`
+      : `解析完了: エラー 0 / 警告 ${warningCount} / 情報 ${infoCount}`;
+    if (warningCount || infoCount) renderDiagnosticResult(summary, displayedDiagnostics);
+    else if (report.build) result.textContent = `${summary}\n${report.name}\n${report.path}`;
+    else result.textContent = `問題ありません。\n文: ${report.statements}\nコンパイル命令: ${report.instructions}`;
+    if (report.build) setStatus(`${report.fileCount} ファイル精査完了 / ${report.name} を生成しました`, warningCount ? 'warning' : 'ok');
+    else setStatus(warningCount ? `警告が ${warningCount} 件あります` : '検証に成功しました', warningCount ? 'warning' : 'ok');
   } else {
-    result.textContent = `解析エラー ${diagnostics.filter((item) => item.severity === 'error').length} 件\n${diagnosticText}`;
+    const errorCount = diagnostics.filter((item) => item.severity === 'error').length;
+    renderDiagnosticResult(report.build ? `コンパイル失敗: 全 ${report.fileCount} ファイル中 ${errorCount} 件` : `解析エラー ${errorCount} 件`, displayedDiagnostics);
     setStatus('修正が必要な問題があります', 'error');
   }
 }
@@ -927,7 +1084,22 @@ saveAllButton.addEventListener('click', () => {
     saveAllButton.textContent = 'すべて保存';
   });
 });
-document.querySelector('#validate').addEventListener('click', () => validate().catch(showError));
+const compileButton = document.querySelector('#validate');
+compileButton.addEventListener('click', () => (async () => {
+  compileButton.disabled = true;
+  compileButton.textContent = 'コンパイル中…';
+  setStatus('全ファイルを精査してネイティブビルド中…');
+  await saveAllScenes();
+  const report = await request('/api/project-build', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: sceneName.value }),
+  });
+  await validate(report);
+})().catch(showError).finally(() => {
+  compileButton.disabled = false;
+  compileButton.textContent = 'コンパイル';
+}));
 const splitGroup = document.querySelector('#split-group');
 const splitFrame = document.querySelector('#split-frame');
 const splitTabsElement = document.querySelector('#split-tabs');
@@ -937,7 +1109,7 @@ let activeSplitScene = '';
 function gotoAtEvent(event) {
   const rect = editor.getBoundingClientRect();
   const style = getComputedStyle(editor);
-  const lineHeight = Number.parseFloat(style.lineHeight) || 23.8;
+  const lineHeight = Number.parseFloat(style.lineHeight) || editorLineHeight();
   const paddingTop = Number.parseFloat(style.paddingTop) || 21;
   const lineIndex = Math.floor((event.clientY - rect.top + editor.scrollTop - paddingTop) / lineHeight);
   const sourceLine = editor.value.split(/\r?\n/)[lineIndex] || '';
@@ -1102,23 +1274,6 @@ splitResizer?.addEventListener('keydown', (event) => {
   const current = Number(splitResizer.getAttribute('aria-valuenow') || 50);
   setSplitWidth(current + (event.key === 'ArrowLeft' ? -5 : 5));
 });
-const nativeBuildButton = document.createElement('button');
-nativeBuildButton.id = 'native-build';
-nativeBuildButton.className = 'native-build-button';
-nativeBuildButton.textContent = 'NATIVE BUILD';
-nativeBuildButton.title = 'nativeプレイヤー用パッケージを書き出す';
-document.querySelector('.document-actions')?.append(nativeBuildButton);
-nativeBuildButton.addEventListener('click', () => (async () => {
-  nativeBuildButton.disabled = true;
-  setStatus('nativeパッケージを生成中…');
-  await saveScene();
-  const built = await request('/api/native-build', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: sceneName.value }),
-  });
-  setStatus(`${built.name} を build/native-packages に保存しました`, 'ok');
-})().catch(showError).finally(() => { nativeBuildButton.disabled = false; }));
 document.querySelector('#play').addEventListener('click', () => (async () => {
   await saveScene();
   window.location.href = `/player.html?source=${encodeURIComponent(sceneName.value)}`;
@@ -1380,6 +1535,23 @@ editor.addEventListener('keydown', (event) => {
 });
 editor.addEventListener('click', updateSuggestions);
 
+function lastSceneKey() { return currentProjectRoot ? `novel-editor-last-scene:${currentProjectRoot}` : 'novel-editor-last-scene'; }
+function uiAsk(message, confirmLabel = 'OK') {
+  return new Promise((resolve) => {
+    const box = document.createElement('div');
+    box.className = 'editor-dialog';
+    const label = document.createElement('div');
+    label.textContent = message;
+    const yes = document.createElement('button');
+    yes.textContent = confirmLabel;
+    const no = document.createElement('button');
+    no.textContent = 'キャンセル';
+    box.append(label, yes, no);
+    document.body.append(box);
+    yes.onclick = () => { box.remove(); resolve(true); };
+    no.onclick = () => { box.remove(); resolve(false); };
+  });
+}
 function uiConfirm(message) { return new Promise((resolve) => { const box = document.createElement('div'); box.className = 'editor-dialog'; box.textContent = message; const yes = document.createElement('button'); yes.textContent = '削除'; const no = document.createElement('button'); no.textContent = 'キャンセル'; box.append(yes, no); document.body.append(box); yes.onclick = () => { box.remove(); resolve(true); }; no.onclick = () => { box.remove(); resolve(false); }; }); }
 function showError(error) {
   displayRuntimeError(error);
@@ -1391,14 +1563,156 @@ function displayRuntimeError(error) { const message = error?.message || String(e
 function uiPrompt(message, initial = '') { return new Promise((resolve) => { const box = document.createElement('div'); box.className = 'editor-dialog'; const label = document.createElement('div'); label.textContent = message; const input = document.createElement('input'); input.value = initial; const ok = document.createElement('button'); ok.textContent = '決定'; const cancel = document.createElement('button'); cancel.textContent = 'キャンセル'; box.append(label, input, ok, cancel); document.body.append(box); input.focus(); ok.onclick = () => { box.remove(); resolve(input.value); }; cancel.onclick = () => { box.remove(); resolve(''); }; input.addEventListener('keydown', (event) => { if (event.key === 'Enter') ok.click(); if (event.key === 'Escape') cancel.click(); }); }); }
 window.addEventListener('error', (event) => displayRuntimeError(event.error || event.message));
 window.addEventListener('unhandledrejection', (event) => displayRuntimeError(event.reason));
-Promise.all([refreshScenes(), refreshCatalog(), refreshSceneGraph()])
-  .then(() => setStatus('編集を開始できます', 'ok'))
+async function loadWorkspace(keepScene = false) {
+  await Promise.all([refreshScenes(), refreshCatalog(), refreshSceneGraph()]);
+  if (keepScene) return;
+  openTabs.length = 0;
+  splitTabs.length = 0;
+  closeSplit(true);
+  clearLeftEditor();
+  renderEditorTabs('');
+  renderSplitTabs();
+  const selected = new URLSearchParams(location.search).get('scene');
+  const remembered = localStorage.getItem(lastSceneKey());
+  const candidate = selected || remembered;
+  if (candidate && sceneNames.includes(candidate)) await openScene(candidate);
+  else if (sceneNames.length) await openScene(sceneNames[0]);
+}
+
+async function postProjectOpen(folder, create) {
+  const response = await fetch('/api/project/open', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: folder, create }),
+  });
+  const data = await response.json();
+  return { ok: response.ok, status: response.status, data };
+}
+
+async function applyOpenedProject(info) {
+  currentProjectRoot = info.projectRoot || '';
+  hideProjectPicker();
+  await loadWorkspace(false);
+  setStatus(`${info.title || '作品'} を開きました`, 'ok');
+}
+
+async function openProjectAt(folder, create = false) {
+  if (isDirty && !(await uiAsk('未保存の変更があります。作品フォルダーを切り替えますか？', '切り替える'))) return;
+  const result = await postProjectOpen(folder, create);
+  if (result.status === 409 && result.data.needsCreate) {
+    if (!await uiAsk(`${result.data.projectRoot}\nはまだ作品フォルダーではありません。ここに新規作品を作成しますか？`, '作成する')) return;
+    const created = await postProjectOpen(result.data.projectRoot, true);
+    if (!created.ok) throw new Error(created.data.error || '作品を作成できませんでした。');
+    await applyOpenedProject(created.data);
+    return;
+  }
+  if (!result.ok) throw new Error(result.data.error || '作品フォルダーを開けませんでした。');
+  await applyOpenedProject(result.data);
+}
+
+function hideProjectPicker() {
+  document.querySelector('#project-picker')?.setAttribute('hidden', '');
+}
+
+async function renderProjectPicker(target = pickerPath) {
+  const list = document.querySelector('#project-picker-list');
+  const pathInput = document.querySelector('#project-picker-path');
+  const recentBox = document.querySelector('#project-picker-recent');
+  const title = document.querySelector('#project-picker-title');
+  if (!list || !pathInput) return;
+  title.textContent = pickerMode === 'create' ? '新しい作品フォルダー' : '作品フォルダーを開く';
+  const browse = await request(`/api/browse?path=${encodeURIComponent(target || '')}`);
+  const project = await request('/api/project');
+  pickerPath = browse.path || '';
+  pathInput.value = pickerPath;
+  list.replaceChildren();
+  if (browse.parent !== null) {
+    const up = document.createElement('button');
+    up.type = 'button';
+    up.className = 'project-picker-item';
+    up.textContent = '… 上のフォルダー';
+    up.onclick = () => renderProjectPicker(browse.parent).catch(showError);
+    list.append(up);
+  }
+  for (const entry of browse.entries || []) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'project-picker-item';
+    item.textContent = `${entry.shortcut ? '☆ ' : '📁 '}${entry.name}`;
+    item.title = entry.path;
+    item.onclick = () => renderProjectPicker(entry.path).catch(showError);
+    item.ondblclick = () => (pickerMode === 'create' ? renderProjectPicker(entry.path) : openProjectAt(entry.path, false)).catch(showError);
+    list.append(item);
+  }
+  recentBox.replaceChildren();
+  for (const folder of project.recent || []) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = folder;
+    button.title = folder;
+    button.onclick = () => openProjectAt(folder, false).catch(showError);
+    recentBox.append(button);
+  }
+}
+
+async function showProjectPicker(mode = 'open') {
+  pickerMode = mode;
+  const overlay = document.querySelector('#project-picker');
+  if (!overlay) return;
+  overlay.hidden = false;
+  await renderProjectPicker(currentProjectRoot || pickerPath);
+  document.querySelector('#project-picker-path')?.focus();
+}
+
+document.querySelector('#open-project')?.addEventListener('click', () => showProjectPicker('open').catch(showError));
+document.querySelector('#new-project')?.addEventListener('click', () => showProjectPicker('create').catch(showError));
+document.querySelector('#project-picker-close')?.addEventListener('click', hideProjectPicker);
+document.querySelector('#project-picker-up')?.addEventListener('click', async () => {
+  const browse = await request(`/api/browse?path=${encodeURIComponent(pickerPath || '')}`);
+  await renderProjectPicker(browse.parent ?? '');
+});
+document.querySelector('#project-picker-go')?.addEventListener('click', () => {
+  renderProjectPicker(document.querySelector('#project-picker-path')?.value || '').catch(showError);
+});
+document.querySelector('#project-picker-path')?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') renderProjectPicker(event.currentTarget.value || '').catch(showError);
+});
+document.querySelector('#project-picker-open')?.addEventListener('click', () => {
+  const folder = document.querySelector('#project-picker-path')?.value || pickerPath;
+  openProjectAt(folder, false).catch(showError);
+});
+document.querySelector('#project-picker-create')?.addEventListener('click', async () => {
+  const parent = document.querySelector('#project-picker-path')?.value || pickerPath;
+  const name = (await uiPrompt('新しい作品フォルダー名', 'gamesenario')).trim();
+  if (!name) return;
+  const folder = `${parent.replace(/[\\/]+$/, '')}/${name}`;
+  openProjectAt(folder, true).catch(showError);
+});
+document.querySelector('#project-picker')?.addEventListener('click', (event) => {
+  if (event.target.id === 'project-picker') hideProjectPicker();
+});
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !document.querySelector('#project-picker')?.hidden) {
+    event.preventDefault();
+    hideProjectPicker();
+  }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o' && !event.shiftKey && !document.documentElement.classList.contains('embedded-editor')) {
+    event.preventDefault();
+    showProjectPicker('open').catch(showError);
+  }
+});
+
+Promise.all([request('/api/project'), loadWorkspace(true)])
+  .then(([project]) => {
+    currentProjectRoot = project.projectRoot || '';
+    setStatus('編集を開始できます', 'ok');
+  })
   .catch(showError);
 updateLineNumbers();
 updateHighlight();
 const selectedScene = new URLSearchParams(location.search).get('scene');
 setTimeout(() => {
-  const remembered = localStorage.getItem('novel-editor-last-scene');
+  const remembered = localStorage.getItem(lastSceneKey());
   const candidate = selectedScene || remembered;
   if (candidate && sceneNames.includes(candidate)) openScene(candidate).catch(showError);
   else if (sceneNames.length) openScene(sceneNames[0]).catch(showError);
@@ -1407,24 +1721,55 @@ function updateMiniMap() {
   if (!minimap || !minimapContent || !minimapViewport) return;
   const lines = editor.value.split('\n');
   minimapContent.innerHTML = lines.map((line) => highlightSource(line) || ' ').join('\n');
-  const miniLineHeight = minimap.clientHeight / Math.max(1, lines.length);
+  // Keep short files packed at the top. When there are too many lines,
+  // scale the minimap text down until every line fits in the available height.
+  const baseLineHeight = 4;
+  const availableHeight = Math.max(1, minimap.clientHeight);
+  const miniLineHeight = Math.min(baseLineHeight, availableHeight / Math.max(1, lines.length));
   minimapContent.style.top = '0px';
-  minimapContent.style.lineHeight = `${Math.max(2, miniLineHeight)}px`;
-  minimapContent.style.fontSize = `${Math.max(2, Math.min(4, miniLineHeight * 0.72))}px`;
-  minimapContent.style.minHeight = `${minimap.clientHeight}px`;
+  minimapContent.style.lineHeight = `${Math.max(1, miniLineHeight)}px`;
+  minimapContent.style.fontSize = `${Math.max(1, Math.min(3, miniLineHeight * 0.72))}px`;
+  minimapContent.style.minHeight = '0px';
   const max = Math.max(1, editor.scrollHeight - editor.clientHeight);
   const ratio = editor.clientHeight / Math.max(editor.scrollHeight, editor.clientHeight);
   const height = Math.max(24, minimap.clientHeight * ratio);
   minimapViewport.style.height = `${height}px`;
   minimapViewport.style.top = `${(editor.scrollTop / max) * Math.max(0, minimap.clientHeight - height)}px`;
 }
-function updateHighlight() { if (!highlight) return; const byLine = new Map(); for (const item of diagnostics) { const line = Number(item.line) || 1; const previous = byLine.get(line); if (!previous || ({error:3,warning:2,info:1}[item.severity] || 0) > ({error:3,warning:2,info:1}[previous.severity] || 0)) byLine.set(line, item); } highlight.innerHTML = editor.value.split('\n').map((line, index) => { const item = byLine.get(index + 1); const kind = item ? ` hl-${item.severity}` : ''; return `<span class="hl-line${kind}">${highlightSource(line) || ' '}</span>`; }).join('\n'); updateMiniMap(); }
+function updateHighlight() {
+  if (!highlight) return;
+  const lines = editor.value.split('\n');
+  const visible = diagnostics.filter(diagnosticForCurrentFile);
+  const byLine = new Map();
+  const unreachableLines = new Set();
+  for (const item of visible) {
+    const line = Number(item.line) || 1;
+    const previous = byLine.get(line);
+    if (!previous || ({ error: 3, warning: 2, info: 1 }[item.severity] || 0) > ({ error: 3, warning: 2, info: 1 }[previous.severity] || 0)) byLine.set(line, item);
+    if (String(item.code || '').startsWith('unreachable')) diagnosticLineRange(item).forEach((value) => unreachableLines.add(value));
+  }
+  for (const item of visible.filter((entry) => entry.code === 'unreachable-scene')) {
+    const start = Math.max(0, Number(item.line) - 1);
+    const next = lines.findIndex((line, index) => index > start && /^\s*scene\s+[A-Za-z_][A-Za-z0-9_]*\s*\{/.test(line));
+    const end = next < 0 ? lines.length : next;
+    for (let index = start; index < end; index += 1) unreachableLines.add(index + 1);
+  }
+  highlight.innerHTML = lines.map((line, index) => {
+    const lineNumber = index + 1;
+    const item = byLine.get(lineNumber);
+    const classes = ['hl-line'];
+    if (item) classes.push(`hl-${item.severity}`);
+    if (unreachableLines.has(lineNumber)) classes.push('hl-unreachable');
+    return `<span class="${classes.join(' ')}">${highlightSource(line) || ' '}</span>`;
+  }).join('\n');
+  updateMiniMap();
+}
 const dirtyStyle=document.createElement('style');dirtyStyle.textContent='.dirty-mark{display:none!important;background:transparent!important;width:auto!important;height:auto!important}.dirty-mark.visible{display:inline-block!important}.dirty-mark.visible:after{content:"•";color:#fff;font-size:13px;margin-left:4px}.document-title input{width:120px}.scene-file.file-dirty:after{position:static;margin-left:5px;color:#fff;font-size:13px}';document.head.append(dirtyStyle);
 const thinDiagnosticStyle=document.createElement('style');thinDiagnosticStyle.textContent='.hl-error,.hl-warning,.hl-info{text-decoration-line:underline;text-decoration-style:wavy;text-decoration-thickness:1px!important;background:transparent!important}.hl-error{text-decoration-color:#e85b68!important}.hl-warning{text-decoration-color:#e3b35c!important}.hl-info{text-decoration-color:#6aa9d8!important}.status-chip.warning .status-dot{background:#e3b35c}';document.head.append(thinDiagnosticStyle);
-highlight?.addEventListener('mouseover', (event) => { const line = event.target.closest('.hl-error,.hl-warning,.hl-info'); if (line) { const lineNumber = [...highlight.children].indexOf(line) + 1; line.title = diagnostics.filter((item) => Number(item.line) === lineNumber).map((item) => `${item.severity}: ${item.message}`).join('\n'); } });
+highlight?.addEventListener('mouseover', (event) => { const line = event.target.closest('.hl-error,.hl-warning,.hl-info'); if (line) { const lineNumber = [...highlight.children].indexOf(line) + 1; line.title = diagnostics.filter(diagnosticForCurrentFile).filter((item) => Number(item.line) === lineNumber).map((item) => `${item.severity}: ${item.message}`).join('\n'); } });
 const syntaxHints = {
   asset: 'asset <種類> <名前> = "パス"',
-  character: 'character <名前> { pose = "画像パス" }',
+  character: 'character <名前> {\n  name = "表示名"\n  affection = 0\n  pose normal = "画像パス"\n}',
   struct: 'struct <名前> { field: int | str }',
   int: 'int <名前> = <整数>',
   str: 'str <名前> = "文字列"',
@@ -1433,7 +1778,7 @@ const syntaxHints = {
   set: 'set <既存の変数> = <値>',
   say: 'say [話者] "本文"  または  say [話者] { "本文1" "本文2" }',
   bg: 'bg <背景アセット>', bgm: 'bgm <BGMアセット>', se: 'play se <SEアセット>',
-  char: 'char <名前> <位置> <ポーズ>', show: 'show char|image ...', hide: 'hide char <名前>',
+  char: 'char <名前> <位置> <ポーズ>（旧形式）', show: 'show <名前>.<ポーズ> <位置> [fade <ミリ秒>]', hide: 'hide <名前> [fade <ミリ秒>]',
   if: 'if <条件> { ... } else { ... }', elif: 'elif <条件> { ... }', else: 'else { ... }',
   for: 'for <変数> from <開始> to <終了> [step <幅>] { ... }',
   while: 'while <条件> { ... }', choice: 'choice "質問" { "選択肢" { ... } }',
@@ -1441,14 +1786,14 @@ const syntaxHints = {
   wait: 'wait <ミリ秒>', effect: 'effect fade <色> [ミリ秒]', play: 'play <種類> <アセット>'
 };
 editor.addEventListener('mousemove', (event) => {
-  const line = Math.floor((event.offsetY - 21) / 23.8) + 1;
-  const errorText = diagnostics.filter((item) => Number(item.line) === line).map((item) => `${item.severity}: ${item.message}`).join('\n');
+  const line = Math.floor((event.offsetY - 21) / editorLineHeight()) + 1;
+  const errorText = diagnostics.filter(diagnosticForCurrentFile).filter((item) => Number(item.line) === line).map((item) => `${item.severity}: ${item.message}`).join('\n');
   if (errorText) { editor.title = errorText; return; }
   editor.title = '';
 });
 window.addEventListener('pagehide', () => { if (!isDirty || !sceneName.value) return; fetch('/api/scene', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: sceneName.value, source: editor.value }), keepalive: true }).catch(() => {}); });
 const fileDirtyStyle=document.createElement('style');fileDirtyStyle.textContent='.scene-file{position:relative;padding-right:22px}.scene-file.file-dirty:after{content:"•";position:absolute;top:50%;right:8px;transform:translateY(calc(-50% + 1px));color:#fff;font-size:16px;line-height:1}';document.head.append(fileDirtyStyle);
-const highlightSpacingStyle=document.createElement('style');highlightSpacingStyle.textContent='#highlight{font-size:0}.hl-line{font-size:14px}';document.head.append(highlightSpacingStyle);
+const highlightSpacingStyle=document.createElement('style');highlightSpacingStyle.textContent='#highlight{font-size:var(--editor-font-size);line-height:var(--editor-line-height)}.hl-line{font-size:var(--editor-font-size);line-height:var(--editor-line-height)}';document.head.append(highlightSpacingStyle);
 const explorerOnlyDirtyStyle=document.createElement('style');explorerOnlyDirtyStyle.textContent='.document-title .dirty-mark{display:none!important}';document.head.append(explorerOnlyDirtyStyle);
 function isChoiceOptionClose(source, lineStart) { const before = source.slice(0, lineStart); const choiceStart = before.lastIndexOf('choice '); if (choiceStart < 0) return false; const part = before.slice(choiceStart); const depth = (part.match(/\{/g) || []).length - (part.match(/\}/g) || []).length; return depth === 2; }
 const indentGuideStyle=document.createElement('style');indentGuideStyle.textContent='#highlight{background-image:repeating-linear-gradient(to right,transparent 0,transparent 27px,rgba(150,170,190,.24) 27px,rgba(150,170,190,.24) 28px);background-position:25px 0;background-size:28px 100%;background-repeat:repeat-y}';document.head.append(indentGuideStyle);

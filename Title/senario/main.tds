@@ -1,22 +1,10 @@
-# Twilight Letter - サンプルノベルゲーム
-
-asset bg school = "assets/bg/school.jpg"
-asset bg night = "assets/bg/night.jpg"
-asset bgm morning = "assets/bgm/morning.ogg"
-asset bgm calm = "assets/bgm/calm.ogg"
-asset se door = "assets/se/door.wav"
-
-character ayase {
-  normal = "assets/char/ayase/normal.png"
-  smile = "assets/char/ayase/smile.png"
-  sad = "assets/char/ayase/sad.png"
-}
-
 struct Player {
   name: str
   affection: int
 }
-
+character ayase {
+  name = "ayase"
+}
 str title = "夕暮れの手紙"
 int day = 1
 int flags = 0
@@ -35,11 +23,6 @@ fn ending_text() -> str {
 }
 
 scene main {
-  bg school
-  bgm morning
-  show char ayase center normal
-  play se door
-
   say ayase {
     "おはよう。"
     "今日も来てくれたんだね。"
@@ -62,13 +45,11 @@ scene main {
   }
 
   if flags == 1 and player.affection > 0 {
-    char ayase center smile
     say ayase "少し安心したよ。"
     add_affection(1)
   } elif day > 1 {
     say narrator "昨日の記憶がふとよみがえった。"
   } else {
-    char ayase center sad
     say ayase "無理をさせちゃったかな。"
   }
 
@@ -89,9 +70,6 @@ scene main {
 }
 
 scene evening {
-  bg night
-  bgm calm
-  show char ayase center smile
   say ayase "夕暮れの空、きれいだね。"
 
   if player.affection >= 3 {

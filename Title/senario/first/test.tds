@@ -1,5 +1,8 @@
 # first/test
 say narrator "hello"
 include functions.tds
+fn a(b: int) -> int{
+  return b
+}
 int e = a(1)
 say narrator "{e}"

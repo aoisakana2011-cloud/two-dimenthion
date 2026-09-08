@@ -1,0 +1,95 @@
+{
+  "loop": {
+    "source": "int x = 0\nint hits = 0\nwhile x < 3 {\nif x == 0 { set hits = hits + 1 }\nset x = x + 1\n}"
+  },
+  "condition_effect": {
+    "source": "int x = 0\nint result = 0\nfn change() -> int { set x = 1\nreturn 1 }\nif change() == 1 { if x == 0 { set result = 99 } else { set result = 1 } }"
+  },
+  "argument_effect": {
+    "source": "int x = 0\nint result = 0\nfn change() -> int { set x = 1\nreturn 1 }\nfn consume(n: int) -> none { }\nconsume(change())\nif x == 0 { set result = 99 } else { set result = 1 }"
+  },
+  "dictionary_alias": {
+    "source": "dict[int] a = {\"x\": 1}\ndict[int] b = a\nset b[\"x\"] = 2\nint result = a[\"x\"]"
+  },
+  "dictionary_parameter": {
+    "source": "dict[int] a = {\"x\": 1}\nfn mutate(d: dict[int]) -> none { set d[\"x\"] = 2 }\nmutate(a)\nint result = a[\"x\"]"
+  },
+  "dictionary_mixed": {
+    "source": "dict[str] a = {\"x\": 1, \"y\": \"s\"}\nstr result = a[\"x\"]"
+  },
+  "dictionary_empty": {
+    "source": "dict[str] a = {}"
+  },
+  "dictionary_side_effect": {
+    "source": "dict[int] d = {\"x\": 0, \"y\": 0}\nfn change() -> int { set d[\"y\"] = 9\nreturn 1 }\nset d[\"x\"] = change()"
+  },
+  "const_unset": {
+    "source": "const dict[int] d = {\"x\": 1}\nunset d[\"x\"]"
+  },
+  "const_alias": {
+    "source": "const dict[int] a = {\"x\": 1}\ndict[int] b = a\nset b[\"x\"] = 2"
+  },
+  "const_branch": {
+    "source": "fn f(n: int) -> int {\nif n == 1 { const int x = 1 } else { const int x = 2 }\nset x = 3\nreturn x\n}\nint result = f(1)"
+  },
+  "reachable_return": {
+    "source": "fn f(n: int) -> int {\nif n == 1 { return 1 } else { int x = 2 }\nreturn x\n}\nint result = f(0)"
+  },
+  "recursion_say": {
+    "source": "fn f() -> str {\nsay { f() }\nreturn \"x\"\n}"
+  },
+  "conversion": {
+    "source": "int result = int(\"+-1\")"
+  },
+  "newline_character": {
+    "source": "character hero\n{\nname = \"Hero\"\n}"
+  },
+  "newline_struct": {
+    "source": "struct User\n{\nname: str\n}"
+  },
+  "finite_while_return": {
+    "source": "fn f() -> int {\nint x = 0\nwhile x < 1 { set x = x + 1 }\n}\nint result = f()"
+  },
+  "say_expression": {
+    "source": "str message = \"hello\"\nsay message + \"!\""
+  },
+  "goto_hyphen": {
+    "source": "goto chapter-1.tds"
+  },
+  "struct_return": {
+    "source": "struct User {\nname: str\n}\nfn f(u: User) -> User { return u }\nUser a = {\"name\": \"A\"}\nUser b = f(a)"
+  },
+  "const_shadow": {
+    "source": "const int x = 1\nfn f(x: int) -> int { set x = 2\nreturn x }\nint result = f(0)"
+  },
+  "include_global": {
+    "files": {
+      "main.tds": "include common.tds\nsay narrator str(x)",
+      "common.tds": "int x = 1"
+    }
+  },
+  "include_order": {
+    "files": {
+      "main.tds": "include common.tds\nint result = f()",
+      "common.tds": "int x = 1\nfn f() -> int { return x }"
+    }
+  },
+  "init_call": {
+    "files": {
+      "main.tds": "int result = f()\nfn f() -> int { return x }\ngoto next.tds",
+      "next.tds": "int x = 1"
+    }
+  },
+  "init_after_goto": {
+    "files": {
+      "main.tds": "goto next.tds\nint x = 1",
+      "next.tds": "say narrator str(x)"
+    }
+  },
+  "external_const": {
+    "files": {
+      "main.tds": "const int x = 1\ngoto next.tds",
+      "next.tds": "set x = 2"
+    }
+  }
+}

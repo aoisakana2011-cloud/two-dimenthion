@@ -4,10 +4,10 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { parse, compile } = require('../dist');
+const { parse, compile, analyzeScript, sceneReachability } = require('../dist');
 const { Runtime } = require('../Edit/runtime');
 const { pack } = require('../tools/pack');
-const { compileProject } = require('../tools/project');
+const { compileProject, resolveProjectScript } = require('../tools/project');
 const program = source => JSON.parse(JSON.stringify(compile(parse(source))));
 async function run(source, host = {}) {
   const rt = new Runtime({ command: async () => {}, choice: async () => 0, ...host });
@@ -81,6 +81,18 @@ test('dictionary interpolation uses the same JSON representation as the native r
   const rt = await run('dict[int] values = { "one": 1 }');
   assert.equal(rt.text('{values}'), '{"one":1}');
 });
+test('character fields persist as runtime state and support dotted interpolation', async () => {
+  const rt = await run(`
+    character ayase {
+      name = "綾瀬"
+      affection = 0
+      pose smile = "assets/char/ayase/smile.png"
+    }
+    set ayase.affection = ayase.affection + 2
+  `);
+  assert.deepEqual({ ...rt.get('ayase') }, { name: '綾瀬', affection: 2n });
+  assert.equal(rt.text('{ayase.name}: {ayase.affection}'), '綾瀬: 2');
+});
 test('choice errors reject the run and restore scope', async () => {
   const rt = new Runtime({ choice: async () => 0 });
   await assert.rejects(rt.run(program('choice {\n"bad" {\nint x = 1 / 0\n}\n}')), /除算/);
@@ -97,7 +109,7 @@ test('file transfers work without scene declarations and preserve global state',
 test('compiler rejects unknown commands, recursion in arguments and invalid pose paths', () => {
   assert.throws(() => program('nonsense'), /未知/);
   assert.throws(() => program('fn id(x: int) -> int { return x }\nfn f() -> int { return id(f()) }'), /再帰/);
-  assert.throws(() => program('character hero {\nnormal = "C:/outside.exe"\n}'), /パス|拡張子/);
+  assert.throws(() => program('character hero {\nname = "Hero"\npose normal = "C:/outside.exe"\n}'), /パス|拡張子/);
   assert.throws(() => program('clear char'), /引数/);
 });
 
@@ -112,7 +124,9 @@ test('metadata binds identical names to their own scopes', () => {
   assert.deepEqual(param.references.map(r => r.container), ['f']);
 });
 test('flow validation rejects disconnected files and accepts local bindings', () => {
-  const { validateGraph } = require('../Edit/server');
+  const { validateGraph, collectSyntaxDiagnostics } = require('../Edit/server');
+  const syntaxErrors = collectSyntaxDiagnostics('say narrator "unterminated\nwait (\nsay narrator "valid"', 'broken.tds');
+  assert.deepEqual(syntaxErrors.map((item) => item.line), [1, 2]);
   const nodes = [{ id: 'a.tds', variables: [] }, { id: 'b.tds', variables: [] }];
   assert.equal(validateGraph({ nodes, edges: [] }, 'a.tds', 'b.tds').ok, false);
   nodes[0].variables = [{ name: 'x', definitions: [{ scope: 'function' }], references: [{ scope: 'function' }] }];
@@ -125,6 +139,30 @@ test('flow validation rejects disconnected files and accepts local bindings', ()
     { id: 'next.tds', variables: [{ name: 'late', scope: 'global', definitions: [], references: [{ scope: 'global', line: 1 }] }] },
   ];
   assert.equal(validateGraph({ nodes: forward, edges: [{ from: 'start.tds', to: 'next.tds' }] }, 'start.tds', 'next.tds').ok, false);
+  const bounded = [{ id: 'start.tds', variables: [] }, { id: 'end.tds', variables: [] }, { id: 'after.tds', error: true, variables: [] }];
+  const boundedResult = validateGraph({ nodes: bounded, edges: [{ from: 'start.tds', to: 'end.tds' }, { from: 'end.tds', to: 'after.tds' }] }, 'start.tds', 'end.tds');
+  assert.equal(boundedResult.ok, true);
+  assert.deepEqual(boundedResult.path, ['start.tds', 'end.tds']);
+  assert.deepEqual(boundedResult.checked, ['start.tds', 'end.tds']);
+});
+
+test('scene graph reachability excludes outgoing gotos from dead code and dead scenes', () => {
+  const afterTransfer = sceneReachability(parse('scene start { goto live\n goto dead.tds }\nscene live { wait 1 }'));
+  assert.equal(afterTransfer.externalGotos.has('dead.tds'), false);
+  const deadScene = sceneReachability(parse('scene start { wait 1 }\nscene unused { goto dead.tds }'));
+  assert.equal(deadScene.externalGotos.has('dead.tds'), false);
+  const falseLoop = sceneReachability(parse('scene start { while 1 == 2 { goto dead.tds } }'));
+  assert.equal(falseLoop.externalGotos.has('dead.tds'), false);
+});
+
+test('include diagnostics retain the included source file', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-location-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.writeFile(path.join(dir, 'child.tds'), 'scene hidden {\n  wait 1\n}');
+  const script = await resolveProjectScript('include child.tds\nscene start { wait 1 }', dir);
+  const diagnostic = analyzeScript(script).find((item) => item.code === 'unreachable-scene' && /hidden/.test(item.message));
+  assert.equal(diagnostic.file, 'child.tds');
+  assert.equal(diagnostic.line, 1);
 });
 test('package includes external scenes, validates assets and remains JSON serializable', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-regression-'));
@@ -132,11 +170,15 @@ test('package includes external scenes, validates assets and remains JSON serial
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const scenesRoot = path.join(dir, 'scenes'), assetsRoot = path.join(dir, 'assets');
   await fs.mkdir(scenesRoot); await fs.mkdir(assetsRoot);
-  await fs.writeFile(path.join(scenesRoot, 'main.tds'), 'int route = 7\ngoto "next.tds"');
-  await fs.writeFile(path.join(scenesRoot, 'next.tds'), 'say narrator str(route)\nint a = 9007199254740993');
+  await fs.writeFile(path.join(assetsRoot, 'hero.png'), 'placeholder');
+  await fs.writeFile(path.join(scenesRoot, 'main.tds'), 'character hero {\nname = "Hero"\npose normal = "assets/hero.png"\n}\nint route = 7\ngoto "next.tds"');
+  await fs.writeFile(path.join(scenesRoot, 'next.tds'), 'show hero.normal center\nsay narrator str(route)\nint a = 9007199254740993');
+  await fs.writeFile(path.join(scenesRoot, 'unused.tds'), 'say narrator "compiled even when unreachable"');
   const data = await pack(path.join(scenesRoot, 'main.tds'), path.join(dir, 'out/game.json'), { scenesRoot, assetsRoot });
+  assert.ok(data.files['unused.tds']);
+  assert.equal(data.files['next.tds'].characters.find((character) => character.name === 'hero').poses[0].path, 'assets/hero.png');
   assert.equal(data.files['next.tds'].globals.find((entry) => entry.name === 'a').initial.value, '9007199254740993');
-  assert.equal(data.files['next.tds'].globals[0].args[1].name, 'str');
+  assert.equal(data.files['next.tds'].globals.find((entry) => entry.name === 'say').args[1].name, 'str');
   await assert.rejects(compileProject('asset bg x = "missing.png"', assetsRoot, scenesRoot), /アセット/);
   await fs.writeFile(path.join(scenesRoot, 'broken-main.tds'), 'str text = str(later)\ngoto "broken-next.tds"');
   await fs.writeFile(path.join(scenesRoot, 'broken-next.tds'), 'int later = 1');

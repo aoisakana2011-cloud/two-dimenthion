@@ -1,4 +1,4 @@
-import { Asset, Character, Expr, FunctionDef, Script, Statement, ValueType } from '../parser';
+import { Asset, Character, Expr, ExternalCharacter, FunctionDef, Script, Statement, ValueType } from '../parser';
 import { assertAnalyzed } from '../checker/analyzer';
 
 export type CompiledExpr =
@@ -30,7 +30,8 @@ export interface CompiledCondition { expression: CompiledExpr; }
 export interface CompiledScene { name: string; instructions: Instruction[]; }
 export interface VariableLocation { file?: string; line?: number; column?: number; scope: 'global' | 'function' | 'scene' | 'local'; container: string; kind?: 'definition' | 'expression' | 'interpolation' | 'assignment'; }
 export interface VariableEntry { name: string; type: ValueType; scope: 'global' | 'function' | 'scene' | 'local'; definedIn: string; definitions: VariableLocation[]; references: VariableLocation[]; mutable: boolean; }
-export interface CompiledProgram { version: 2; assets: Asset[]; characters: Character[]; globals: Instruction[]; functions: Instruction[]; scenes: CompiledScene[]; variables: VariableEntry[]; }
+export type CompiledCharacter = Omit<Character, 'properties'> & { external?: boolean };
+export interface CompiledProgram { version: 2; assets: Asset[]; characters: CompiledCharacter[]; globals: Instruction[]; functions: Instruction[]; scenes: CompiledScene[]; variables: VariableEntry[]; }
 export class CompileError extends Error {}
 
 type ConstantValue = bigint | string | boolean;
@@ -88,7 +89,7 @@ function functionWrites(functions: Instruction[], globalNames: Set<string>): Map
   const walk = (instructions: Instruction[], writes: Set<string>, invoked: Set<string>): void => {
     for (const instruction of instructions) {
       if ((instruction.op === 'set' || instruction.op === 'unset') && instruction.target.kind === 'load' && globalNames.has(instruction.target.name)) writes.add(instruction.target.name);
-      if (instruction.op === 'call') invoked.add(instruction.name);
+      if (instruction.op === 'call') { invoked.add(instruction.name); instruction.args.forEach((argument) => visitExpressionCalls(argument, (name) => invoked.add(name))); }
       if (instruction.op === 'declare') visitExpressionCalls(instruction.initial, (name) => invoked.add(name));
       if (instruction.op === 'set') { visitExpressionCalls(instruction.target, (name) => invoked.add(name)); visitExpressionCalls(instruction.value, (name) => invoked.add(name)); }
       if (instruction.op === 'unset') visitExpressionCalls(instruction.target, (name) => invoked.add(name));
@@ -132,7 +133,8 @@ function optimizeInstructions(instructions: Instruction[], effects: Map<string, 
   const invalidateAssigned = (items: Instruction[]): void => {
     for (const item of items) {
       if ((item.op === 'set' || item.op === 'unset') && item.target.kind === 'load') constants.delete(item.target.name);
-      if (item.op === 'call') invalidateCall(item.name);
+      if (item.op === 'call') { invalidateCall(item.name); item.args.forEach(invalidateExpression); }
+      if (item.op === 'declare') constants.delete(item.name);
       if (item.op === 'declare') invalidateExpression(item.initial);
       if (item.op === 'set') { invalidateExpression(item.target); invalidateExpression(item.value); }
       if (item.op === 'unset') invalidateExpression(item.target);
@@ -170,11 +172,14 @@ function optimizeInstructions(instructions: Instruction[], effects: Map<string, 
       continue;
     }
     if (instruction.op === 'call') {
+      instruction.args.forEach(invalidateExpression);
       invalidateCall(instruction.name);
       output.push(instruction);
       continue;
     }
     if (instruction.op === 'if') {
+      invalidateExpression(instruction.condition);
+      instruction.elseIf.forEach((branch) => invalidateExpression(branch.condition));
       const first = constantValue(instruction.condition, constants);
       if (first === true) {
         output.push(...optimizeInstructions(instruction.body, effects, constants));
@@ -206,13 +211,16 @@ function optimizeInstructions(instructions: Instruction[], effects: Map<string, 
       continue;
     }
     if (instruction.op === 'for' || instruction.op === 'while') {
-      output.push({ ...instruction, body: optimizeInstructions(instruction.body, effects, new Map(constants)) });
       if (instruction.op === 'for') { invalidateExpression(instruction.start); invalidateExpression(instruction.stop); invalidateExpression(instruction.step); }
       else invalidateExpression(instruction.condition);
       invalidateAssigned(instruction.body);
+      const loopConstants = new Map(constants);
+      if (instruction.op === 'for') loopConstants.delete(instruction.name);
+      output.push({ ...instruction, body: optimizeInstructions(instruction.body, effects, loopConstants) });
       continue;
     }
     if (instruction.op === 'choice') {
+      invalidateExpression(instruction.prompt); instruction.options.forEach((option) => invalidateExpression(option.label));
       output.push({ ...instruction, options: instruction.options.map((option) => ({ ...option, body: optimizeInstructions(option.body, effects, new Map(constants)) })) });
       instruction.options.forEach((option) => invalidateAssigned(option.body));
       invalidateExpression(instruction.prompt); instruction.options.forEach((option) => invalidateExpression(option.label));
@@ -226,22 +234,39 @@ function optimizeInstructions(instructions: Instruction[], effects: Map<string, 
   return output;
 }
 
-export function compile(script: Script, externalGlobals = new Map<string, ValueType>(), externalCharacters = new Map<string, Set<string>>()): CompiledProgram {
+const characterTypeName = (name: string) => `character:${name}`;
+function characterDeclarations(script: Script): Statement[] {
+  return script.characters.map((character) => ({
+    kind: 'declare', name: character.name, type: { kind: 'struct', name: characterTypeName(character.name) },
+    initial: { kind: 'dict', entries: character.properties.map((property) => ({ key: property.name, value: property.value })) },
+    line: character.line, column: character.column,
+  }));
+}
+
+export function compile(script: Script, externalGlobals = new Map<string, ValueType>(), externalCharacters = new Map<string, Set<string> | ExternalCharacter>()): CompiledProgram {
   assertAnalyzed(script, 'current', externalGlobals, externalCharacters);
   const compiler = new Compiler();
-  const variables = compiler.variables(script, externalGlobals);
-  const rawGlobals = compiler.statements(script.globals);
+  const implicitCharacterGlobals = characterDeclarations(script);
+  const runtimeScript = { ...script, globals: [...implicitCharacterGlobals, ...script.globals] };
+  const metadataGlobals = new Map(externalGlobals);
+  for (const name of externalCharacters.keys()) metadataGlobals.set(name, { kind: 'struct', name: characterTypeName(name) });
+  const variables = compiler.variables(runtimeScript, metadataGlobals);
+  const rawGlobals = compiler.statements(runtimeScript.globals);
   const rawFunctions = script.functions.map((fn) => compiler.function(fn));
-  const effects = functionWrites(rawFunctions, new Set(script.globals.filter((statement) => statement.kind === 'declare').map((statement) => statement.name)));
+  const effects = functionWrites(rawFunctions, new Set([...externalGlobals.keys(), ...runtimeScript.globals.filter((statement) => statement.kind === 'declare').map((statement) => statement.name)]));
   const globals = optimizeInstructions(rawGlobals, effects);
   const functions = rawFunctions.map((instruction) => instruction.op === 'function'
     ? { ...instruction, body: optimizeInstructions(instruction.body, effects) }
     : instruction);
+  const externalCharacterDefinitions = [...externalCharacters.values()]
+    .filter((character): character is ExternalCharacter => !(character instanceof Set))
+    .flatMap((character) => character.definition ? [character.definition] : [])
+    .map(({ properties: _properties, ...character }) => ({ ...character, external: true }));
 
   return {
     version: 2,
     assets: script.assets,
-    characters: script.characters,
+    characters: [...externalCharacterDefinitions, ...script.characters.map(({ properties: _properties, ...character }) => character)],
     globals,
     functions,
     scenes: script.scenes.map((scene) => ({ name: scene.name, instructions: optimizeInstructions(compiler.statements(scene.body), effects) })),
@@ -265,7 +290,7 @@ class Compiler {
     };
     const ref = (e: Expr, bindings: Bindings, loc: VariableLocation): void => {
       if (e.kind === 'variable') bindings.get(e.name)?.references.push({ ...loc, line: e.line, column: e.column, kind: loc.kind || 'expression' });
-      if (e.kind === 'literal' && typeof e.value === 'string') for (const m of e.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) bindings.get(m[1])?.references.push({ ...loc, line: e.line, column: e.column, kind: 'interpolation' });
+      if (e.kind === 'literal' && typeof e.value === 'string') for (const m of e.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\}/g)) bindings.get(m[1].split('.')[0])?.references.push({ ...loc, line: e.line, column: e.column, kind: 'interpolation' });
       if (e.kind === 'binary') { ref(e.left, bindings, loc); ref(e.right, bindings, loc); }
       if (e.kind === 'unary') ref(e.value, bindings, loc);
       if (e.kind === 'index') { ref(e.target, bindings, loc); ref(e.key, bindings, loc); }

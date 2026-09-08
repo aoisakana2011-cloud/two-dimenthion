@@ -24,8 +24,14 @@ asset se flac = "tone.flac"
 asset se vorbis = "tone.ogg"
 asset se mpthree = "tone.mp3"
 asset video clip = "clip.mp4"
-character hero { normal = "pixel.png" }
-character friend { normal = "pixel.png" }
+character hero {
+  name = "Hero"
+  pose normal = "pixel.png"
+}
+character friend {
+  name = "Friend"
+  pose normal = "pixel.png"
+}
 int x = 9007199254740993
 bg room
 bgm music
@@ -41,12 +47,12 @@ clear image webp
 clear image gif
 show image first left
 show image second right
-show char hero left normal fade 10
-show char friend right normal
+show hero.normal left fade 10
+show friend.normal right
 char hero center normal
 clear image first
 clear char friend
-hide char hero fade 10
+hide hero fade 10
 effect fade white 10
 play video clip blocking
 play video clip async

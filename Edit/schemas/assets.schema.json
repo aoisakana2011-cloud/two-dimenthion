@@ -12,7 +12,7 @@
           "type": { "enum": ["bg", "char", "bgm", "se", "voice", "image", "video"] },
           "name": { "type": "string" },
           "pose": { "type": "string" },
-          "path": { "type": "string", "pattern": "^assets/" },
+          "path": { "type": "string", "pattern": "^asset/" },
           "definedIn": { "type": "string" }
         }
       }

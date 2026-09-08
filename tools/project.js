@@ -37,11 +37,11 @@ async function validateProgram(program, assetsRoot, scenesRoot) {
   const errors = [];
   const assetEntries = [
     ...program.assets.map((asset) => ({ path: asset.path, line: asset.line, column: asset.column })),
-    ...program.characters.flatMap((character) => character.poses.map((pose) => ({ path: pose.path, line: character.line, column: character.column }))),
+    ...program.characters.filter((character) => !character.external).flatMap((character) => character.poses.map((pose) => ({ path: pose.path, line: pose.line || character.line, column: pose.column || character.column }))),
   ];
   for (const entry of assetEntries) {
     const asset = entry.path;
-    try { await inside(assetsRoot, asset.replace(/^assets[\\/]/, '')); }
+    try { await inside(assetsRoot, asset.replace(/^assets?[\\/]/, '')); }
     catch (e) { errors.push(`アセット '${asset}' を読み込めません: ${fsErrorMessage(e)} (行 ${entry.line || 1})`); }
   }
   const local = new Set(program.scenes.map(s => s.name));
@@ -54,18 +54,27 @@ async function validateProgram(program, assetsRoot, scenesRoot) {
   if (errors.length) throw Error(errors.join('\n'));
   return program;
 }
-async function resolveProjectScript(source, scenesRoot, seen = new Set()) {
-  const script = parse(source);
+function tagLocations(value, file, seen = new Set()) {
+  if (!value || typeof value !== 'object' || seen.has(value)) return value;
+  seen.add(value);
+  if (Number.isFinite(value.line) || Number.isFinite(value.column)) value.file = file;
+  if (Array.isArray(value)) value.forEach((item) => tagLocations(item, file, seen));
+  else Object.values(value).forEach((item) => tagLocations(item, file, seen));
+  return value;
+}
+
+async function resolveProjectScript(source, scenesRoot, seen = new Set(), sourceName = 'current') {
+  const script = tagLocations(parse(source), sourceName);
   const assets = [...script.assets];
   const characters = [...script.characters];
-  const globals = [...script.globals];
+  const globals = [];
   const functions = [...script.functions];
   const scenes = [...script.scenes];
   for (const include of script.includes) {
     const name = sceneFile(include);
     if (seen.has(name)) throw Error(`include が循環しています: ${name}`);
     const file = await inside(scenesRoot, name);
-    const child = await resolveProjectScript(await fs.readFile(file, 'utf8'), scenesRoot, new Set([...seen, name]));
+    const child = await resolveProjectScript(await fs.readFile(file, 'utf8'), scenesRoot, new Set([...seen, name]), name);
     assets.push(...child.assets);
     characters.push(...child.characters);
     globals.push(...child.globals);
@@ -74,14 +83,23 @@ async function resolveProjectScript(source, scenesRoot, seen = new Set()) {
   }
   script.assets = assets;
   script.characters = characters;
+  globals.push(...script.globals);
   script.globals = globals;
   script.functions = functions;
   script.scenes = scenes;
   script.body = globals;
   return script;
 }
-async function compileProject(source, assetsRoot, scenesRoot, globalVariables = new Map(), characters = new Map()) {
-  const script = await resolveProjectScript(source, scenesRoot);
-  return validateProgram(compile(script, globalVariables, characters), assetsRoot, scenesRoot);
+async function compileProject(source, assetsRoot, scenesRoot, globalVariables = new Map(), characters = new Map(), sourceName = 'current') {
+  const script = await resolveProjectScript(source, scenesRoot, new Set(), sourceName);
+  const context = projectContext(script, globalVariables, characters, sourceName);
+  return validateProgram(compile(script, context.globals, context.characters), assetsRoot, scenesRoot);
 }
-module.exports = { sceneFile, inside, assetPaths, gotos, validateProgram, resolveProjectScript, compileProject };
+function projectContext(script, globalVariables, characters, sourceName = 'current') {
+  const globals = new Map(globalVariables), visibleCharacters = new Map(characters);
+  globals.readonlyNames = new Set(globalVariables.readonlyNames || []);
+  for (const statement of script.globals) if (statement.kind === 'declare' && statement.file && statement.file !== sourceName) { globals.delete(statement.name); globals.readonlyNames.delete(statement.name); }
+  for (const character of script.characters) if (character.file && character.file !== sourceName) visibleCharacters.delete(character.name);
+  return { globals, characters: visibleCharacters };
+}
+module.exports = { sceneFile, inside, assetPaths, gotos, validateProgram, resolveProjectScript, compileProject, tagLocations, projectContext };

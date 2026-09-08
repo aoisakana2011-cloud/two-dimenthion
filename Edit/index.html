@@ -28,27 +28,36 @@
             <div class="section-heading">
               <div><span class="eyebrow">EXPLORER</span><h2>プロジェクト</h2></div><a class="flow-link" href="/flow.html">Scene Flow</a>
             </div>
-            <label class="sr-only" for="scene-list">保存済みシーン</label>
-            <div class="project-heading"><span class="eyebrow">PROJECT FILES</span><a class="flow-link" href="/flow.html">Scene Flow</a></div>
+            <label class="sr-only" for="scene-list"></label>
+            <div class="project-heading">
+              <span class="eyebrow" id="project-title">EXPLORER</span>
+              <div class="project-heading-actions">
+                <button id="open-project" class="project-action" type="button" title="別の場所の作品フォルダーを開く">開く</button>
+                <button id="new-project" class="project-action" type="button" title="新しい作品フォルダーを作成">新規</button>
+                <a class="flow-link" href="/flow.html">Scene Flow</a>
+              </div>
+            </div>
             <div id="file-tree" class="scene-tree file-tree" role="tree" aria-label="プロジェクトファイル"></div>
             <div id="file-info" class="file-info">ファイルを右クリックすると情報を表示</div>
-            <div class="storage-note"><span class="folder-icon">▱</span> Edit / scenes</div>
+            <div id="project-path" class="storage-note" title="現在の作品フォルダー"><span class="folder-icon">▱</span> 作品フォルダー</div>
           </section>
 
           <section class="side-section insert-section is-collapsed">
             <div class="section-heading insert-heading"><div><span class="eyebrow">COMMANDS</span><h2>予測入力</h2></div><button id="insert-toggle" class="insert-toggle" type="button" aria-expanded="false" title="コマンドをすべて表示"><span class="insert-toggle-label">展開</span><span class="insert-toggle-chevron" aria-hidden="true"></span></button></div>
             <p class="side-copy">ボタンの続きは候補から選択</p>
             <div class="insert-grid">
-              <button class="command-predict" data-predict="char " data-shortcut="1"><span class="command-icon purple">C</span><span>char<small>キャラクター</small></span></button>
+              <button class="command-predict" data-predict="show " data-shortcut="1"><span class="command-icon purple">C</span><span>show<small>キャラクター表示</small></span></button>
               <button class="command-predict" data-predict="say " data-shortcut="2"><span class="command-icon blue">S</span><span>say<small>セリフ</small></span></button>
               <button class="command-predict" data-predict="bgm " data-shortcut="3"><span class="command-icon orange">B</span><span>bgm<small>BGM</small></span></button>
               <button class="command-predict" data-predict="play se " data-shortcut="4"><span class="command-icon green">SE</span><span>se<small>効果音</small></span></button>
               <button class="command-predict" data-predict="choice " data-shortcut="5"><span class="command-icon cyan">?</span><span>chc<small>選択肢</small></span></button>
               <button class="command-predict" data-predict="if " data-shortcut="6"><span class="command-icon yellow">?</span><span>if<small>条件分岐</small></span></button>
               <button class="command-predict" data-predict="for " data-shortcut="7"><span class="command-icon pink">↻</span><span>for<small>ループ</small></span></button>
-              <button class="command-predict" data-predict="asset "><span class="command-icon orange">A</span><span>asset<small>その他の素材</small></span></button>
-              <button class="command-predict insert-optional" data-predict="fn "><span class="command-icon pink">ƒ</span><span>fn<small>関数</small></span></button>
+              <button class="command-predict" data-predict="fn "><span class="command-icon pink">ƒ</span><span>fn<small>関数</small></span></button>
+              <button class="command-predict insert-optional" data-predict="asset "><span class="command-icon orange">A</span><span>asset<small>その他の素材</small></span></button>
               <button class="command-predict insert-optional" data-predict="goto "><span class="command-icon white">→</span><span>goto<small>シーン移動</small></span></button>
+              <button class="command-predict insert-optional" data-predict="struct "><span class="command-icon cyan">{}</span><span>struct<small>構造体</small></span></button>
+              <button class="command-predict insert-optional" data-predict="set "><span class="command-icon green">=</span><span>set<small>変数を更新</small></span></button>
             </div>
             <button id="reload-catalog" class="catalog-button"><span>↻</span> 素材候補を再読込</button>
           </section>
@@ -67,7 +76,7 @@
           </div>
           <div class="document-bar">
             <div class="document-title"><span class="file-icon">▤</span><label class="sr-only" for="scene-name">ファイル名</label><input id="scene-name" value="chapter1.novel" autocomplete="off" spellcheck="false"><span class="dirty-mark" title="未保存"></span></div>
-            <div class="document-actions"><span class="save-hint"><kbd>Ctrl</kbd><span>+</span><kbd>S</kbd> すべて保存</span><button id="validate" class="validate-button"><span>✓</span> 検証・コンパイル</button><button id="play" class="save-button">▶ 再生</button><button id="save" class="save-button" title="左右で開いているファイルをすべて保存">すべて保存</button></div>
+            <div class="document-actions"><span class="save-hint"><kbd>Ctrl</kbd><span>+</span><kbd>S</kbd> すべて保存</span><button id="validate" class="validate-button" title="全ファイルを精査してネイティブパッケージを生成"><span>✓</span> コンパイル</button><button id="play" class="save-button">▶ 再生</button><button id="save" class="save-button" title="左右で開いているファイルをすべて保存">すべて保存</button></div>
           </div>
           <div class="editor-meta"><span>SCENE SCRIPT</span><span class="meta-separator">/</span><span>UTF-8</span><span class="meta-spacer"></span><span>直接入力モード</span></div>
           <div class="editor-wrap">
@@ -86,6 +95,31 @@
 
       </div>
     </div>
-    <style>.scenes-section>.section-heading{display:none}.project-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.project-heading .flow-link{margin-left:auto}</style><script src="/editor.js"></script>
+    <div id="project-picker" class="project-picker" hidden>
+      <div class="project-picker-panel" role="dialog" aria-modal="true" aria-labelledby="project-picker-title">
+        <div class="project-picker-header">
+          <div>
+            <div class="eyebrow">WORKSPACE</div>
+            <h2 id="project-picker-title">作品フォルダー</h2>
+          </div>
+          <button id="project-picker-close" type="button" aria-label="閉じる">×</button>
+        </div>
+        <p class="project-picker-copy">ディスク上の任意の場所から作品フォルダーを開きます。空のフォルダーは新規作品として作成できます。</p>
+        <label class="project-picker-path-label" for="project-picker-path">パス</label>
+        <div class="project-picker-path-row">
+          <button id="project-picker-up" type="button" title="上のフォルダー">↑</button>
+          <input id="project-picker-path" spellcheck="false" autocomplete="off">
+          <button id="project-picker-go" type="button">移動</button>
+        </div>
+        <div id="project-picker-list" class="project-picker-list" role="listbox" aria-label="フォルダー一覧"></div>
+        <div class="project-picker-recent-label">最近開いた作品</div>
+        <div id="project-picker-recent" class="project-picker-recent"></div>
+        <div class="project-picker-actions">
+          <button id="project-picker-create" type="button">この場所に新規作成</button>
+          <button id="project-picker-open" class="project-picker-open" type="button">このフォルダーを開く</button>
+        </div>
+      </div>
+    </div>
+    <style>.scenes-section>.section-heading{display:none}.project-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.project-heading .flow-link{margin-left:0}</style><script src="/editor.js"></script>
   </body>
 </html>

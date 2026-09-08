@@ -1,0 +1,29 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# TypeScript and test output
+*.tsbuildinfo
+coverage/
+
+# Generated project output
+dist/
+build/audit-*/
+build/audit-smoke/asset/
+
+# Native/CMake build output
+native/build/
+native/build-audit/
+native/vcpkg_installed/
+native/.vs/
+.vs/
+CMakeUserPresets.json
+
+# Local editor and OS files
+.vscode/*.user.json
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

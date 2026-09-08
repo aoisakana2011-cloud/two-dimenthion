@@ -2,6 +2,12 @@
   'use strict';
   const MIN = -(1n << 63n), MAX = (1n << 63n) - 1n;
   const own = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+  function copy(value) {
+    if (!value || typeof value !== 'object') return value;
+    const result = Object.create(null);
+    for (const key of Object.keys(value)) result[key] = copy(value[key]);
+    return result;
+  }
   function serialized(value) {
     if (typeof value === 'bigint') return String(value);
     if (typeof value === 'string') return JSON.stringify(value);
@@ -35,12 +41,20 @@
     assertMutable(target) {
       const name = target?.kind === 'load' ? target.name : target?.kind === 'index' && target.target?.kind === 'load' ? target.target.name : null;
       if (!name) return;
-      for (let i = this.frames.length - 1; i >= 0; --i) if (own(this.frames[i], name) && this.readonlyFrames.get(this.frames[i])?.has(name)) throw Error(`const 変数 '${name}' は変更できません`);
+      for (let i = this.frames.length - 1; i >= 0; --i) if (own(this.frames[i], name)) {
+        if (this.readonlyFrames.get(this.frames[i])?.has(name)) throw Error(`const 変数 '${name}' は変更できません`);
+        return;
+      }
     }
     text(value) {
       const source = value === null || value === undefined ? '' : typeof value === 'object' ? serialized(value) : String(value);
-      return source.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name) => {
-        const replacement = this.get(name);
+      return source.replace(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\}/g, (_, path) => {
+        const [name, ...fields] = path.split('.');
+        let replacement = this.get(name);
+        for (const field of fields) {
+          if (!replacement || typeof replacement !== 'object' || !own(replacement, field)) throw Error(`存在しないフィールド '${path}' です`);
+          replacement = replacement[field];
+        }
         return replacement && typeof replacement === 'object' ? serialized(replacement) : String(replacement ?? '');
       });
     }
@@ -48,7 +62,7 @@
       if (!x) return null;
       if (x.kind === 'integer') return integer(x.value);
       if (x.kind === 'literal') return typeof x.value === 'string' ? x.value : integer(x.value);
-      if (x.kind === 'load') return this.get(x.name);
+      if (x.kind === 'load') return copy(this.get(x.name));
       if (x.kind === 'dict') {
         const d = Object.create(null);
         for (const e of x.entries) d[e.key] = await this.value(e.value);
@@ -116,13 +130,14 @@
           const val = await this.value(c.value);
           this.assertMutable(c.target);
           if (c.target.kind === 'load') this.set(c.target.name, val);
-          else (await this.value(c.target.target))[await this.value(c.target.key)] = val;
+          else { const key = await this.value(c.target.key); const d = copy(this.get(c.target.target.name)); d[key] = val; this.set(c.target.target.name, d); }
         } else if (c.op === 'unset') {
           if (c.target.kind === 'load') throw Error('unset は辞書要素を指定してください');
           this.assertMutable(c.target);
-          const d = await this.value(c.target.target), k = await this.value(c.target.key);
+          const k = await this.value(c.target.key), d = copy(this.get(c.target.target.name));
           if (!own(d, k)) throw Error(`存在しない辞書キー '${k}' です`);
           delete d[k];
+          this.set(c.target.target.name, d);
         } else if (c.op === 'command') {
           const args = []; for (const a of c.args) args.push(await this.value(a));
           if (!this.host.command) throw Error(`命令 '${c.name}' の実行先がありません`);

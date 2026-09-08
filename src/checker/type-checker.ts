@@ -1,4 +1,4 @@
-import { AssetKind, Expr, FunctionDef, NodeLocation, PrimitiveType, Script, Statement, ValueType } from '../parser';
+import { AssetKind, Expr, ExternalCharacter, FunctionDef, NodeLocation, PrimitiveType, Script, Statement, ValueType } from '../parser';
 
 export class TypeCheckError extends Error {}
 
@@ -28,8 +28,17 @@ function sameType(left: ExtendedType, right: ExtendedType): boolean {
   return left.kind === right.kind && (left.kind === 'dict' ? left.value === (right as any).value : left.name === (right as any).name);
 }
 
+type ExternalCharacters = Map<string, Set<string> | ExternalCharacter>;
+const characterTypeName = (name: string) => `character:${name}`;
+const characterInfo = (value: Set<string> | ExternalCharacter): ExternalCharacter => value instanceof Set ? { poses: value, fields: {} } : value;
+function characterPropertyType(expression: Expr): PrimitiveType | undefined {
+  if (expression.kind === 'literal') return typeof expression.value === 'string' ? 'str' : (typeof expression.value === 'number' || typeof expression.value === 'bigint') ? 'int' : undefined;
+  if (expression.kind === 'unary' && (expression.operator === '+' || expression.operator === '-')) return characterPropertyType(expression.value) === 'int' ? 'int' : undefined;
+  return undefined;
+}
+
 function interpolationNames(value: string): string[] {
-  return [...value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)].map((match) => match[1]);
+  return [...value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\}/g)].map((match) => match[1]);
 }
 
 interface TypeContext {
@@ -44,19 +53,28 @@ interface TypeContext {
   locals?: Set<string>;
   readonly?: Set<string>;
   externalGlobals?: Set<string>;
+  errors?: TypeCheckError[];
 }
 
 function getLocStr(node?: NodeLocation, file = 'current'): string {
   return `line ${node?.line ?? 1}`;
 }
 
-function expressionType(expression: Expr, variables: Map<string, ValueType>, ctx: TypeContext): ExtendedType {
+function expressionType(expression: Expr, variables: Map<string, ValueType>, ctx: TypeContext, expected?: ValueType): ExtendedType {
   const loc = getLocStr(expression, ctx.file);
 
   if (expression.kind === 'literal') {
     if (typeof expression.value === 'string') {
-      for (const name of interpolationNames(expression.value)) {
-        if (!variables.has(name)) throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 補間対象の変数 '${name}' が未定義です`);
+      for (const path of interpolationNames(expression.value)) {
+        const [name, ...fields] = path.split('.');
+        let current: ExtendedType | undefined = variables.get(name);
+        if (!current) throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 補間対象の変数 '${name}' が未定義です`);
+        for (const field of fields) {
+          if (!current || typeof current === 'string' || current.kind !== 'struct') throw new TypeCheckError(`${loc}: 補間対象 '${path}' の '${field}' はフィールド参照できません`);
+          const next: PrimitiveType | undefined = ctx.structs.get(current.name)?.[field];
+          if (!next) throw new TypeCheckError(`${loc}: 補間対象 '${path}' にフィールド '${field}' はありません`);
+          current = next;
+        }
       }
       return 'str';
     }
@@ -148,8 +166,12 @@ function expressionType(expression: Expr, variables: Map<string, ValueType>, ctx
 
   if (expression.kind === 'dict') {
     const types = expression.entries.map((entry) => expressionType(entry.value, variables, ctx));
+    if (expected && typeof expected !== 'string') {
+      if (expected.kind === 'struct') return { kind: 'dict', value: 'int' }; // Fields are checked against the struct declaration below.
+      if (types.some((type) => type !== expected.value)) throw new TypeCheckError(`${loc}: 辞書の値の型は ${expected.value} に統一してください`);
+      return expected;
+    }
     if (!types.length) return { kind: 'dict', value: 'int' };
-    if (types.length > 1 && types.some((t) => t !== types[0])) return { kind: 'dict', value: 'str' };
     if (types.some((t) => typeof t !== 'string' || (t !== 'int' && t !== 'str') || t !== types[0])) {
       throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 辞書の値の型は統一してください`);
     }
@@ -178,7 +200,7 @@ function expressionType(expression: Expr, variables: Map<string, ValueType>, ctx
       throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 関数 '${expression.name}' の引数の個数が一致しません (期待: ${fn.params.length}, 実際: ${expression.args.length})`);
     }
     for (let i = 0; i < fn.params.length; i++) {
-      const argType = expressionType(expression.args[i], variables, ctx);
+      const argType = expressionType(expression.args[i], variables, ctx, fn.params[i].type);
       if (!sameType(fn.params[i].type, argType)) {
         throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 関数 '${expression.name}' の第 ${i + 1} 引数の型が一致しません`);
       }
@@ -248,6 +270,29 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
       break;
     }
     case 'show': {
+      const poseReference = args.length ? /^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(getArgStr(0)) : null;
+      if (poseReference) {
+        if (args.length < 2) throw new TypeCheckError(`${locStr}: show は show <character>.<pose> <position> で指定してください`);
+        const [, charName, pose] = poseReference;
+        const pos = getArgStr(1);
+        if (!['left', 'center', 'right'].includes(pos)) throw new TypeCheckError(`${locStr}: 不正な表示位置 '${pos}' です`);
+        const charDef = ctx.characters.get(charName);
+        if (!charDef) throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
+        if (!charDef.has(pose)) throw new TypeCheckError(`${locStr}: キャラクター '${charName}' にポーズ '${pose}' はありません`);
+        checkFade(args.slice(2), variables, ctx, locStr);
+        break;
+      }
+      if (args.length >= 5 && getArgStr(1) === 'at' && getArgStr(3) === 'pose') {
+        const charName = getArgStr(0);
+        const pos = getArgStr(2);
+        const pose = getArgStr(4);
+        if (!['left', 'center', 'right'].includes(pos)) throw new TypeCheckError(`${locStr}: 不正な表示位置 '${pos}' です`);
+        const charDef = ctx.characters.get(charName);
+        if (!charDef) throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
+        if (!charDef.has(pose)) throw new TypeCheckError(`${locStr}: キャラクター '${charName}' にポーズ '${pose}' はありません`);
+        checkFade(args.slice(5), variables, ctx, locStr);
+        break;
+      }
       if (args.length < 2) throw new TypeCheckError(`${locStr}: コマンド 'show' の引数が不足しています`);
       const targetKind = getArgStr(0);
       if (targetKind === 'char') {
@@ -286,6 +331,12 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
       break;
     }
     case 'hide': {
+      if (args.length && getArgStr(0) !== 'char') {
+        const charName = getArgStr(0);
+        if (!ctx.characters.has(charName)) throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
+        checkFade(args.slice(1), variables, ctx, locStr);
+        break;
+      }
       if (args.length < 2 || getArgStr(0) !== 'char') throw new TypeCheckError(`${locStr}: hide は hide char <name> で指定してください`);
       const charName = getArgStr(1);
       if (!ctx.characters.has(charName)) throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
@@ -327,6 +378,11 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
   }
 }
 
+function exitsBlock(statements: Statement[]): boolean {
+  return statements.some((statement) => statement.kind === 'return' || statement.kind === 'goto' ||
+    (statement.kind === 'if' && statement.otherwise.length > 0 && exitsBlock(statement.body) && statement.elseIf.every((branch) => exitsBlock(branch.body)) && exitsBlock(statement.otherwise)));
+}
+
 function checkStatements(
   statements: Statement[],
   variables: Map<string, ValueType>,
@@ -335,6 +391,7 @@ function checkStatements(
 ): void {
   for (const statement of statements) {
     const locStr = getLocStr(statement, ctx.file);
+    try {
 
     if (statement.kind === 'declare') {
       if (!options.allowDeclaration) {
@@ -346,7 +403,7 @@ function checkStatements(
         throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 変数 '${statement.name}' は既に宣言されています。再宣言せず set を使用してください`);
       }
       if (statement.initial) {
-        const actual = expressionType(statement.initial, variables, ctx);
+        const actual = expressionType(statement.initial, variables, ctx, statement.type === 'infer' ? undefined : statement.type);
         if (typeof statement.type !== 'string' && statement.type.kind === 'struct') {
           const fields = ctx.structs.get(statement.type.name);
           if (!fields) throw new TypeCheckError(`${locStr}: 未定義のstruct '${statement.type.name}' です`);
@@ -376,12 +433,14 @@ function checkStatements(
         throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): let '${statement.name}' には初期値が必要です`);
       }
       variables.set(statement.name, statement.type);
+      ctx.readonly?.delete(statement.name);
       if (statement.constant) ctx.readonly?.add(statement.name);
       ctx.locals?.add(statement.name);
     }
 
     if (statement.kind === 'set') {
-      const exprType = expressionType(statement.value, variables, ctx);
+      const expected = statement.target.kind === 'variable' ? variables.get(statement.target.name) : expressionType(statement.target, variables, ctx);
+      const exprType = expressionType(statement.value, variables, ctx, expected === 'bool' ? undefined : expected);
       if (statement.target.kind === 'variable') {
         if (ctx.readonly?.has(statement.target.name)) {
           throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): const 変数 '${statement.target.name}' は変更できません`);
@@ -421,6 +480,7 @@ function checkStatements(
       if (statement.target.kind === 'variable') {
         throw new TypeCheckError(`${locStr}: unset は辞書要素を指定してください`);
       } else if (statement.target.kind === 'index') {
+        if (statement.target.target.kind === 'variable' && ctx.readonly?.has(statement.target.target.name)) throw new TypeCheckError(`${locStr}: const 変数 '${statement.target.target.name}' の要素は変更できません`);
         const targetType = expressionType(statement.target.target, variables, ctx);
         const keyType = expressionType(statement.target.key, variables, ctx);
         if (typeof targetType === 'string' || targetType.kind !== 'dict' || keyType !== 'str') {
@@ -440,10 +500,12 @@ function checkStatements(
       checkCondition(statement.condition.expression, variables, ctx);
       const baseNames = new Set(variables.keys());
       const branchVariables: Map<string, ValueType>[] = [];
+      const branchReadonly: Set<string>[] = [];
       const checkBranch = (body: Statement[]) => {
         const branch = new Map(variables);
-        checkStatements(body, branch, { ...ctx, locals: ctx.locals ? new Set(ctx.locals) : undefined, readonly: ctx.readonly ? new Set(ctx.readonly) : undefined }, options);
-        branchVariables.push(branch);
+        const readonly = new Set(ctx.readonly);
+        checkStatements(body, branch, { ...ctx, locals: ctx.locals ? new Set(ctx.locals) : undefined, readonly }, options);
+        if (!exitsBlock(body)) { branchVariables.push(branch); branchReadonly.push(readonly); }
       };
       checkBranch(statement.body);
       for (const branch of statement.elseIf) {
@@ -451,8 +513,8 @@ function checkStatements(
         checkBranch(branch.body);
       }
       if (statement.otherwise.length) checkBranch(statement.otherwise);
-      else branchVariables.push(new Map(variables));
-      const candidates = [...branchVariables[0].keys()].filter((name) => !baseNames.has(name));
+      else { branchVariables.push(new Map(variables)); branchReadonly.push(new Set(ctx.readonly)); }
+      const candidates = [...(branchVariables[0]?.keys() || [])].filter((name) => !baseNames.has(name));
       for (const name of candidates) {
         const types = branchVariables.map((branch) => branch.get(name));
         if (types.some((type) => type === undefined)) continue;
@@ -460,6 +522,7 @@ function checkStatements(
           throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 分岐ごとに変数 '${name}' の型が一致していません`);
         }
         variables.set(name, types[0]!);
+        if (branchReadonly.some((readonly) => readonly.has(name))) ctx.readonly?.add(name);
         ctx.locals?.add(name);
       }
     }
@@ -473,9 +536,10 @@ function checkStatements(
       }
       const loopVars = new Map(variables);
       loopVars.set(statement.name, 'int');
+      const loopReadonly = new Set(ctx.readonly); loopReadonly.delete(statement.name);
       const loopLocals = new Set(ctx.locals || variables.keys()); loopLocals.add(statement.name);
-      checkStatements(statement.body, loopVars, { ...ctx, locals: loopLocals, readonly: ctx.readonly ? new Set(ctx.readonly) : undefined }, options);
-      for (const [name, type] of loopVars) if (name !== statement.name && !variables.has(name)) { variables.set(name, type); ctx.locals?.add(name); }
+      checkStatements(statement.body, loopVars, { ...ctx, locals: loopLocals, readonly: loopReadonly }, options);
+      for (const [name, type] of loopVars) if (name !== statement.name && !variables.has(name)) { variables.set(name, type); ctx.locals?.add(name); if (loopReadonly.has(name)) ctx.readonly?.add(name); }
     }
 
     if (statement.kind === 'while') {
@@ -513,7 +577,7 @@ function checkStatements(
         if (statement.value) throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): none 型の関数は値を返せません`);
       } else {
         if (!statement.value) throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 値を返す必要があります`);
-        const actualReturn = expressionType(statement.value, variables, ctx);
+        const actualReturn = expressionType(statement.value, variables, ctx, expectedReturn);
         if (!sameType(expectedReturn, actualReturn)) {
           throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 戻り値の型が一致しません (期待: ${typeName(expectedReturn)}, 実際: ${typeName(actualReturn)})`);
         }
@@ -529,6 +593,10 @@ function checkStatements(
       if (!target.includes('/') && !/\.(tds|txt)$/i.test(target) && !ctx.scenes.has(target)) {
         throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 存在しないシーン '${target}' への goto です`);
       }
+    }
+    } catch (error) {
+      if (!ctx.errors || !(error instanceof TypeCheckError)) throw error;
+      ctx.errors.push(error);
     }
   }
 }
@@ -552,6 +620,8 @@ function checkRecursion(functions: FunctionDef[]): void {
         if (s.target.kind === 'index') { visitExpr(s.target.target); visitExpr(s.target.key); }
       }
       if (s.kind === 'command') s.args.forEach(visitExpr);
+      if (s.kind === 'sayBlock') { visitExpr(s.speaker); s.lines.forEach(visitExpr); }
+      if (s.kind === 'unset') visitExpr(s.target);
       if (s.kind === 'if') {
         visitExpr(s.condition.expression);
         s.body.forEach(visitStmt);
@@ -598,7 +668,7 @@ function checkRecursion(functions: FunctionDef[]): void {
   }
 }
 
-export function checkTypes(script: Script, file = 'current', externalGlobals = new Map<string, ValueType>(), externalCharacters = new Map<string, Set<string>>()): void {
+export function checkTypes(script: Script, file = 'current', externalGlobals = new Map<string, ValueType>(), externalCharacters: ExternalCharacters = new Map(), errors?: TypeCheckError[]): void {
   // 1. 重複宣言チェック
   const declaredGlobals = new Set<string>();
   const declaredFunctions = new Set<string>();
@@ -606,16 +676,32 @@ export function checkTypes(script: Script, file = 'current', externalGlobals = n
   const declaredStructs = new Set<string>();
   const declaredCharacters = new Set<string>(externalCharacters.keys());
   const declaredAssets = new Set<string>();
+  const capture = (check: () => void): void => {
+    try { check(); }
+    catch (error) {
+      if (!errors || !(error instanceof TypeCheckError)) throw error;
+      errors.push(error);
+    }
+  };
+
+  for (const name of externalCharacters.keys()) {
+    capture(() => {
+      if (externalGlobals.has(name)) throw new TypeCheckError(`character '${name}' とグローバル変数 '${name}' の名前が重複しています`);
+    });
+  }
 
   for (const struct of script.structs) {
-    if (declaredStructs.has(struct.name)) throw new TypeCheckError(`${getLocStr(struct, file)}: struct '${struct.name}' が重複しています`);
-    declaredStructs.add(struct.name);
-    for (const [field, fieldType] of Object.entries(struct.fields)) {
-      if (fieldType !== 'int' && fieldType !== 'str') throw new TypeCheckError(`${getLocStr(struct, file)}: struct フィールド '${field}' の型が不正です`);
-    }
+    capture(() => {
+      if (declaredStructs.has(struct.name)) throw new TypeCheckError(`${getLocStr(struct, file)}: struct '${struct.name}' が重複しています`);
+      declaredStructs.add(struct.name);
+      for (const [field, fieldType] of Object.entries(struct.fields)) {
+        if (fieldType !== 'int' && fieldType !== 'str') throw new TypeCheckError(`${getLocStr(struct, file)}: struct フィールド '${field}' の型が不正です`);
+      }
+    });
   }
 
   for (const asset of script.assets) {
+    capture(() => {
     if (declaredAssets.has(asset.name)) {
       throw new TypeCheckError(`${getLocStr(asset, file)}: アセット '${asset.name}' が重複して宣言されています`);
     }
@@ -630,13 +716,24 @@ export function checkTypes(script: Script, file = 'current', externalGlobals = n
       throw new TypeCheckError(`${getLocStr(asset, file)}: アセット '${asset.name}' (${asset.type}) の拡張子 '${ext}' は不正です`);
     }
     declaredAssets.add(asset.name);
+    });
   }
 
   for (const char of script.characters) {
+    capture(() => {
+    if (externalGlobals.has(char.name)) throw new TypeCheckError(`${getLocStr(char, file)}: character '${char.name}' とグローバル変数 '${char.name}' の名前が重複しています`);
     if (declaredCharacters.has(char.name)) {
       throw new TypeCheckError(`${getLocStr(char, file)}: キャラクター '${char.name}' が重複して宣言されています`);
     }
     declaredCharacters.add(char.name);
+    const properties = new Set<string>();
+    for (const property of char.properties) {
+      if (properties.has(property.name)) throw new TypeCheckError(`${getLocStr(property, file)}: キャラクター '${char.name}' のフィールド '${property.name}' が重複しています`);
+      if (!characterPropertyType(property.value)) throw new TypeCheckError(`${getLocStr(property, file)}: キャラクターフィールド '${property.name}' は int または str の定数で指定してください`);
+      properties.add(property.name);
+    }
+    const displayName = char.properties.find((property) => property.name === 'name');
+    if (!displayName || characterPropertyType(displayName.value) !== 'str') throw new TypeCheckError(`${getLocStr(char, file)}: character '${char.name}' には str の name フィールドが必要です`);
     const poses = new Set<string>();
     for (const pose of char.poses) {
       if (poses.has(pose.name)) {
@@ -648,35 +745,52 @@ export function checkTypes(script: Script, file = 'current', externalGlobals = n
       if (!ALLOWED_EXTENSIONS.char.some(ext => pose.path.toLowerCase().endsWith(ext))) throw new TypeCheckError(`表情 '${pose.name}' の拡張子が不正です`);
       poses.add(pose.name);
     }
+    });
   }
 
   for (const fn of script.functions) {
+    capture(() => {
     if (declaredFunctions.has(fn.name)) {
       throw new TypeCheckError(`${getLocStr(fn, file)}: 関数 '${fn.name}' が重複して宣言されています`);
     }
     declaredFunctions.add(fn.name);
+    });
   }
 
   for (const sc of script.scenes) {
+    capture(() => {
     if (declaredScenes.has(sc.name)) {
       throw new TypeCheckError(`${getLocStr(sc, file)}: シーン '${sc.name}' が重複して宣言されています`);
     }
     declaredScenes.add(sc.name);
+    });
   }
 
   // 2. 再帰検査
-  checkRecursion(script.functions);
+  capture(() => checkRecursion(script.functions));
 
   // 3. コンテキスト構築
   const globals = new Map(externalGlobals);
   const functions = new Map<string, FunctionDef>();
   const scenes = new Set<string>(script.scenes.map((s) => s.name));
-  const characters = new Map(externalCharacters);
+  const characters = new Map<string, Set<string>>();
   const assets = new Map<string, { type: AssetKind; path: string; loc?: NodeLocation }>();
   const structs = new Map(script.structs.map((s) => [s.name, s.fields]));
 
+  for (const [name, rawInfo] of externalCharacters) {
+    const info = characterInfo(rawInfo);
+    characters.set(name, info.poses);
+    structs.set(characterTypeName(name), info.fields);
+    globals.set(name, { kind: 'struct', name: characterTypeName(name) });
+  }
+  for (const character of script.characters) {
+    const fields = Object.fromEntries(character.properties.map((property) => [property.name, characterPropertyType(property.value)!]));
+    characters.set(character.name, new Set(character.poses.map((pose) => pose.name)));
+    structs.set(characterTypeName(character.name), fields);
+    globals.set(character.name, { kind: 'struct', name: characterTypeName(character.name) });
+  }
+
   script.assets.forEach((a) => assets.set(a.name, { type: a.type, path: a.path, loc: a }));
-  script.characters.forEach((c) => characters.set(c.name, new Set(c.poses.map((p) => p.name))));
   script.functions.forEach((f) => functions.set(f.name, f));
 
   const ctx: TypeContext = {
@@ -688,23 +802,27 @@ export function checkTypes(script: Script, file = 'current', externalGlobals = n
     assets,
     structs,
     externalGlobals: new Set(externalGlobals.keys()),
-    readonly: new Set(),
+    readonly: new Set([...(externalGlobals as Map<string, ValueType> & { readonlyNames?: Set<string> }).readonlyNames || []].filter((name) => externalGlobals.has(name))),
+    errors,
   };
 
   // グローバル文（変数宣言）の検証
   for (const stmt of script.globals) {
-    if (stmt.kind === 'declare') {
-      if (declaredGlobals.has(stmt.name)) {
-        throw new TypeCheckError(`${getLocStr(stmt, file)}: グローバル変数 '${stmt.name}' が重複して宣言されています`);
+    capture(() => {
+      if (stmt.kind === 'declare') {
+        if (declaredGlobals.has(stmt.name)) {
+          throw new TypeCheckError(`${getLocStr(stmt, file)}: グローバル変数 '${stmt.name}' が重複して宣言されています`);
+        }
+        declaredGlobals.add(stmt.name);
       }
-      declaredGlobals.add(stmt.name);
-    }
+    });
   }
   const isImplicitScene = script.scenes.length === 0;
   checkStatements(script.globals, globals, ctx, { allowGoto: isImplicitScene, allowChoice: isImplicitScene, allowReturn: false, allowDeclaration: true });
 
   // 関数の検証
   for (const fn of script.functions) {
+    capture(() => {
     const fnVars = new Map(globals);
     const paramNames = new Set<string>();
     for (const param of fn.params) {
@@ -715,7 +833,8 @@ export function checkTypes(script: Script, file = 'current', externalGlobals = n
       fnVars.set(param.name, param.type);
     }
     const fnCtx = { ...ctx, currentFunction: fn, locals: paramNames };
-    checkStatements(fn.body, fnVars, { ...fnCtx, readonly: new Set(ctx.readonly) }, { allowGoto: false, allowChoice: false, allowReturn: true, allowDeclaration: true });
+    checkStatements(fn.body, fnVars, { ...fnCtx, readonly: new Set([...ctx.readonly || []].filter((name) => !paramNames.has(name))) }, { allowGoto: false, allowChoice: false, allowReturn: true, allowDeclaration: true });
+    });
   }
 
   // シーンの検証（scene直下での変数宣言は禁止）

@@ -6,6 +6,8 @@ export type AssetKind = 'bg' | 'char' | 'bgm' | 'se' | 'voice' | 'video' | 'imag
 export interface NodeLocation {
   line?: number;
   column?: number;
+  endLine?: number;
+  file?: string;
 }
 
 export type Expr = NodeLocation & (
@@ -40,7 +42,14 @@ export type Statement = NodeLocation & (
 );
 
 export interface Asset extends NodeLocation { kind: 'asset'; type: AssetKind; name: string; path: string; }
-export interface Character extends NodeLocation { kind: 'character'; name: string; poses: Array<{ name: string; path: string }>; }
+export interface CharacterProperty extends NodeLocation { name: string; value: Expr; }
+export interface Character extends NodeLocation {
+  kind: 'character';
+  name: string;
+  properties: CharacterProperty[];
+  poses: Array<{ name: string; path: string; line?: number; column?: number }>;
+}
+export interface ExternalCharacter { poses: Set<string>; fields: Record<string, PrimitiveType>; definition?: Character; }
 export interface StructDef extends NodeLocation { kind: 'struct'; name: string; fields: Record<string, PrimitiveType>; }
 export interface FunctionDef extends NodeLocation { kind: 'function'; name: string; returnType: ValueType; params: Array<{ type: ValueType; name: string }>; body: Statement[]; }
 export interface Scene extends NodeLocation { kind: 'scene'; name: string; body: Statement[]; }

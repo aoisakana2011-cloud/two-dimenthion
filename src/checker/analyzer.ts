@@ -1,5 +1,5 @@
-import { Expr, FunctionDef, NodeLocation, Script, Statement, ValueType } from '../parser';
-import { checkTypes } from './type-checker';
+import { Expr, ExternalCharacter, FunctionDef, NodeLocation, Script, Statement, ValueType } from '../parser';
+import { checkTypes, TypeCheckError } from './type-checker';
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info';
 
@@ -10,18 +10,19 @@ export interface Diagnostic {
   file: string;
   line: number;
   column: number;
+  endLine?: number;
 }
 
 type Constant = bigint | string | boolean | undefined;
 const INT_MIN = -(1n << 63n);
 const INT_MAX = (1n << 63n) - 1n;
 
-function at(node?: NodeLocation): Pick<Diagnostic, 'line' | 'column'> {
-  return { line: node?.line ?? 1, column: node?.column ?? 1 };
+function at(node?: NodeLocation): Pick<Diagnostic, 'line' | 'column' | 'endLine'> {
+  return { line: node?.line ?? 1, column: node?.column ?? 1, ...(node?.endLine ? { endLine: node.endLine } : {}) };
 }
 
 function diagnostic(file: string, code: string, severity: DiagnosticSeverity, message: string, node?: NodeLocation): Diagnostic {
-  return { code, severity, message, file, ...at(node) };
+  return { code, severity, message, file: node?.file || file, ...at(node) };
 }
 
 function errorDiagnostic(error: unknown, file: string): Diagnostic {
@@ -36,19 +37,20 @@ function integer(value: number | bigint): bigint | undefined {
   return Number.isSafeInteger(value) ? BigInt(value) : undefined;
 }
 
-function constant(expr: Expr): Constant {
+function constant(expr: Expr, constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map()): Constant {
   if (expr.kind === 'literal') return typeof expr.value === 'string' ? expr.value : integer(expr.value);
+  if (expr.kind === 'variable') return constants.get(expr.name);
   if (expr.kind === 'unary') {
-    const value = constant(expr.value);
+    const value = constant(expr.value, constants);
     if (expr.operator === 'not' && typeof value === 'boolean') return !value;
     if ((expr.operator === '+' || expr.operator === '-') && typeof value === 'bigint') return expr.operator === '-' ? -value : value;
     return undefined;
   }
   if (expr.kind !== 'binary') return undefined;
-  const left = constant(expr.left);
-  if (expr.operator === 'and' && typeof left === 'boolean') return left ? constant(expr.right) : false;
-  if (expr.operator === 'or' && typeof left === 'boolean') return left ? true : constant(expr.right);
-  const right = constant(expr.right);
+  const left = constant(expr.left, constants);
+  if (expr.operator === 'and' && typeof left === 'boolean') return left ? constant(expr.right, constants) : false;
+  if (expr.operator === 'or' && typeof left === 'boolean') return left ? true : constant(expr.right, constants);
+  const right = constant(expr.right, constants);
   if (left === undefined || right === undefined) return undefined;
   if (expr.operator === '==') return left === right;
   if (expr.operator === '!=') return left !== right;
@@ -71,10 +73,84 @@ function expressionKey(expr: Expr): string {
   if (expr.kind === 'literal') return `literal:${String(expr.value)}`;
   if (expr.kind === 'variable') return `variable:${expr.name}`;
   if (expr.kind === 'unary') return `${expr.operator}(${expressionKey(expr.value)})`;
-  if (expr.kind === 'binary') return `(${expressionKey(expr.left)}${expr.operator}${expressionKey(expr.right)})`;
+  if (expr.kind === 'binary') {
+    const left = expressionKey(expr.left), right = expressionKey(expr.right);
+    if (expr.operator === '==' || expr.operator === '!=') return `(${[left, right].sort().join(expr.operator)})`;
+    return `(${left}${expr.operator}${right})`;
+  }
   if (expr.kind === 'index') return `${expressionKey(expr.target)}[${expressionKey(expr.key)}]`;
   if (expr.kind === 'call') return `${expr.name}(${expr.args.map(expressionKey).join(',')})`;
   return `{${expr.entries.map((entry) => `${entry.key}:${expressionKey(entry.value)}`).join(',')}}`;
+}
+
+function inverseExpressionKey(expr: Expr): string | undefined {
+  if (expr.kind === 'unary' && expr.operator === 'not') return expressionKey(expr.value);
+  if (expr.kind !== 'binary') return undefined;
+  const inverse: Record<string, string> = { '==': '!=', '!=': '==', '>': '<=', '>=': '<', '<': '>=', '<=': '>' };
+  const operator = inverse[expr.operator];
+  return operator ? expressionKey({ ...expr, operator }) : undefined;
+}
+
+function conditionValue(expr: Expr, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, facts: ReadonlyMap<string, boolean>): Constant {
+  const value = constant(expr, constants);
+  if (value !== undefined || !isPureExpression(expr)) return value;
+  return facts.get(expressionKey(expr));
+}
+
+function recordCondition(facts: Map<string, boolean>, expr: Expr, value: boolean): void {
+  if (!isPureExpression(expr)) return;
+  facts.set(expressionKey(expr), value);
+  const inverse = inverseExpressionKey(expr);
+  if (inverse) facts.set(inverse, !value);
+}
+
+type IntegerConstraint = { name: string; operator: string; value: bigint };
+function integerConstraint(expr: Expr, constants: ReadonlyMap<string, Exclude<Constant, undefined>>): IntegerConstraint | undefined {
+  if (expr.kind !== 'binary' || !['==', '!=', '>', '>=', '<', '<='].includes(expr.operator)) return undefined;
+  if (expr.left.kind === 'variable') {
+    const value = constant(expr.right, constants);
+    if (typeof value === 'bigint') return { name: expr.left.name, operator: expr.operator, value };
+  }
+  if (expr.right.kind === 'variable') {
+    const value = constant(expr.left, constants);
+    const flipped: Record<string, string> = { '==': '==', '!=': '!=', '>': '<', '>=': '<=', '<': '>', '<=': '>=' };
+    if (typeof value === 'bigint') return { name: expr.right.name, operator: flipped[expr.operator], value };
+  }
+  return undefined;
+}
+
+function conditionImplies(current: Expr, previous: Expr, constants: ReadonlyMap<string, Exclude<Constant, undefined>>): boolean {
+  if (!isPureExpression(current) || !isPureExpression(previous)) return false;
+  if (expressionKey(current) === expressionKey(previous)) return true;
+  const left = integerConstraint(current, constants), right = integerConstraint(previous, constants);
+  if (!left || !right || left.name !== right.name) return false;
+  const accepts = (constraint: IntegerConstraint, value: bigint): boolean => {
+    if (constraint.operator === '==') return value === constraint.value;
+    if (constraint.operator === '!=') return value !== constraint.value;
+    if (constraint.operator === '>') return value > constraint.value;
+    if (constraint.operator === '>=') return value >= constraint.value;
+    if (constraint.operator === '<') return value < constraint.value;
+    return value <= constraint.value;
+  };
+  if (left.operator === '==') return accepts(right, left.value);
+  if (left.operator === '!=') return right.operator === '!=' && left.value === right.value;
+  if (right.operator === '!=') return !accepts(left, right.value);
+  if (right.operator === '==') return false;
+  const lower = (constraint: IntegerConstraint): [bigint, boolean] | undefined => constraint.operator === '>' ? [constraint.value, false] : constraint.operator === '>=' ? [constraint.value, true] : undefined;
+  const upper = (constraint: IntegerConstraint): [bigint, boolean] | undefined => constraint.operator === '<' ? [constraint.value, false] : constraint.operator === '<=' ? [constraint.value, true] : undefined;
+  const leftLower = lower(left), rightLower = lower(right), leftUpper = upper(left), rightUpper = upper(right);
+  if (rightLower) return !!leftLower && (leftLower[0] > rightLower[0] || (leftLower[0] === rightLower[0] && (!leftLower[1] || rightLower[1])));
+  if (rightUpper) return !!leftUpper && (leftUpper[0] < rightUpper[0] || (leftUpper[0] === rightUpper[0] && (!leftUpper[1] || rightUpper[1])));
+  return false;
+}
+
+function isPureExpression(expr: Expr): boolean {
+  if (expr.kind === 'call') return expr.name === 'int' || expr.name === 'str' ? expr.args.every(isPureExpression) : false;
+  if (expr.kind === 'binary') return isPureExpression(expr.left) && isPureExpression(expr.right);
+  if (expr.kind === 'unary') return isPureExpression(expr.value);
+  if (expr.kind === 'index') return isPureExpression(expr.target) && isPureExpression(expr.key);
+  if (expr.kind === 'dict') return expr.entries.every((entry) => isPureExpression(entry.value));
+  return true;
 }
 
 function visitExpressions(expr: Expr, visit: (expr: Expr) => void): void {
@@ -106,48 +182,190 @@ function nested(statement: Statement): Statement[][] {
   return [];
 }
 
-function definitelyTerminates(statement: Statement): boolean {
+function definitelyTerminates(statement: Statement, constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(), facts: ReadonlyMap<string, boolean> = new Map()): boolean {
   if (statement.kind === 'return' || statement.kind === 'goto') return true;
   if (statement.kind === 'if') {
     const branches = [{ condition: statement.condition.expression, body: statement.body }, ...statement.elseIf.map((branch) => ({ condition: branch.condition.expression, body: branch.body }))];
     let allTerminate = true;
     let canFallThrough = true;
+    const seen = new Set<string>(), previousConditions: Expr[] = [], remainingFacts = new Map(facts);
     for (const branch of branches) {
       if (!canFallThrough) break;
-      const value = constant(branch.condition);
-      if (value === false) continue;
-      allTerminate = allTerminate && blockTerminates(branch.body);
+      const value = conditionValue(branch.condition, constants, remainingFacts);
+      if (value === false) { recordCondition(remainingFacts, branch.condition, false); continue; }
+      const key = expressionKey(branch.condition);
+      if (isPureExpression(branch.condition) && (seen.has(key) || previousConditions.some((previous) => conditionImplies(branch.condition, previous, constants)))) continue;
+      const bodyFacts = new Map(remainingFacts); recordCondition(bodyFacts, branch.condition, true);
+      allTerminate = allTerminate && blockTerminates(branch.body, constants, bodyFacts);
+      if (isPureExpression(branch.condition)) seen.add(key);
+      if (isPureExpression(branch.condition)) previousConditions.push(branch.condition);
+      recordCondition(remainingFacts, branch.condition, false);
       if (value === true) canFallThrough = false;
     }
     if (canFallThrough) {
       if (!statement.otherwise.length) return false;
-      allTerminate = allTerminate && blockTerminates(statement.otherwise);
+      allTerminate = allTerminate && blockTerminates(statement.otherwise, constants, remainingFacts);
     }
     return allTerminate;
   }
-  if (statement.kind === 'while') return constant(statement.condition.expression) === true;
-  if (statement.kind === 'choice') return statement.options.length > 0 && statement.options.every((option) => blockTerminates(option.body));
+  if (statement.kind === 'while') {
+    if (conditionValue(statement.condition.expression, constants, facts) !== true) return false;
+    const stable = loopConstants(statement, constants);
+    return conditionValue(statement.condition.expression, stable, new Map()) === true || blockTerminates(statement.body, constants, facts);
+  }
+  if (statement.kind === 'for') return blockTerminates(statement.body, constants, facts);
+  if (statement.kind === 'choice') return statement.options.length > 0 && statement.options.every((option) => blockTerminates(option.body, constants, facts));
   return false;
 }
 
-function blockTerminates(statements: Statement[]): boolean {
-  return statements.some(definitelyTerminates);
+function writtenVariables(statement: Statement, result = new Set<string>()): Set<string> {
+  if (statement.kind === 'declare') result.add(statement.name);
+  if (statement.kind === 'set' && statement.target.kind === 'variable') result.add(statement.target.name);
+  for (const body of nested(statement)) for (const child of body) writtenVariables(child, result);
+  return result;
 }
 
-function analyzeExpression(expr: Expr, file: string, out: Diagnostic[]): void {
+function hasCalls(statement: Statement): boolean {
+  return statement.kind === 'call' || statementExpressions(statement).some((expr) => !isPureExpression(expr)) || nested(statement).some((body) => body.some(hasCalls));
+}
+
+function loopConstants(statement: Statement, constants: ReadonlyMap<string, Exclude<Constant, undefined>>): Map<string, Exclude<Constant, undefined>> {
+  const stable = new Map(constants);
+  if (hasCalls(statement)) stable.clear();
+  for (const name of writtenVariables(statement)) stable.delete(name);
+  if (statement.kind === 'for') stable.delete(statement.name);
+  return stable;
+}
+
+function updateKnownConstants(statement: Statement, constants: Map<string, Exclude<Constant, undefined>>): void {
+  if (hasCalls(statement)) constants.clear();
+  if (statement.kind === 'declare') {
+    const value = statement.initial ? constant(statement.initial, constants) : undefined;
+    if (value === undefined) constants.delete(statement.name); else constants.set(statement.name, value);
+    return;
+  }
+  if (statement.kind === 'set' && statement.target.kind === 'variable') {
+    const value = constant(statement.value, constants);
+    if (value === undefined) constants.delete(statement.target.name); else constants.set(statement.target.name, value);
+    return;
+  }
+  if (statement.kind === 'if' || statement.kind === 'while' || statement.kind === 'for' || statement.kind === 'choice') {
+    for (const name of writtenVariables(statement)) constants.delete(name);
+  }
+}
+
+function invalidatesConditionFacts(statement: Statement): boolean {
+  if (statement.kind === 'declare' || statement.kind === 'set' || statement.kind === 'unset' || statement.kind === 'call') return true;
+  return statementExpressions(statement).some((expr) => {
+    let calls = false;
+    visitExpressions(expr, (current) => { if (current.kind === 'call' && current.name !== 'int' && current.name !== 'str') calls = true; });
+    return calls;
+  });
+}
+
+function blockTerminates(statements: Statement[], constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(), facts: ReadonlyMap<string, boolean> = new Map()): boolean {
+  const known = new Map(constants);
+  const knownFacts = new Map(facts);
+  for (const statement of statements) {
+    if (hasCalls(statement)) { known.clear(); knownFacts.clear(); }
+    if (definitelyTerminates(statement, known, knownFacts)) return true;
+    updateKnownConstants(statement, known);
+    if (invalidatesConditionFacts(statement)) knownFacts.clear();
+  }
+  return false;
+}
+
+function reachableGotoTargets(statements: Statement[], targets = new Set<string>(), constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(), facts: ReadonlyMap<string, boolean> = new Map()): Set<string> {
+  const known = new Map(constants);
+  const knownFacts = new Map(facts);
+  for (const statement of statements) {
+    if (statement.kind === 'goto') {
+      targets.add(statement.scene);
+      break;
+    }
+    if (statement.kind === 'if') {
+      if (hasCalls(statement)) { known.clear(); knownFacts.clear(); }
+      const branches = [{ expression: statement.condition.expression, body: statement.body }, ...statement.elseIf.map((branch) => ({ expression: branch.condition.expression, body: branch.body }))];
+      const seen = new Set<string>(), previousConditions: Expr[] = [], remainingFacts = new Map(knownFacts);
+      let canTryNext = true;
+      for (const branch of branches) {
+        if (!canTryNext) break;
+        const value = conditionValue(branch.expression, known, remainingFacts);
+        const key = expressionKey(branch.expression);
+        const duplicate = isPureExpression(branch.expression) && (seen.has(key) || previousConditions.some((previous) => conditionImplies(branch.expression, previous, known)));
+        const bodyFacts = new Map(remainingFacts); recordCondition(bodyFacts, branch.expression, true);
+        if (value !== false && !duplicate) reachableGotoTargets(branch.body, targets, known, bodyFacts);
+        if (isPureExpression(branch.expression)) seen.add(key);
+        if (isPureExpression(branch.expression)) previousConditions.push(branch.expression);
+        recordCondition(remainingFacts, branch.expression, false);
+        if (value === true) canTryNext = false;
+      }
+      if (canTryNext) reachableGotoTargets(statement.otherwise, targets, known, remainingFacts);
+    } else if (statement.kind === 'choice') statement.options.forEach((option) => reachableGotoTargets(option.body, targets, known, knownFacts));
+    else if (statement.kind === 'while') {
+      if (conditionValue(statement.condition.expression, known, knownFacts) !== false) {
+        const bodyFacts = new Map(knownFacts); recordCondition(bodyFacts, statement.condition.expression, true);
+        reachableGotoTargets(statement.body, targets, known, bodyFacts);
+      }
+    } else if (statement.kind === 'for') reachableGotoTargets(statement.body, targets, known, knownFacts);
+    if (definitelyTerminates(statement, known, knownFacts)) break;
+    updateKnownConstants(statement, known);
+    if (invalidatesConditionFacts(statement)) knownFacts.clear();
+  }
+  return targets;
+}
+
+export interface SceneReachability {
+  reachableScenes: Set<string>;
+  externalGotos: Set<string>;
+}
+
+export function sceneReachability(script: Script): SceneReachability {
+  const scenes = new Map(script.scenes.map((scene) => [scene.name, scene]));
+  const reachableScenes = new Set<string>();
+  const externalGotos = new Set<string>();
+  const constants = new Map<string, Exclude<Constant, undefined>>();
+  for (const statement of script.globals) {
+    if (statement.kind !== 'declare' || !statement.constant || !statement.initial) continue;
+    const value = constant(statement.initial, constants);
+    if (value !== undefined) constants.set(statement.name, value);
+  }
+  const pending = script.scenes.length && !blockTerminates(script.globals, constants) ? [script.scenes[0].name] : [];
+  while (pending.length) {
+    const name = pending.pop()!;
+    if (reachableScenes.has(name)) continue;
+    const scene = scenes.get(name);
+    if (!scene) continue;
+    reachableScenes.add(name);
+    for (const target of reachableGotoTargets(scene.body, new Set(), constants)) {
+      if (scenes.has(target)) pending.push(target);
+      else externalGotos.add(target);
+    }
+  }
+  if (!script.scenes.length) {
+    for (const target of reachableGotoTargets(script.globals, new Set(), constants)) externalGotos.add(target);
+  }
+  return { reachableScenes, externalGotos };
+}
+
+function analyzeExpression(expr: Expr, file: string, out: Diagnostic[], constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map()): void {
   const walk = (current: Expr, parent?: Expr): void => {
     if (current.kind === 'binary') {
-      const right = constant(current.right);
+      const right = constant(current.right, constants);
       if ((current.operator === '/' || current.operator === '%') && right === 0n) {
         out.push(diagnostic(file, 'division-by-zero', 'warning', '0 による除算または剰余は実行時エラーになります', current));
       }
     }
-    const value = constant(current);
+    const value = constant(current, constants);
     const minimumMagnitude = current.kind === 'literal' && value === INT_MAX + 1n && parent?.kind === 'unary' && parent.operator === '-';
     if (typeof value === 'bigint' && (value < INT_MIN || value > INT_MAX) && !minimumMagnitude) {
       out.push(diagnostic(file, 'integer-overflow', 'error', '定数式で64bit整数オーバーフローが発生します', current));
     }
-    if (current.kind === 'binary') { walk(current.left, current); walk(current.right, current); }
+    if (current.kind === 'binary') {
+      walk(current.left, current);
+      const left = constant(current.left, constants);
+      if (!((current.operator === 'and' && left === false) || (current.operator === 'or' && left === true))) walk(current.right, current);
+    }
     if (current.kind === 'unary') walk(current.value, current);
     if (current.kind === 'index') { walk(current.target, current); walk(current.key, current); }
     if (current.kind === 'call') current.args.forEach((arg) => walk(arg, current));
@@ -156,41 +374,60 @@ function analyzeExpression(expr: Expr, file: string, out: Diagnostic[]): void {
   walk(expr);
 }
 
-function analyzeBlock(statements: Statement[], file: string, out: Diagnostic[], reachable = true): void {
+function analyzeBlock(statements: Statement[], file: string, out: Diagnostic[], reachable = true, constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(), facts: ReadonlyMap<string, boolean> = new Map()): void {
   let canReach = reachable;
+  const known = new Map(constants);
+  const knownFacts = new Map(facts);
   for (const statement of statements) {
-    if (!canReach) out.push(diagnostic(file, 'unreachable-code', 'warning', 'この文には到達できません', statement));
-    statementExpressions(statement).forEach((expr) => analyzeExpression(expr, file, out));
+    if (!canReach) {
+      out.push(diagnostic(file, 'unreachable-code', 'warning', 'この文には到達できません', statement));
+      for (const body of nested(statement)) analyzeBlock(body, file, out, false, known, knownFacts);
+      continue;
+    }
+    statementExpressions(statement).forEach((expr) => analyzeExpression(expr, file, out, known));
 
     if (statement.kind === 'set' && statement.target.kind === 'variable' && statement.value.kind === 'variable' && statement.target.name === statement.value.name) {
       out.push(diagnostic(file, 'self-assignment', 'warning', `変数 '${statement.target.name}' を同じ値で上書きしています`, statement));
     }
     if (statement.kind === 'if') {
       const branches = [{ expression: statement.condition.expression, body: statement.body }, ...statement.elseIf.map((branch) => ({ expression: branch.condition.expression, body: branch.body }))];
-      const seen = new Set<string>();
+      const seen = new Set<string>(), previousConditions: Expr[] = [], remainingFacts = new Map(knownFacts);
       let previousAlways = false;
       for (const branch of branches) {
         const key = expressionKey(branch.expression);
-        const value = constant(branch.expression);
-        if (seen.has(key)) out.push(diagnostic(file, 'duplicate-condition', 'warning', '前の分岐と同じ条件なので、この分岐には到達できません', branch.expression));
+        const value = conditionValue(branch.expression, known, remainingFacts);
+        const exactDuplicate = isPureExpression(branch.expression) && seen.has(key);
+        const subsumed = isPureExpression(branch.expression) && previousConditions.some((previous) => conditionImplies(branch.expression, previous, known));
+        const duplicate = exactDuplicate || subsumed;
+        if (exactDuplicate) out.push(diagnostic(file, 'duplicate-condition', 'warning', '前の分岐と同じ条件なので、この分岐には到達できません', branch.expression));
+        else if (subsumed) out.push(diagnostic(file, 'unreachable-branch', 'warning', '前の分岐条件に含まれるため、この分岐には到達できません', branch.expression));
         if (previousAlways) out.push(diagnostic(file, 'unreachable-branch', 'warning', '前の条件が常に真なので、この分岐には到達できません', branch.expression));
         else if (value === false) out.push(diagnostic(file, 'constant-condition', 'warning', '条件は常に偽です。この分岐には到達できません', branch.expression));
         else if (value === true) out.push(diagnostic(file, 'constant-condition', 'info', '条件は常に真です。後続の分岐は実行されません', branch.expression));
-        analyzeBlock(branch.body, file, out, canReach && !previousAlways && value !== false && !seen.has(key));
-        seen.add(key);
+        const bodyFacts = new Map(remainingFacts); recordCondition(bodyFacts, branch.expression, true);
+        analyzeBlock(branch.body, file, out, canReach && !previousAlways && value !== false && !duplicate, known, bodyFacts);
+        if (isPureExpression(branch.expression)) seen.add(key);
+        if (isPureExpression(branch.expression)) previousConditions.push(branch.expression);
+        recordCondition(remainingFacts, branch.expression, false);
         if (value === true) previousAlways = true;
       }
-      if (statement.otherwise.length) analyzeBlock(statement.otherwise, file, out, canReach && !previousAlways);
+      if (statement.otherwise.length) analyzeBlock(statement.otherwise, file, out, canReach && !previousAlways, known, remainingFacts);
       if (previousAlways && statement.otherwise.length) out.push(diagnostic(file, 'unreachable-branch', 'warning', '前の条件が常に真なので、else には到達できません', statement.otherwise[0]));
     } else if (statement.kind === 'while') {
-      const value = constant(statement.condition.expression);
+      const value = conditionValue(statement.condition.expression, known, knownFacts);
       if (value === false) out.push(diagnostic(file, 'constant-condition', 'warning', 'while の条件は常に偽です。ループ本体には到達できません', statement.condition));
-      if (value === true) out.push(diagnostic(file, 'infinite-loop', 'warning', 'while の条件は常に真で、ループを抜ける文がありません', statement.condition));
-      analyzeBlock(statement.body, file, out, canReach && value !== false);
+      const stable = loopConstants(statement, known);
+      const bodyFacts = new Map<string, boolean>(); recordCondition(bodyFacts, statement.condition.expression, true);
+      if (conditionValue(statement.condition.expression, stable, new Map()) === true && !blockTerminates(statement.body, stable, bodyFacts)) out.push(diagnostic(file, 'infinite-loop', 'warning', 'while の条件は常に真で、ループ本体は後続へ進みません', statement.condition));
+      analyzeBlock(statement.body, file, out, canReach && value !== false, stable, bodyFacts);
+    } else if (statement.kind === 'for') {
+      analyzeBlock(statement.body, file, out, canReach, loopConstants(statement, known), new Map());
     } else {
-      for (const body of nested(statement)) analyzeBlock(body, file, out, canReach);
+      for (const body of nested(statement)) analyzeBlock(body, file, out, canReach, known, knownFacts);
     }
-    if (canReach && definitelyTerminates(statement)) canReach = false;
+    if (canReach && definitelyTerminates(statement, known, knownFacts)) canReach = false;
+    updateKnownConstants(statement, known);
+    if (invalidatesConditionFacts(statement)) knownFacts.clear();
   }
 }
 
@@ -214,26 +451,41 @@ function analyzeUnused(fn: FunctionDef, file: string, out: Diagnostic[]): void {
   for (const [name, loc] of declared) if (!used.has(name)) out.push(diagnostic(file, 'unused-variable', 'warning', `変数または引数 '${name}' は使用されていません`, loc));
 }
 
-export function analyzeScript(script: Script, file = 'current', externalGlobals = new Map<string, ValueType>(), externalCharacters = new Map<string, Set<string>>()): Diagnostic[] {
+export function analyzeScript(script: Script, file = 'current', externalGlobals = new Map<string, ValueType>(), externalCharacters = new Map<string, Set<string> | ExternalCharacter>()): Diagnostic[] {
   const out: Diagnostic[] = [];
+  const constants = new Map<string, Exclude<Constant, undefined>>();
+  for (const statement of script.globals) {
+    if (statement.kind !== 'declare' || !statement.constant || !statement.initial) continue;
+    const value = constant(statement.initial, constants);
+    if (value !== undefined) constants.set(statement.name, value);
+  }
   try {
-    checkTypes(script, file, externalGlobals, externalCharacters);
+    const typeErrors: TypeCheckError[] = [];
+    checkTypes(script, file, externalGlobals, externalCharacters, typeErrors);
+    typeErrors.forEach((error) => out.push(errorDiagnostic(error, file)));
   } catch (error) {
     out.push(errorDiagnostic(error, file));
   }
-  analyzeBlock(script.globals, file, out);
+  analyzeBlock(script.globals, file, out, true, constants);
   for (const fn of script.functions) {
-    analyzeBlock(fn.body, file, out);
+    const functionConstants = new Map(constants);
+    fn.params.forEach((param) => functionConstants.delete(param.name));
+    analyzeBlock(fn.body, file, out, true, functionConstants);
     analyzeUnused(fn, file, out);
-    if (fn.returnType !== 'none' && !blockTerminates(fn.body)) {
+    if (fn.returnType !== 'none' && !blockTerminates(fn.body, functionConstants)) {
       out.push(diagnostic(file, 'missing-return', 'error', `関数 '${fn.name}' はすべての経路で値を返していません`, fn));
     }
   }
-  script.scenes.forEach((scene) => analyzeBlock(scene.body, file, out));
+  const { reachableScenes } = sceneReachability(script);
+  script.scenes.forEach((scene) => {
+    const reachable = reachableScenes.has(scene.name);
+    if (!reachable) out.push(diagnostic(file, 'unreachable-scene', 'warning', `シーン '${scene.name}' には到達できません`, scene));
+    analyzeBlock(scene.body, file, out, reachable, constants);
+  });
   return out.sort((a, b) => a.line - b.line || a.column - b.column || ({ error: 0, warning: 1, info: 2 }[a.severity] - { error: 0, warning: 1, info: 2 }[b.severity]));
 }
 
-export function assertAnalyzed(script: Script, file = 'current', externalGlobals = new Map<string, ValueType>(), externalCharacters = new Map<string, Set<string>>()): Diagnostic[] {
+export function assertAnalyzed(script: Script, file = 'current', externalGlobals = new Map<string, ValueType>(), externalCharacters = new Map<string, Set<string> | ExternalCharacter>()): Diagnostic[] {
   const diagnostics = analyzeScript(script, file, externalGlobals, externalCharacters);
   const first = diagnostics.find((item) => item.severity === 'error');
   if (first) throw new Error(`line ${first.line}, column ${first.column}: ${first.message}`);

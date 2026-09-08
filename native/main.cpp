@@ -11,6 +11,10 @@
 #include <thread>
 using novel::json;
 namespace fs = std::filesystem;
+static std::string utf8Path(const fs::path& path) {
+    const auto value = path.u8string();
+    return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+}
 
 struct Quit {};
 struct Engine {
@@ -44,7 +48,7 @@ struct Engine {
         return {Uint8(r),Uint8(g),Uint8(b),Uint8(a)};
     }
     SDL_Texture* image(const fs::path& path) {
-        auto key = path.string(); if (textures.contains(key)) return textures[key];
+        auto key = utf8Path(path); if (textures.contains(key)) return textures[key];
         auto* t = IMG_LoadTexture(renderer, key.c_str());
         if (!t) { Video decoded(renderer, key); decoded.update(); t = decoded.releaseTexture(); }
         if (!t) throw std::runtime_error("Cannot load image " + key + ": " + SDL_GetError());
@@ -57,15 +61,16 @@ struct Engine {
         } else for (const auto& a : runtime.program.at("assets")) if (a.at("type") == type && a.at("name") == id) relative = a.at("path");
         std::replace(relative.begin(), relative.end(), '\\', '/');
         if (relative.starts_with("assets/")) relative.erase(0, 7);
+        else if (relative.starts_with("asset/")) relative.erase(0, 6);
         if (relative.empty()) throw std::runtime_error("Unknown asset: " + id);
-        auto base = fs::weakly_canonical(root / "assets"), resolved = fs::canonical(base / relative);
+        auto base = fs::weakly_canonical(root / "asset"), resolved = fs::canonical(base / fs::u8path(relative));
         auto rel = resolved.lexically_relative(base);
         if (rel.empty() || rel.is_absolute() || *rel.begin() == "..") throw std::runtime_error("Asset outside package");
         return resolved;
     }
     Engine(novel::Runtime& rt, const fs::path& package) : root(package.parent_path()), runtime(rt) {
         if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) || !TTF_Init() || !MIX_Init()) throw std::runtime_error(SDL_GetError());
-        fs::path data = fs::path(SDL_GetBasePath()) / "engine_data";
+        fs::path data = fs::u8path(SDL_GetBasePath()) / "engine_data";
         std::ifstream file(data / "engine.txt"); std::string line;
         while (std::getline(file, line)) {
             auto equals = line.find('='); if (equals == std::string::npos || line.starts_with('#')) continue;
@@ -77,11 +82,11 @@ struct Engine {
         renderer = SDL_CreateRenderer(window,nullptr);
         if (!window || !renderer) throw std::runtime_error(SDL_GetError());
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-        fs::path fontPath = config.contains("font.path") ? config["font.path"] : "C:/Windows/Fonts/meiryo.ttc";
+        fs::path fontPath = fs::u8path(config.contains("font.path") ? config["font.path"] : "C:/Windows/Fonts/meiryo.ttc");
         if (fontPath.is_relative()) fontPath = data / fontPath;
-        font = TTF_OpenFont(fontPath.string().c_str(), number("font.size",24));
+        font = TTF_OpenFont(utf8Path(fontPath).c_str(), number("font.size",24));
         if (!font) throw std::runtime_error(SDL_GetError());
-        if (config.contains("dialog.background_image")) dialog = image(data / config["dialog.background_image"]);
+        if (config.contains("dialog.background_image")) dialog = image(data / fs::u8path(config["dialog.background_image"]));
         mixer = MIX_CreateMixerDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,nullptr);
         if (!mixer) throw std::runtime_error(SDL_GetError());
     }
@@ -183,39 +188,53 @@ struct Engine {
     }
     void sound(const std::string& type,const std::string& id) {
         if (type=="bgm" && bgm) MIX_StopTrack(bgm,0);
-        auto* a=MIX_LoadAudio(mixer,asset(type,id).string().c_str(),true); if(!a) throw std::runtime_error(SDL_GetError()); audio.push_back(a);
+        auto* a=MIX_LoadAudio(mixer,utf8Path(asset(type,id)).c_str(),true); if(!a) throw std::runtime_error(SDL_GetError()); audio.push_back(a);
         auto* track=MIX_CreateTrack(mixer); if(!track || !MIX_SetTrackAudio(track,a)) throw std::runtime_error(SDL_GetError());
         auto props=SDL_CreateProperties(); if(type=="bgm") {bgm=track;SDL_SetNumberProperty(props,MIX_PROP_PLAY_LOOPS_NUMBER,-1);}
         bool ok=MIX_PlayTrack(track,props);SDL_DestroyProperties(props);if(!ok) throw std::runtime_error(SDL_GetError());
     }
     void command(const std::string& name,const json& args) {
         auto s=[&](size_t i){return args.at(i).get<std::string>();};
-        if(name=="say") {speaker=s(0)=="none"?"":s(0);text=runtime.interpolate(args.at(1));next=false;if(automated)pump();else while(!next)pump();}
+        if(name=="say") {
+            speaker=s(0)=="none"?"":s(0);
+            if(!speaker.empty()) {
+                try { auto actor=runtime.get(speaker); if(actor.is_object() && actor.contains("name") && actor.at("name").is_string())speaker=actor.at("name").get<std::string>(); }
+                catch(const std::runtime_error&) {}
+            }
+            text=runtime.interpolate(args.at(1));next=false;if(automated)pump();else while(!next)pump();
+        }
         else if(name=="wait") delay(args.at(0).get<int64_t>());
         else if(name=="bg") background=image(asset("bg",s(0)));
         else if(name=="bgm") sound("bgm",s(0));
         else if(name=="play") {
-            if(s(0)=="video") {video=std::make_unique<Video>(renderer,asset("video",s(1)).string());if(args.size()>2 && s(2)=="blocking")while(video)pump();}
+            if(s(0)=="video") {video=std::make_unique<Video>(renderer,utf8Path(asset("video",s(1))));if(args.size()>2 && s(2)=="blocking")while(video)pump();}
             else sound(s(0),s(1));
         } else if(name=="show" || name=="char") {
-            bool show=name=="show"; size_t offset=show?1:0; auto type=show?s(0):"char";auto id=s(offset);
+            const auto dot=name=="show"?s(0).find('.'):std::string::npos;
+            const bool poseReference=name=="show" && dot!=std::string::npos;
+            const bool canonical=name=="show" && args.size()>=5 && s(1)=="at" && s(3)=="pose";
+            bool show=name=="show"; size_t offset=show?1:0; auto type=(poseReference||canonical)?"char":show?s(0):"char";auto id=poseReference?s(0).substr(0,dot):canonical?s(0):s(offset);
             if(type=="image") images[id]={image(asset("image",id)),s(offset+1)};
             else {
                 if(!show && !characters.contains(id))throw std::runtime_error("Character not shown: "+id);
-                characters[id]={image(asset("char",id,s(offset+2))),s(offset+1)};
-                if(show && args.size()>offset+3)delay(args.at(offset+4).get<int64_t>(),[&](float t){characters.at(id).alpha=t;});
+                const auto position=poseReference?s(1):canonical?s(2):s(offset+1), pose=poseReference?s(0).substr(dot+1):canonical?s(4):s(offset+2);
+                characters[id]={image(asset("char",id,pose)),position};
+                const size_t fadeOffset=poseReference?2:canonical?5:offset+3;
+                if(show && args.size()>fadeOffset && s(fadeOffset)=="fade")delay(args.at(fadeOffset+1).get<int64_t>(),[&](float t){characters.at(id).alpha=t;});
             }
-        } else if(name=="hide") {auto id=s(1);if(characters.contains(id) && args.size()>2)delay(args.at(3).get<int64_t>(),[&](float t){characters.at(id).alpha=1-t;});characters.erase(id);}
+        } else if(name=="hide") {
+            const bool legacy=args.size()>1 && s(0)=="char"; const auto id=legacy?s(1):s(0); const size_t fadeOffset=legacy?2:1;
+            if(characters.contains(id) && args.size()>fadeOffset && s(fadeOffset)=="fade")delay(args.at(fadeOffset+1).get<int64_t>(),[&](float t){characters.at(id).alpha=1-t;});characters.erase(id);
+        }
         else if(name=="clear") {if(s(0)=="char")characters.erase(s(1));else if(s(0)=="image")images.erase(s(1));else if(s(0)=="bg")background=nullptr;else if(s(0)=="bgm" && bgm)MIX_StopTrack(bgm,0);}
         else if(name=="effect") {overlayColor=s(1)=="white"?SDL_Color{255,255,255,255}:SDL_Color{0,0,0,255};delay(args.size()>2?args.at(2).get<int64_t>():500,[&](float t){overlay=1-t;});}
         else throw std::runtime_error("Unknown command: "+name);
         pump();
     }
 };
-int main(int argc,char**argv) {
-    if(argc<2){std::cerr<<"Usage: novel_player package.nsp.json [--headless]\n";return 2;}
+static int runPlayer(const fs::path& packagePath, const std::string& mode) {
     try {
-        std::ifstream file(argv[1]);json package;file>>package;
+        std::ifstream file(packagePath);json package;file>>package;
         if(package.value("format","")!="novel-script-package" || package.at("version")!=1)throw std::runtime_error("Unsupported package format/version");
         novel::Runtime runtime;
         runtime.load=[&](std::string name){
@@ -236,15 +255,15 @@ int main(int argc,char**argv) {
             mergeIncludes(result, result);
             return result;
         };
-        bool headless=argc>2 && std::string(argv[2])=="--headless";
+        bool headless=mode=="--headless";
         if(headless){
             json transcript=json::array();
             runtime.command=[&](const std::string& n,const json& a){transcript.push_back({{"name",n},{"args",a}});};
             runtime.choice=[](const std::string&,const std::vector<std::string>&){return size_t(0);};
             runtime.run(package.at("program"));std::cout<<json{{"globals",runtime.globals},{"commands",transcript}}.dump()<<"\n";
         }else{
-            Engine engine(runtime,fs::absolute(argv[1]));
-            engine.automated = argc>2 && std::string(argv[2])=="--smoke";
+            Engine engine(runtime,fs::absolute(packagePath));
+            engine.automated = mode=="--smoke";
             runtime.command=[&](const std::string& n,const json& a){engine.command(n,a);};
             runtime.choice=[&](const std::string& p,const std::vector<std::string>& labels){engine.text=p;engine.options=labels;engine.selection=engine.automated?0:-1;engine.pump();while(engine.selection<0)engine.pump();auto selected=engine.selection;engine.options.clear();return size_t(selected);};
             try { runtime.run(package.at("program")); while(engine.video)engine.pump(); }
@@ -253,3 +272,14 @@ int main(int argc,char**argv) {
         return 0;
     }catch(const std::exception&e){std::cerr<<"PLAYER ERROR: "<<e.what()<<"\n";return 1;}
 }
+#ifdef _WIN32
+int wmain(int argc, wchar_t** argv) {
+    if (argc < 2) { std::cerr << "Usage: novel_player package.nsp.json [--headless]\n"; return 2; }
+    return runPlayer(fs::path(argv[1]), argc > 2 ? utf8Path(fs::path(argv[2])) : "");
+}
+#else
+int main(int argc, char** argv) {
+    if (argc < 2) { std::cerr << "Usage: novel_player package.nsp.json [--headless]\n"; return 2; }
+    return runPlayer(fs::path(argv[1]), argc > 2 ? argv[2] : "");
+}
+#endif

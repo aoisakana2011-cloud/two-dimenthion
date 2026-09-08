@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["variables"],
+  "properties": {
+    "variables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "type", "scope", "definedIn", "mutable"],
+        "properties": {
+          "name": { "type": "string" },
+          "type": { "type": ["string", "object"] },
+          "scope": { "enum": ["global", "function", "scene", "local"] },
+          "definedIn": { "type": "string" },
+          "mutable": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}
