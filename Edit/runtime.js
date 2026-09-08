@@ -58,6 +58,18 @@
         return replacement && typeof replacement === 'object' ? serialized(replacement) : String(replacement ?? '');
       });
     }
+    async textAsync(value) {
+      const source = this.text(value);
+      const matches = [...source.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\(\)\}/g)];
+      if (!matches.length) return source;
+      let result = '', cursor = 0;
+      for (const match of matches) {
+        result += source.slice(cursor, match.index);
+        result += String((await this.call(match[1], [])) ?? '');
+        cursor = match.index + match[0].length;
+      }
+      return result + source.slice(cursor);
+    }
     async value(x) {
       if (!x) return null;
       if (x.kind === 'integer') return integer(x.value);
@@ -157,8 +169,8 @@
           const result = await this.exec(body); if (result) return result;
         } else if (c.op === 'choice') {
           if (!c.options.length) throw Error('選択肢がありません');
-          const labels = []; for (const o of c.options) labels.push(this.text(await this.value(o.label)));
-          const index = await this.host.choice(c.prompt ? this.text(await this.value(c.prompt)) : '', labels);
+          const labels = []; for (const o of c.options) labels.push(await this.textAsync(await this.value(o.label)));
+          const index = await this.host.choice(c.prompt ? await this.textAsync(await this.value(c.prompt)) : '', labels);
           if (!Number.isInteger(index) || !c.options[index]) throw Error('不正な選択肢です');
           this.frames.push(Object.create(null));
           try { const result = await this.exec(c.options[index].body); if (result) return result; }

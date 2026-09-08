@@ -384,8 +384,9 @@ class Compiler {
             if (e.kind === 'variable')
                 bindings.get(e.name)?.references.push({ ...loc, line: e.line, column: e.column, kind: loc.kind || 'expression' });
             if (e.kind === 'literal' && typeof e.value === 'string')
-                for (const m of e.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\}/g))
-                    bindings.get(m[1].split('.')[0])?.references.push({ ...loc, line: e.line, column: e.column, kind: 'interpolation' });
+                for (const m of e.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(\(\))?\}/g))
+                    if (!m[2])
+                        bindings.get(m[1].split('.')[0])?.references.push({ ...loc, line: e.line, column: e.column, kind: 'interpolation' });
             if (e.kind === 'binary') {
                 ref(e.left, bindings, loc);
                 ref(e.right, bindings, loc);

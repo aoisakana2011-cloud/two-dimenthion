@@ -38,7 +38,7 @@ function characterPropertyType(expression: Expr): PrimitiveType | undefined {
 }
 
 function interpolationNames(value: string): string[] {
-  return [...value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\}/g)].map((match) => match[1]);
+  return [...value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(\(\))?\}/g)].map((match) => `${match[1]}${match[2] || ''}`);
 }
 
 interface TypeContext {
@@ -66,6 +66,14 @@ function expressionType(expression: Expr, variables: Map<string, ValueType>, ctx
   if (expression.kind === 'literal') {
     if (typeof expression.value === 'string') {
       for (const path of interpolationNames(expression.value)) {
+        if (path.endsWith('()')) {
+          const name = path.slice(0, -2);
+          const fn = ctx.functions.get(name);
+          if (!fn) throw new TypeCheckError(`${loc}: 補間対象の関数 '${name}' が未定義です`);
+          if (fn.params.length) throw new TypeCheckError(`${loc}: 補間対象の関数 '${name}' は引数なしで呼び出せません`);
+          if (fn.returnType === 'none') throw new TypeCheckError(`${loc}: 補間対象の関数 '${name}' は値を返しません`);
+          continue;
+        }
         const [name, ...fields] = path.split('.');
         let current: ExtendedType | undefined = variables.get(name);
         if (!current) throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 補間対象の変数 '${name}' が未定義です`);

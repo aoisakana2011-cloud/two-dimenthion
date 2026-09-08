@@ -1,0 +1,2911 @@
+{
+  "format": "novel-script-package",
+  "version": 1,
+  "source": "main.tds",
+  "program": {
+    "version": 2,
+    "assets": [],
+    "characters": [
+      {
+        "kind": "character",
+        "name": "ayase",
+        "poses": [],
+        "line": 5,
+        "column": 1,
+        "endLine": 7,
+        "file": "current"
+      }
+    ],
+    "globals": [
+      {
+        "op": "declare",
+        "type": {
+          "kind": "struct",
+          "name": "character:ayase"
+        },
+        "name": "ayase",
+        "initial": {
+          "kind": "dict",
+          "entries": [
+            {
+              "key": "name",
+              "value": {
+                "kind": "literal",
+                "value": "ayase",
+                "line": 6,
+                "column": 10,
+                "file": "current"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "op": "declare",
+        "type": "str",
+        "name": "title",
+        "constant": false,
+        "initial": {
+          "kind": "literal",
+          "value": "夕暮れの手紙",
+          "line": 8,
+          "column": 13,
+          "file": "current"
+        }
+      },
+      {
+        "op": "declare",
+        "type": "int",
+        "name": "day",
+        "constant": false,
+        "initial": {
+          "kind": "literal",
+          "value": 1,
+          "line": 9,
+          "column": 11,
+          "file": "current"
+        }
+      },
+      {
+        "op": "declare",
+        "type": "int",
+        "name": "flags",
+        "constant": false,
+        "initial": {
+          "kind": "literal",
+          "value": 0,
+          "line": 10,
+          "column": 13,
+          "file": "current"
+        }
+      },
+      {
+        "op": "declare",
+        "type": "str",
+        "name": "game_version",
+        "constant": true,
+        "initial": {
+          "kind": "literal",
+          "value": "1.0",
+          "line": 11,
+          "column": 26,
+          "file": "current"
+        }
+      },
+      {
+        "op": "declare",
+        "type": {
+          "kind": "struct",
+          "name": "Player"
+        },
+        "name": "player",
+        "initial": {
+          "kind": "dict",
+          "entries": [
+            {
+              "key": "name",
+              "value": {
+                "kind": "literal",
+                "value": "あなた",
+                "line": 12,
+                "column": 27,
+                "file": "current"
+              }
+            },
+            {
+              "key": "affection",
+              "value": {
+                "kind": "literal",
+                "value": 0,
+                "line": 12,
+                "column": 47,
+                "file": "current"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "functions": [
+      {
+        "op": "function",
+        "name": "add_affection",
+        "returnType": "none",
+        "params": [
+          {
+            "name": "value",
+            "type": "int"
+          }
+        ],
+        "body": [
+          {
+            "op": "set",
+            "target": {
+              "kind": "index",
+              "target": {
+                "kind": "load",
+                "name": "player"
+              },
+              "key": {
+                "kind": "literal",
+                "value": "affection"
+              }
+            },
+            "value": {
+              "kind": "binary",
+              "operator": "+",
+              "left": {
+                "kind": "index",
+                "target": {
+                  "kind": "load",
+                  "name": "player"
+                },
+                "key": {
+                  "kind": "literal",
+                  "value": "affection"
+                }
+              },
+              "right": {
+                "kind": "load",
+                "name": "value"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "op": "function",
+        "name": "ending_text",
+        "returnType": "str",
+        "params": [],
+        "body": [
+          {
+            "op": "if",
+            "condition": {
+              "kind": "binary",
+              "operator": ">=",
+              "left": {
+                "kind": "index",
+                "target": {
+                  "kind": "load",
+                  "name": "player"
+                },
+                "key": {
+                  "kind": "literal",
+                  "value": "affection"
+                }
+              },
+              "right": {
+                "kind": "literal",
+                "value": 3,
+                "line": 19,
+                "column": 26,
+                "file": "current"
+              }
+            },
+            "body": [
+              {
+                "op": "return",
+                "value": {
+                  "kind": "literal",
+                  "value": "笑顔のエンディング",
+                  "line": 20,
+                  "column": 12,
+                  "file": "current"
+                }
+              }
+            ],
+            "elseIf": [],
+            "otherwise": []
+          },
+          {
+            "op": "return",
+            "value": {
+              "kind": "literal",
+              "value": "静かなエンディング",
+              "line": 22,
+              "column": 10,
+              "file": "current"
+            }
+          }
+        ]
+      }
+    ],
+    "scenes": [
+      {
+        "name": "main",
+        "instructions": [
+          {
+            "op": "sayBlock",
+            "speaker": {
+              "kind": "literal",
+              "value": "ayase",
+              "line": 26,
+              "column": 7,
+              "file": "current"
+            },
+            "lines": [
+              {
+                "kind": "literal",
+                "value": "おはよう。",
+                "line": 27,
+                "column": 5,
+                "file": "current"
+              },
+              {
+                "kind": "literal",
+                "value": "今日も来てくれたんだね。",
+                "line": 28,
+                "column": 5,
+                "file": "current"
+              }
+            ]
+          },
+          {
+            "op": "sayBlock",
+            "speaker": {
+              "kind": "literal",
+              "value": "narrator",
+              "line": 30,
+              "column": 3,
+              "file": "current"
+            },
+            "lines": [
+              {
+                "kind": "literal",
+                "value": "これは、放課後の小さな物語。",
+                "line": 31,
+                "column": 5,
+                "file": "current"
+              },
+              {
+                "kind": "literal",
+                "value": "選んだ言葉が、明日の景色を変えていく。",
+                "line": 32,
+                "column": 5,
+                "file": "current"
+              }
+            ]
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayase",
+                "line": 35,
+                "column": 3,
+                "file": "current"
+              },
+              {
+                "kind": "literal",
+                "value": "{player.name}、少しだけ相談してもいい？",
+                "line": 35,
+                "column": 13,
+                "file": "current"
+              }
+            ]
+          },
+          {
+            "op": "choice",
+            "prompt": {
+              "kind": "literal",
+              "value": "どう答える？",
+              "line": 36,
+              "column": 10,
+              "file": "current"
+            },
+            "options": [
+              {
+                "label": {
+                  "kind": "literal",
+                  "value": "もちろん",
+                  "line": 37,
+                  "column": 5,
+                  "file": "current"
+                },
+                "body": [
+                  {
+                    "op": "command",
+                    "name": "say",
+                    "args": [
+                      {
+                        "kind": "literal",
+                        "value": "ayase",
+                        "line": 38,
+                        "column": 7,
+                        "file": "current"
+                      },
+                      {
+                        "kind": "literal",
+                        "value": "ありがとう。",
+                        "line": 38,
+                        "column": 17,
+                        "file": "current"
+                      }
+                    ]
+                  },
+                  {
+                    "op": "set",
+                    "target": {
+                      "kind": "index",
+                      "target": {
+                        "kind": "load",
+                        "name": "player"
+                      },
+                      "key": {
+                        "kind": "literal",
+                        "value": "affection"
+                      }
+                    },
+                    "value": {
+                      "kind": "binary",
+                      "operator": "+",
+                      "left": {
+                        "kind": "index",
+                        "target": {
+                          "kind": "load",
+                          "name": "player"
+                        },
+                        "key": {
+                          "kind": "literal",
+                          "value": "affection"
+                        }
+                      },
+                      "right": {
+                        "kind": "literal",
+                        "value": 1,
+                        "line": 39,
+                        "column": 49,
+                        "file": "current"
+                      }
+                    }
+                  },
+                  {
+                    "op": "set",
+                    "target": {
+                      "kind": "load",
+                      "name": "flags"
+                    },
+                    "value": {
+                      "kind": "binary",
+                      "operator": "+",
+                      "left": {
+                        "kind": "load",
+                        "name": "flags"
+                      },
+                      "right": {
+                        "kind": "literal",
+                        "value": 1,
+                        "line": 40,
+                        "column": 27,
+                        "file": "current"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "label": {
+                  "kind": "literal",
+                  "value": "今日は急いでいる",
+                  "line": 42,
+                  "column": 5,
+                  "file": "current"
+                },
+                "body": [
+                  {
+                    "op": "command",
+                    "name": "say",
+                    "args": [
+                      {
+                        "kind": "literal",
+                        "value": "ayase",
+                        "line": 43,
+                        "column": 7,
+                        "file": "current"
+                      },
+                      {
+                        "kind": "literal",
+                        "value": "そっか。また明日ね。",
+                        "line": 43,
+                        "column": 17,
+                        "file": "current"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "op": "if",
+            "condition": {
+              "kind": "binary",
+              "operator": "and",
+              "left": {
+                "kind": "binary",
+                "operator": "==",
+                "left": {
+                  "kind": "load",
+                  "name": "flags"
+                },
+                "right": {
+                  "kind": "literal",
+                  "value": 1,
+                  "line": 47,
+                  "column": 15,
+                  "file": "current"
+                }
+              },
+              "right": {
+                "kind": "binary",
+                "operator": ">",
+                "left": {
+                  "kind": "index",
+                  "target": {
+                    "kind": "load",
+                    "name": "player"
+                  },
+                  "key": {
+                    "kind": "literal",
+                    "value": "affection"
+                  }
+                },
+                "right": {
+                  "kind": "literal",
+                  "value": 0,
+                  "line": 47,
+                  "column": 40,
+                  "file": "current"
+                }
+              }
+            },
+            "body": [
+              {
+                "op": "command",
+                "name": "say",
+                "args": [
+                  {
+                    "kind": "literal",
+                    "value": "ayase",
+                    "line": 48,
+                    "column": 5,
+                    "file": "current"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "少し安心したよ。",
+                    "line": 48,
+                    "column": 15,
+                    "file": "current"
+                  }
+                ]
+              },
+              {
+                "op": "call",
+                "name": "add_affection",
+                "args": [
+                  {
+                    "kind": "literal",
+                    "value": 1,
+                    "line": 49,
+                    "column": 19,
+                    "file": "current"
+                  }
+                ]
+              }
+            ],
+            "elseIf": [
+              {
+                "condition": {
+                  "kind": "binary",
+                  "operator": ">",
+                  "left": {
+                    "kind": "load",
+                    "name": "day"
+                  },
+                  "right": {
+                    "kind": "literal",
+                    "value": 1,
+                    "line": 50,
+                    "column": 16,
+                    "file": "current"
+                  }
+                },
+                "body": [
+                  {
+                    "op": "command",
+                    "name": "say",
+                    "args": [
+                      {
+                        "kind": "literal",
+                        "value": "narrator",
+                        "line": 51,
+                        "column": 5,
+                        "file": "current"
+                      },
+                      {
+                        "kind": "literal",
+                        "value": "昨日の記憶がふとよみがえった。",
+                        "line": 51,
+                        "column": 18,
+                        "file": "current"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "otherwise": [
+              {
+                "op": "command",
+                "name": "say",
+                "args": [
+                  {
+                    "kind": "literal",
+                    "value": "ayase",
+                    "line": 53,
+                    "column": 5,
+                    "file": "current"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "無理をさせちゃったかな。",
+                    "line": 53,
+                    "column": 15,
+                    "file": "current"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator",
+                "line": 56,
+                "column": 3,
+                "file": "current"
+              },
+              {
+                "kind": "literal",
+                "value": "好感度を確認します。",
+                "line": 56,
+                "column": 16,
+                "file": "current"
+              }
+            ]
+          },
+          {
+            "op": "for",
+            "name": "i",
+            "start": {
+              "kind": "literal",
+              "value": 1,
+              "line": 57,
+              "column": 14,
+              "file": "current"
+            },
+            "stop": {
+              "kind": "literal",
+              "value": 2,
+              "line": 57,
+              "column": 19,
+              "file": "current"
+            },
+            "step": {
+              "kind": "literal",
+              "value": 1
+            },
+            "body": [
+              {
+                "op": "command",
+                "name": "say",
+                "args": [
+                  {
+                    "kind": "literal",
+                    "value": "narrator",
+                    "line": 58,
+                    "column": 5,
+                    "file": "current"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "確認 {i} 回目",
+                    "line": 58,
+                    "column": 18,
+                    "file": "current"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "op": "while",
+            "condition": {
+              "kind": "binary",
+              "operator": "<",
+              "left": {
+                "kind": "load",
+                "name": "day"
+              },
+              "right": {
+                "kind": "literal",
+                "value": 2,
+                "line": 60,
+                "column": 15,
+                "file": "current"
+              }
+            },
+            "body": [
+              {
+                "op": "set",
+                "target": {
+                  "kind": "load",
+                  "name": "day"
+                },
+                "value": {
+                  "kind": "binary",
+                  "operator": "+",
+                  "left": {
+                    "kind": "load",
+                    "name": "day"
+                  },
+                  "right": {
+                    "kind": "literal",
+                    "value": 1,
+                    "line": 61,
+                    "column": 21,
+                    "file": "current"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "op": "set",
+            "target": {
+              "kind": "index",
+              "target": {
+                "kind": "load",
+                "name": "player"
+              },
+              "key": {
+                "kind": "literal",
+                "value": "affection"
+              }
+            },
+            "value": {
+              "kind": "binary",
+              "operator": "+",
+              "left": {
+                "kind": "index",
+                "target": {
+                  "kind": "load",
+                  "name": "player"
+                },
+                "key": {
+                  "kind": "literal",
+                  "value": "affection"
+                }
+              },
+              "right": {
+                "kind": "literal",
+                "value": 1,
+                "line": 64,
+                "column": 45,
+                "file": "current"
+              }
+            }
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator",
+                "line": 65,
+                "column": 3,
+                "file": "current"
+              },
+              {
+                "kind": "literal",
+                "value": "現在の好感度は {player.affection}。",
+                "line": 65,
+                "column": 16,
+                "file": "current"
+              }
+            ]
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator",
+                "line": 66,
+                "column": 3,
+                "file": "current"
+              },
+              {
+                "kind": "literal",
+                "value": "バージョン {game_version}",
+                "line": 66,
+                "column": 16,
+                "file": "current"
+              }
+            ]
+          },
+          {
+            "op": "command",
+            "name": "wait",
+            "args": [
+              {
+                "kind": "literal",
+                "value": 500,
+                "line": 67,
+                "column": 8,
+                "file": "current"
+              }
+            ]
+          },
+          {
+            "op": "command",
+            "name": "effect",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "fade",
+                "line": 68,
+                "column": 10,
+                "file": "current"
+              },
+              {
+                "kind": "literal",
+                "value": "black",
+                "line": 68,
+                "column": 15,
+                "file": "current"
+              },
+              {
+                "kind": "literal",
+                "value": 500,
+                "line": 68,
+                "column": 21,
+                "file": "current"
+              }
+            ]
+          },
+          {
+            "op": "goto",
+            "scene": "evening"
+          }
+        ]
+      },
+      {
+        "name": "evening",
+        "instructions": [
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayase",
+                "line": 73,
+                "column": 3,
+                "file": "current"
+              },
+              {
+                "kind": "literal",
+                "value": "夕暮れの空、きれいだね。",
+                "line": 73,
+                "column": 13,
+                "file": "current"
+              }
+            ]
+          },
+          {
+            "op": "if",
+            "condition": {
+              "kind": "binary",
+              "operator": ">=",
+              "left": {
+                "kind": "index",
+                "target": {
+                  "kind": "load",
+                  "name": "player"
+                },
+                "key": {
+                  "kind": "literal",
+                  "value": "affection"
+                }
+              },
+              "right": {
+                "kind": "literal",
+                "value": 3,
+                "line": 75,
+                "column": 26,
+                "file": "current"
+              }
+            },
+            "body": [
+              {
+                "op": "command",
+                "name": "say",
+                "args": [
+                  {
+                    "kind": "literal",
+                    "value": "ayase",
+                    "line": 76,
+                    "column": 5,
+                    "file": "current"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "また明日も、一緒に帰ろう。",
+                    "line": 76,
+                    "column": 15,
+                    "file": "current"
+                  }
+                ]
+              }
+            ],
+            "elseIf": [],
+            "otherwise": [
+              {
+                "op": "command",
+                "name": "say",
+                "args": [
+                  {
+                    "kind": "literal",
+                    "value": "ayase",
+                    "line": 78,
+                    "column": 5,
+                    "file": "current"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "今日はここまで。またいつか。",
+                    "line": 78,
+                    "column": 15,
+                    "file": "current"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator",
+                "line": 81,
+                "column": 3,
+                "file": "current"
+              },
+              {
+                "kind": "literal",
+                "value": "{ending_text()}",
+                "line": 81,
+                "column": 16,
+                "file": "current"
+              }
+            ]
+          },
+          {
+            "op": "command",
+            "name": "hide",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "char",
+                "line": 82,
+                "column": 8,
+                "file": "current"
+              },
+              {
+                "kind": "literal",
+                "value": "ayase",
+                "line": 82,
+                "column": 13,
+                "file": "current"
+              }
+            ]
+          },
+          {
+            "op": "command",
+            "name": "clear",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "bg",
+                "line": 83,
+                "column": 9,
+                "file": "current"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "variables": [
+      {
+        "name": "e",
+        "type": "int",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [],
+        "references": [],
+        "mutable": true
+      },
+      {
+        "name": "ayase",
+        "type": {
+          "kind": "struct",
+          "name": "character:ayase"
+        },
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [
+          {
+            "scope": "global",
+            "container": "global",
+            "line": 5,
+            "column": 1,
+            "kind": "definition"
+          }
+        ],
+        "references": [],
+        "mutable": true
+      },
+      {
+        "name": "title",
+        "type": "str",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [
+          {
+            "scope": "global",
+            "container": "global",
+            "line": 8,
+            "column": 1,
+            "kind": "definition"
+          }
+        ],
+        "references": [],
+        "mutable": true
+      },
+      {
+        "name": "day",
+        "type": "int",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [
+          {
+            "scope": "global",
+            "container": "global",
+            "line": 9,
+            "column": 1,
+            "kind": "definition"
+          }
+        ],
+        "references": [
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 50,
+            "column": 10,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 60,
+            "column": 9,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "kind": "assignment",
+            "line": 61,
+            "column": 9
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 61,
+            "column": 15,
+            "kind": "expression"
+          }
+        ],
+        "mutable": true
+      },
+      {
+        "name": "flags",
+        "type": "int",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [
+          {
+            "scope": "global",
+            "container": "global",
+            "line": 10,
+            "column": 1,
+            "kind": "definition"
+          }
+        ],
+        "references": [
+          {
+            "scope": "local",
+            "container": "main:choice1",
+            "kind": "assignment",
+            "line": 40,
+            "column": 11
+          },
+          {
+            "scope": "local",
+            "container": "main:choice1",
+            "line": 40,
+            "column": 19,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 47,
+            "column": 6,
+            "kind": "expression"
+          }
+        ],
+        "mutable": true
+      },
+      {
+        "name": "game_version",
+        "type": "str",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [
+          {
+            "scope": "global",
+            "container": "global",
+            "line": 11,
+            "column": 1,
+            "kind": "definition"
+          }
+        ],
+        "references": [
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 66,
+            "column": 16,
+            "kind": "interpolation"
+          }
+        ],
+        "mutable": false
+      },
+      {
+        "name": "player",
+        "type": {
+          "kind": "struct",
+          "name": "Player"
+        },
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [
+          {
+            "scope": "global",
+            "container": "global",
+            "line": 12,
+            "column": 1,
+            "kind": "definition"
+          }
+        ],
+        "references": [
+          {
+            "scope": "function",
+            "container": "add_affection",
+            "line": 15,
+            "column": 7,
+            "kind": "expression"
+          },
+          {
+            "scope": "function",
+            "container": "add_affection",
+            "line": 15,
+            "column": 26,
+            "kind": "expression"
+          },
+          {
+            "scope": "function",
+            "container": "ending_text",
+            "line": 19,
+            "column": 6,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 35,
+            "column": 13,
+            "kind": "interpolation"
+          },
+          {
+            "scope": "local",
+            "container": "main:choice1",
+            "line": 39,
+            "column": 11,
+            "kind": "expression"
+          },
+          {
+            "scope": "local",
+            "container": "main:choice1",
+            "line": 39,
+            "column": 30,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 47,
+            "column": 21,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 64,
+            "column": 7,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 64,
+            "column": 26,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 65,
+            "column": 16,
+            "kind": "interpolation"
+          },
+          {
+            "scope": "scene",
+            "container": "evening",
+            "line": 75,
+            "column": 6,
+            "kind": "expression"
+          }
+        ],
+        "mutable": true
+      },
+      {
+        "name": "value",
+        "type": "int",
+        "scope": "function",
+        "definedIn": "add_affection",
+        "definitions": [
+          {
+            "scope": "function",
+            "container": "add_affection"
+          }
+        ],
+        "references": [
+          {
+            "scope": "function",
+            "container": "add_affection",
+            "line": 15,
+            "column": 45,
+            "kind": "expression"
+          }
+        ],
+        "mutable": true
+      },
+      {
+        "name": "i",
+        "type": "int",
+        "scope": "local",
+        "definedIn": "main:for3",
+        "definitions": [
+          {
+            "scope": "local",
+            "container": "main:for3"
+          }
+        ],
+        "references": [
+          {
+            "scope": "local",
+            "container": "main:for3",
+            "line": 58,
+            "column": 18,
+            "kind": "interpolation"
+          }
+        ],
+        "mutable": true
+      }
+    ]
+  },
+  "files": {
+    "main.tds": {
+      "version": 2,
+      "assets": [],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "ayase",
+          "poses": [],
+          "line": 5,
+          "column": 1,
+          "endLine": 7,
+          "file": "current"
+        }
+      ],
+      "globals": [
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:ayase"
+          },
+          "name": "ayase",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "ayase",
+                  "line": 6,
+                  "column": 10,
+                  "file": "current"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "op": "declare",
+          "type": "str",
+          "name": "title",
+          "constant": false,
+          "initial": {
+            "kind": "literal",
+            "value": "夕暮れの手紙",
+            "line": 8,
+            "column": 13,
+            "file": "current"
+          }
+        },
+        {
+          "op": "declare",
+          "type": "int",
+          "name": "day",
+          "constant": false,
+          "initial": {
+            "kind": "literal",
+            "value": 1,
+            "line": 9,
+            "column": 11,
+            "file": "current"
+          }
+        },
+        {
+          "op": "declare",
+          "type": "int",
+          "name": "flags",
+          "constant": false,
+          "initial": {
+            "kind": "literal",
+            "value": 0,
+            "line": 10,
+            "column": 13,
+            "file": "current"
+          }
+        },
+        {
+          "op": "declare",
+          "type": "str",
+          "name": "game_version",
+          "constant": true,
+          "initial": {
+            "kind": "literal",
+            "value": "1.0",
+            "line": 11,
+            "column": 26,
+            "file": "current"
+          }
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "Player"
+          },
+          "name": "player",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "あなた",
+                  "line": 12,
+                  "column": 27,
+                  "file": "current"
+                }
+              },
+              {
+                "key": "affection",
+                "value": {
+                  "kind": "literal",
+                  "value": 0,
+                  "line": 12,
+                  "column": 47,
+                  "file": "current"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "functions": [
+        {
+          "op": "function",
+          "name": "add_affection",
+          "returnType": "none",
+          "params": [
+            {
+              "name": "value",
+              "type": "int"
+            }
+          ],
+          "body": [
+            {
+              "op": "set",
+              "target": {
+                "kind": "index",
+                "target": {
+                  "kind": "load",
+                  "name": "player"
+                },
+                "key": {
+                  "kind": "literal",
+                  "value": "affection"
+                }
+              },
+              "value": {
+                "kind": "binary",
+                "operator": "+",
+                "left": {
+                  "kind": "index",
+                  "target": {
+                    "kind": "load",
+                    "name": "player"
+                  },
+                  "key": {
+                    "kind": "literal",
+                    "value": "affection"
+                  }
+                },
+                "right": {
+                  "kind": "load",
+                  "name": "value"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "op": "function",
+          "name": "ending_text",
+          "returnType": "str",
+          "params": [],
+          "body": [
+            {
+              "op": "if",
+              "condition": {
+                "kind": "binary",
+                "operator": ">=",
+                "left": {
+                  "kind": "index",
+                  "target": {
+                    "kind": "load",
+                    "name": "player"
+                  },
+                  "key": {
+                    "kind": "literal",
+                    "value": "affection"
+                  }
+                },
+                "right": {
+                  "kind": "literal",
+                  "value": 3,
+                  "line": 19,
+                  "column": 26,
+                  "file": "current"
+                }
+              },
+              "body": [
+                {
+                  "op": "return",
+                  "value": {
+                    "kind": "literal",
+                    "value": "笑顔のエンディング",
+                    "line": 20,
+                    "column": 12,
+                    "file": "current"
+                  }
+                }
+              ],
+              "elseIf": [],
+              "otherwise": []
+            },
+            {
+              "op": "return",
+              "value": {
+                "kind": "literal",
+                "value": "静かなエンディング",
+                "line": 22,
+                "column": 10,
+                "file": "current"
+              }
+            }
+          ]
+        }
+      ],
+      "scenes": [
+        {
+          "name": "main",
+          "instructions": [
+            {
+              "op": "sayBlock",
+              "speaker": {
+                "kind": "literal",
+                "value": "ayase",
+                "line": 26,
+                "column": 7,
+                "file": "current"
+              },
+              "lines": [
+                {
+                  "kind": "literal",
+                  "value": "おはよう。",
+                  "line": 27,
+                  "column": 5,
+                  "file": "current"
+                },
+                {
+                  "kind": "literal",
+                  "value": "今日も来てくれたんだね。",
+                  "line": 28,
+                  "column": 5,
+                  "file": "current"
+                }
+              ]
+            },
+            {
+              "op": "sayBlock",
+              "speaker": {
+                "kind": "literal",
+                "value": "narrator",
+                "line": 30,
+                "column": 3,
+                "file": "current"
+              },
+              "lines": [
+                {
+                  "kind": "literal",
+                  "value": "これは、放課後の小さな物語。",
+                  "line": 31,
+                  "column": 5,
+                  "file": "current"
+                },
+                {
+                  "kind": "literal",
+                  "value": "選んだ言葉が、明日の景色を変えていく。",
+                  "line": 32,
+                  "column": 5,
+                  "file": "current"
+                }
+              ]
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayase",
+                  "line": 35,
+                  "column": 3,
+                  "file": "current"
+                },
+                {
+                  "kind": "literal",
+                  "value": "{player.name}、少しだけ相談してもいい？",
+                  "line": 35,
+                  "column": 13,
+                  "file": "current"
+                }
+              ]
+            },
+            {
+              "op": "choice",
+              "prompt": {
+                "kind": "literal",
+                "value": "どう答える？",
+                "line": 36,
+                "column": 10,
+                "file": "current"
+              },
+              "options": [
+                {
+                  "label": {
+                    "kind": "literal",
+                    "value": "もちろん",
+                    "line": 37,
+                    "column": 5,
+                    "file": "current"
+                  },
+                  "body": [
+                    {
+                      "op": "command",
+                      "name": "say",
+                      "args": [
+                        {
+                          "kind": "literal",
+                          "value": "ayase",
+                          "line": 38,
+                          "column": 7,
+                          "file": "current"
+                        },
+                        {
+                          "kind": "literal",
+                          "value": "ありがとう。",
+                          "line": 38,
+                          "column": 17,
+                          "file": "current"
+                        }
+                      ]
+                    },
+                    {
+                      "op": "set",
+                      "target": {
+                        "kind": "index",
+                        "target": {
+                          "kind": "load",
+                          "name": "player"
+                        },
+                        "key": {
+                          "kind": "literal",
+                          "value": "affection"
+                        }
+                      },
+                      "value": {
+                        "kind": "binary",
+                        "operator": "+",
+                        "left": {
+                          "kind": "index",
+                          "target": {
+                            "kind": "load",
+                            "name": "player"
+                          },
+                          "key": {
+                            "kind": "literal",
+                            "value": "affection"
+                          }
+                        },
+                        "right": {
+                          "kind": "literal",
+                          "value": 1,
+                          "line": 39,
+                          "column": 49,
+                          "file": "current"
+                        }
+                      }
+                    },
+                    {
+                      "op": "set",
+                      "target": {
+                        "kind": "load",
+                        "name": "flags"
+                      },
+                      "value": {
+                        "kind": "binary",
+                        "operator": "+",
+                        "left": {
+                          "kind": "load",
+                          "name": "flags"
+                        },
+                        "right": {
+                          "kind": "literal",
+                          "value": 1,
+                          "line": 40,
+                          "column": 27,
+                          "file": "current"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "label": {
+                    "kind": "literal",
+                    "value": "今日は急いでいる",
+                    "line": 42,
+                    "column": 5,
+                    "file": "current"
+                  },
+                  "body": [
+                    {
+                      "op": "command",
+                      "name": "say",
+                      "args": [
+                        {
+                          "kind": "literal",
+                          "value": "ayase",
+                          "line": 43,
+                          "column": 7,
+                          "file": "current"
+                        },
+                        {
+                          "kind": "literal",
+                          "value": "そっか。また明日ね。",
+                          "line": 43,
+                          "column": 17,
+                          "file": "current"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "if",
+              "condition": {
+                "kind": "binary",
+                "operator": "and",
+                "left": {
+                  "kind": "binary",
+                  "operator": "==",
+                  "left": {
+                    "kind": "load",
+                    "name": "flags"
+                  },
+                  "right": {
+                    "kind": "literal",
+                    "value": 1,
+                    "line": 47,
+                    "column": 15,
+                    "file": "current"
+                  }
+                },
+                "right": {
+                  "kind": "binary",
+                  "operator": ">",
+                  "left": {
+                    "kind": "index",
+                    "target": {
+                      "kind": "load",
+                      "name": "player"
+                    },
+                    "key": {
+                      "kind": "literal",
+                      "value": "affection"
+                    }
+                  },
+                  "right": {
+                    "kind": "literal",
+                    "value": 0,
+                    "line": 47,
+                    "column": 40,
+                    "file": "current"
+                  }
+                }
+              },
+              "body": [
+                {
+                  "op": "command",
+                  "name": "say",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "ayase",
+                      "line": 48,
+                      "column": 5,
+                      "file": "current"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "少し安心したよ。",
+                      "line": 48,
+                      "column": 15,
+                      "file": "current"
+                    }
+                  ]
+                },
+                {
+                  "op": "call",
+                  "name": "add_affection",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": 1,
+                      "line": 49,
+                      "column": 19,
+                      "file": "current"
+                    }
+                  ]
+                }
+              ],
+              "elseIf": [
+                {
+                  "condition": {
+                    "kind": "binary",
+                    "operator": ">",
+                    "left": {
+                      "kind": "load",
+                      "name": "day"
+                    },
+                    "right": {
+                      "kind": "literal",
+                      "value": 1,
+                      "line": 50,
+                      "column": 16,
+                      "file": "current"
+                    }
+                  },
+                  "body": [
+                    {
+                      "op": "command",
+                      "name": "say",
+                      "args": [
+                        {
+                          "kind": "literal",
+                          "value": "narrator",
+                          "line": 51,
+                          "column": 5,
+                          "file": "current"
+                        },
+                        {
+                          "kind": "literal",
+                          "value": "昨日の記憶がふとよみがえった。",
+                          "line": 51,
+                          "column": 18,
+                          "file": "current"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "otherwise": [
+                {
+                  "op": "command",
+                  "name": "say",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "ayase",
+                      "line": 53,
+                      "column": 5,
+                      "file": "current"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "無理をさせちゃったかな。",
+                      "line": 53,
+                      "column": 15,
+                      "file": "current"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator",
+                  "line": 56,
+                  "column": 3,
+                  "file": "current"
+                },
+                {
+                  "kind": "literal",
+                  "value": "好感度を確認します。",
+                  "line": 56,
+                  "column": 16,
+                  "file": "current"
+                }
+              ]
+            },
+            {
+              "op": "for",
+              "name": "i",
+              "start": {
+                "kind": "literal",
+                "value": 1,
+                "line": 57,
+                "column": 14,
+                "file": "current"
+              },
+              "stop": {
+                "kind": "literal",
+                "value": 2,
+                "line": 57,
+                "column": 19,
+                "file": "current"
+              },
+              "step": {
+                "kind": "literal",
+                "value": 1
+              },
+              "body": [
+                {
+                  "op": "command",
+                  "name": "say",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "narrator",
+                      "line": 58,
+                      "column": 5,
+                      "file": "current"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "確認 {i} 回目",
+                      "line": 58,
+                      "column": 18,
+                      "file": "current"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "while",
+              "condition": {
+                "kind": "binary",
+                "operator": "<",
+                "left": {
+                  "kind": "load",
+                  "name": "day"
+                },
+                "right": {
+                  "kind": "literal",
+                  "value": 2,
+                  "line": 60,
+                  "column": 15,
+                  "file": "current"
+                }
+              },
+              "body": [
+                {
+                  "op": "set",
+                  "target": {
+                    "kind": "load",
+                    "name": "day"
+                  },
+                  "value": {
+                    "kind": "binary",
+                    "operator": "+",
+                    "left": {
+                      "kind": "load",
+                      "name": "day"
+                    },
+                    "right": {
+                      "kind": "literal",
+                      "value": 1,
+                      "line": 61,
+                      "column": 21,
+                      "file": "current"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "op": "set",
+              "target": {
+                "kind": "index",
+                "target": {
+                  "kind": "load",
+                  "name": "player"
+                },
+                "key": {
+                  "kind": "literal",
+                  "value": "affection"
+                }
+              },
+              "value": {
+                "kind": "binary",
+                "operator": "+",
+                "left": {
+                  "kind": "index",
+                  "target": {
+                    "kind": "load",
+                    "name": "player"
+                  },
+                  "key": {
+                    "kind": "literal",
+                    "value": "affection"
+                  }
+                },
+                "right": {
+                  "kind": "literal",
+                  "value": 1,
+                  "line": 64,
+                  "column": 45,
+                  "file": "current"
+                }
+              }
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator",
+                  "line": 65,
+                  "column": 3,
+                  "file": "current"
+                },
+                {
+                  "kind": "literal",
+                  "value": "現在の好感度は {player.affection}。",
+                  "line": 65,
+                  "column": 16,
+                  "file": "current"
+                }
+              ]
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator",
+                  "line": 66,
+                  "column": 3,
+                  "file": "current"
+                },
+                {
+                  "kind": "literal",
+                  "value": "バージョン {game_version}",
+                  "line": 66,
+                  "column": 16,
+                  "file": "current"
+                }
+              ]
+            },
+            {
+              "op": "command",
+              "name": "wait",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": 500,
+                  "line": 67,
+                  "column": 8,
+                  "file": "current"
+                }
+              ]
+            },
+            {
+              "op": "command",
+              "name": "effect",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "fade",
+                  "line": 68,
+                  "column": 10,
+                  "file": "current"
+                },
+                {
+                  "kind": "literal",
+                  "value": "black",
+                  "line": 68,
+                  "column": 15,
+                  "file": "current"
+                },
+                {
+                  "kind": "literal",
+                  "value": 500,
+                  "line": 68,
+                  "column": 21,
+                  "file": "current"
+                }
+              ]
+            },
+            {
+              "op": "goto",
+              "scene": "evening"
+            }
+          ]
+        },
+        {
+          "name": "evening",
+          "instructions": [
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayase",
+                  "line": 73,
+                  "column": 3,
+                  "file": "current"
+                },
+                {
+                  "kind": "literal",
+                  "value": "夕暮れの空、きれいだね。",
+                  "line": 73,
+                  "column": 13,
+                  "file": "current"
+                }
+              ]
+            },
+            {
+              "op": "if",
+              "condition": {
+                "kind": "binary",
+                "operator": ">=",
+                "left": {
+                  "kind": "index",
+                  "target": {
+                    "kind": "load",
+                    "name": "player"
+                  },
+                  "key": {
+                    "kind": "literal",
+                    "value": "affection"
+                  }
+                },
+                "right": {
+                  "kind": "literal",
+                  "value": 3,
+                  "line": 75,
+                  "column": 26,
+                  "file": "current"
+                }
+              },
+              "body": [
+                {
+                  "op": "command",
+                  "name": "say",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "ayase",
+                      "line": 76,
+                      "column": 5,
+                      "file": "current"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "また明日も、一緒に帰ろう。",
+                      "line": 76,
+                      "column": 15,
+                      "file": "current"
+                    }
+                  ]
+                }
+              ],
+              "elseIf": [],
+              "otherwise": [
+                {
+                  "op": "command",
+                  "name": "say",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "ayase",
+                      "line": 78,
+                      "column": 5,
+                      "file": "current"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "今日はここまで。またいつか。",
+                      "line": 78,
+                      "column": 15,
+                      "file": "current"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator",
+                  "line": 81,
+                  "column": 3,
+                  "file": "current"
+                },
+                {
+                  "kind": "literal",
+                  "value": "{ending_text()}",
+                  "line": 81,
+                  "column": 16,
+                  "file": "current"
+                }
+              ]
+            },
+            {
+              "op": "command",
+              "name": "hide",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "char",
+                  "line": 82,
+                  "column": 8,
+                  "file": "current"
+                },
+                {
+                  "kind": "literal",
+                  "value": "ayase",
+                  "line": 82,
+                  "column": 13,
+                  "file": "current"
+                }
+              ]
+            },
+            {
+              "op": "command",
+              "name": "clear",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "bg",
+                  "line": 83,
+                  "column": 9,
+                  "file": "current"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "variables": [
+        {
+          "name": "e",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ayase",
+          "type": {
+            "kind": "struct",
+            "name": "character:ayase"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 5,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "title",
+          "type": "str",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 8,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "day",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 9,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 50,
+              "column": 10,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 60,
+              "column": 9,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "kind": "assignment",
+              "line": 61,
+              "column": 9
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 61,
+              "column": 15,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "flags",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 10,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "local",
+              "container": "main:choice1",
+              "kind": "assignment",
+              "line": 40,
+              "column": 11
+            },
+            {
+              "scope": "local",
+              "container": "main:choice1",
+              "line": 40,
+              "column": 19,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 47,
+              "column": 6,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "game_version",
+          "type": "str",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 11,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 66,
+              "column": 16,
+              "kind": "interpolation"
+            }
+          ],
+          "mutable": false
+        },
+        {
+          "name": "player",
+          "type": {
+            "kind": "struct",
+            "name": "Player"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 12,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "function",
+              "container": "add_affection",
+              "line": 15,
+              "column": 7,
+              "kind": "expression"
+            },
+            {
+              "scope": "function",
+              "container": "add_affection",
+              "line": 15,
+              "column": 26,
+              "kind": "expression"
+            },
+            {
+              "scope": "function",
+              "container": "ending_text",
+              "line": 19,
+              "column": 6,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 35,
+              "column": 13,
+              "kind": "interpolation"
+            },
+            {
+              "scope": "local",
+              "container": "main:choice1",
+              "line": 39,
+              "column": 11,
+              "kind": "expression"
+            },
+            {
+              "scope": "local",
+              "container": "main:choice1",
+              "line": 39,
+              "column": 30,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 47,
+              "column": 21,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 64,
+              "column": 7,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 64,
+              "column": 26,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 65,
+              "column": 16,
+              "kind": "interpolation"
+            },
+            {
+              "scope": "scene",
+              "container": "evening",
+              "line": 75,
+              "column": 6,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "value",
+          "type": "int",
+          "scope": "function",
+          "definedIn": "add_affection",
+          "definitions": [
+            {
+              "scope": "function",
+              "container": "add_affection"
+            }
+          ],
+          "references": [
+            {
+              "scope": "function",
+              "container": "add_affection",
+              "line": 15,
+              "column": 45,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "i",
+          "type": "int",
+          "scope": "local",
+          "definedIn": "main:for3",
+          "definitions": [
+            {
+              "scope": "local",
+              "container": "main:for3"
+            }
+          ],
+          "references": [
+            {
+              "scope": "local",
+              "container": "main:for3",
+              "line": 58,
+              "column": 18,
+              "kind": "interpolation"
+            }
+          ],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "functions.tds": {
+      "version": 2,
+      "assets": [],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "ayase",
+          "poses": [],
+          "line": 5,
+          "column": 1,
+          "endLine": 7,
+          "external": true
+        }
+      ],
+      "globals": [],
+      "functions": [],
+      "scenes": [],
+      "variables": [
+        {
+          "name": "e",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "title",
+          "type": "str",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "day",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "flags",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "game_version",
+          "type": "str",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "player",
+          "type": {
+            "kind": "struct",
+            "name": "Player"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ayase",
+          "type": {
+            "kind": "struct",
+            "name": "character:ayase"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "first/test1.tds": {
+      "version": 2,
+      "assets": [],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "ayase",
+          "poses": [],
+          "line": 5,
+          "column": 1,
+          "endLine": 7,
+          "external": true
+        }
+      ],
+      "globals": [],
+      "functions": [],
+      "scenes": [],
+      "variables": [
+        {
+          "name": "e",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "title",
+          "type": "str",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "day",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "flags",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "game_version",
+          "type": "str",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "player",
+          "type": {
+            "kind": "struct",
+            "name": "Player"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ayase",
+          "type": {
+            "kind": "struct",
+            "name": "character:ayase"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "first/test.tds": {
+      "version": 2,
+      "assets": [],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "ayase",
+          "poses": [],
+          "line": 5,
+          "column": 1,
+          "endLine": 7,
+          "external": true
+        }
+      ],
+      "globals": [
+        {
+          "op": "command",
+          "name": "say",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "narrator",
+              "line": 2,
+              "column": 1,
+              "file": "current"
+            },
+            {
+              "kind": "literal",
+              "value": "hello",
+              "line": 2,
+              "column": 14,
+              "file": "current"
+            }
+          ]
+        },
+        {
+          "op": "declare",
+          "type": "int",
+          "name": "e",
+          "constant": false,
+          "initial": {
+            "kind": "call",
+            "name": "a",
+            "args": [
+              {
+                "kind": "literal",
+                "value": 1,
+                "line": 7,
+                "column": 11,
+                "file": "current"
+              }
+            ]
+          }
+        },
+        {
+          "op": "command",
+          "name": "say",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "narrator",
+              "line": 8,
+              "column": 1,
+              "file": "current"
+            },
+            {
+              "kind": "literal",
+              "value": "{e}",
+              "line": 8,
+              "column": 14,
+              "file": "current"
+            }
+          ]
+        }
+      ],
+      "functions": [
+        {
+          "op": "function",
+          "name": "a",
+          "returnType": "int",
+          "params": [
+            {
+              "name": "b",
+              "type": "int"
+            }
+          ],
+          "body": [
+            {
+              "op": "return",
+              "value": {
+                "kind": "load",
+                "name": "b"
+              }
+            }
+          ]
+        }
+      ],
+      "scenes": [],
+      "variables": [
+        {
+          "name": "title",
+          "type": "str",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "day",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "flags",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "game_version",
+          "type": "str",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "player",
+          "type": {
+            "kind": "struct",
+            "name": "Player"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ayase",
+          "type": {
+            "kind": "struct",
+            "name": "character:ayase"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "e",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 7,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 8,
+              "column": 14,
+              "kind": "interpolation"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "b",
+          "type": "int",
+          "scope": "function",
+          "definedIn": "a",
+          "definitions": [
+            {
+              "scope": "function",
+              "container": "a"
+            }
+          ],
+          "references": [
+            {
+              "scope": "function",
+              "container": "a",
+              "line": 5,
+              "column": 10,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    }
+  }
+}

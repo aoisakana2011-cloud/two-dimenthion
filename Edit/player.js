@@ -148,7 +148,7 @@ const runtime = new NovelRuntime.Runtime({
         try { speaker = rt.get(speaker)?.name || speaker; } catch {}
       }
       $('speaker').textContent = speaker;
-      $('text').textContent = rt.text(args[1]);
+      $('text').textContent = await rt.textAsync(args[1]);
       await new Promise(resolve => { $('next').onclick = () => { $('next').onclick = null; resolve(); }; });
     } else if (name === 'wait') {
       if (args[0] < 0n || args[0] > 2147483647n) throw Error('待機時間が不正です');

@@ -93,6 +93,12 @@ test('character fields persist as runtime state and support dotted interpolation
   assert.deepEqual({ ...rt.get('ayase') }, { name: '綾瀬', affection: 2n });
   assert.equal(rt.text('{ayase.name}: {ayase.affection}'), '綾瀬: 2');
 });
+test('evaluates zero-argument function calls in interpolated text', async () => {
+  const rt = await run('fn ending_text() -> str { return "静かなエンディング" }\nsay narrator "{ending_text()}"', {
+    command: async (name, args) => { if (name === 'say') assert.equal(args[1], '{ending_text()}'); },
+  });
+  assert.equal(await rt.textAsync('{ending_text()}'), '静かなエンディング');
+});
 test('choice errors reject the run and restore scope', async () => {
   const rt = new Runtime({ choice: async () => 0 });
   await assert.rejects(rt.run(program('choice {\n"bad" {\nint x = 1 / 0\n}\n}')), /除算/);

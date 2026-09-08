@@ -196,7 +196,7 @@ function highlightSource(source) {
     if (token.value === ':' && significant[index + 1]?.kind === 'word' && types.has(significant[index + 1].value)) significant[index + 1].role = 'type';
   });
   const renderString = (token) => {
-    const value = escape(token.value).replace(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\}/g, '<span class="hl-interpolation">{$1}</span>');
+    const value = escape(token.value).replace(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(\(\))?\}/g, '<span class="hl-interpolation">{$1$2}</span>');
     return `<span class="hl-string${token.closed ? '' : ' hl-invalid'}">${value}</span>`;
   };
   return tokens.map((token) => {

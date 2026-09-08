@@ -604,6 +604,11 @@ test('validates interpolation variables and choice cardinality', () => {
   assert.throws(() => compile(parse('choice {\n}')), /1つ以上の選択肢/);
 });
 
+test('validates zero-argument function interpolation', () => {
+  assert.doesNotThrow(() => compile(parse('fn ending_text() -> str { return "end" }\nsay narrator "{ending_text()}"')));
+  assert.throws(() => compile(parse('say narrator "{missing()}"')), /補間対象の関数 'missing' が未定義/);
+});
+
 test('counts interpolated function variables as used', () => {
   const diagnostics = analyzeScript(parse(`
     fn greet(name: str) -> none {
