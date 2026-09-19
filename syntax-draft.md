@@ -1,6 +1,47 @@
-# Novel Script DSL 現行仕様
+# Novel Script DSL リファレンス
 
-この文書は、現在のパーサー、型検査器、静的解析器、コンパイラ、ブラウザーランタイム、ネイティブランタイム、およびプロジェクトビルドの実装を基準にした仕様である。
+この文書は、現在のパーサー、型検査器、コンパイラ、ブラウザーランタイム、ネイティブランタイム、プロジェクトビルドを突き合わせた、実装準拠の構文リファレンスである。ここにない構文を受理すること、または旧形式の互換性を保証することはない。
+
+## はじめに：最小の作品
+
+まず `setting.txt` を置き、開始ファイルに次のように書く。これだけで背景、立ち絵、会話、選択肢を含む作品になる。
+
+```text
+# setting.txt
+scenario_dir = senario
+asset_dir = asset
+start_file = main.tds
+title = はじめての作品
+```
+
+```tds
+# senario/main.tds
+asset bg room = "asset/bg/room.jpg"
+
+character hero {
+  name = "主人公"
+  pose normal = "asset/char/hero/normal.png"
+}
+
+scene main {
+  bg room
+  show hero.normal center
+  say hero "こんにちは。"
+
+  choice "どうする？" {
+    "あいさつを返す" { say narrator "会話が始まった。" }
+    "立ち去る" { hide hero }
+  }
+}
+```
+
+`asset` のパスは作品ルートから、`setting.txt` の各パスは作品ルートから指定する。`include` と外部ファイルへの `goto` は `scenario_dir` を基準にする。
+
+表記の約束は次のとおり。
+
+- `<...>` は置き換える部分、`[...]` は省略可能な部分、`|` は選択肢を表す。
+- `int`、`str` などの型名と、`left`、`fade` などの固定語は半角・小文字で書く。
+- 「構文エラー」は解析時、「型エラー」はコンパイル時、「実行時エラー」は再生中に検出される。
 
 ## 1. 基本規則
 
@@ -15,6 +56,7 @@
 - 保存可能な基本型は `int` と `str`。複合型として `dict[int]`、`dict[str]`、名前付き `struct`、キャラクターオブジェクトがある。
 - 内部的な真偽値は条件式にだけ存在し、`bool` 型の変数は宣言できない。
 - `let` は廃止済みであり、使用すると構文エラーになる。
+- `true`、`false`、`null` のリテラルはない。真偽値は比較・論理演算の結果としてのみ存在する。
 
 ## 2. コメント、文字列、識別子
 
@@ -52,7 +94,24 @@ say narrator "# と // は文字列内では本文"
 
 シナリオファイルの拡張子は `.tds` または `.txt`。
 
-作品フォルダー名は任意。作品直下の `asset/` に素材、`senario/` にシナリオを置く（`senario` が正式なディレクトリ名）。エディター本体は作品フォルダーの外に置く。生成される変数・素材の索引とbuild成果物は作品内の `.novel/` に保存される。includeと外部gotoは `senario/` を基準とする。
+作品フォルダーの直下には必ず `setting.txt` を置く。設定がない旧作品は、互換用の既定値（`senario/`、`asset/`、`main.tds`）で開けるが、保存・配布する作品では `setting.txt` を作成する。
+
+```text
+# すべて作品フォルダーからの相対パス。/ を使用する。
+scenario_dir = senario
+asset_dir = asset
+start_file = main.tds
+title = 作品名
+```
+
+- `scenario_dir`: `.tds` / `.txt` の場所。includeと外部 `goto` の基準になる。
+- `asset_dir`: `asset` 宣言が参照する素材のルート。
+- `start_file`: パッケージングとプレイヤーが最初に開くシナリオファイル。`.tds` または `.txt` を指定する。
+- `title`: エディター上の作品名。省略時は作品フォルダー名。
+
+値は作品フォルダー内の相対パスに限る。絶対パス、空要素、`.`、`..` は使えない。開始ファイルの最初の `scene` が開始sceneになる。別のsceneから始めたい場合は、そのsceneを開始ファイルの先頭に置くか、開始ファイルの先頭sceneから `goto` する。
+
+生成される索引とbuild成果物は `.novel/` に保存される。
 
 1ファイルには次の要素を記述できる。
 
@@ -65,9 +124,9 @@ say narrator "# と // は文字列内では本文"
 - シーン
 - トップレベル命令
 
-`scene` がある場合、グローバル命令を実行した後、そのファイルで最初に宣言されたシーンから実行する。`scene` がないファイルは、トップレベル命令をそのまま順番に実行する。
+`scene` がある場合、トップレベル命令を実行した後、そのファイルで最初に宣言されたシーンから実行する。`scene` がないファイルは、トップレベル命令をそのまま順番に実行する。
 
-パーサーはトップレベル要素を種類ごとのAST配列へ分ける。グローバル命令同士、関数同士、シーン同士の順序は保持されるが、異なる種類を交ぜたソース順がそのまま実行順になるわけではない。読みやすさと初期化順を明確にするため、記述順は次を推奨する。
+トップレベルの `asset`、`character`、`struct`、`fn`、`scene`、`include` は宣言であり、通常命令と同じ順序では実行されない。トップレベルの変数宣言・命令だけが初期化列として実行される。混在時の誤解を避けるため、記述順は次を推奨する。
 
 1. `include`
 2. `asset`、`character`、`struct`
@@ -87,17 +146,17 @@ include "chapter/common.tds"
 - 絶対パスと `..` によるプロジェクト外参照は禁止される。
 - includeの循環はエラーになる。
 - include先のアセット、キャラクター、グローバル、関数、シーンは、include元へ統合される。
-- include先のグローバル命令は、includeの記述順に、include元のグローバル命令より先に実行される。入れ子のincludeは依存先から実行する。シーンの開始位置はinclude元の最初のシーンを優先する。
+- include先のトップレベル命令は、include元の初期化より先に実行される。入れ子のincludeは依存先から実行する。開始シーンはinclude元の最初のシーンを優先する。
 - 現在のプロジェクト統合処理はinclude先の `struct` を取り込まない。共有する `struct` はエントリーファイル側で宣言する。
 
 別ファイルへの遷移は `goto` で行う。
 
 ```tds
-goto chapter2.tds
-goto chapter/chapter2.tds
+goto "chapter2.tds"
+goto "chapter/chapter2.tds"
 ```
 
-include先と外部goto先のパスに使用できる文字は、英数字、`_`、`.`、`/`、`-`。引用符で囲んでも空白は使用できない。
+外部ファイルは引用符で囲んで指定する。パスに使用できる文字は、英数字、`_`、`.`、`/`、`-`。引用符で囲んでも空白は使用できない。
 
 ファイルをまたいでも既存のグローバル変数とキャラクター状態は維持される。同名グローバルの再宣言はせず、既存値の変更には `set` を使う。
 
@@ -165,7 +224,7 @@ say ayase "私の表示名は name フィールドから取得されます"
 
 ポーズは必ず `pose` を付けて宣言する。
 
-```tds
+```text
 pose smile = "asset/char/ayase/smile.png"
 ```
 
@@ -180,6 +239,7 @@ int score = 0
 str player_name = "主人公"
 const int max_score = 100
 const str title = "Twilight Letter"
+global int shared_score = 0
 ```
 
 構文は次のとおり。
@@ -190,9 +250,15 @@ str <name> = <str-expression>
 dict[int] <name> = <dictionary-expression>
 dict[str] <name> = <dictionary-expression>
 const <type> <name> = <expression>
+global <type> <name> = <expression>
+global const <type> <name> = <expression>
 ```
 
-`const` は宣言後に変更できない。辞書やstructを `const` にした場合、その要素やフィールドも `set`、`unset` で変更できない。
+`main.tds` のトップレベル変数は、`global` を省略してもプロジェクト全体から参照できる。`main.tds` 以外の通常のトップレベル変数は、そのファイル内でのみ参照できる。別ファイルから参照する変数は `global` を付けて宣言する。`global` 宣言はファイルのトップレベルでのみ使用できる。
+
+別ファイルの `global` 変数は、その宣言を含むファイルが実行された後に使用できる。実行前に参照できるのは型情報だけであり、build時の変数フロー検証は初期化前の参照をエラーにする。
+
+`const` は宣言後に変更できない。辞書やstructを `const` にした場合、その要素やフィールドも `set`、`unset` で変更できない。`const` は予約語一覧には含まれない実装上の特別語なので、識別子には使わない。
 
 constの制約はファイル遷移後も維持される。分岐後に共有される変数が到達可能な分岐のいずれかでconstなら、その変数への変更は静的エラーになる。関数引数や関数ローカルが同名のグローバルを隠す場合、ローカル側の宣言に従う。
 
@@ -249,11 +315,122 @@ say narrator "{user.name}: {user.age}"
 ```
 
 - structフィールド型は `int` または `str`。
+- `struct` は使用より前に、ファイルのトップレベルで宣言する。scene、関数、choice、条件ブロックの内部には書けない。
+- 未宣言の型名を変数宣言に書いてもstructとして推測しない。`User user = ...` を使う前に必ず `struct User { ... }` を置く。
 - 初期値は辞書形式で指定する。
 - 宣言されたすべてのフィールドが必要。
 - 余分なフィールド、欠けたフィールド、型の違うフィールドは静的エラー。
 - フィールドは `.` で参照・更新する。
 - `unset` でstructフィールドを削除することはできない。
+
+### 8.3 structを使うときの考え方
+
+`struct` は「同じまとまりとして扱う、名前付きの値の設計図」である。`struct Player` は値を作らず、`Player player = { ... }` が実際の値を作る。struct変数の宣言時は必ずこの辞書リテラル形式で初期化する。
+
+```text
+struct Player { ... }     # 型（設計図）を宣言する
+Player player = { ... }   # Player 型の値を1つ作る（宣言時は必須）
+```
+
+フィールドは定義時の名前と型が固定される。辞書と違い、実行中にフィールドを追加・削除したり、別の型の値に置き換えたりはできない。その代わり `player.name` のように安全にアクセスできる。
+
+### 8.4 宣言から更新までの完全例
+
+型宣言は利用箇所より前、かつトップレベルに置く。初期化の `{ ... }` には全フィールドをちょうど1回ずつ書く。
+
+```tds
+struct Player {
+  name: str
+  level: int
+  coins: int
+}
+
+Player player = {
+  "name": "ユイ",
+  "level": 1,
+  "coins": 50
+}
+
+set player.coins = player.coins + 10
+set player.level = player.level + 1
+say narrator "{player.name} は Lv.{player.level}、所持金 {player.coins}"
+```
+
+読み取りは式として使える。代入先にできるのは既存フィールドだけで、`set player.rank = 1` のように新しいフィールドを追加することはできない。
+
+```tds
+if player.coins >= 100 {
+  say narrator "買い物できます"
+}
+
+str display_name = player.name + "さん"
+```
+
+### 8.5 関数へ渡す・関数から返す
+
+名前付きstructは関数の引数と戻り値にも指定できる。struct値は値渡しなので、関数内で引数を変更しても呼び出し元の値は変化しない。変更結果を使いたい場合は、戻り値を受け取って明示的に代入する。struct変数の宣言時には辞書リテラルが必要なため、戻り値を受ける変数もまず初期値を作ってから `set` する。
+
+```tds
+struct Player {
+  name: str
+  coins: int
+}
+
+fn add_coins(target: Player, amount: int) -> Player {
+  set target.coins = target.coins + amount
+  return target
+}
+
+Player player = { "name": "ユイ", "coins": 50 }
+Player rewarded = { "name": "", "coins": 0 }
+set rewarded = add_coins(player, 10)
+
+say narrator "元の所持金: {player.coins}"
+say narrator "報酬後の所持金: {rewarded.coins}"
+```
+
+上の例では `player.coins` は `50` のまま、`rewarded.coins` は `60` になる。元の変数を更新したいなら `set player = add_coins(player, 10)` と書ける。
+
+### 8.6 代入とconst
+
+struct同士の `set` による代入もコピーになる。`copy` を更新しても `original` は変わらない。`Settings copy = original` のような宣言時の代入は使えないため、コピー先を辞書リテラルで初期化してから `set copy = original` と書く。
+
+```tds
+struct Settings {
+  title: str
+  volume: int
+}
+
+Settings original = { "title": "本編", "volume": 80 }
+Settings copy = { "title": "", "volume": 0 }
+set copy = original
+set copy.volume = 20
+
+say narrator "{original.volume}"  # 80
+say narrator "{copy.volume}"      # 20
+```
+
+`const Settings settings = ...` はフィールドを含めて変更不可である。`set settings.volume = 20` はエラーになる。const値を変更可能な変数へ代入した場合は、コピー先だけを変更できる。
+
+### 8.7 許可されない形とよくあるエラー
+
+| 書き方 | 結果 | 正しい考え方 |
+|---|---|---|
+| `Player p = { "name": "ユイ" }` | `coins` が不足してエラー | 全フィールドを指定する |
+| `Player p = { "name": "ユイ", "coins": 1, "rank": 1 }` | 未定義フィールドでエラー | 定義にないキーは書かない |
+| `Player p = { "name": 1, "coins": 1 }` | `name` の型不一致 | `str` / `int` を定義どおりにする |
+| `Player copy = player` | 宣言時のstruct初期化エラー | `{ ... }` で初期化してから `set copy = player` |
+| `set p.rank = 1` | 未定義フィールドでエラー | フィールド追加は不可 |
+| `unset p.name` | エラー | `unset` は辞書要素専用 |
+| `struct Party { leader: Player }` | 構文エラー | フィールド型は `int` または `str` のみ |
+| `dict[Player] members = ...` | 型として使用不可 | 辞書の値型も `int` または `str` のみ |
+| `Player p = ...` を `struct Player` より前に書く | 未知の命令/型としてエラー | structを先にトップレベル宣言する |
+
+structの入れ子、structフィールドへの辞書、辞書の値としてのstruct、`bool` フィールドは現在のDSLでは対応していない。複雑な状態が必要なら、複数のstruct変数に分けるか、`dict[int]` / `dict[str]` を別変数として持つ。
+
+### 8.8 複数ファイルで使うstruct
+
+includeは一つのプログラムとして統合されるが、structの型名はエントリーファイル側で先に宣言する。include先だけにstructを置いて他ファイルから共有する書き方は使わない。外部 `goto` 先で同じstructを使う場合も、各ファイルが解析できるよう開始ファイルの共有宣言・include構成を確認する。
 
 ## 9. スコープ
 
@@ -279,7 +456,7 @@ say narrator "{user.name}: {user.age}"
 
 ### 10.1 リテラルと参照
 
-```tds
+```text
 123
 -20
 "文字列"
@@ -361,37 +538,26 @@ say ayase "こんにちは"
 say narrator "その日の朝。"
 say none "話者欄を空にする"
 say "話者省略は narrator"
-say message
+say narrator message
 ```
 
-- 第1引数は宣言済みキャラクター、`narrator`、`none` のいずれか。
-- 本文は `str` 式。
-- 話者を省略した文字列または式は `narrator` として扱う。
+- 第1引数は、指定する場合のみ、宣言済みキャラクター、`narrator`、`none` のいずれか。
+- 本文は必須の `str` 式。文字列、`str` 型変数、文字列連結、`str()`、`str` を返す関数を使用できる。
+- 話者を省略できるのは先頭が文字列リテラルのときだけで、その場合は `narrator` として扱う。変数や関数呼び出しを本文にする場合は `say narrator message` のように話者を明示する。
 - キャラクターを指定すると、画面にはそのキャラクターの `name` フィールドが表示される。
 
-連続するセリフはブロック形式で書ける。空ブロックは禁止。
+`say hero` のように本文を省略する形式、および `say hero { ... }` / `say { ... }` のブロック形式は廃止済みで、構文エラーになる。複数行を表示したい場合は `say` を行ごとに書く。
 
-```tds
-say ayase {
-  "こんにちは"
-  "今日もよろしくね"
-}
-
-say {
-  "ナレーターの1行目"
-  "ナレーターの2行目"
-}
-```
-
-文字列補間は単純変数またはドット区切りのフィールド参照に対応する。
+文字列補間は単純変数、ドット区切りのstruct／キャラクターフィールド参照、または引数なし関数呼び出しに対応する。
 
 ```tds
 say narrator "得点は {score}"
 say narrator "{user.name}: {user.age}"
 say narrator "好感度は {ayase.affection}"
+say narrator "結果は {ending_text()}"
 ```
 
-補間内に `[]`、関数呼び出し、演算式は書けない。補間対象は静的に存在確認・型検査される。辞書全体を補間した場合はJSON形式の文字列になる。
+補間内に `[]`、引数付き関数呼び出し、演算式は書けない。補間関数は引数を取らず、`none` を返してはならない。補間対象は静的に存在確認・型検査される。辞書全体を補間した場合はJSON形式の文字列になる。
 
 ## 13. 画像、音声、動画、演出
 
@@ -417,25 +583,23 @@ show ayase.normal center
 show ayase.smile left fade 300
 hide ayase
 hide ayase fade 300
-clear char ayase
 ```
 
 - `show <character>.<pose> <position>` はキャラクターを表示する。
 - 既に表示中なら、同じ命令で位置とポーズを更新する。
 - `fade <int>` を付けるとフェードインする。
 - `hide` は必要ならフェードアウトしてから表示を解除する。
-- `clear char` はフェードせず即時に表示を解除する。
+- キャラクターを即時に消す場合も `hide ayase` を使う。`clear char` は存在しない。
 
-次の旧形式も互換性のため受理されるが、新規コードでは使用しない。
+次の旧形式はすべて廃止済みで、使用するとコンパイルエラーになる。
 
-```tds
+```text
 show ayase at center pose normal
 show char ayase center normal
 char ayase center smile
 hide char ayase
+clear char ayase
 ```
-
-旧 `char` は表示中キャラクターの更新用で、未表示の場合は実行時エラーになる。
 
 ### 13.3 一般画像
 
@@ -585,13 +749,33 @@ scene chapter1 {
 ```
 
 - 同じファイル内の `goto chapter1` は宣言済みシーンを参照する。
-- `.tds`、`.txt`、`/` を含む対象は外部ファイル遷移として扱われる。
+- 外部ファイルには `goto "chapter/next.tds"` のように、引用符付きの相対パスを使う。`.tds`、`.txt`、`/` を含む対象は外部ファイル遷移として扱われる。
 - `goto` が実行されると現在の命令列を終了し、遷移先へ移る。
 - `goto` より後ろの同じ経路にある命令は到達不能。
 - `goto` は関数内では使用できない。
 - sceneを持つファイルでは、トップレベルの `choice` と `goto` は使用できない。
 
 ## 19. 静的検査と診断
+
+### JSONで固定するグローバル変数
+
+作品の `.novel/variables.json` では、シナリオ中で型が変わらないグローバル値を
+`staticVariables` に宣言できる。これらは各シーンで同じグローバル変数として扱われ、
+通常の `int` / `str` 変数と同じ静的型検査を受ける。`int` の64 bit境界値はJSONの丸めを
+避けるため文字列で記述する。
+
+```json
+{
+  "staticVariables": [
+    { "name": "clear_threshold", "type": "int", "value": 10, "constant": true },
+    { "name": "route_name", "type": "str", "value": "common" }
+  ]
+}
+```
+
+`constant: true` を指定した値は `const` と同様に `set` できない。シナリオ側で同名の
+グローバルを再宣言することはできない。`variables` はエディタが生成する参照情報なので、
+手で編集する対象は `staticVariables` のみとする。
 
 ### 19.1 エラー
 
@@ -638,7 +822,36 @@ scene chapter1 {
 
 アセットエラーを含む問題一覧の項目はクリックでき、該当ファイル・行へ移動する。
 
-## 21. 標準構文の完成例
+## 21. 命令一覧
+
+以下は受理される命令形の一覧である。`<expr>` は式、`<str-expr>` は `str` 式、`<int-expr>` は `int` 式を表す。
+
+| 分類 | 構文 | 制約 |
+|---|---|---|
+| 宣言 | `int\|str <name> = <expr>` | 初期値は必須、型は一致させる |
+| 宣言 | `dict[int\|str] <name> = <dict>` | キーは常に `str` |
+| 宣言 | `const <type> <name> = <expr>` | 以後の `set` / `unset` は不可 |
+| 宣言 | `global <declaration>` | ファイルのトップレベルだけ |
+| 更新 | `set <target> = <expr>` | target は変数、辞書要素、struct／キャラクターフィールド |
+| 更新 | `unset <dict>[<str-expr>]` | 辞書要素だけ |
+| 会話 | `say [<speaker>] <str-expr>` | speaker はキャラクター、`narrator`、`none` |
+| 背景 | `bg <bg-id>` / `bgm <bgm-id>` | 種別が一致するアセットID |
+| 表示 | `show <character>.<pose> <left\|center\|right> [fade <ms>]` | 新規コードで使う形式 |
+| 表示 | `hide <character> [fade <ms>]` | キャラクターを非表示 |
+| 表示 | `show image <image-id> <left\|center\|right>` / `clear image <image-id>` | 一般画像。fade不可 |
+| 再生 | `play <se\|voice\|bgm> <id>` | 種別が一致するアセットID |
+| 再生 | `play video <id> [blocking\|async]` | 省略時は `async` |
+| 演出 | `wait <int-expr>` / `effect fade <black\|white> [<int-expr>]` | 時間はミリ秒 |
+| 分岐 | `if <condition> { ... } [elif <condition> { ... }] [else { ... }]` | condition は `bool` 式 |
+| 選択 | `choice [<str-expr>] { <str-expr> { ... } ... }` | 1選択肢以上。関数内では不可 |
+| 反復 | `for <name> from <int-expr> to <int-expr> [step <int-expr>] { ... }` | 両端を含む |
+| 反復 | `while <condition> { ... }` | 上限100,000反復 |
+| 関数 | `fn <name>([<name>: <type>, ...]) -> <type> { ... }` | 再帰不可 |
+| 遷移 | `goto <scene-name>` / `goto "<relative-file-path>"` | 関数内では不可 |
+
+旧 `say` ブロック、`show <character> at <position> pose <pose>`、`show char <character> <position> <pose>`、`char <character> <position> <pose>`、`hide char <character>`、`clear char <character>` は受理されない。
+
+## 22. 標準構文の完成例
 
 ```tds
 asset bg school = "asset/bg/school.jpg"
@@ -667,10 +880,8 @@ scene main {
   show ayase.normal center
   play se door
 
-  say ayase {
-    "おはよう。"
-    "今日も来てくれたんだね。"
-  }
+  say ayase "おはよう。"
+  say ayase "今日も来てくれたんだね。"
 
   choice "どう答える？" {
     "もちろん" {
@@ -700,13 +911,13 @@ scene ending {
 }
 ```
 
-## 22. 識別子禁止語、宣言語、固定語
+## 23. 識別子禁止語、宣言語、固定語
 
 次の語は識別子として使用できない。
 
 ```text
 scene asset character struct pose include
-int str dict none
+int str dict none global
 set unset
 say bg bgm char show at hide image clear play effect wait
 if elif else and or not
@@ -715,7 +926,7 @@ fn return goto
 async blocking voice video
 ```
 
-`const` も宣言の先頭で特別な意味を持つ構文語である。ただし現在のパーサーでは識別子禁止語の集合には含まれていないため、宣言先頭以外では識別子として解析され得る。混乱を避けるため、名前には使用しない。
+`const` と `let` はこの一覧とは別に、文頭で特別に解釈される。どちらも識別子には使用しない。`let` は常にエラーである。
 
 命令内で意味が固定される語には次がある。
 
@@ -724,3 +935,25 @@ narrator left center right fade black white se
 ```
 
 標準の新規コードでは、キャラクター表示に `show <character>.<pose> <position>`、退場に `hide <character>` を使用する。
+
+## 24. 旧構文からの移行
+
+| 旧形式 | 正式構文 | 補足 |
+|---|---|---|
+| `char hero center smile` | `show hero.smile center` | 未表示時も同じ `show` で表示する |
+| `show hero at center pose smile` | `show hero.smile center` | `at` と `pose` は使わない |
+| `show char hero center smile` | `show hero.smile center` | `char` は命令ではない |
+| `hide char hero` | `hide hero` | fade は `hide hero fade 300` |
+| `clear char hero` | `hide hero` | キャラクター用の `clear` はない |
+| `say hero { "A" "B" }` | `say hero "A"` と `say hero "B"` | 1行ごとに明示する |
+| `say hero` | `say hero "本文"` | 本文の省略は不可 |
+
+## 25. 書くときのチェックリスト
+
+1. `struct` は最初にトップレベルで宣言したか。
+2. キャラクター表示は `show name.pose left|center|right` だけになっているか。
+3. 会話はすべて本文付きの `say` か。
+4. 外部ファイル遷移は `goto "path/file.tds"` と引用符付きか。
+5. `asset` と `pose` のパスは `asset_dir` 内にあり、拡張子が用途に合うか。
+6. `const` や外部 `global` を初期化前に変更・参照していないか。
+7. 最後にプロジェクト全体をコンパイルして、browser と native の両方で再生を確認したか。

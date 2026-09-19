@@ -167,7 +167,6 @@ function statementExpressions(statement: Statement): Expr[] {
   if (statement.kind === 'set') return [statement.value, statement.target];
   if (statement.kind === 'unset') return [statement.target];
   if (statement.kind === 'command' || statement.kind === 'call') return statement.args;
-  if (statement.kind === 'sayBlock') return [statement.speaker, ...statement.lines];
   if (statement.kind === 'if' || statement.kind === 'while') return [statement.condition.expression];
   if (statement.kind === 'for') return [statement.start, statement.stop, statement.step];
   if (statement.kind === 'choice') return [...(statement.prompt ? [statement.prompt] : []), ...statement.options.map((option) => option.label)];
@@ -180,6 +179,20 @@ function nested(statement: Statement): Statement[][] {
   if (statement.kind === 'for' || statement.kind === 'while') return [statement.body];
   if (statement.kind === 'choice') return statement.options.map((option) => option.body);
   return [];
+}
+
+type ForExecution = 'runs' | 'invalid' | 'unknown';
+
+// Keep this in lockstep with the browser and native runtimes: a statically
+// known zero step, or a step pointing away from its bound, is a runtime error.
+// A valid inclusive for-loop always executes at least once.
+function forExecution(statement: Extract<Statement, { kind: 'for' }>, constants: ReadonlyMap<string, Exclude<Constant, undefined>>): ForExecution {
+  const start = constant(statement.start, constants);
+  const stop = constant(statement.stop, constants);
+  const step = constant(statement.step, constants);
+  if (typeof start !== 'bigint' || typeof stop !== 'bigint' || typeof step !== 'bigint') return 'unknown';
+  if (step === 0n || (start < stop && step < 0n) || (start > stop && step > 0n)) return 'invalid';
+  return 'runs';
 }
 
 function definitelyTerminates(statement: Statement, constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(), facts: ReadonlyMap<string, boolean> = new Map()): boolean {
@@ -213,7 +226,7 @@ function definitelyTerminates(statement: Statement, constants: ReadonlyMap<strin
     const stable = loopConstants(statement, constants);
     return conditionValue(statement.condition.expression, stable, new Map()) === true || blockTerminates(statement.body, constants, facts);
   }
-  if (statement.kind === 'for') return blockTerminates(statement.body, constants, facts);
+  if (statement.kind === 'for') return forExecution(statement, constants) !== 'invalid' && blockTerminates(statement.body, constants, facts);
   if (statement.kind === 'choice') return statement.options.length > 0 && statement.options.every((option) => blockTerminates(option.body, constants, facts));
   return false;
 }
@@ -307,7 +320,9 @@ function reachableGotoTargets(statements: Statement[], targets = new Set<string>
         const bodyFacts = new Map(knownFacts); recordCondition(bodyFacts, statement.condition.expression, true);
         reachableGotoTargets(statement.body, targets, known, bodyFacts);
       }
-    } else if (statement.kind === 'for') reachableGotoTargets(statement.body, targets, known, knownFacts);
+    } else if (statement.kind === 'for') {
+      if (forExecution(statement, known) !== 'invalid') reachableGotoTargets(statement.body, targets, known, knownFacts);
+    }
     if (definitelyTerminates(statement, known, knownFacts)) break;
     updateKnownConstants(statement, known);
     if (invalidatesConditionFacts(statement)) knownFacts.clear();
@@ -421,7 +436,11 @@ function analyzeBlock(statements: Statement[], file: string, out: Diagnostic[], 
       if (conditionValue(statement.condition.expression, stable, new Map()) === true && !blockTerminates(statement.body, stable, bodyFacts)) out.push(diagnostic(file, 'infinite-loop', 'warning', 'while の条件は常に真で、ループ本体は後続へ進みません', statement.condition));
       analyzeBlock(statement.body, file, out, canReach && value !== false, stable, bodyFacts);
     } else if (statement.kind === 'for') {
-      analyzeBlock(statement.body, file, out, canReach, loopConstants(statement, known), new Map());
+      const execution = forExecution(statement, known);
+      if (execution === 'invalid') {
+        out.push(diagnostic(file, 'invalid-for-step', 'error', 'この for ループの step では開始値から終了値へ進めません', statement));
+      }
+      analyzeBlock(statement.body, file, out, canReach && execution !== 'invalid', loopConstants(statement, known), new Map());
     } else {
       for (const body of nested(statement)) analyzeBlock(body, file, out, canReach, known, knownFacts);
     }

@@ -108,10 +108,6 @@ function functionWrites(functions, globalNames) {
                 visitExpressionCalls(instruction.target, (name) => invoked.add(name));
             if (instruction.op === 'command')
                 instruction.args.forEach((argument) => visitExpressionCalls(argument, (name) => invoked.add(name)));
-            if (instruction.op === 'sayBlock') {
-                visitExpressionCalls(instruction.speaker, (name) => invoked.add(name));
-                instruction.lines.forEach((line) => visitExpressionCalls(line, (name) => invoked.add(name)));
-            }
             if (instruction.op === 'return')
                 visitExpressionCalls(instruction.value, (name) => invoked.add(name));
             if (instruction.op === 'if') {
@@ -185,10 +181,6 @@ function optimizeInstructions(instructions, effects, constants = new Map()) {
                 invalidateExpression(item.target);
             if (item.op === 'command')
                 item.args.forEach(invalidateExpression);
-            if (item.op === 'sayBlock') {
-                invalidateExpression(item.speaker);
-                item.lines.forEach(invalidateExpression);
-            }
             if (item.op === 'return')
                 invalidateExpression(item.value);
             if (item.op === 'if') {
@@ -319,10 +311,6 @@ function optimizeInstructions(instructions, effects, constants = new Map()) {
         }
         if (instruction.op === 'command')
             instruction.args.forEach(invalidateExpression);
-        if (instruction.op === 'sayBlock') {
-            invalidateExpression(instruction.speaker);
-            instruction.lines.forEach(invalidateExpression);
-        }
         if (instruction.op === 'return')
             invalidateExpression(instruction.value);
         output.push(instruction);
@@ -428,10 +416,6 @@ class Compiler {
                     ref(s.target, bindings, loc);
                 if (s.kind === 'command' || s.kind === 'call')
                     s.args.forEach(e => ref(e, bindings, loc));
-                if (s.kind === 'sayBlock') {
-                    ref(s.speaker, bindings, loc);
-                    s.lines.forEach(e => ref(e, bindings, loc));
-                }
                 if (s.kind === 'return' && s.value)
                     ref(s.value, bindings, loc);
                 if (s.kind === 'if') {
@@ -489,7 +473,6 @@ class Compiler {
             case 'set': return { op: 'set', target: this.assignable(statement.target), value: this.expr(statement.value) };
             case 'unset': return { op: 'unset', target: this.assignable(statement.target) };
             case 'command': return { op: 'command', name: statement.name, args: statement.args.map((v) => this.expr(v)) };
-            case 'sayBlock': return { op: 'sayBlock', speaker: this.expr(statement.speaker), lines: statement.lines.map((v) => this.expr(v)) };
             case 'if': return {
                 op: 'if',
                 condition: this.expr(statement.condition.expression),

@@ -49,9 +49,9 @@ show image first left
 show image second right
 show hero.normal left fade 10
 show friend.normal right
-char hero center normal
+show hero.normal center
 clear image first
-clear char friend
+hide friend
 hide hero fade 10
 effect fade white 10
 play video clip blocking

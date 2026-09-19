@@ -1,6 +1,6 @@
 ^C:\USERS\OWNER\DESKTOP\NOVEL EDITER\NATIVE\BUILD\CMAKEFILES\C51FF5DC8AC8ABCE2DDF1233EDE9D4CD\GENERATE.STAMP.RULE
 setlocal
-"C:\Program Files\CMake\bin\cmake.exe" -SN:/native "-BC:/Users/Owner/Desktop/Novel Editer/native/build" --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file "C:/Users/Owner/Desktop/Novel Editer/native/build/novel_script_native.slnx"
+"C:\Program Files\CMake\bin\cmake.exe" "-SC:/Users/Owner/Desktop/Novel Editer/native" "-BC:/Users/Owner/Desktop/Novel Editer/native/build" --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file "C:/Users/Owner/Desktop/Novel Editer/native/build/novel_script_native.slnx"
 if %errorlevel% neq 0 goto :cmEnd
 :cmEnd
 endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone

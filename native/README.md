@@ -4,7 +4,8 @@
 検証済みの `.nsp.json` パッケージを使用します。
 
 ```powershell
-npm.cmd run pack -- Title/senario/main.tds build/main.nsp.json
+npm.cmd run pack -- --project Title
+npm.cmd run native -- --project Title
 ```
 
 使用する主なライブラリ：
@@ -17,6 +18,21 @@ npm.cmd run pack -- Title/senario/main.tds build/main.nsp.json
 
 ネイティブランタイムはパッケージとアセットだけを読み込みます。
 編集用のシナリオソースを直接解析・実行しません。
+
+## DSLとの契約
+
+native player は browser player と同じコンパイル済み命令を実行します。立ち絵の正式構文は以下だけです。
+
+```tds
+show hero.normal center
+show hero.smile left fade 300
+hide hero
+hide hero fade 300
+show image logo center
+clear image logo
+```
+
+`char ...`、`show ... at ... pose ...`、`show char ...`、`hide char ...`、`clear char ...` はnativeでも受理しません。ソース構文・型・プロジェクト構成は [../syntax-draft.md](../syntax-draft.md) を参照してください。
 
 ## ビルド
 

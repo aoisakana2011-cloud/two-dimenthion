@@ -209,8 +209,6 @@ function statementExpressions(statement) {
         return [statement.target];
     if (statement.kind === 'command' || statement.kind === 'call')
         return statement.args;
-    if (statement.kind === 'sayBlock')
-        return [statement.speaker, ...statement.lines];
     if (statement.kind === 'if' || statement.kind === 'while')
         return [statement.condition.expression];
     if (statement.kind === 'for')
@@ -229,6 +227,19 @@ function nested(statement) {
     if (statement.kind === 'choice')
         return statement.options.map((option) => option.body);
     return [];
+}
+// Keep this in lockstep with the browser and native runtimes: a statically
+// known zero step, or a step pointing away from its bound, is a runtime error.
+// A valid inclusive for-loop always executes at least once.
+function forExecution(statement, constants) {
+    const start = constant(statement.start, constants);
+    const stop = constant(statement.stop, constants);
+    const step = constant(statement.step, constants);
+    if (typeof start !== 'bigint' || typeof stop !== 'bigint' || typeof step !== 'bigint')
+        return 'unknown';
+    if (step === 0n || (start < stop && step < 0n) || (start > stop && step > 0n))
+        return 'invalid';
+    return 'runs';
 }
 function definitelyTerminates(statement, constants = new Map(), facts = new Map()) {
     if (statement.kind === 'return' || statement.kind === 'goto')
@@ -274,7 +285,7 @@ function definitelyTerminates(statement, constants = new Map(), facts = new Map(
         return conditionValue(statement.condition.expression, stable, new Map()) === true || blockTerminates(statement.body, constants, facts);
     }
     if (statement.kind === 'for')
-        return blockTerminates(statement.body, constants, facts);
+        return forExecution(statement, constants) !== 'invalid' && blockTerminates(statement.body, constants, facts);
     if (statement.kind === 'choice')
         return statement.options.length > 0 && statement.options.every((option) => blockTerminates(option.body, constants, facts));
     return false;
@@ -398,8 +409,10 @@ function reachableGotoTargets(statements, targets = new Set(), constants = new M
                 reachableGotoTargets(statement.body, targets, known, bodyFacts);
             }
         }
-        else if (statement.kind === 'for')
-            reachableGotoTargets(statement.body, targets, known, knownFacts);
+        else if (statement.kind === 'for') {
+            if (forExecution(statement, known) !== 'invalid')
+                reachableGotoTargets(statement.body, targets, known, knownFacts);
+        }
         if (definitelyTerminates(statement, known, knownFacts))
             break;
         updateKnownConstants(statement, known);
@@ -537,7 +550,11 @@ function analyzeBlock(statements, file, out, reachable = true, constants = new M
             analyzeBlock(statement.body, file, out, canReach && value !== false, stable, bodyFacts);
         }
         else if (statement.kind === 'for') {
-            analyzeBlock(statement.body, file, out, canReach, loopConstants(statement, known), new Map());
+            const execution = forExecution(statement, known);
+            if (execution === 'invalid') {
+                out.push(diagnostic(file, 'invalid-for-step', 'error', 'この for ループの step では開始値から終了値へ進めません', statement));
+            }
+            analyzeBlock(statement.body, file, out, canReach && execution !== 'invalid', loopConstants(statement, known), new Map());
         }
         else {
             for (const body of nested(statement))

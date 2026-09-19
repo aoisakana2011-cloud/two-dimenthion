@@ -248,6 +248,12 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
     throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): コマンド '${name}' の第 ${idx + 1} 引数はリテラル識別子でなければなりません`);
   };
 
+  if (name === 'char') throw new TypeCheckError(`${locStr}: char は廃止されました。show <character>.<pose> <position> を使用してください`);
+  if (name === 'hide' && args[0]?.kind === 'literal' && args[0].value === 'char') throw new TypeCheckError(`${locStr}: hide char は廃止されました。hide <character> を使用してください`);
+  if (name === 'show' && args[0]?.kind === 'literal' && args[0].value !== 'image' && !/^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$/.test(String(args[0].value))) {
+    throw new TypeCheckError(`${locStr}: show は show <character>.<pose> <position> または show image <id> <position> を使用してください`);
+  }
+
   switch (name) {
     case 'bg': {
       if (args.length !== 1) throw new TypeCheckError(`${locStr}: コマンド 'bg' は引数を1つ取ります`);
@@ -290,30 +296,9 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
         checkFade(args.slice(2), variables, ctx, locStr);
         break;
       }
-      if (args.length >= 5 && getArgStr(1) === 'at' && getArgStr(3) === 'pose') {
-        const charName = getArgStr(0);
-        const pos = getArgStr(2);
-        const pose = getArgStr(4);
-        if (!['left', 'center', 'right'].includes(pos)) throw new TypeCheckError(`${locStr}: 不正な表示位置 '${pos}' です`);
-        const charDef = ctx.characters.get(charName);
-        if (!charDef) throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
-        if (!charDef.has(pose)) throw new TypeCheckError(`${locStr}: キャラクター '${charName}' にポーズ '${pose}' はありません`);
-        checkFade(args.slice(5), variables, ctx, locStr);
-        break;
-      }
       if (args.length < 2) throw new TypeCheckError(`${locStr}: コマンド 'show' の引数が不足しています`);
       const targetKind = getArgStr(0);
-      if (targetKind === 'char') {
-        if (args.length < 4) throw new TypeCheckError(`${locStr}: show char は <char> <pos> <pose> が必要です`);
-        checkFade(args.slice(4), variables, ctx, locStr);
-        const charName = getArgStr(1);
-        const pos = getArgStr(2);
-        const pose = getArgStr(3);
-        if (!['left', 'center', 'right'].includes(pos)) throw new TypeCheckError(`${locStr}: 不正な配置位置 '${pos}' です`);
-        const charDef = ctx.characters.get(charName);
-        if (!charDef) throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
-        if (!charDef.has(pose)) throw new TypeCheckError(`${locStr}: キャラクター '${charName}' に表情 '${pose}' はありません`);
-      } else if (targetKind === 'image') {
+      if (targetKind === 'image') {
         if (args.length !== 3) throw new TypeCheckError(`${locStr}: show image は画像と位置を指定してください`);
         const imgName = getArgStr(1);
         const asset = ctx.assets.get(imgName);
@@ -323,41 +308,23 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
           if (!['left', 'center', 'right'].includes(pos)) throw new TypeCheckError(`${locStr}: 不正な配置位置 '${pos}' です`);
         }
       } else {
-        throw new TypeCheckError(`${locStr}: show の対象は char または image でなければなりません`);
+        throw new TypeCheckError(`${locStr}: show の対象は image でなければなりません`);
       }
-      break;
-    }
-    case 'char': {
-      if (args.length !== 3) throw new TypeCheckError(`${locStr}: char は <char> <pos> <pose> が必要です`);
-      const charName = getArgStr(0);
-      const pos = getArgStr(1);
-      const pose = getArgStr(2);
-      if (!['left', 'center', 'right'].includes(pos)) throw new TypeCheckError(`${locStr}: 不正な配置位置 '${pos}' です`);
-      const charDef = ctx.characters.get(charName);
-      if (!charDef) throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
-      if (!charDef.has(pose)) throw new TypeCheckError(`${locStr}: キャラクター '${charName}' に表情 '${pose}' はありません`);
       break;
     }
     case 'hide': {
-      if (args.length && getArgStr(0) !== 'char') {
-        const charName = getArgStr(0);
-        if (!ctx.characters.has(charName)) throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
-        checkFade(args.slice(1), variables, ctx, locStr);
-        break;
-      }
-      if (args.length < 2 || getArgStr(0) !== 'char') throw new TypeCheckError(`${locStr}: hide は hide char <name> で指定してください`);
-      const charName = getArgStr(1);
+      if (!args.length) throw new TypeCheckError(`${locStr}: hide は hide <character> [fade <int>] で指定してください`);
+      const charName = getArgStr(0);
       if (!ctx.characters.has(charName)) throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
-      checkFade(args.slice(2), variables, ctx, locStr);
+      checkFade(args.slice(1), variables, ctx, locStr);
       break;
     }
     case 'clear': {
       if (args.length < 1) throw new TypeCheckError(`${locStr}: clear の対象を指定してください`);
       const target = getArgStr(0);
-      if (args.length !== (target === 'char' || target === 'image' ? 2 : 1)) throw new TypeCheckError(`${locStr}: clear の引数が不正です`);
-      if (target === 'char' && !ctx.characters.has(getArgStr(1))) throw new TypeCheckError(`${locStr}: 未定義のキャラクターです`);
+      if (args.length !== (target === 'image' ? 2 : 1)) throw new TypeCheckError(`${locStr}: clear の引数が不正です`);
       if (target === 'image' && ctx.assets.get(getArgStr(1))?.type !== 'image') throw new TypeCheckError(`${locStr}: 未定義の画像です`);
-      if (!['bg', 'bgm', 'image', 'char'].includes(target)) throw new TypeCheckError(`${locStr}: clear の対象 '${target}' が不正です`);
+      if (!['bg', 'bgm', 'image'].includes(target)) throw new TypeCheckError(`${locStr}: clear の対象 '${target}' が不正です`);
       break;
     }
     case 'wait': {
@@ -402,6 +369,9 @@ function checkStatements(
     try {
 
     if (statement.kind === 'declare') {
+      if (statement.global && ctx.locals) {
+        throw new TypeCheckError(`${locStr}: global 宣言はファイルのトップレベルでのみ使用できます`);
+      }
       if (!options.allowDeclaration) {
         throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): scene 直下での変数宣言は禁止されています（選択肢ブロック内またはグローバルで宣言してください）`);
       }
@@ -499,9 +469,6 @@ function checkStatements(
 
     if (statement.kind === 'command') {
       checkCommand(statement.name, statement.args, variables, ctx, locStr);
-    }
-    if (statement.kind === 'sayBlock') {
-      for (const line of statement.lines) checkCommand('say', [statement.speaker, line], variables, ctx, locStr);
     }
 
     if (statement.kind === 'if') {
@@ -628,7 +595,6 @@ function checkRecursion(functions: FunctionDef[]): void {
         if (s.target.kind === 'index') { visitExpr(s.target.target); visitExpr(s.target.key); }
       }
       if (s.kind === 'command') s.args.forEach(visitExpr);
-      if (s.kind === 'sayBlock') { visitExpr(s.speaker); s.lines.forEach(visitExpr); }
       if (s.kind === 'unset') visitExpr(s.target);
       if (s.kind === 'if') {
         visitExpr(s.condition.expression);

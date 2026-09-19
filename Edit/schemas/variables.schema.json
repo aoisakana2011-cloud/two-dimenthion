@@ -3,6 +3,20 @@
   "type": "object",
   "required": ["variables"],
   "properties": {
+    "staticVariables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "type", "value"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+          "type": { "enum": ["int", "str"] },
+          "value": { "type": ["integer", "string"] },
+          "constant": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
     "variables": {
       "type": "array",
       "items": {

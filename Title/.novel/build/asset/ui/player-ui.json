@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "screen": {
+    "width": 1280,
+    "height": 720,
+    "backdrop": { "bottomFog": {
+      "enabled": true,
+      "color": [
+      255,
+      250,
+      253,
+      255
+      ],
+      "height": 300
+    } }
+  },
+  "dialog": {
+    "image": "dialogue-panel-romance.png",
+    "x": 100,
+    "y": 510,
+    "width": 1080,
+    "height": 184,
+    "message": {
+      "x": 190,
+      "y": 63,
+      "width": 844,
+      "height": 100,
+      "size": 24,
+      "color": [
+        76,
+        57,
+        76,
+        255
+      ]
+    },
+    "nameplate": {
+      "x": 90,
+      "y": -52,
+      "width": 280,
+      "height": 40,
+      "image": "speaker-plate-romance.png",
+      "text": { "x": 0, "y": 0, "width": 280, "height": 40, "size": 27, "color": [76, 57, 76, 255] }
+    }
+  },
+  "choices": {
+    "x": 330,
+    "y": 220,
+    "image": "choice-romance.png",
+    "activeImage": "choice-active.png",
+    "width": 620,
+    "height": 230,
+    "itemHeight": 48,
+    "gap": 10,
+    "text": {
+      "x": 24,
+      "y": 0,
+      "width": 572,
+      "height": 48,
+      "size": 19,
+      "color": [
+        76,
+        57,
+        76,
+        255
+      ]
+    }
+  }
+}

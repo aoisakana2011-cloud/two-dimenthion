@@ -1,8 +1,5 @@
 # first/test
-say narrator "hello"
-include functions.tds
-fn a(b: int) -> int{
-  return b
+scene first{
+  say "hello"
+  goto "first/test1.tds"
 }
-int e = a(1)
-say narrator "{e}"

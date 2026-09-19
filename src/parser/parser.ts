@@ -12,10 +12,10 @@ const PRECEDENCE: Record<string, number> = {
 };
 
 const KEYWORDS = new Set([
-  'scene', 'asset', 'character', 'int', 'str', 'dict', 'set', 'unset', 'say', 'bg', 'bgm', 'char', 'show', 'hide', 'image',
+  'scene', 'asset', 'character', 'int', 'str', 'dict', 'set', 'unset', 'say', 'bg', 'bgm', 'show', 'hide',
   'clear', 'play', 'effect', 'wait', 'if', 'elif', 'else', 'and', 'or', 'not', 'choice', 'for', 'from', 'to',
   'step', 'while', 'fn', 'return', 'goto', 'none', 'int', 'str', 'dict', 'async', 'blocking', 'voice', 'video',
-  'include', 'struct', 'pose', 'at',
+  'include', 'struct', 'pose', 'global',
 ]);
 
 export class ParseError extends Error {
@@ -30,6 +30,7 @@ export class Parser {
   private readonly lexer: Lexer;
   private readonly buffered: Token[] = [];
   private lastBlockEndLine = 1;
+  private readonly declaredStructs = new Set<string>();
 
   constructor(private readonly source: string) {
     this.lexer = new Lexer(source);
@@ -134,7 +135,7 @@ export class Parser {
       if (fields[field]) throw this.error(`Duplicate struct field '${field}'`);
       fields[field] = type; this.endLine(); this.skipLines();
     }
-    this.take(); return { kind: 'struct', name, fields, line: start.line, column: start.column };
+    this.take(); this.declaredStructs.add(name); return { kind: 'struct', name, fields, line: start.line, column: start.column };
   }
 
 
@@ -174,7 +175,7 @@ export class Parser {
       return { kind: 'dict', value };
     }
     if (TYPES.has(word) && (allowNone || word !== 'none')) return word as ValueType;
-    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(word)) return { kind: 'struct', name: word };
+    if (this.declaredStructs.has(word)) return { kind: 'struct', name: word };
     throw this.error(`Invalid type '${word}'`);
   }
 
@@ -194,6 +195,12 @@ export class Parser {
     const command = token.value;
 
     switch (command) {
+      case 'global': {
+        this.take();
+        const declaration = this.parseStatement();
+        if (declaration.kind !== 'declare') throw this.error('global の後には変数宣言が必要です');
+        return { ...declaration, global: true, line: token.line, column: token.column };
+      }
       case 'const': case 'int': case 'str': case 'dict': {
         this.take();
         let type: ValueType | 'infer';
@@ -287,12 +294,20 @@ export class Parser {
       case 'goto': {
         this.take();
         let scene = '';
-        if (this.current.type === 'string') {
+        if (this.current.type === 'string' || this.atValue('(') || (this.current.type === 'word' && (['+', '-', '[', '.'].includes(this.peekToken().value) || (this.peekToken().value === '(' && this.peekToken().offset === this.current.offset + this.current.value.length)) && !['narrator', 'none'].includes(this.current.value))) {
           scene = this.take().value;
         } else {
-          while (!this.atLineEnd()) scene += this.take().value;
+          while (!this.atLineEnd() && !this.atValue('}')) scene += this.take().value;
         }
-        if (!/^[A-Za-z0-9_][A-Za-z0-9_./-]*$/.test(scene) || scene.split('/').includes('..')) throw this.error('Invalid scene path');
+        // Source may use Windows separators, but compiled programs and package
+        // keys always use '/'.  Normalize at the language boundary so local
+        // scene lookup and external file loading agree.
+        scene = scene.replaceAll('\\', '/');
+        const parts = scene.split('/');
+        const safeDirectory = (part: string) => part.length <= 120 && part !== '.' && part !== '..' && !/[<>:"|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part);
+        const file = parts.pop() || '';
+        if (scene.startsWith('/') || parts.some((part) => !safeDirectory(part)) || !/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$/.test(file)) throw this.error('Invalid scene path');
+        scene = [...parts, file].join('/');
         return { kind: 'goto', scene, line: token.line, column: token.column };
       }
       case 'say': {
@@ -300,24 +315,16 @@ export class Parser {
         this.skipLines();
         let speaker = 'narrator';
         let textExpr: Expr;
-        if (this.atValue('{')) return this.parseSayBlock(token, { kind: 'literal', value: speaker, line: token.line, column: token.column });
-        if (this.current.type === 'string' || this.atValue('(') || (this.current.type === 'word' && (['+', '-', '[', '.'].includes(this.peekToken().value) || (this.peekToken().value === '(' && this.peekToken().offset === this.current.offset + this.current.value.length)) && !['narrator', 'none'].includes(this.current.value))) {
+        if (this.atValue('{')) throw this.error('say does not support block syntax');
+        if (this.current.type === 'string') {
           textExpr = this.parseExpression();
         } else if (this.current.type === 'word') {
           const spkToken = this.current;
-          const block = this.peekContent().value === '{';
           this.take();
-          if (block) {
-            this.skipLines();
-            return this.parseSayBlock(token, { kind: 'literal', value: spkToken.value, line: spkToken.line, column: spkToken.column });
-          } else if (this.atLineEnd()) {
-            textExpr = { kind: 'variable', name: spkToken.value, line: spkToken.line, column: spkToken.column };
-          } else if (this.atValue('{')) {
-            return this.parseSayBlock(token, { kind: 'literal', value: spkToken.value, line: spkToken.line, column: spkToken.column });
-          } else {
-            speaker = spkToken.value;
-            textExpr = this.parseExpression();
-          }
+          if (this.atLineEnd()) throw this.error('say requires quoted text');
+          speaker = spkToken.value;
+          if (this.atValue('{')) throw this.error('say does not support block syntax');
+          textExpr = this.parseExpression();
         } else {
           throw this.error('say 命令の引数が不正です');
         }
@@ -334,9 +341,10 @@ export class Parser {
       }
       default: {
         this.take();
-        if (token.type === 'word' && this.current.type === 'word' && this.peekToken().value === '=') {
-          const name = this.take(); this.expect('=');
-          return { kind: 'declare', name: name.value, type: { kind: 'struct', name: command } as any, initial: this.parseExpression(), line: token.line, column: token.column };
+        if (this.declaredStructs.has(command)) {
+          const name = this.expectIdentifier('Expected variable name');
+          this.expect('=');
+          return { kind: 'declare', name, type: { kind: 'struct', name: command }, initial: this.parseExpression(), line: token.line, column: token.column };
         }
         if (this.atValue('(')) {
           const args = this.parseCallArgs();
@@ -359,7 +367,7 @@ export class Parser {
     }
     const closing = this.take();
     if (!lines.length) throw this.error('say ブロックには本文を1つ以上指定してください');
-    return { kind: 'sayBlock', speaker, lines, line: token.line, column: token.column, endLine: closing.line };
+    throw this.error('say block syntax was removed');
   }
 
   private parseAssignable(): { kind: 'variable'; name: string; line?: number; column?: number } | { kind: 'index'; target: Expr; key: Expr; line?: number; column?: number } {
@@ -387,7 +395,7 @@ export class Parser {
         this.expect('.');
         const pose = this.expectIdentifier('Expected character pose');
         args.push({ kind: 'literal', value: `${token.value}.${pose}`, line: token.line, column: token.column });
-      } else if (token.type === 'word' && ['bg', 'bgm', 'char', 'show', 'hide', 'clear', 'play', 'effect'].includes(command)) {
+      } else if (token.type === 'word' && ['bg', 'bgm', 'show', 'hide', 'clear', 'play', 'effect'].includes(command)) {
         this.take();
         args.push({ kind: 'literal', value: token.value, line: token.line, column: token.column });
       } else {

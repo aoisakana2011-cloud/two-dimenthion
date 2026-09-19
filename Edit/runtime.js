@@ -154,10 +154,6 @@
           const args = []; for (const a of c.args) args.push(await this.value(a));
           if (!this.host.command) throw Error(`命令 '${c.name}' の実行先がありません`);
           await this.host.command(c.name, args, this);
-        } else if (c.op === 'sayBlock') {
-          const speaker = await this.value(c.speaker);
-          if (!this.host.command) throw Error('命令の実行先がありません');
-          for (const line of c.lines) await this.host.command('say', [speaker, await this.value(line)], this);
         } else if (c.op === 'call') {
           await this.value({ kind: 'call', name: c.name, args: c.args });
         } else if (c.op === 'return') return { kind: 'return', value: c.value ? await this.value(c.value) : null };

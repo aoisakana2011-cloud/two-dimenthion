@@ -116,7 +116,7 @@ test('compiler rejects unknown commands, recursion in arguments and invalid pose
   assert.throws(() => program('nonsense'), /未知/);
   assert.throws(() => program('fn id(x: int) -> int { return x }\nfn f() -> int { return id(f()) }'), /再帰/);
   assert.throws(() => program('character hero {\nname = "Hero"\npose normal = "C:/outside.exe"\n}'), /パス|拡張子/);
-  assert.throws(() => program('clear char'), /引数/);
+  assert.throws(() => program('clear char'), /対象/);
 });
 
 test('runtime rejects writes to const variables', async () => {
@@ -153,11 +153,11 @@ test('flow validation rejects disconnected files and accepts local bindings', ()
 });
 
 test('scene graph reachability excludes outgoing gotos from dead code and dead scenes', () => {
-  const afterTransfer = sceneReachability(parse('scene start { goto live\n goto dead.tds }\nscene live { wait 1 }'));
+  const afterTransfer = sceneReachability(parse('scene start { goto live\n goto "dead.tds" }\nscene live { wait 1 }'));
   assert.equal(afterTransfer.externalGotos.has('dead.tds'), false);
-  const deadScene = sceneReachability(parse('scene start { wait 1 }\nscene unused { goto dead.tds }'));
+  const deadScene = sceneReachability(parse('scene start { wait 1 }\nscene unused { goto "dead.tds" }'));
   assert.equal(deadScene.externalGotos.has('dead.tds'), false);
-  const falseLoop = sceneReachability(parse('scene start { while 1 == 2 { goto dead.tds } }'));
+  const falseLoop = sceneReachability(parse('scene start { while 1 == 2 { goto "dead.tds" } }'));
   assert.equal(falseLoop.externalGotos.has('dead.tds'), false);
 });
 
@@ -187,10 +187,45 @@ test('package includes external scenes, validates assets and remains JSON serial
   assert.equal(data.files['next.tds'].globals.find((entry) => entry.name === 'say').args[1].name, 'str');
   await assert.rejects(compileProject('asset bg x = "missing.png"', assetsRoot, scenesRoot), /アセット/);
   await fs.writeFile(path.join(scenesRoot, 'broken-main.tds'), 'str text = str(later)\ngoto "broken-next.tds"');
-  await fs.writeFile(path.join(scenesRoot, 'broken-next.tds'), 'int later = 1');
+  await fs.writeFile(path.join(scenesRoot, 'broken-next.tds'), 'global int later = 1');
   await assert.rejects(pack(path.join(scenesRoot, 'broken-main.tds'), path.join(dir, 'out/broken.json'), { scenesRoot, assetsRoot }), /初期化前.*later/);
-  await fs.writeFile(path.join(scenesRoot, 'duplicate.tds'), 'int route = 9');
+  await fs.writeFile(path.join(scenesRoot, 'duplicate.tds'), 'global int route = 9');
   await assert.rejects(pack(path.join(scenesRoot, 'main.tds'), path.join(dir, 'out/duplicate.json'), { scenesRoot, assetsRoot }), /route.*既に宣言.*set/);
+});
+
+test('project packaging resolves Windows separators in include and goto paths', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-windows-path-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const scenesRoot = path.join(dir, 'scenes'), assetsRoot = path.join(dir, 'assets');
+  await fs.mkdir(path.join(scenesRoot, 'first'), { recursive: true }); await fs.mkdir(assetsRoot);
+  await fs.writeFile(path.join(scenesRoot, 'main.tds'), 'include "first\\common.tds"\ngoto first\\next.tds');
+  await fs.writeFile(path.join(scenesRoot, 'first', 'common.tds'), 'wait 1');
+  await fs.writeFile(path.join(scenesRoot, 'first', 'next.tds'), 'wait 1');
+  const data = await pack(path.join(scenesRoot, 'main.tds'), path.join(dir, 'out/game.json'), { scenesRoot, assetsRoot });
+  assert.ok(data.files['first/common.tds']);
+  assert.ok(data.files['first/next.tds']);
+  assert.equal(data.program.globals.find((entry) => entry.op === 'goto').scene, 'first/next.tds');
+});
+test('JSON static variables are typed globals with exact integer values', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-static-variables-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const scenesRoot = path.join(dir, 'scenes'), assetsRoot = path.join(dir, 'assets'), dataRoot = path.join(dir, '.novel');
+  await fs.mkdir(scenesRoot); await fs.mkdir(assetsRoot); await fs.mkdir(dataRoot);
+  await fs.writeFile(path.join(dataRoot, 'variables.json'), JSON.stringify({
+    staticVariables: [
+      { name: 'clear_threshold', type: 'int', value: '9007199254740993', constant: true },
+      { name: 'route_name', type: 'str', value: 'common' },
+    ],
+  }));
+  await fs.writeFile(path.join(scenesRoot, 'main.tds'), 'int result = clear_threshold + 1\nstr route = route_name');
+  const data = await pack(path.join(scenesRoot, 'main.tds'), path.join(dir, 'out/game.json'), { scenesRoot, assetsRoot, dataRoot });
+  assert.equal(data.program.globals.find((entry) => entry.name === 'clear_threshold').initial.value, '9007199254740993');
+  const runtime = new Runtime({ command: async () => {}, choice: async () => 0 });
+  await runtime.run(data.program);
+  assert.equal(runtime.get('result'), 9007199254740994n);
+  assert.equal(runtime.get('route'), 'common');
+  await fs.writeFile(path.join(scenesRoot, 'main.tds'), 'set clear_threshold = 1');
+  await assert.rejects(pack(path.join(scenesRoot, 'main.tds'), path.join(dir, 'out/broken.json'), { scenesRoot, assetsRoot, dataRoot }), /const/);
 });
 test('native and browser runtimes agree on functions, loops, choice and scene transitions', async t => {
   const exe = process.env.NOVEL_NATIVE_EXE;

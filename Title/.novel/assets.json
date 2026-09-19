@@ -1,4 +1,18 @@
 {
   "$schema": "./assets.schema.json",
-  "assets": []
+  "assets": [
+    {
+      "type": "char",
+      "name": "akari",
+      "pose": "d",
+      "path": "asset/char/aokami.png",
+      "definedIn": "main.tds"
+    },
+    {
+      "type": "bg",
+      "name": "s",
+      "path": "asset/bg/mori.jpg",
+      "definedIn": "main.tds"
+    }
+  ]
 }

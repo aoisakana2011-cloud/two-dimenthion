@@ -82,16 +82,17 @@ test('audit: empty and mixed dictionaries are checked in assignments, arguments 
   assert.throws(()=>compile(parse('fn f(x: dict[str]) -> none {}\nf({"x":1,"y":"s"})')),/辞書.*型/);
 });
 
-test('audit: alternative block brace placement remains accepted',()=>{
-  assert.doesNotThrow(()=>compile(parse('character hero\n{\nname = "Hero"\n}\nstruct Person\n{\nname: str\n}\nchoice "choose"\n{\n"ok" { say\n{\n"hello"\n} }\n}')));
-  assert.doesNotThrow(()=>compile(parse('character hero { name = "Hero" }\nsay hero\n{\n"hello"\n}\nsay hero ("hello")')));
+test('audit: removed say forms are rejected while ordinary brace placement remains accepted',()=>{
+  assert.doesNotThrow(()=>compile(parse('character hero\n{\nname = "Hero"\n}\nstruct Person\n{\nname: str\n}\nchoice "choose"\n{\n"ok" { say narrator "hello" }\n}')));
+  assert.throws(()=>parse('say hero\n{\n"hello"\n}'), /quoted text/);
+  assert.throws(()=>parse('say hero'), /quoted text/);
 });
 
 test('audit: includes retain functions on external transfers and initialize dependencies first',async t=>{
   const dir=await temporary(t), scenesRoot=path.join(dir,'scenes'),assetsRoot=path.join(dir,'assets');
   await fs.mkdir(scenesRoot);await fs.mkdir(assetsRoot);
   const files={
-    'main.tds':'goto next.tds',
+    'main.tds':'goto "next.tds"',
     'next.tds':'include common.tds\nint result = read_value()',
     'common.tds':'int value = 8\nfn read_value() -> int { return value }',
   };
@@ -104,7 +105,7 @@ test('audit: includes retain functions on external transfers and initialize depe
 test('audit: flow skips dead loops and short-circuited reads but rejects live function reads',async t=>{
   const dir=await temporary(t), scenesRoot=path.join(dir,'scenes'),assetsRoot=path.join(dir,'assets');
   await fs.mkdir(scenesRoot);await fs.mkdir(assetsRoot);
-  await fs.writeFile(path.join(scenesRoot,'later.tds'),'int later = 1');
+  await fs.writeFile(path.join(scenesRoot,'later.tds'),'global int later = 1');
   await fs.writeFile(path.join(scenesRoot,'main.tds'),'while 1 == 2 { say narrator str(later) }\nif 1 == 2 and later == 1 { wait 1 }');
   await pack(path.join(scenesRoot,'main.tds'),path.join(dir,'game.nsp.json'),{scenesRoot,assetsRoot});
   await fs.writeFile(path.join(scenesRoot,'main.tds'),'fn read_later() -> int { return later }\nint result = read_later()');

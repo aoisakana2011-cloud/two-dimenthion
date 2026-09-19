@@ -1,15 +1,23 @@
 {
   "name": "novel-script",
+  "version": "0.1.0",
   "private": true,
   "type": "commonjs",
+  "main": "Edit/electron-main.js",
+  "productName": "Novel Script Editor",
   "scripts": {
     "build": "tsc",
     "test": "npm run build && node --test test/*.test.js",
     "editor": "npm run build && node Edit/server.js",
+    "desktop": "npm run build && node Edit/launch-electron.js",
+    "desktop:package:win": "npm run build && node tools/package-electron.js",
     "pack": "npm run build && node tools/pack.js",
-    "native": "node tools/native.js"
+    "native": "node tools/native.js",
+    "native:build": "node tools/native-build.js"
   },
   "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^44.3.0",
     "typescript": "^5.7.2"
   }
 }

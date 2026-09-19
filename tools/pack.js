@@ -5,11 +5,17 @@ const { compileProject, sceneFile, inside, assetPaths, gotos } = require('./proj
 const { parse } = require('../dist');
 const { inferValueType } = require('../dist/checker/type-checker');
 const { projectLayout, projectOption, layoutForInput, entryFile, positionalArguments } = require('./project-layout');
+const { readStaticVariables } = require('./static-variables');
 
-async function projectGlobalVariables(scenesRoot) {
+async function projectGlobalVariables(scenesRoot, dataRoot) {
   const table = new Map();
   table.readonlyNames = new Set();
+  const staticVariables = await readStaticVariables(dataRoot);
+  for (const [name, type] of staticVariables.table) table.set(name, type);
+  for (const name of staticVariables.table.readonlyNames) table.readonlyNames.add(name);
+  table.staticDeclarations = staticVariables.declarations;
   const owners = new Map();
+  for (const name of staticVariables.table.keys()) owners.set(name, '.novel/variables.json');
   const characterOwners = new Map();
   const characters = new Map();
   const declarationsByFile = new Map();
@@ -32,8 +38,10 @@ async function projectGlobalVariables(scenesRoot) {
             definition: character,
           });
         }
+        const implicitGlobals = relative.toLowerCase() === 'main.tds';
         for (const statement of script.globals) {
           if (statement.kind !== 'declare') continue;
+          if (!implicitGlobals && !statement.global) continue;
           if (statement.type === 'infer') continue;
           const owner = owners.get(statement.name);
           if (owner) throw new Error(`変数 '${statement.name}' は '${owner}' で既に宣言されています。'${relative}' では set を使用してください`);
@@ -45,7 +53,7 @@ async function projectGlobalVariables(scenesRoot) {
     }
   }
   await visit(scenesRoot);
-  const pending = scripts.flatMap(({ script, file }) => script.globals.filter(statement => statement.kind === 'declare' && statement.type === 'infer').map(statement => ({ statement, functions: script.functions, file })));
+  const pending = scripts.flatMap(({ script, file }) => script.globals.filter(statement => statement.kind === 'declare' && statement.type === 'infer' && (file.toLowerCase() === 'main.tds' || statement.global)).map(statement => ({ statement, functions: script.functions, file })));
   let lastError;
   while (pending.length) {
     let progress = false;
@@ -68,7 +76,8 @@ async function pack(input, output, roots = {}) {
   const layout = roots.projectRoot ? projectLayout(roots.projectRoot) : (!roots.scenesRoot || !roots.assetsRoot) ? layoutForInput(input) : null;
   const scenesRoot = roots.scenesRoot || layout.scenesRoot;
   const assetsRoot = roots.assetsRoot || layout.assetsRoot;
-  const { table: globalVariables, declarationsByFile, scripts, characters, characterOwners } = await projectGlobalVariables(scenesRoot);
+  const dataRoot = roots.dataRoot || layout?.dataRoot || path.join(path.dirname(scenesRoot), '.novel');
+  const { table: globalVariables, declarationsByFile, scripts, characters, characterOwners } = await projectGlobalVariables(scenesRoot, dataRoot);
   const files = Object.create(null);
   const entry = path.relative(scenesRoot, path.resolve(input)).replaceAll('\\', '/');
   const pending = scripts.map(({ file }) => file);
@@ -80,6 +89,7 @@ async function pack(input, output, roots = {}) {
     const localScript = parse(source);
     const visibleGlobals = new Map(globalVariables);
     visibleGlobals.readonlyNames = globalVariables.readonlyNames;
+    visibleGlobals.staticDeclarations = globalVariables.staticDeclarations;
     for (const name of declarationsByFile.get(file) || []) visibleGlobals.delete(name);
     const visibleCharacters = new Map(characters);
     for (const [name, owner] of characterOwners) if (owner === file) visibleCharacters.delete(name);
@@ -93,6 +103,7 @@ async function pack(input, output, roots = {}) {
   validateVariableFlow(files, entry);
   const entryGlobals = new Map(globalVariables);
   entryGlobals.readonlyNames = globalVariables.readonlyNames;
+  entryGlobals.staticDeclarations = globalVariables.staticDeclarations;
   for (const name of declarationsByFile.get(entry) || []) entryGlobals.delete(name);
   const entryCharacters = new Map(characters);
   for (const [name, owner] of characterOwners) if (owner === entry) entryCharacters.delete(name);
@@ -105,7 +116,26 @@ async function pack(input, output, roots = {}) {
     await fs.mkdir(path.dirname(target), { recursive: true });
     if (path.resolve(source) !== target) await fs.copyFile(source, target);
   }
-  const data = { format: 'novel-script-package', version: 1, source: entry, program, files };
+  const nativeUi = layout?.settings.native_ui_theme ? { native_ui_theme: layout.settings.native_ui_theme } : {};
+  if (nativeUi.native_ui_theme) {
+    const themePath = nativeUi.native_ui_theme;
+    const themeSource = await inside(assetsRoot, themePath);
+    const themeTarget = path.resolve(path.dirname(destination), 'asset', themePath);
+    await fs.mkdir(path.dirname(themeTarget), { recursive: true });
+    if (path.resolve(themeSource) !== themeTarget) await fs.copyFile(themeSource, themeTarget);
+    const theme = JSON.parse(await fs.readFile(await inside(assetsRoot, themePath), 'utf8'));
+    if (theme.version !== 1) throw Error('Unsupported native UI theme version');
+    const themeDirectory = path.posix.dirname(themePath.replaceAll('\\', '/'));
+    const imageNames = [theme?.dialog?.image, theme?.dialog?.nameplate?.image, theme?.choices?.image, theme?.choices?.activeImage].filter((value) => typeof value === 'string');
+    for (const imageName of imageNames) {
+      const relative = path.posix.join(themeDirectory, imageName);
+      const source = await inside(assetsRoot, relative);
+      const target = path.resolve(path.dirname(destination), 'asset', relative);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      if (path.resolve(source) !== target) await fs.copyFile(source, target);
+    }
+  }
+  const data = { format: 'novel-script-package', version: 1, source: entry, program, files, native_ui: nativeUi };
   await fs.mkdir(path.dirname(destination), { recursive: true });
   await fs.writeFile(destination, JSON.stringify(data, null, 2) + '\n', 'utf8');
   return data;

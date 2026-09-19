@@ -191,9 +191,6 @@ public:
             } else if (op == "command") {
                 json args = json::array(); for (const auto& a : c.at("args")) args.push_back(value(a));
                 command(c.at("name"), args);
-            } else if (op == "sayBlock") {
-                auto speaker = value(c.at("speaker"));
-                for (const auto& line : c.at("lines")) command("say", json::array({speaker, value(line)}));
             } else if (op == "call") value(json{{"kind", "call"}, {"name", c.at("name")}, {"args", c.at("args")}});
             else if (op == "return") return {Signal::Return, c.contains("value") ? value(c.at("value")) : json()};
             else if (op == "goto") return {Signal::Goto, c.at("scene")};

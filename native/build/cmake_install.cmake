@@ -1,8 +1,8 @@
-# Install script for directory: N:/native
+# Install script for directory: C:/Users/Owner/Desktop/Novel Editer/native
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
-  set(CMAKE_INSTALL_PREFIX "C:/Program Files/novel_script_native")
+  set(CMAKE_INSTALL_PREFIX "C:/Program Files (x86)/novel_script_native")
 endif()
 string(REGEX REPLACE "/$" "" CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
 

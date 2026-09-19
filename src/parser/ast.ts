@@ -27,11 +27,10 @@ export type Assignable = NodeLocation & (
 );
 
 export type Statement = NodeLocation & (
-  | { kind: 'declare'; type: DeclaredType; name: string; initial?: Expr; inferred?: boolean; constant?: boolean }
+  | { kind: 'declare'; type: DeclaredType; name: string; initial?: Expr; inferred?: boolean; constant?: boolean; global?: boolean }
   | { kind: 'set'; target: Assignable; value: Expr }
   | { kind: 'unset'; target: Assignable }
   | { kind: 'command'; name: string; args: Expr[] }
-  | { kind: 'sayBlock'; speaker: Expr; lines: Expr[] }
   | { kind: 'if'; condition: Condition; body: Statement[]; elseIf: Array<{ condition: Condition; body: Statement[] }>; otherwise: Statement[] }
   | { kind: 'for'; name: string; start: Expr; stop: Expr; step: Expr; body: Statement[] }
   | { kind: 'while'; condition: Condition; body: Statement[] }

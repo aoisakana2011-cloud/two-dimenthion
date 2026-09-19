@@ -1,19 +1,238 @@
-const graphBox=document.querySelector('#graph'),details=document.querySelector('#details'),status=document.querySelector('#status');let currentData=null;const style=document.createElement('style');style.textContent='.flow-folders{display:flex;align-items:flex-start;flex-wrap:wrap;gap:20px;margin-bottom:20px}.flow-folder{position:relative;flex:0 0 160px;background:#151d27;border:1px solid #2a3b4c;border-radius:6px;padding:8px}.flow-folder-edges{margin-top:16px;padding:12px;background:#0d131a;border:1px solid #243342;border-radius:6px;display:block}.flow-folder-edge{color:#8ab4f8;font:11px/1.8 ui-monospace,Consolas,monospace}';document.head.append(style);
-// フォルダの転移順を左から右へ並べる
-function orderFolders(folders,links){const incoming=new Map(folders.map(f=>[f,0]));links.forEach(([,to])=>incoming.set(to,(incoming.get(to)||0)+1));const result=[],left=new Set(folders);while(left.size){const ready=[...left].filter(f=>incoming.get(f)===0);if(!ready.length){result.push(...left);break}ready.forEach(f=>{result.push(f);left.delete(f);links.filter(([from])=>from===f).forEach(([,to])=>incoming.set(to,incoming.get(to)-1))})}return result}
-const folderOf=f=>{const p=String(f).replaceAll('\\\\','/').split('/');return p.length>1?p.slice(0,-1).join('/'):'(root)'};
-const label=f=>String(f).replaceAll('\\\\','/').split('/').pop().replace(/(?:\.novel)?\.tds$/i,'');
-function link(file,text=file){const a=document.createElement('a');a.className='flow-link-button';a.href='/?scene='+encodeURIComponent(file);a.textContent=text;return a}
-function group(parent,title,items){if(!items.length)return;const g=document.createElement('div');g.className='flow-detail-group';const h=document.createElement('div');h.className='group-label';h.textContent=title;g.append(h);[...new Set(items)].forEach(x=>g.append(link(x)));parent.append(g)}
-function showFile(file,data){details.replaceChildren();const h=document.createElement('div');h.className='detail-title';h.textContent=file;details.append(h);group(details,'転移元',data.edges.filter(e=>e.to===file).map(e=>e.from));group(details,'転移先',data.edges.filter(e=>e.from===file).map(e=>e.to));const n=data.nodes.find(x=>x.id===file);if(n?.reachable===false){const e=document.createElement('div');e.className='flow-error';e.textContent='開始ファイルから到達できません';details.append(e)}if(n?.error){const e=document.createElement('div');e.className='flow-error';e.textContent='このファイルは解析できません';details.append(e)}if(n?.variables?.length){const g=document.createElement('div');g.className='flow-detail-group';const h2=document.createElement('div');h2.className='group-label';h2.textContent='変数';g.append(h2);n.variables.forEach(v=>{const r=document.createElement('div');r.className='flow-variable';r.textContent=`${v.name} : ${v.type||'unknown'}`;g.append(r)});details.append(g)}}
-function showFolder(folder,files){details.replaceChildren();const h=document.createElement('div');h.className='detail-title';h.textContent=`${folder} / ${files.length} files`;details.append(h);const p=document.createElement('div');p.textContent='ファイルにカーソルを合わせると詳細を表示します';details.append(p);files.forEach(f=>details.append(link(f)))}
-function render(data){const by=new Map;data.nodes.forEach(n=>{const f=folderOf(n.id);if(!by.has(f))by.set(f,[]);by.get(f).push(n.id)});const folders=[...by.keys()],seen=new Set,links=[];data.edges.forEach(e=>{const a=folderOf(e.from),b=folderOf(e.to),k=a+'>'+b;if(a!==b&&by.has(a)&&by.has(b)&&!seen.has(k)){seen.add(k);links.push([a,b])}});const orderedFolders=orderFolders(folders,links);const shell=document.createElement('div');shell.className='flow-shell';const row=document.createElement('div');row.className='flow-folders';orderedFolders.forEach(f=>{const b=document.createElement('div');b.className='flow-folder';const t=document.createElement('div');t.className='flow-folder-title';t.textContent=f;b.append(t);const list=document.createElement('div');list.className='flow-files';(by.get(f)||[]).forEach(file=>{const a=document.createElement('a');a.className='flow-file';const node=data.nodes.find(item=>item.id===file);if(node?.reachable===false)a.classList.add('unreachable');a.href='/?scene='+encodeURIComponent(file);a.textContent=label(file);a.title=node?.reachable===false?`${file}（開始ファイルから到達不能）`:file;a.onmouseenter=()=>showFile(file,data);list.append(a)});b.append(list);b.onmouseenter=()=>showFolder(f,by.get(f)||[]);row.append(b)});shell.append(row);const es=document.createElement('div');es.className='flow-folder-edges';const edgeTitle=document.createElement('div');edgeTitle.className='group-label';edgeTitle.textContent='接続関係 (エッジ)';es.append(edgeTitle);if(data.edges.length===0){const noEdge=document.createElement('div');noEdge.textContent='ファイル間接続はありません';noEdge.style.color='#738496';es.append(noEdge)}else{data.edges.forEach(e=>{const el=document.createElement('div');el.className='flow-folder-edge';el.textContent=`${e.from}  ──▶  ${e.to}`;es.append(el)})}shell.append(es);graphBox.replaceChildren(shell);status.textContent=`${folders.length} folders / ${data.nodes.length} files`}
-document.addEventListener('click',e=>{const file=e.target.closest('.flow-file');if(!file||!currentData)return;e.preventDefault();e.stopPropagation();const folder=file.closest('.flow-folder')?.querySelector('.flow-folder-title')?.textContent;const full=[...currentData.nodes].find(n=>label(n.id)===file.textContent&&folderOf(n.id)===folder)?.id;if(full)showFile(full,currentData)},true);
-const originalRender=render;render=data=>{currentData=data;originalRender(data)};fetch('/api/scene-graph').then(r=>{if(!r.ok)throw Error('Scene Flow API error: '+r.status);return r.json()}).then(render).catch(e=>{status.textContent=e.message;details.textContent=e.message});
+const graph = document.querySelector('#graph');
+const details = document.querySelector('#details');
+const status = document.querySelector('#status');
+const flowCount = document.querySelector('#flow-count');
+let data = null;
+let selected = '';
+let rangePicker = null;
+function sendToEditor(message) {
+  if (window.parent === window) return false;
+  window.parent.postMessage(message, location.origin);
+  return true;
+}
+window.setFlowRangePicker = (target) => { rangePicker = target; };
 
-const compactStyle=document.createElement('style');compactStyle.textContent='.flow-folder{width:95px!important;flex-basis:95px!important}';document.head.append(compactStyle);
-const layoutStyle=document.createElement('style');layoutStyle.textContent='#graph{transform-origin:top left;overflow:visible}.flow-shell{transform-origin:top left;min-width:0}.flow-folders{align-items:flex-start!important;flex-wrap:wrap!important;overflow:visible!important}.flow-folder{z-index:2}.flow-files{position:absolute;left:0;top:100%;width:100%;padding-top:9px;z-index:20}.flow-folder:hover{z-index:30}.flow-folder-edges{position:relative;z-index:1}';document.head.append(layoutStyle);
-const visualStyle=document.createElement('style');visualStyle.textContent='.flow-files{background:#111923;border:1px solid #385165;border-radius:6px;padding:7px;box-shadow:0 8px 18px #0008}.flow-file{padding:5px 7px;border:0;border-radius:3px;background:transparent;color:#d7e4ee}.flow-file.unreachable{color:#69727e;filter:grayscale(1);opacity:.68}.flow-file:hover{background:#294452;color:#fff}';document.head.append(visualStyle);
-const clickStyle=document.createElement('style');clickStyle.textContent='.flow-file{position:relative;z-index:50;cursor:pointer;pointer-events:auto}';document.head.append(clickStyle);
-document.addEventListener('pointerup',e=>{const file=e.target.closest('.flow-file');if(!file||!currentData)return;e.preventDefault();e.stopPropagation();showFile(file.title,currentData)},true);
-const hoverStyle=document.createElement('style');hoverStyle.textContent='.flow-folder.open .flow-files{display:flex}';document.head.append(hoverStyle);let hoverTimer;document.addEventListener('mouseenter',e=>{const folder=e.target.closest?.('.flow-folder');if(folder){clearTimeout(hoverTimer);folder.classList.add('open')}},true);document.addEventListener('mouseleave',e=>{const folder=e.target.closest?.('.flow-folder');if(folder){hoverTimer=setTimeout(()=>folder.classList.remove('open'),250)}},true);
+const folderOf = (file) => {
+  const parts = String(file).replaceAll('\\', '/').split('/');
+  return parts.length > 1 ? parts.slice(0, -1).join('/') : '(root)';
+};
+const fileLabel = (file) => String(file).replaceAll('\\', '/').split('/').pop().replace(/(?:\.novel)?\.tds$/i, '');
+const svg = (name, attrs = {}) => {
+  const element = document.createElementNS('http://www.w3.org/2000/svg', name);
+  Object.entries(attrs).forEach(([key, value]) => element.setAttribute(key, value));
+  return element;
+};
+function editorLink(file) {
+  const element = document.createElement('a');
+  element.className = 'detail-link';
+  element.href = '/?scene=' + encodeURIComponent(file);
+  element.addEventListener('click', (event) => { if (sendToEditor({ type: 'scene-flow:open-scene', scene: file })) event.preventDefault(); });
+  element.textContent = file;
+  return element;
+}
+function detailGroup(title, items) {
+  if (!items.length) return;
+  const box = document.createElement('div'); box.className = 'detail-group';
+  const heading = document.createElement('div'); heading.className = 'group-label'; heading.textContent = title;
+  box.append(heading);
+  [...new Set(items)].forEach((item) => box.append(editorLink(item)));
+  details.append(box);
+}
+function variableTypeLabel(type) {
+  if (typeof type === 'string') return type;
+  if (!type || typeof type !== 'object') return 'unknown';
+  if (type.kind === 'struct' && typeof type.name === 'string') {
+    return type.name.startsWith('character:') ? `character ${type.name.slice('character:'.length)}` : `struct ${type.name}`;
+  }
+  if (type.kind === 'dict') return `dict<${type.value || 'unknown'}>`;
+  return 'unknown';
+}
+function selectNode(file) {
+  selected = file;
+  const picker = rangePicker ? document.querySelector(`#${rangePicker}`) : null;
+  if (picker) {
+    picker.value = file;
+    window.updateFlowPicker?.(rangePicker);
+  }
+  document.querySelectorAll('.flow-node').forEach((node) => node.classList.toggle('selected', node.dataset.file === file));
+  details.replaceChildren();
+  const heading = document.createElement('div'); heading.className = 'detail-title'; heading.textContent = file;
+  details.append(heading);
+  detailGroup('転移元', data.edges.filter((edge) => edge.to === file).map((edge) => edge.from));
+  detailGroup('転移先', data.edges.filter((edge) => edge.from === file).map((edge) => edge.to));
+  const node = data.nodes.find((item) => item.id === file);
+  if (node?.reachable === false) {
+    const warning = document.createElement('div'); warning.className = 'flow-error'; warning.textContent = '開始ファイルから到達できません'; details.append(warning);
+  }
+  if (node?.error) {
+    const warning = document.createElement('div'); warning.className = 'flow-error'; warning.textContent = 'このファイルは解析できません'; details.append(warning);
+  }
+  if (node?.variables?.length) {
+    const box = document.createElement('div'); box.className = 'detail-group';
+    const title = document.createElement('div'); title.className = 'group-label'; title.textContent = '変数'; box.append(title);
+    const groups = new Map();
+    node.variables.forEach((variable) => { const type = variableTypeLabel(variable.type); if (!groups.has(type)) groups.set(type, []); groups.get(type).push(variable.name); });
+    groups.forEach((names, type) => {
+      const heading = document.createElement('div'); heading.className = 'variable-type'; heading.textContent = `${type}:`; box.append(heading);
+      names.forEach((name) => { const row = document.createElement('div'); row.className = 'variable'; row.textContent = name; row.title = 'Ctrl+クリックで定義を開く'; row.addEventListener('click', (event) => { if (!event.ctrlKey && !event.metaKey) return; event.preventDefault(); if (!sendToEditor({ type: 'scene-flow:open-scene', scene: file, symbol: name })) window.location.href = '/?scene=' + encodeURIComponent(file) + '&symbol=' + encodeURIComponent(name); }); box.append(row); });
+    });
+    details.append(box);
+  }
+}
+window.selectFlowNode = (file) => {
+  if (!data?.nodes.some((node) => node.id === file)) return;
+  selectNode(file);
+  document.querySelector(`.flow-node[data-file="${CSS.escape(file)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
+};
+
+window.showFlowValidation = (report) => {
+  const route = report.path || [];
+  const path = new Set(route);
+  const checked = new Set(report.checked || []);
+  const errorFiles = new Set((report.errors || []).map((error) => error.file));
+  document.querySelectorAll('.flow-node').forEach((node) => {
+    const file = node.dataset.file;
+    node.classList.toggle('validation-path', path.has(file));
+    node.classList.toggle('validation-checked', checked.has(file) && !path.has(file));
+    node.classList.toggle('validation-error', errorFiles.has(file));
+  });
+  document.querySelectorAll('.flow-edge').forEach((edge) => {
+    const from = edge.dataset.from, to = edge.dataset.to;
+    edge.classList.toggle('validation-path', route.some((file, index) => file === from && route[index + 1] === to));
+  });
+  if (route.length) window.selectFlowNode(route[0]);
+};
+
+function folderDepths(folders, edges) {
+  const depths = new Map(folders.map((folder) => [folder, 0]));
+  const folderEdges = edges.map((edge) => [folderOf(edge.from), folderOf(edge.to)]).filter(([from, to]) => from !== to);
+  for (let pass = 0; pass < folders.length; pass++) {
+    let changed = false;
+    for (const [from, to] of folderEdges) {
+      const next = Math.min(folders.length - 1, (depths.get(from) || 0) + 1);
+      if (next > (depths.get(to) || 0)) { depths.set(to, next); changed = true; }
+    }
+    if (!changed) break;
+  }
+  return depths;
+}
+
+function render(flow) {
+  data = flow;
+  const tree = { path: '', label: '', nodes: [], children: new Map() };
+  const ensureFolder = (folder) => {
+    const parts = folder === '(root)' ? ['(root)'] : folder.split('/');
+    let branch = tree, path = '';
+    parts.forEach((part) => {
+      path = path ? `${path}/${part}` : part;
+      if (!branch.children.has(part)) branch.children.set(part, { path, label: path, nodes: [], children: new Map() });
+      branch = branch.children.get(part);
+    });
+    return branch;
+  };
+  flow.nodes.forEach((node) => {
+    const folder = folderOf(node.id);
+    ensureFolder(folder).nodes.push(node);
+  });
+  const topFolders = [...tree.children.values()];
+  const topFolderOf = (file) => {
+    const folder = folderOf(file);
+    return folder === '(root)' ? folder : folder.split('/')[0];
+  };
+  const topEdges = flow.edges.map((edge) => ({ from: topFolderOf(edge.from), to: topFolderOf(edge.to) }));
+  const depths = folderDepths(topFolders.map((folder) => folder.path), topEdges);
+  const columns = new Map();
+  topFolders.forEach((folder) => {
+    const depth = depths.get(folder.path) || 0;
+    if (!columns.has(depth)) columns.set(depth, []);
+    columns.get(depth).push(folder);
+  });
+
+  const folderWidth = 214, folderGapX = 100, folderGapY = 30, nodeHeight = 36, nodeGap = 6, headerHeight = 27, padding = 42;
+  const folderPositions = new Map(), nodePositions = new Map();
+  const measureFolder = (folder, depth) => {
+    folder.width = Math.max(132, folderWidth - depth * 18);
+    folder.nodes.sort((a, b) => a.id.localeCompare(b.id));
+    const children = [...folder.children.values()].sort((a, b) => a.path.localeCompare(b.path, 'ja'));
+    children.forEach((child) => measureFolder(child, depth + 1));
+    const nodesHeight = folder.nodes.length * nodeHeight + Math.max(0, folder.nodes.length - 1) * nodeGap;
+    const childrenHeight = children.reduce((sum, child, index) => sum + child.height + (index ? 10 : 0), 0);
+    folder.height = headerHeight + 10 + nodesHeight + (nodesHeight && childrenHeight ? 10 : 0) + childrenHeight + 10;
+  };
+  topFolders.forEach((folder) => measureFolder(folder, 0));
+  const placeFolder = (folder, x, y, depth) => {
+    folderPositions.set(folder.path, { x, y, width: folder.width, height: folder.height, folder });
+    let cursor = y + headerHeight + 10;
+    folder.nodes.forEach((node, index) => {
+      nodePositions.set(node.id, { x: x + 12, y: cursor + index * (nodeHeight + nodeGap), width: folder.width - 24 });
+    });
+    cursor += folder.nodes.length * nodeHeight + Math.max(0, folder.nodes.length - 1) * nodeGap;
+    if (folder.nodes.length && folder.children.size) cursor += 10;
+    [...folder.children.values()].sort((a, b) => a.path.localeCompare(b.path, 'ja')).forEach((child) => {
+      placeFolder(child, x + 12, cursor, depth + 1);
+      cursor += child.height + 10;
+    });
+  };
+  let totalHeight = padding;
+  for (const [depth, columnFolders] of columns) {
+    let y = padding;
+    columnFolders.sort((a, b) => a.path.localeCompare(b.path, 'ja')).forEach((folder) => {
+      const x = padding + depth * (folderWidth + folderGapX);
+      placeFolder(folder, x, y, 0);
+      y += folder.height + folderGapY;
+    });
+    totalHeight = Math.max(totalHeight, y);
+  }
+  const maxDepth = Math.max(0, ...columns.keys());
+  const width = Math.max(graph.clientWidth, padding * 2 + (maxDepth + 1) * folderWidth + maxDepth * folderGapX);
+  const height = Math.max(graph.clientHeight, totalHeight + padding - folderGapY);
+  const root = svg('svg', { class: 'flow-svg', width, height, viewBox: `0 0 ${width} ${height}` });
+  const defs = svg('defs');
+  const marker = svg('marker', { id: 'arrow', markerWidth: 8, markerHeight: 8, refX: 7, refY: 3, orient: 'auto' });
+  marker.append(svg('path', { d: 'M0 0v6l7-3z', class: 'flow-arrow' })); defs.append(marker); root.append(defs);
+
+  const drawFolder = (folder) => {
+    const position = folderPositions.get(folder.path);
+    const box = svg('g', { class: 'flow-folder', transform: `translate(${position.x} ${position.y})` });
+    box.append(svg('rect', { class: 'flow-folder-frame', y: 9, width: position.width, height: position.height - 9, rx: 3 }));
+    const labelWidth = Math.min(position.width - 18, Math.max(48, folder.label.length * 7 + 18));
+    box.append(svg('rect', { class: 'flow-folder-label-bg', x: 9, y: 1, width: labelWidth, height: 18 }));
+    const title = svg('text', { class: 'flow-folder-title', x: 17, y: 14 }); title.textContent = folder.label;
+    box.append(title); root.append(box);
+    [...folder.children.values()].sort((a, b) => a.path.localeCompare(b.path, 'ja')).forEach(drawFolder);
+  };
+  topFolders.forEach(drawFolder);
+  flow.edges.forEach((edge) => {
+    const from = nodePositions.get(edge.from), to = nodePositions.get(edge.to); if (!from || !to) return;
+    if (folderOf(edge.from) === folderOf(edge.to)) {
+      const x1 = from.x + from.width, y1 = from.y + nodeHeight / 2, x2 = to.x + to.width, y2 = to.y + nodeHeight / 2;
+      const loop = 52 + Math.abs(y2 - y1) * 0.18;
+      const path = svg('path', { d: `M${x1} ${y1}C${x1 + loop} ${y1} ${x2 + loop} ${y2} ${x2} ${y2}`, class: 'flow-edge folder-edge', 'marker-end': 'url(#arrow)' }); path.dataset.from = edge.from; path.dataset.to = edge.to; root.append(path);
+      return;
+    }
+    const x1 = from.x + from.width, y1 = from.y + nodeHeight / 2, x2 = to.x, y2 = to.y + nodeHeight / 2, offset = Math.max(35, Math.abs(x2 - x1) / 2);
+    const path = svg('path', { d: `M${x1} ${y1}C${x1 + offset} ${y1} ${x2 - offset} ${y2} ${x2} ${y2}`, class: 'flow-edge', 'marker-end': 'url(#arrow)' }); path.dataset.from = edge.from; path.dataset.to = edge.to; root.append(path);
+  });
+  flow.nodes.forEach((node) => {
+    const position = nodePositions.get(node.id);
+    const item = svg('g', { class: `flow-node${node.reachable === false ? ' unreachable' : ''}${node.error ? ' error' : ''}`, transform: `translate(${position.x} ${position.y})`, tabindex: 0, role: 'button' });
+    item.dataset.file = node.id;
+    item.append(svg('rect', { width: position.width, height: nodeHeight, rx: 3 }));
+    const name = svg('text', { x: 11, y: 22 }); name.textContent = fileLabel(node.id); item.append(name);
+    item.addEventListener('click', () => selectNode(node.id));
+    item.addEventListener('dblclick', () => { if (!sendToEditor({ type: 'scene-flow:open-scene', scene: node.id })) location.href = '/?scene=' + encodeURIComponent(node.id); });
+    item.addEventListener('keydown', (event) => { if (event.key === 'Enter') selectNode(node.id); });
+    root.append(item);
+  });
+  graph.replaceChildren(root);
+  status.textContent = '準備完了';
+  flowCount.textContent = `${folderPositions.size} folders / ${flow.nodes.length} scenes / ${flow.edges.length} transitions`;
+  if (flow.nodes.length) selectNode(selected && nodePositions.has(selected) ? selected : flow.nodes[0].id);
+}
+
+fetch('/api/scene-graph').then((response) => { if (!response.ok) throw Error('Scene Flow API error: ' + response.status); return response.json(); }).then(render).catch((error) => { status.textContent = 'エラー'; status.title = error.message; details.textContent = error.message; flowCount.textContent = ''; });
+let resizeTimer;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => data && render(data), 100); });
+
+document.querySelectorAll('[data-flow-view]').forEach((link) => link.addEventListener('click', (event) => { if (sendToEditor({ type: 'scene-flow:view', view: link.dataset.flowView })) event.preventDefault(); }));
+document.querySelectorAll('[data-flow-action]').forEach((button) => button.addEventListener('click', () => { const action = button.dataset.flowAction; if (action === 'editor') { if (!sendToEditor({ type: 'scene-flow:view', view: 'explorer' })) window.location.href = '/'; } if (action === 'validate') document.querySelector('#validate')?.click(); if (action === 'toggle-details') document.querySelector('.details')?.classList.toggle('is-hidden'); if (action === 'help' && !sendToEditor({ type: 'scene-flow:help' })) window.location.href = '/?help=language'; }));

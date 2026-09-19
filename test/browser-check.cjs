@@ -17,7 +17,7 @@ const assert = require('node:assert/strict');
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
     browser = await chromium.launch({ channel: 'msedge', headless: true, args: ['--autoplay-policy=no-user-gesture-required'] });
-    const page = await browser.newPage(); const errors = []; page.on('pageerror', e => errors.push(e.message));
+    const page = await browser.newPage(); page.setDefaultTimeout(10_000); const errors = []; page.on('pageerror', e => errors.push(e.message));
     let compiledSceneName = '';
     page.on('request', async request => {
       if (new URL(request.url()).pathname === '/api/compile') compiledSceneName = request.postDataJSON()?.name || '';
@@ -40,13 +40,15 @@ show image second right
 show hero.normal left fade 10
 show friend.normal right
 clear image first
-clear char hero
+hide hero
 choice "choose" {
 "continue" { say hero result + ":" + str(answer()) }
 }`;
     await page.route('**/api/scene?*', route => route.fulfill({ json: { name: '__audit.tds', source } }));
     await page.goto(base + '/player.html?source=__audit.tds');
-    await page.locator('.choice').waitFor();
+    await page.locator('.choice').waitFor().catch(async (error) => {
+      throw new Error(`choice was not shown: ${await page.locator('#speaker').textContent()} / ${await page.locator('#text').textContent()} (${errors.join('; ') || error.message})`);
+    });
     assert.equal(compiledSceneName, '__audit.tds');
     assert.equal(await page.locator('#image-first').count(), 0);
     assert.equal(await page.locator('#image-second').count(), 1);

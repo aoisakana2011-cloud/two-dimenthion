@@ -16,7 +16,7 @@ export class Lexer {
     if (this.isDigit(c)) return this.readNumber(start);
     const pair = `${c}${this.peek(1) ?? ''}`;
     if (['==', '!=', '>=', '<=', '->', '=>', '..'].includes(pair)) { this.advance(); this.advance(); return this.token('symbol', pair, start); }
-    if ('{}[]=():,+-*/%<>!.'.includes(c)) { this.advance(); return this.token('symbol', c, start); }
+    if ('{}[]=():,+-*/%<>!.\\'.includes(c)) { this.advance(); return this.token('symbol', c, start); }
     if (this.isAlpha(c)) return this.readWord(start);
     throw this.error(`Unexpected character '${c}'`, start);
   }

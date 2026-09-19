@@ -14,6 +14,9 @@
 # EXTERNAL cache entries
 ########################
 
+//Path to a program.
+CMAKE_AR:FILEPATH=C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/lib.exe
+
 //Semicolon separated list of supported configuration types, only
 // supports Debug, Release, MinSizeRel, and RelWithDebInfo, anything
 // else will be ignored.
@@ -56,7 +59,10 @@ CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO:STRING=/debug /INCREMENTAL
 CMAKE_FIND_PACKAGE_REDIRECTS_DIR:STATIC=C:/Users/Owner/Desktop/Novel Editer/native/build/CMakeFiles/pkgRedirects
 
 //Install path prefix, prepended onto install directories.
-CMAKE_INSTALL_PREFIX:PATH=C:/Program Files/novel_script_native
+CMAKE_INSTALL_PREFIX:PATH=C:/Program Files (x86)/novel_script_native
+
+//Path to a program.
+CMAKE_LINKER:FILEPATH=C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/link.exe
 
 //Flags used by the linker during the creation of modules during
 // all build types.
@@ -78,6 +84,9 @@ CMAKE_MODULE_LINKER_FLAGS_RELEASE:STRING=/INCREMENTAL:NO
 // RELWITHDEBINFO builds.
 CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO:STRING=/debug /INCREMENTAL
 
+//Path to a program.
+CMAKE_MT:FILEPATH=CMAKE_MT-NOTFOUND
+
 //Value Computed by CMake
 CMAKE_PROJECT_COMPAT_VERSION:STATIC=
 
@@ -92,6 +101,9 @@ CMAKE_PROJECT_NAME:STATIC=novel_script_native
 
 //Value Computed by CMake
 CMAKE_PROJECT_SPDX_LICENSE:STATIC=
+
+//RC compiler
+CMAKE_RC_COMPILER:FILEPATH=rc
 
 //Flags for Windows Resource Compiler during all build types.
 CMAKE_RC_FLAGS:STRING=-DWIN32
@@ -156,7 +168,7 @@ CMAKE_STATIC_LINKER_FLAGS_RELEASE:STRING=
 CMAKE_STATIC_LINKER_FLAGS_RELWITHDEBINFO:STRING=
 
 //No help, variable specified on the command line.
-CMAKE_TOOLCHAIN_FILE:UNINITIALIZED=N:/native/.vcpkg/scripts/buildsystems/vcpkg.cmake
+CMAKE_TOOLCHAIN_FILE:UNINITIALIZED=C:\Users\Owner\Desktop\Novel Editer\native\.vcpkg\scripts\buildsystems\vcpkg.cmake
 
 //If this value is on, makefiles will be generated without the
 // .SILENT directive, and all commands will be echoed to the console
@@ -166,114 +178,119 @@ CMAKE_VERBOSE_MAKEFILE:BOOL=FALSE
 
 FFMPEG_FOUND:BOOL=TRUE
 
-FFMPEG_INCLUDE_DIRS:STRING=N:/native/build/vcpkg_installed/x64-windows/include
+FFMPEG_INCLUDE_DIRS:STRING=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/include
 
-FFMPEG_LIBRARIES:STRING=optimized;N:/native/build/vcpkg_installed/x64-windows/lib/avdevice.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/avdevice.lib;optimized;N:/native/build/vcpkg_installed/x64-windows/lib/avfilter.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/avfilter.lib;optimized;N:/native/build/vcpkg_installed/x64-windows/lib/avformat.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/avformat.lib;optimized;N:/native/build/vcpkg_installed/x64-windows/lib/avcodec.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/avcodec.lib;optimized;N:/native/build/vcpkg_installed/x64-windows/lib/swresample.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/swresample.lib;optimized;N:/native/build/vcpkg_installed/x64-windows/lib/swscale.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/swscale.lib;optimized;N:/native/build/vcpkg_installed/x64-windows/lib/avutil.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/avutil.lib
+FFMPEG_LIBRARIES:STRING=optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avdevice.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avdevice.lib;optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avfilter.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avfilter.lib;optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avformat.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avformat.lib;optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avcodec.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avcodec.lib;optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/swresample.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/swresample.lib;optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/swscale.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/swscale.lib;optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avutil.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avutil.lib
 
-FFMPEG_LIBRARY_DIRS:STRING=N:/native/build/vcpkg_installed/x64-windows/lib;N:/native/build/vcpkg_installed/x64-windows/debug/lib
+FFMPEG_LIBRARY_DIRS:STRING=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib
 
 //Path to a file.
-FFMPEG_libavcodec_INCLUDE_DIRS:PATH=N:/native/build/vcpkg_installed/x64-windows/include
+FFMPEG_libavcodec_INCLUDE_DIRS:PATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/include
 
-FFMPEG_libavcodec_LIBRARY:STRING=optimized;N:/native/build/vcpkg_installed/x64-windows/lib/avcodec.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/avcodec.lib
-
-//Path to a library.
-FFMPEG_libavcodec_LIBRARY_DEBUG:FILEPATH=N:/native/build/vcpkg_installed/x64-windows/debug/lib/avcodec.lib
+FFMPEG_libavcodec_LIBRARY:STRING=optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avcodec.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avcodec.lib
 
 //Path to a library.
-FFMPEG_libavcodec_LIBRARY_RELEASE:FILEPATH=N:/native/build/vcpkg_installed/x64-windows/lib/avcodec.lib
+FFMPEG_libavcodec_LIBRARY_DEBUG:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avcodec.lib
+
+//Path to a library.
+FFMPEG_libavcodec_LIBRARY_RELEASE:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avcodec.lib
 
 FFMPEG_libavcodec_VERSION:STRING=63.1.101
 
 //Path to a file.
-FFMPEG_libavdevice_INCLUDE_DIRS:PATH=N:/native/build/vcpkg_installed/x64-windows/include
+FFMPEG_libavdevice_INCLUDE_DIRS:PATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/include
 
-FFMPEG_libavdevice_LIBRARY:STRING=optimized;N:/native/build/vcpkg_installed/x64-windows/lib/avdevice.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/avdevice.lib
-
-//Path to a library.
-FFMPEG_libavdevice_LIBRARY_DEBUG:FILEPATH=N:/native/build/vcpkg_installed/x64-windows/debug/lib/avdevice.lib
+FFMPEG_libavdevice_LIBRARY:STRING=optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avdevice.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avdevice.lib
 
 //Path to a library.
-FFMPEG_libavdevice_LIBRARY_RELEASE:FILEPATH=N:/native/build/vcpkg_installed/x64-windows/lib/avdevice.lib
+FFMPEG_libavdevice_LIBRARY_DEBUG:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avdevice.lib
+
+//Path to a library.
+FFMPEG_libavdevice_LIBRARY_RELEASE:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avdevice.lib
 
 FFMPEG_libavdevice_VERSION:STRING=63.1.101
 
 //Path to a file.
-FFMPEG_libavfilter_INCLUDE_DIRS:PATH=N:/native/build/vcpkg_installed/x64-windows/include
+FFMPEG_libavfilter_INCLUDE_DIRS:PATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/include
 
-FFMPEG_libavfilter_LIBRARY:STRING=optimized;N:/native/build/vcpkg_installed/x64-windows/lib/avfilter.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/avfilter.lib
-
-//Path to a library.
-FFMPEG_libavfilter_LIBRARY_DEBUG:FILEPATH=N:/native/build/vcpkg_installed/x64-windows/debug/lib/avfilter.lib
+FFMPEG_libavfilter_LIBRARY:STRING=optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avfilter.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avfilter.lib
 
 //Path to a library.
-FFMPEG_libavfilter_LIBRARY_RELEASE:FILEPATH=N:/native/build/vcpkg_installed/x64-windows/lib/avfilter.lib
+FFMPEG_libavfilter_LIBRARY_DEBUG:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avfilter.lib
+
+//Path to a library.
+FFMPEG_libavfilter_LIBRARY_RELEASE:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avfilter.lib
 
 FFMPEG_libavfilter_VERSION:STRING=12.1.101
 
 //Path to a file.
-FFMPEG_libavformat_INCLUDE_DIRS:PATH=N:/native/build/vcpkg_installed/x64-windows/include
+FFMPEG_libavformat_INCLUDE_DIRS:PATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/include
 
-FFMPEG_libavformat_LIBRARY:STRING=optimized;N:/native/build/vcpkg_installed/x64-windows/lib/avformat.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/avformat.lib
-
-//Path to a library.
-FFMPEG_libavformat_LIBRARY_DEBUG:FILEPATH=N:/native/build/vcpkg_installed/x64-windows/debug/lib/avformat.lib
+FFMPEG_libavformat_LIBRARY:STRING=optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avformat.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avformat.lib
 
 //Path to a library.
-FFMPEG_libavformat_LIBRARY_RELEASE:FILEPATH=N:/native/build/vcpkg_installed/x64-windows/lib/avformat.lib
+FFMPEG_libavformat_LIBRARY_DEBUG:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avformat.lib
+
+//Path to a library.
+FFMPEG_libavformat_LIBRARY_RELEASE:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avformat.lib
 
 FFMPEG_libavformat_VERSION:STRING=63.1.101
 
 //Path to a file.
-FFMPEG_libavutil_INCLUDE_DIRS:PATH=N:/native/build/vcpkg_installed/x64-windows/include
+FFMPEG_libavutil_INCLUDE_DIRS:PATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/include
 
-FFMPEG_libavutil_LIBRARY:STRING=optimized;N:/native/build/vcpkg_installed/x64-windows/lib/avutil.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/avutil.lib
-
-//Path to a library.
-FFMPEG_libavutil_LIBRARY_DEBUG:FILEPATH=N:/native/build/vcpkg_installed/x64-windows/debug/lib/avutil.lib
+FFMPEG_libavutil_LIBRARY:STRING=optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avutil.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avutil.lib
 
 //Path to a library.
-FFMPEG_libavutil_LIBRARY_RELEASE:FILEPATH=N:/native/build/vcpkg_installed/x64-windows/lib/avutil.lib
+FFMPEG_libavutil_LIBRARY_DEBUG:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avutil.lib
+
+//Path to a library.
+FFMPEG_libavutil_LIBRARY_RELEASE:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avutil.lib
 
 FFMPEG_libavutil_VERSION:STRING=61.1.101
 
 //Path to a file.
-FFMPEG_libswresample_INCLUDE_DIRS:PATH=N:/native/build/vcpkg_installed/x64-windows/include
+FFMPEG_libswresample_INCLUDE_DIRS:PATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/include
 
-FFMPEG_libswresample_LIBRARY:STRING=optimized;N:/native/build/vcpkg_installed/x64-windows/lib/swresample.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/swresample.lib
-
-//Path to a library.
-FFMPEG_libswresample_LIBRARY_DEBUG:FILEPATH=N:/native/build/vcpkg_installed/x64-windows/debug/lib/swresample.lib
+FFMPEG_libswresample_LIBRARY:STRING=optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/swresample.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/swresample.lib
 
 //Path to a library.
-FFMPEG_libswresample_LIBRARY_RELEASE:FILEPATH=N:/native/build/vcpkg_installed/x64-windows/lib/swresample.lib
+FFMPEG_libswresample_LIBRARY_DEBUG:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/swresample.lib
+
+//Path to a library.
+FFMPEG_libswresample_LIBRARY_RELEASE:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/swresample.lib
 
 FFMPEG_libswresample_VERSION:STRING=7.1.101
 
 //Path to a file.
-FFMPEG_libswscale_INCLUDE_DIRS:PATH=N:/native/build/vcpkg_installed/x64-windows/include
+FFMPEG_libswscale_INCLUDE_DIRS:PATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/include
 
-FFMPEG_libswscale_LIBRARY:STRING=optimized;N:/native/build/vcpkg_installed/x64-windows/lib/swscale.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/swscale.lib
-
-//Path to a library.
-FFMPEG_libswscale_LIBRARY_DEBUG:FILEPATH=N:/native/build/vcpkg_installed/x64-windows/debug/lib/swscale.lib
+FFMPEG_libswscale_LIBRARY:STRING=optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/swscale.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/swscale.lib
 
 //Path to a library.
-FFMPEG_libswscale_LIBRARY_RELEASE:FILEPATH=N:/native/build/vcpkg_installed/x64-windows/lib/swscale.lib
+FFMPEG_libswscale_LIBRARY_DEBUG:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/swscale.lib
+
+//Path to a library.
+FFMPEG_libswscale_LIBRARY_RELEASE:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/swscale.lib
 
 FFMPEG_libswscale_VERSION:STRING=10.1.101
 
+//Arguments to supply to pkg-config
+PKG_CONFIG_ARGN:STRING=
+
+PKG_CONFIG_EXECUTABLE:STRING=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/tools/pkgconf/pkgconf.exe
+
 //The directory containing a CMake configuration file for SDL3.
-SDL3_DIR:PATH=N:/native/build/vcpkg_installed/x64-windows/share/sdl3
+SDL3_DIR:PATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/share/sdl3
 
 //The directory containing a CMake configuration file for SDL3_image.
-SDL3_image_DIR:PATH=N:/native/build/vcpkg_installed/x64-windows/share/SDL3_image
+SDL3_image_DIR:PATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/share/SDL3_image
 
 //The directory containing a CMake configuration file for SDL3_mixer.
-SDL3_mixer_DIR:PATH=N:/native/build/vcpkg_installed/x64-windows/share/SDL3_mixer
+SDL3_mixer_DIR:PATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/share/SDL3_mixer
 
 //The directory containing a CMake configuration file for SDL3_ttf.
-SDL3_ttf_DIR:PATH=N:/native/build/vcpkg_installed/x64-windows/share/sdl3_ttf
+SDL3_ttf_DIR:PATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/share/sdl3_ttf
 
 //Automatically copy dependencies into the output directory for
 // executables.
@@ -284,13 +301,13 @@ VCPKG_BOOTSTRAP_OPTIONS:STRING=
 
 //The directory which contains the installed libraries for each
 // triplet
-VCPKG_INSTALLED_DIR:PATH=N:/native/build/vcpkg_installed
+VCPKG_INSTALLED_DIR:PATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed
 
 //Additional install options to pass to vcpkg
 VCPKG_INSTALL_OPTIONS:STRING=
 
 //The path to the vcpkg manifest directory.
-VCPKG_MANIFEST_DIR:PATH=N:/native
+VCPKG_MANIFEST_DIR:PATH=C:/Users/Owner/Desktop/Novel Editer/native
 
 //Install the dependencies listed in your manifest:
 //\n    If this is off, you will have to manually install your dependencies.
@@ -338,10 +355,10 @@ X_VCPKG_APPLOCAL_DEPS_SERIALIZED:BOOL=OFF
 
 //The directory which contains the installed libraries for each
 // triplet
-_VCPKG_INSTALLED_DIR:PATH=N:/native/build/vcpkg_installed
+_VCPKG_INSTALLED_DIR:PATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed
 
 //The directory containing a CMake configuration file for nlohmann_json.
-nlohmann_json_DIR:PATH=N:/native/build/vcpkg_installed/x64-windows/share/nlohmann_json
+nlohmann_json_DIR:PATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/share/nlohmann_json
 
 //Value Computed by CMake
 novel_script_native_BINARY_DIR:STATIC=C:/Users/Owner/Desktop/Novel Editer/native/build
@@ -350,13 +367,18 @@ novel_script_native_BINARY_DIR:STATIC=C:/Users/Owner/Desktop/Novel Editer/native
 novel_script_native_IS_TOP_LEVEL:STATIC=ON
 
 //Value Computed by CMake
-novel_script_native_SOURCE_DIR:STATIC=N:/native
+novel_script_native_SOURCE_DIR:STATIC=C:/Users/Owner/Desktop/Novel Editer/native
+
+//Path to a library.
+pkgcfg_lib_PKG_libavcodec_avcodec:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avcodec.lib
 
 
 ########################
 # INTERNAL cache entries
 ########################
 
+//ADVANCED property for variable: CMAKE_AR
+CMAKE_AR-ADVANCED:INTERNAL=1
 //This is the directory where this CMakeCache.txt was created
 CMAKE_CACHEFILE_DIR:INTERNAL=c:/Users/Owner/Desktop/Novel Editer/native/build
 //Major version of cmake used to create the current loaded cache
@@ -383,6 +405,8 @@ CMAKE_CXX_FLAGS_RELEASE-ADVANCED:INTERNAL=1
 CMAKE_CXX_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_CXX_STANDARD_LIBRARIES
 CMAKE_CXX_STANDARD_LIBRARIES-ADVANCED:INTERNAL=1
+//Executable file format
+CMAKE_EXECUTABLE_FORMAT:INTERNAL=Unknown
 //ADVANCED property for variable: CMAKE_EXE_LINKER_FLAGS
 CMAKE_EXE_LINKER_FLAGS-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_EXE_LINKER_FLAGS_DEBUG
@@ -405,7 +429,9 @@ CMAKE_GENERATOR_PLATFORM:INTERNAL=
 CMAKE_GENERATOR_TOOLSET:INTERNAL=
 //Source directory with the top level CMakeLists.txt file for this
 // project
-CMAKE_HOME_DIRECTORY:INTERNAL=N:/native
+CMAKE_HOME_DIRECTORY:INTERNAL=C:/Users/Owner/Desktop/Novel Editer/native
+//ADVANCED property for variable: CMAKE_LINKER
+CMAKE_LINKER-ADVANCED:INTERNAL=1
 //Name of CMakeLists files to read
 CMAKE_LIST_FILE_NAME:INTERNAL=CMakeLists.txt
 //ADVANCED property for variable: CMAKE_MODULE_LINKER_FLAGS
@@ -418,10 +444,17 @@ CMAKE_MODULE_LINKER_FLAGS_MINSIZEREL-ADVANCED:INTERNAL=1
 CMAKE_MODULE_LINKER_FLAGS_RELEASE-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO
 CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_MT
+CMAKE_MT-ADVANCED:INTERNAL=1
 //number of local generators
 CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=1
 //Platform information initialized
 CMAKE_PLATFORM_INFO_INITIALIZED:INTERNAL=1
+//noop for ranlib
+CMAKE_RANLIB:INTERNAL=:
+//ADVANCED property for variable: CMAKE_RC_COMPILER
+CMAKE_RC_COMPILER-ADVANCED:INTERNAL=1
+CMAKE_RC_COMPILER_WORKS:INTERNAL=1
 //ADVANCED property for variable: CMAKE_RC_FLAGS
 CMAKE_RC_FLAGS-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_RC_FLAGS_DEBUG
@@ -491,13 +524,59 @@ FFMPEG_libswscale_LIBRARY_DEBUG-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: FFMPEG_libswscale_LIBRARY_RELEASE
 FFMPEG_libswscale_LIBRARY_RELEASE-ADVANCED:INTERNAL=1
 //Details about finding FFMPEG
-FIND_PACKAGE_MESSAGE_DETAILS_FFMPEG:INTERNAL=[optimized;N:/native/build/vcpkg_installed/x64-windows/lib/avdevice.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/avdevice.lib;optimized;N:/native/build/vcpkg_installed/x64-windows/lib/avfilter.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/avfilter.lib;optimized;N:/native/build/vcpkg_installed/x64-windows/lib/avformat.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/avformat.lib;optimized;N:/native/build/vcpkg_installed/x64-windows/lib/avcodec.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/avcodec.lib;optimized;N:/native/build/vcpkg_installed/x64-windows/lib/swresample.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/swresample.lib;optimized;N:/native/build/vcpkg_installed/x64-windows/lib/swscale.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/swscale.lib;optimized;N:/native/build/vcpkg_installed/x64-windows/lib/avutil.lib;debug;N:/native/build/vcpkg_installed/x64-windows/debug/lib/avutil.lib][N:/native/build/vcpkg_installed/x64-windows/lib;N:/native/build/vcpkg_installed/x64-windows/debug/lib][N:/native/build/vcpkg_installed/x64-windows/include][v()]
+FIND_PACKAGE_MESSAGE_DETAILS_FFMPEG:INTERNAL=[optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avdevice.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avdevice.lib;optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avfilter.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avfilter.lib;optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avformat.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avformat.lib;optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avcodec.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avcodec.lib;optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/swresample.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/swresample.lib;optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/swscale.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/swscale.lib;optimized;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib/avutil.lib;debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avutil.lib][C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/lib;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib][C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/include][v()]
+//Details about finding PkgConfig
+FIND_PACKAGE_MESSAGE_DETAILS_PkgConfig:INTERNAL=[C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/tools/pkgconf/pkgconf.exe][v3.0.3()]
 //Details about finding nlohmann_json
-FIND_PACKAGE_MESSAGE_DETAILS_nlohmann_json:INTERNAL=[N:/native/build/vcpkg_installed/x64-windows/share/nlohmann_json/nlohmann_jsonConfig.cmake][v3.12.0()]
+FIND_PACKAGE_MESSAGE_DETAILS_nlohmann_json:INTERNAL=[C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/share/nlohmann_json/nlohmann_jsonConfig.cmake][v3.12.0()]
+//ADVANCED property for variable: PKG_CONFIG_ARGN
+PKG_CONFIG_ARGN-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: PKG_CONFIG_EXECUTABLE
+PKG_CONFIG_EXECUTABLE-ADVANCED:INTERNAL=1
+PKG_libavcodec_CFLAGS:INTERNAL=-IC:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/../include
+PKG_libavcodec_CFLAGS_I:INTERNAL=
+PKG_libavcodec_CFLAGS_OTHER:INTERNAL=
+PKG_libavcodec_FOUND:INTERNAL=1
+PKG_libavcodec_INCLUDEDIR:INTERNAL=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/../include
+PKG_libavcodec_INCLUDE_DIRS:INTERNAL=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/../include
+PKG_libavcodec_LDFLAGS:INTERNAL=-LC:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib;-lavcodec
+PKG_libavcodec_LDFLAGS_OTHER:INTERNAL=
+PKG_libavcodec_LIBDIR:INTERNAL=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib
+PKG_libavcodec_LIBRARIES:INTERNAL=avcodec
+PKG_libavcodec_LIBRARY_DIRS:INTERNAL=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib
+PKG_libavcodec_LIBS:INTERNAL=
+PKG_libavcodec_LIBS_L:INTERNAL=
+PKG_libavcodec_LIBS_OTHER:INTERNAL=
+PKG_libavcodec_LIBS_PATHS:INTERNAL=
+PKG_libavcodec_MODULE_NAME:INTERNAL=libavcodec
+PKG_libavcodec_PREFIX:INTERNAL=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug
+PKG_libavcodec_STATIC_CFLAGS:INTERNAL=-IC:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/../include
+PKG_libavcodec_STATIC_CFLAGS_I:INTERNAL=
+PKG_libavcodec_STATIC_CFLAGS_OTHER:INTERNAL=
+PKG_libavcodec_STATIC_INCLUDE_DIRS:INTERNAL=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/../include
+PKG_libavcodec_STATIC_LDFLAGS:INTERNAL=-LC:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib;-lavcodec;-lmfuuid;-lole32;-lstrmiids;-lole32;-luser32;-lswresample;-lavutil;-luser32;-lbcrypt
+PKG_libavcodec_STATIC_LDFLAGS_OTHER:INTERNAL=
+PKG_libavcodec_STATIC_LIBDIR:INTERNAL=
+PKG_libavcodec_STATIC_LIBRARIES:INTERNAL=avcodec;mfuuid;ole32;strmiids;ole32;user32;swresample;avutil;user32;bcrypt
+PKG_libavcodec_STATIC_LIBRARY_DIRS:INTERNAL=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib
+PKG_libavcodec_STATIC_LIBS:INTERNAL=
+PKG_libavcodec_STATIC_LIBS_L:INTERNAL=
+PKG_libavcodec_STATIC_LIBS_OTHER:INTERNAL=
+PKG_libavcodec_STATIC_LIBS_PATHS:INTERNAL=
+PKG_libavcodec_VERSION:INTERNAL=63.1.101
+PKG_libavcodec_libavcodec_INCLUDEDIR:INTERNAL=
+PKG_libavcodec_libavcodec_LIBDIR:INTERNAL=
+PKG_libavcodec_libavcodec_PREFIX:INTERNAL=
+PKG_libavcodec_libavcodec_VERSION:INTERNAL=
 //ADVANCED property for variable: VCPKG_VERBOSE
 VCPKG_VERBOSE-ADVANCED:INTERNAL=1
 //Making sure VCPKG_MANIFEST_MODE doesn't change
 Z_VCPKG_CHECK_MANIFEST_MODE:INTERNAL=ON
 //Vcpkg root directory
-Z_VCPKG_ROOT_DIR:INTERNAL=N:/native/.vcpkg
+Z_VCPKG_ROOT_DIR:INTERNAL=C:/Users/Owner/Desktop/Novel Editer/native/.vcpkg
+__pkg_config_arguments_PKG_libavcodec:INTERNAL=libavcodec
+__pkg_config_checked_PKG_libavcodec:INTERNAL=1
+//ADVANCED property for variable: pkgcfg_lib_PKG_libavcodec_avcodec
+pkgcfg_lib_PKG_libavcodec_avcodec-ADVANCED:INTERNAL=1
+prefix_result:INTERNAL=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib
 

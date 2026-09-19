@@ -1,5 +1,18 @@
 'use strict';
 const $ = id => document.getElementById(id);
+function uiAsset(themePath, image) {
+  const directory = themePath.replaceAll('\\', '/').split('/').slice(0, -1);
+  return '/asset/' + [...directory, image].map(encodeURIComponent).join('/');
+}
+function applyPlayerUi(themePath, theme) {
+  const { screen, dialog, choices } = theme;
+  const stage = $('stage'), dialogue = $('dialogue'), speaker = $('speaker'), text = $('text'), choiceBox = $('choices');
+  stage.style.width = `${screen.width}px`; stage.style.height = `${screen.height}px`;
+  Object.assign(dialogue.style, { left: `${dialog.x}px`, top: `${dialog.y}px`, right: 'auto', bottom: 'auto', width: `${dialog.width}px`, height: `${dialog.height}px`, minHeight: '0', padding: '0', border: '0', borderRadius: '0', background: `url("${uiAsset(themePath, dialog.image)}") center / 100% 100% no-repeat` });
+  Object.assign(text.style, { position: 'absolute', left: `${dialog.message.x}px`, top: `${dialog.message.y}px`, width: `${dialog.message.width}px`, height: `${dialog.message.height}px`, overflow: 'hidden', fontSize: `${dialog.message.size}px`, color: `rgba(${dialog.message.color.join(',')})` });
+  Object.assign(speaker.style, { position: 'absolute', display: 'grid', placeItems: 'center', left: `${dialog.nameplate.x}px`, top: `${dialog.nameplate.y}px`, width: `${dialog.nameplate.width}px`, height: `${dialog.nameplate.height}px`, color: `rgba(${dialog.nameplate.text.color.join(',')})`, fontSize: `${dialog.nameplate.text.size}px`, background: `url("${uiAsset(themePath, dialog.nameplate.image)}") center / 100% 100% no-repeat` });
+  Object.assign(choiceBox.style, { position: 'absolute', left: `${choices.x - dialog.x}px`, top: `${choices.y - dialog.y}px`, width: `${choices.width}px`, height: `${choices.height}px`, overflowY: 'auto' });
+}
 function url(type, name, pose) {
   let a = runtime.program?.assets?.find((x) => x.name === name && x.type === type);
   if (type === 'char') {
@@ -67,23 +80,18 @@ async function command(c) {
   const a = c.args;
   const n = c.name;
   const poseReference = n === 'show' && /^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(a[0]);
-  const canonicalShowChar = n === 'show' && a[1] === 'at' && a[3] === 'pose';
-  const showChar = n === 'show' && (a[0] === 'char' || canonicalShowChar || poseReference);
+  const showChar = n === 'show' && Boolean(poseReference);
 
   if (n === 'bg') {
     const src = url('bg', a[0]);
     const preload = new Image(); preload.src = src; await preload.decode();
     $('background').style.backgroundImage = `url("${src}")`;
-  } else if (n === 'char' || showChar) {
-    const offset = showChar && !canonicalShowChar ? 1 : 0;
-    const charName = poseReference ? poseReference[1] : a[offset];
-    const pos = poseReference ? a[1] : canonicalShowChar ? a[2] : a[offset + 1] || 'center';
-    const pose = poseReference ? poseReference[2] : canonicalShowChar ? a[4] : a[offset + 2];
-    const fadeOffset = poseReference ? 2 : canonicalShowChar ? 5 : offset + 3;
+  } else if (showChar) {
+    const charName = poseReference[1];
+    const pos = a[1];
+    const pose = poseReference[2];
+    const fadeOffset = 2;
     const existing = $(`char-${charName}`);
-    if (n === 'char' && !existing) {
-      throw new Error(`キャラクター '${charName}' はまだ登場していません`);
-    }
     const e = existing || Object.assign(document.createElement('img'), { id: `char-${charName}` });
     e.className = `actor ${pos}`;
     e.src = url('char', charName, pose);
@@ -91,9 +99,8 @@ async function command(c) {
     if (!e.parentNode) $('characters').append(e);
     if (showChar && a[fadeOffset] === 'fade') await fade(e, 0, 1, a[fadeOffset + 1]);
   } else if (n === 'hide') {
-    const legacy = a[0] === 'char';
-    const charName = legacy ? a[1] : a[0];
-    const fadeOffset = legacy ? 2 : 1;
+    const charName = a[0];
+    const fadeOffset = 1;
     const e = $(`char-${charName}`);
     if (e && a[fadeOffset] === 'fade') await fade(e, 1, 0, a[fadeOffset + 1]);
     e?.remove();
@@ -104,8 +111,7 @@ async function command(c) {
       const bgm = $('bgm');
       bgm.pause();
       bgm.removeAttribute('src');
-    } else if (target === 'char') $(`char-${a[1]}`)?.remove();
-    else if (target === 'image') $(`image-${a[1]}`)?.remove();
+    } else if (target === 'image') $(`image-${a[1]}`)?.remove();
   } else if (n === 'bgm') {
     await media('bgm', a[0]);
   } else if (n === 'play') {
@@ -113,9 +119,9 @@ async function command(c) {
     else await media(a[0], a[1]);
   } else if (n === 'effect') {
     await applyEffect(a[0], a[1], a[2]);
-  } else if (n === 'image' || (n === 'show' && !showChar)) {
-    const imgName = a[0] === 'image' ? a[1] : a[0];
-    const pos = (a[0] === 'image' ? a[2] : a[1]) || 'center';
+  } else if (n === 'show' && a[0] === 'image') {
+    const imgName = a[1];
+    const pos = a[2];
     const e = $(`image-${imgName}`) || document.createElement('img');
     e.id = `image-${imgName}`;
     e.className = `image ${pos}`;
@@ -143,7 +149,7 @@ const runtime = new NovelRuntime.Runtime({
   load: loadScene,
   async command(name, args, rt) {
     if (name === 'say') {
-      let speaker = args[0] === 'none' ? '' : args[0];
+      let speaker = args[0] === 'none' || args[0] === 'narrator' ? '' : args[0];
       if (speaker) {
         try { speaker = rt.get(speaker)?.name || speaker; } catch {}
       }
@@ -166,6 +172,8 @@ const runtime = new NovelRuntime.Runtime({
   }
 });
 (async () => {
+  const ui = await (await fetch('/api/player-ui')).json();
+  applyPlayerUi(ui.path, ui.theme);
   const settings = await (await fetch('/api/scene-config')).json();
   const name = new URLSearchParams(location.search).get('source') || settings.start_scene || 'main.tds';
   await runtime.run(await loadScene(name));

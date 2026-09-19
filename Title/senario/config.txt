@@ -1,3 +1,0 @@
-# Twilight Letter project settings
-start_scene = main.tds
-title = Twilight Letter

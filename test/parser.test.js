@@ -54,19 +54,28 @@ test('supports typed const declarations and rejects reassignment', () => {
   assert.throws(() => checkTypes(parse('const int answer = 1\nset answer = 2')), /const.*変更できません/);
 });
 
+test('parses explicit global declarations', () => {
+  const script = parse('global int score = 1\nglobal const str title = "ok"');
+  assert.deepEqual(script.globals.map((statement) => [statement.kind, statement.global, statement.constant]), [
+    ['declare', true, false],
+    ['declare', true, true],
+  ]);
+  assert.throws(() => checkTypes(parse('fn bad() -> none { global int value = 1 }')), /global.*トップレベル/);
+});
+
 test('defaults shorthand say to narrator', () => {
   const statement = parse('say "hello"').globals[0];
   assert.equal(statement.kind, 'command');
   assert.equal(statement.args[0].value, 'narrator');
 });
 
-test('parses consecutive say block lines', () => {
-  const script = parse('character ayase { name = "Ayase" }\nsay ayase {\n  "hello"\n  "ayasedesu"\n}');
-  const statement = script.globals[0];
-  assert.equal(statement.kind, 'sayBlock');
-  assert.equal(statement.speaker.value, 'ayase');
-  assert.deepEqual(statement.lines.map((line) => line.value), ['hello', 'ayasedesu']);
-  assert.equal(compile(script).globals[1].op, 'sayBlock');
+test('rejects removed say forms', () => {
+  assert.throws(() => parse('say message'), /quoted text/);
+  assert.throws(() => parse('say narrator {\n  "hello"\n}'), /block syntax/);
+  const hero = 'character hero {\n  name = "Hero"\n  pose normal = "asset/hero.png"\n}\n';
+  assert.throws(() => checkTypes(parse(hero + 'char hero center normal')), /廃止/);
+  assert.throws(() => checkTypes(parse(hero + 'show char hero center normal')), /show は/);
+  assert.throws(() => parse('Unknown value = { "x": 1 }'), /Expected expression/);
 });
 
 test('character fields are typed runtime state with dotted interpolation', () => {
@@ -421,6 +430,11 @@ test('computes transitive scene reachability and excludes dead goto targets', ()
   }
 });
 
+test('normalizes Windows separators in goto scene paths', () => {
+  const program = compile(parse('scene start { goto first\\next.tds }'));
+  assert.equal(program.scenes[0].instructions[0].scene, 'first/next.tds');
+});
+
 test('reports empty unreachable scenes and termination through for and while bodies', () => {
   const empty = analyzeScript(parse('scene start { wait 1 }\nscene hidden {\n}'));
   assert.ok(empty.some((item) => item.code === 'unreachable-scene' && item.line === 2));
@@ -436,6 +450,20 @@ test('reports empty unreachable scenes and termination through for and while bod
 
   const transfer = analyzeScript(parse('scene start { while 1 == 1 { goto ending } }\nscene ending { wait 1 }'));
   assert.equal(transfer.some((item) => item.code === 'infinite-loop'), false);
+});
+
+test('rejects statically invalid for steps before compilation and excludes their goto targets', () => {
+  for (const source of [
+    'scene start { for i from 0 to 2 step 0 { goto hidden } }\nscene hidden { wait 1 }',
+    'scene start { for i from 0 to 2 step -1 { goto hidden } }\nscene hidden { wait 1 }',
+    'scene start { for i from 2 to 0 step 1 { goto hidden } }\nscene hidden { wait 1 }',
+  ]) {
+    const script = parse(source);
+    const diagnostics = analyzeScript(script);
+    assert.ok(diagnostics.some((item) => item.code === 'invalid-for-step' && item.severity === 'error'));
+    assert.ok(diagnostics.some((item) => item.code === 'unreachable-scene' && /hidden/.test(item.message)));
+    assert.throws(() => compile(script), /step|開始値/);
+  }
 });
 
 test('does not treat repeated side-effectful conditions as duplicates', () => {
@@ -494,10 +522,10 @@ test('suppresses secondary control-flow warnings inside already unreachable code
   assert.equal(diagnostics.some((item) => item.code === 'constant-condition'), false);
 });
 
-test('reports the complete source range of an unreachable say block', () => {
-  const diagnostics = analyzeScript(parse('scene start {\n  goto ending\n  say narrator {\n    "first"\n    "second"\n  }\n}\nscene ending { wait 1 }'));
-  const unreachable = diagnostics.find((item) => item.code === 'unreachable-code' && item.line === 3);
-  assert.equal(unreachable.endLine, 6);
+test('reports the complete source range of unreachable say statements', () => {
+  const diagnostics = analyzeScript(parse('scene start {\n  goto ending\n  say narrator "first"\n  say narrator "second"\n}\nscene ending { wait 1 }'));
+  assert.ok(diagnostics.some((item) => item.code === 'unreachable-code' && item.line === 3));
+  assert.ok(diagnostics.some((item) => item.code === 'unreachable-code' && item.line === 4));
 });
 
 test('reports complete source ranges for unreachable control-flow blocks', () => {

@@ -6,6 +6,22 @@ const os = require('node:os');
 const {spawn,spawnSync} = require('node:child_process');
 const {projectLayout,layoutForInput,entryFile} = require('../tools/project-layout');
 
+test('setting.txt fixes layout and entry file at the project root',async t=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'novel-settings-'));
+  t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  await fs.writeFile(path.join(dir,'setting.txt'),'scenario_dir = story/scripts\nasset_dir = media\nstart_file = opening/intro.txt\ntitle = Configured title\n');
+  const layout=projectLayout(dir);
+  assert.equal(layout.scenesRoot,path.join(dir,'story','scripts'));
+  assert.equal(layout.assetsRoot,path.join(dir,'media'));
+  assert.equal(layout.title,'Configured title');
+  assert.equal(entryFile(layout),path.join(dir,'story','scripts','opening','intro.txt'));
+  await fs.mkdir(path.dirname(entryFile(layout)),{recursive:true});
+  await fs.writeFile(entryFile(layout),'say "start"');
+  assert.equal(layoutForInput(entryFile(layout)).projectRoot,dir);
+  assert.throws(()=>require('../tools/project-layout').parseSettings('scenario_dir = ../outside'),/scenario_dir/);
+  assert.throws(()=>require('../tools/project-layout').parseSettings('unknown = value'),/未対応/);
+});
+
 test('arbitrary title: editor CRUD, assets, project build and CLI use the same project',async t=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'novel-作品 空白-'));
   t.after(()=>fs.rm(dir,{recursive:true,force:true}));

@@ -4,7 +4,13 @@ const path = require('node:path');
 const { parse, compile } = require('../dist');
 
 function sceneFile(name) {
-  if (typeof name !== 'string' || !/^[A-Za-z0-9_][A-Za-z0-9_./-]*$/.test(name) || name.split('/').includes('..') || name.startsWith('/')) throw Error('不正なシーンパスです');
+  if (typeof name !== 'string') throw Error('不正なシーンパスです');
+  name = name.replaceAll('\\', '/');
+  const parts = name.split('/');
+  const safeDirectory = (part) => part.length <= 120 && part !== '.' && part !== '..' && !/[<>:"|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part);
+  const file = parts.pop();
+  if (name.startsWith('/') || parts.some((part) => !safeDirectory(part)) || !/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$/.test(file)) throw Error('Invalid scene path');
+  name = [...parts, file].join('/');
   return /\.(tds|txt)$/i.test(name) ? name : name + '.tds';
 }
 async function inside(root, relative) {
@@ -92,12 +98,24 @@ async function resolveProjectScript(source, scenesRoot, seen = new Set(), source
 }
 async function compileProject(source, assetsRoot, scenesRoot, globalVariables = new Map(), characters = new Map(), sourceName = 'current') {
   const script = await resolveProjectScript(source, scenesRoot, new Set(), sourceName);
+  // JSON static variables are real global declarations, not merely checker
+  // metadata.  Every packaged file receives them; preserveGlobals initializes
+  // them once and verifies their type on later scene transitions.
+  const staticDeclarations = globalVariables.staticDeclarations || [];
+  if (staticDeclarations.length) {
+    script.globals = [...staticDeclarations, ...script.globals];
+    script.body = script.globals;
+  }
   const context = projectContext(script, globalVariables, characters, sourceName);
   return validateProgram(compile(script, context.globals, context.characters), assetsRoot, scenesRoot);
 }
 function projectContext(script, globalVariables, characters, sourceName = 'current') {
   const globals = new Map(globalVariables), visibleCharacters = new Map(characters);
   globals.readonlyNames = new Set(globalVariables.readonlyNames || []);
+  for (const statement of globalVariables.staticDeclarations || []) {
+    globals.delete(statement.name);
+    globals.readonlyNames.delete(statement.name);
+  }
   for (const statement of script.globals) if (statement.kind === 'declare' && statement.file && statement.file !== sourceName) { globals.delete(statement.name); globals.readonlyNames.delete(statement.name); }
   for (const character of script.characters) if (character.file && character.file !== sourceName) visibleCharacters.delete(character.name);
   return { globals, characters: visibleCharacters };

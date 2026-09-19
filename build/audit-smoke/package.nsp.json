@@ -11,7 +11,8 @@
         "name": "room",
         "path": "pixel.png",
         "line": 1,
-        "column": 1
+        "column": 1,
+        "file": "current"
       },
       {
         "kind": "asset",
@@ -19,7 +20,8 @@
         "name": "first",
         "path": "pixel.png",
         "line": 2,
-        "column": 1
+        "column": 1,
+        "file": "current"
       },
       {
         "kind": "asset",
@@ -27,7 +29,8 @@
         "name": "second",
         "path": "pixel.png",
         "line": 3,
-        "column": 1
+        "column": 1,
+        "file": "current"
       },
       {
         "kind": "asset",
@@ -35,7 +38,8 @@
         "name": "jpeg",
         "path": "pixel.jpg",
         "line": 4,
-        "column": 1
+        "column": 1,
+        "file": "current"
       },
       {
         "kind": "asset",
@@ -43,7 +47,8 @@
         "name": "webp",
         "path": "pixel.webp",
         "line": 5,
-        "column": 1
+        "column": 1,
+        "file": "current"
       },
       {
         "kind": "asset",
@@ -51,7 +56,8 @@
         "name": "gif",
         "path": "pixel.gif",
         "line": 6,
-        "column": 1
+        "column": 1,
+        "file": "current"
       },
       {
         "kind": "asset",
@@ -59,7 +65,8 @@
         "name": "music",
         "path": "tone.wav",
         "line": 7,
-        "column": 1
+        "column": 1,
+        "file": "current"
       },
       {
         "kind": "asset",
@@ -67,7 +74,8 @@
         "name": "sound",
         "path": "tone.wav",
         "line": 8,
-        "column": 1
+        "column": 1,
+        "file": "current"
       },
       {
         "kind": "asset",
@@ -75,7 +83,8 @@
         "name": "flac",
         "path": "tone.flac",
         "line": 9,
-        "column": 1
+        "column": 1,
+        "file": "current"
       },
       {
         "kind": "asset",
@@ -83,7 +92,8 @@
         "name": "vorbis",
         "path": "tone.ogg",
         "line": 10,
-        "column": 1
+        "column": 1,
+        "file": "current"
       },
       {
         "kind": "asset",
@@ -91,7 +101,8 @@
         "name": "mpthree",
         "path": "tone.mp3",
         "line": 11,
-        "column": 1
+        "column": 1,
+        "file": "current"
       },
       {
         "kind": "asset",
@@ -99,7 +110,8 @@
         "name": "clip",
         "path": "clip.mp4",
         "line": 12,
-        "column": 1
+        "column": 1,
+        "file": "current"
       }
     ],
     "characters": [
@@ -109,11 +121,16 @@
         "poses": [
           {
             "name": "normal",
-            "path": "pixel.png"
+            "path": "pixel.png",
+            "line": 15,
+            "column": 3,
+            "file": "current"
           }
         ],
         "line": 13,
-        "column": 1
+        "column": 1,
+        "endLine": 16,
+        "file": "current"
       },
       {
         "kind": "character",
@@ -121,18 +138,70 @@
         "poses": [
           {
             "name": "normal",
-            "path": "pixel.png"
+            "path": "pixel.png",
+            "line": 19,
+            "column": 3,
+            "file": "current"
           }
         ],
-        "line": 14,
-        "column": 1
+        "line": 17,
+        "column": 1,
+        "endLine": 20,
+        "file": "current"
       }
     ],
     "globals": [
       {
         "op": "declare",
+        "type": {
+          "kind": "struct",
+          "name": "character:hero"
+        },
+        "name": "hero",
+        "initial": {
+          "kind": "dict",
+          "entries": [
+            {
+              "key": "name",
+              "value": {
+                "kind": "literal",
+                "value": "Hero",
+                "line": 14,
+                "column": 10,
+                "file": "current"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "op": "declare",
+        "type": {
+          "kind": "struct",
+          "name": "character:friend"
+        },
+        "name": "friend",
+        "initial": {
+          "kind": "dict",
+          "entries": [
+            {
+              "key": "name",
+              "value": {
+                "kind": "literal",
+                "value": "Friend",
+                "line": 18,
+                "column": 10,
+                "file": "current"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "op": "declare",
         "type": "int",
         "name": "x",
+        "constant": false,
         "initial": {
           "kind": "integer",
           "value": "9007199254740993"
@@ -145,8 +214,9 @@
           {
             "kind": "literal",
             "value": "room",
-            "line": 16,
-            "column": 4
+            "line": 22,
+            "column": 4,
+            "file": "current"
           }
         ]
       },
@@ -157,8 +227,9 @@
           {
             "kind": "literal",
             "value": "music",
-            "line": 17,
-            "column": 5
+            "line": 23,
+            "column": 5,
+            "file": "current"
           }
         ]
       },
@@ -169,14 +240,16 @@
           {
             "kind": "literal",
             "value": "se",
-            "line": 18,
-            "column": 6
+            "line": 24,
+            "column": 6,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "sound",
-            "line": 18,
-            "column": 9
+            "line": 24,
+            "column": 9,
+            "file": "current"
           }
         ]
       },
@@ -187,14 +260,16 @@
           {
             "kind": "literal",
             "value": "se",
-            "line": 19,
-            "column": 6
+            "line": 25,
+            "column": 6,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "flac",
-            "line": 19,
-            "column": 9
+            "line": 25,
+            "column": 9,
+            "file": "current"
           }
         ]
       },
@@ -205,14 +280,16 @@
           {
             "kind": "literal",
             "value": "se",
-            "line": 20,
-            "column": 6
+            "line": 26,
+            "column": 6,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "vorbis",
-            "line": 20,
-            "column": 9
+            "line": 26,
+            "column": 9,
+            "file": "current"
           }
         ]
       },
@@ -223,14 +300,16 @@
           {
             "kind": "literal",
             "value": "se",
-            "line": 21,
-            "column": 6
+            "line": 27,
+            "column": 6,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "mpthree",
-            "line": 21,
-            "column": 9
+            "line": 27,
+            "column": 9,
+            "file": "current"
           }
         ]
       },
@@ -241,146 +320,23 @@
           {
             "kind": "literal",
             "value": "image",
-            "line": 22,
-            "column": 6
+            "line": 28,
+            "column": 6,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "jpeg",
-            "line": 22,
-            "column": 12
+            "line": 28,
+            "column": 12,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "center",
-            "line": 22,
-            "column": 17
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "show",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "image",
-            "line": 23,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "webp",
-            "line": 23,
-            "column": 12
-          },
-          {
-            "kind": "literal",
-            "value": "center",
-            "line": 23,
-            "column": 17
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "show",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "image",
-            "line": 24,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "gif",
-            "line": 24,
-            "column": 12
-          },
-          {
-            "kind": "literal",
-            "value": "center",
-            "line": 24,
-            "column": 16
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "clear",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "image",
-            "line": 25,
-            "column": 7
-          },
-          {
-            "kind": "literal",
-            "value": "jpeg",
-            "line": 25,
-            "column": 13
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "clear",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "image",
-            "line": 26,
-            "column": 7
-          },
-          {
-            "kind": "literal",
-            "value": "webp",
-            "line": 26,
-            "column": 13
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "clear",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "image",
-            "line": 27,
-            "column": 7
-          },
-          {
-            "kind": "literal",
-            "value": "gif",
-            "line": 27,
-            "column": 13
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "show",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "image",
             "line": 28,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "first",
-            "line": 28,
-            "column": 12
-          },
-          {
-            "kind": "literal",
-            "value": "left",
-            "line": 28,
-            "column": 18
+            "column": 17,
+            "file": "current"
           }
         ]
       },
@@ -392,19 +348,163 @@
             "kind": "literal",
             "value": "image",
             "line": 29,
-            "column": 6
+            "column": 6,
+            "file": "current"
+          },
+          {
+            "kind": "literal",
+            "value": "webp",
+            "line": 29,
+            "column": 12,
+            "file": "current"
+          },
+          {
+            "kind": "literal",
+            "value": "center",
+            "line": 29,
+            "column": 17,
+            "file": "current"
+          }
+        ]
+      },
+      {
+        "op": "command",
+        "name": "show",
+        "args": [
+          {
+            "kind": "literal",
+            "value": "image",
+            "line": 30,
+            "column": 6,
+            "file": "current"
+          },
+          {
+            "kind": "literal",
+            "value": "gif",
+            "line": 30,
+            "column": 12,
+            "file": "current"
+          },
+          {
+            "kind": "literal",
+            "value": "center",
+            "line": 30,
+            "column": 16,
+            "file": "current"
+          }
+        ]
+      },
+      {
+        "op": "command",
+        "name": "clear",
+        "args": [
+          {
+            "kind": "literal",
+            "value": "image",
+            "line": 31,
+            "column": 7,
+            "file": "current"
+          },
+          {
+            "kind": "literal",
+            "value": "jpeg",
+            "line": 31,
+            "column": 13,
+            "file": "current"
+          }
+        ]
+      },
+      {
+        "op": "command",
+        "name": "clear",
+        "args": [
+          {
+            "kind": "literal",
+            "value": "image",
+            "line": 32,
+            "column": 7,
+            "file": "current"
+          },
+          {
+            "kind": "literal",
+            "value": "webp",
+            "line": 32,
+            "column": 13,
+            "file": "current"
+          }
+        ]
+      },
+      {
+        "op": "command",
+        "name": "clear",
+        "args": [
+          {
+            "kind": "literal",
+            "value": "image",
+            "line": 33,
+            "column": 7,
+            "file": "current"
+          },
+          {
+            "kind": "literal",
+            "value": "gif",
+            "line": 33,
+            "column": 13,
+            "file": "current"
+          }
+        ]
+      },
+      {
+        "op": "command",
+        "name": "show",
+        "args": [
+          {
+            "kind": "literal",
+            "value": "image",
+            "line": 34,
+            "column": 6,
+            "file": "current"
+          },
+          {
+            "kind": "literal",
+            "value": "first",
+            "line": 34,
+            "column": 12,
+            "file": "current"
+          },
+          {
+            "kind": "literal",
+            "value": "left",
+            "line": 34,
+            "column": 18,
+            "file": "current"
+          }
+        ]
+      },
+      {
+        "op": "command",
+        "name": "show",
+        "args": [
+          {
+            "kind": "literal",
+            "value": "image",
+            "line": 35,
+            "column": 6,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "second",
-            "line": 29,
-            "column": 12
+            "line": 35,
+            "column": 12,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "right",
-            "line": 29,
-            "column": 19
+            "line": 35,
+            "column": 19,
+            "file": "current"
           }
         ]
       },
@@ -414,39 +514,31 @@
         "args": [
           {
             "kind": "literal",
-            "value": "char",
-            "line": 30,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "hero",
-            "line": 30,
-            "column": 11
+            "value": "hero.normal",
+            "line": 36,
+            "column": 6,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "left",
-            "line": 30,
-            "column": 16
-          },
-          {
-            "kind": "literal",
-            "value": "normal",
-            "line": 30,
-            "column": 21
+            "line": 36,
+            "column": 18,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "fade",
-            "line": 30,
-            "column": 28
+            "line": 36,
+            "column": 23,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": 10,
-            "line": 30,
-            "column": 33
+            "line": 36,
+            "column": 28,
+            "file": "current"
           }
         ]
       },
@@ -456,51 +548,37 @@
         "args": [
           {
             "kind": "literal",
-            "value": "char",
-            "line": 31,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "friend",
-            "line": 31,
-            "column": 11
+            "value": "friend.normal",
+            "line": 37,
+            "column": 6,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "right",
-            "line": 31,
-            "column": 18
-          },
-          {
-            "kind": "literal",
-            "value": "normal",
-            "line": 31,
-            "column": 24
+            "line": 37,
+            "column": 20,
+            "file": "current"
           }
         ]
       },
       {
         "op": "command",
-        "name": "char",
+        "name": "show",
         "args": [
           {
             "kind": "literal",
-            "value": "hero",
-            "line": 32,
-            "column": 6
+            "value": "hero.normal",
+            "line": 38,
+            "column": 6,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "center",
-            "line": 32,
-            "column": 11
-          },
-          {
-            "kind": "literal",
-            "value": "normal",
-            "line": 32,
-            "column": 18
+            "line": 38,
+            "column": 18,
+            "file": "current"
           }
         ]
       },
@@ -511,32 +589,16 @@
           {
             "kind": "literal",
             "value": "image",
-            "line": 33,
-            "column": 7
+            "line": 39,
+            "column": 7,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "first",
-            "line": 33,
-            "column": 13
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "clear",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "char",
-            "line": 34,
-            "column": 7
-          },
-          {
-            "kind": "literal",
-            "value": "friend",
-            "line": 34,
-            "column": 12
+            "line": 39,
+            "column": 13,
+            "file": "current"
           }
         ]
       },
@@ -546,27 +608,37 @@
         "args": [
           {
             "kind": "literal",
-            "value": "char",
-            "line": 35,
-            "column": 6
-          },
+            "value": "friend",
+            "line": 40,
+            "column": 6,
+            "file": "current"
+          }
+        ]
+      },
+      {
+        "op": "command",
+        "name": "hide",
+        "args": [
           {
             "kind": "literal",
             "value": "hero",
-            "line": 35,
-            "column": 11
+            "line": 41,
+            "column": 6,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "fade",
-            "line": 35,
-            "column": 16
+            "line": 41,
+            "column": 11,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": 10,
-            "line": 35,
-            "column": 21
+            "line": 41,
+            "column": 16,
+            "file": "current"
           }
         ]
       },
@@ -577,20 +649,23 @@
           {
             "kind": "literal",
             "value": "fade",
-            "line": 36,
-            "column": 8
+            "line": 42,
+            "column": 8,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "white",
-            "line": 36,
-            "column": 13
+            "line": 42,
+            "column": 13,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": 10,
-            "line": 36,
-            "column": 19
+            "line": 42,
+            "column": 19,
+            "file": "current"
           }
         ]
       },
@@ -601,20 +676,23 @@
           {
             "kind": "literal",
             "value": "video",
-            "line": 37,
-            "column": 6
+            "line": 43,
+            "column": 6,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "clip",
-            "line": 37,
-            "column": 12
+            "line": 43,
+            "column": 12,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "blocking",
-            "line": 37,
-            "column": 17
+            "line": 43,
+            "column": 17,
+            "file": "current"
           }
         ]
       },
@@ -625,20 +703,23 @@
           {
             "kind": "literal",
             "value": "video",
-            "line": 38,
-            "column": 6
+            "line": 44,
+            "column": 6,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "clip",
-            "line": 38,
-            "column": 12
+            "line": 44,
+            "column": 12,
+            "file": "current"
           },
           {
             "kind": "literal",
             "value": "async",
-            "line": 38,
-            "column": 17
+            "line": 44,
+            "column": 17,
+            "file": "current"
           }
         ]
       },
@@ -649,8 +730,9 @@
           {
             "kind": "literal",
             "value": 500,
-            "line": 39,
-            "column": 6
+            "line": 45,
+            "column": 6,
+            "file": "current"
           }
         ]
       },
@@ -661,8 +743,9 @@
           {
             "kind": "literal",
             "value": "bgm",
-            "line": 40,
-            "column": 7
+            "line": 46,
+            "column": 7,
+            "file": "current"
           }
         ]
       },
@@ -673,8 +756,9 @@
           {
             "kind": "literal",
             "value": "bg",
-            "line": 41,
-            "column": 7
+            "line": 47,
+            "column": 7,
+            "file": "current"
           }
         ]
       },
@@ -683,16 +767,18 @@
         "prompt": {
           "kind": "literal",
           "value": "test",
-          "line": 42,
-          "column": 8
+          "line": 48,
+          "column": 8,
+          "file": "current"
         },
         "options": [
           {
             "label": {
               "kind": "literal",
               "value": "continue",
-              "line": 42,
-              "column": 17
+              "line": 48,
+              "column": 17,
+              "file": "current"
             },
             "body": [
               {
@@ -702,8 +788,9 @@
                   {
                     "kind": "literal",
                     "value": "none",
-                    "line": 42,
-                    "column": 30
+                    "line": 48,
+                    "column": 30,
+                    "file": "current"
                   },
                   {
                     "kind": "call",
@@ -724,601 +811,47 @@
     ],
     "functions": [],
     "scenes": [],
-    "instructions": [
-      {
-        "op": "declare",
-        "type": "int",
-        "name": "x",
-        "initial": {
-          "kind": "integer",
-          "value": "9007199254740993"
-        }
-      },
-      {
-        "op": "command",
-        "name": "bg",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "room",
-            "line": 16,
-            "column": 4
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "bgm",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "music",
-            "line": 17,
-            "column": 5
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "play",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "se",
-            "line": 18,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "sound",
-            "line": 18,
-            "column": 9
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "play",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "se",
-            "line": 19,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "flac",
-            "line": 19,
-            "column": 9
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "play",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "se",
-            "line": 20,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "vorbis",
-            "line": 20,
-            "column": 9
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "play",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "se",
-            "line": 21,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "mpthree",
-            "line": 21,
-            "column": 9
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "show",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "image",
-            "line": 22,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "jpeg",
-            "line": 22,
-            "column": 12
-          },
-          {
-            "kind": "literal",
-            "value": "center",
-            "line": 22,
-            "column": 17
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "show",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "image",
-            "line": 23,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "webp",
-            "line": 23,
-            "column": 12
-          },
-          {
-            "kind": "literal",
-            "value": "center",
-            "line": 23,
-            "column": 17
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "show",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "image",
-            "line": 24,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "gif",
-            "line": 24,
-            "column": 12
-          },
-          {
-            "kind": "literal",
-            "value": "center",
-            "line": 24,
-            "column": 16
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "clear",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "image",
-            "line": 25,
-            "column": 7
-          },
-          {
-            "kind": "literal",
-            "value": "jpeg",
-            "line": 25,
-            "column": 13
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "clear",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "image",
-            "line": 26,
-            "column": 7
-          },
-          {
-            "kind": "literal",
-            "value": "webp",
-            "line": 26,
-            "column": 13
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "clear",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "image",
-            "line": 27,
-            "column": 7
-          },
-          {
-            "kind": "literal",
-            "value": "gif",
-            "line": 27,
-            "column": 13
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "show",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "image",
-            "line": 28,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "first",
-            "line": 28,
-            "column": 12
-          },
-          {
-            "kind": "literal",
-            "value": "left",
-            "line": 28,
-            "column": 18
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "show",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "image",
-            "line": 29,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "second",
-            "line": 29,
-            "column": 12
-          },
-          {
-            "kind": "literal",
-            "value": "right",
-            "line": 29,
-            "column": 19
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "show",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "char",
-            "line": 30,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "hero",
-            "line": 30,
-            "column": 11
-          },
-          {
-            "kind": "literal",
-            "value": "left",
-            "line": 30,
-            "column": 16
-          },
-          {
-            "kind": "literal",
-            "value": "normal",
-            "line": 30,
-            "column": 21
-          },
-          {
-            "kind": "literal",
-            "value": "fade",
-            "line": 30,
-            "column": 28
-          },
-          {
-            "kind": "literal",
-            "value": 10,
-            "line": 30,
-            "column": 33
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "show",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "char",
-            "line": 31,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "friend",
-            "line": 31,
-            "column": 11
-          },
-          {
-            "kind": "literal",
-            "value": "right",
-            "line": 31,
-            "column": 18
-          },
-          {
-            "kind": "literal",
-            "value": "normal",
-            "line": 31,
-            "column": 24
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "char",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "hero",
-            "line": 32,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "center",
-            "line": 32,
-            "column": 11
-          },
-          {
-            "kind": "literal",
-            "value": "normal",
-            "line": 32,
-            "column": 18
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "clear",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "image",
-            "line": 33,
-            "column": 7
-          },
-          {
-            "kind": "literal",
-            "value": "first",
-            "line": 33,
-            "column": 13
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "clear",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "char",
-            "line": 34,
-            "column": 7
-          },
-          {
-            "kind": "literal",
-            "value": "friend",
-            "line": 34,
-            "column": 12
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "hide",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "char",
-            "line": 35,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "hero",
-            "line": 35,
-            "column": 11
-          },
-          {
-            "kind": "literal",
-            "value": "fade",
-            "line": 35,
-            "column": 16
-          },
-          {
-            "kind": "literal",
-            "value": 10,
-            "line": 35,
-            "column": 21
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "effect",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "fade",
-            "line": 36,
-            "column": 8
-          },
-          {
-            "kind": "literal",
-            "value": "white",
-            "line": 36,
-            "column": 13
-          },
-          {
-            "kind": "literal",
-            "value": 10,
-            "line": 36,
-            "column": 19
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "play",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "video",
-            "line": 37,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "clip",
-            "line": 37,
-            "column": 12
-          },
-          {
-            "kind": "literal",
-            "value": "blocking",
-            "line": 37,
-            "column": 17
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "play",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "video",
-            "line": 38,
-            "column": 6
-          },
-          {
-            "kind": "literal",
-            "value": "clip",
-            "line": 38,
-            "column": 12
-          },
-          {
-            "kind": "literal",
-            "value": "async",
-            "line": 38,
-            "column": 17
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "wait",
-        "args": [
-          {
-            "kind": "literal",
-            "value": 500,
-            "line": 39,
-            "column": 6
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "clear",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "bgm",
-            "line": 40,
-            "column": 7
-          }
-        ]
-      },
-      {
-        "op": "command",
-        "name": "clear",
-        "args": [
-          {
-            "kind": "literal",
-            "value": "bg",
-            "line": 41,
-            "column": 7
-          }
-        ]
-      },
-      {
-        "op": "choice",
-        "prompt": {
-          "kind": "literal",
-          "value": "test",
-          "line": 42,
-          "column": 8
-        },
-        "options": [
-          {
-            "label": {
-              "kind": "literal",
-              "value": "continue",
-              "line": 42,
-              "column": 17
-            },
-            "body": [
-              {
-                "op": "command",
-                "name": "say",
-                "args": [
-                  {
-                    "kind": "literal",
-                    "value": "none",
-                    "line": 42,
-                    "column": 30
-                  },
-                  {
-                    "kind": "call",
-                    "name": "str",
-                    "args": [
-                      {
-                        "kind": "load",
-                        "name": "x"
-                      }
-                    ]
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      }
-    ],
     "variables": [
+      {
+        "name": "hero",
+        "type": {
+          "kind": "struct",
+          "name": "character:hero"
+        },
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [
+          {
+            "scope": "global",
+            "container": "global",
+            "line": 13,
+            "column": 1,
+            "kind": "definition"
+          }
+        ],
+        "references": [],
+        "mutable": true
+      },
+      {
+        "name": "friend",
+        "type": {
+          "kind": "struct",
+          "name": "character:friend"
+        },
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [
+          {
+            "scope": "global",
+            "container": "global",
+            "line": 17,
+            "column": 1,
+            "kind": "definition"
+          }
+        ],
+        "references": [],
+        "mutable": true
+      },
       {
         "name": "x",
         "type": "int",
@@ -1328,7 +861,7 @@
           {
             "scope": "global",
             "container": "global",
-            "line": 15,
+            "line": 21,
             "column": 1,
             "kind": "definition"
           }
@@ -1337,7 +870,7 @@
           {
             "scope": "local",
             "container": "global:choice1",
-            "line": 42,
+            "line": 48,
             "column": 43,
             "kind": "expression"
           }
@@ -1356,7 +889,8 @@
           "name": "room",
           "path": "pixel.png",
           "line": 1,
-          "column": 1
+          "column": 1,
+          "file": "current"
         },
         {
           "kind": "asset",
@@ -1364,7 +898,8 @@
           "name": "first",
           "path": "pixel.png",
           "line": 2,
-          "column": 1
+          "column": 1,
+          "file": "current"
         },
         {
           "kind": "asset",
@@ -1372,7 +907,8 @@
           "name": "second",
           "path": "pixel.png",
           "line": 3,
-          "column": 1
+          "column": 1,
+          "file": "current"
         },
         {
           "kind": "asset",
@@ -1380,7 +916,8 @@
           "name": "jpeg",
           "path": "pixel.jpg",
           "line": 4,
-          "column": 1
+          "column": 1,
+          "file": "current"
         },
         {
           "kind": "asset",
@@ -1388,7 +925,8 @@
           "name": "webp",
           "path": "pixel.webp",
           "line": 5,
-          "column": 1
+          "column": 1,
+          "file": "current"
         },
         {
           "kind": "asset",
@@ -1396,7 +934,8 @@
           "name": "gif",
           "path": "pixel.gif",
           "line": 6,
-          "column": 1
+          "column": 1,
+          "file": "current"
         },
         {
           "kind": "asset",
@@ -1404,7 +943,8 @@
           "name": "music",
           "path": "tone.wav",
           "line": 7,
-          "column": 1
+          "column": 1,
+          "file": "current"
         },
         {
           "kind": "asset",
@@ -1412,7 +952,8 @@
           "name": "sound",
           "path": "tone.wav",
           "line": 8,
-          "column": 1
+          "column": 1,
+          "file": "current"
         },
         {
           "kind": "asset",
@@ -1420,7 +961,8 @@
           "name": "flac",
           "path": "tone.flac",
           "line": 9,
-          "column": 1
+          "column": 1,
+          "file": "current"
         },
         {
           "kind": "asset",
@@ -1428,7 +970,8 @@
           "name": "vorbis",
           "path": "tone.ogg",
           "line": 10,
-          "column": 1
+          "column": 1,
+          "file": "current"
         },
         {
           "kind": "asset",
@@ -1436,7 +979,8 @@
           "name": "mpthree",
           "path": "tone.mp3",
           "line": 11,
-          "column": 1
+          "column": 1,
+          "file": "current"
         },
         {
           "kind": "asset",
@@ -1444,7 +988,8 @@
           "name": "clip",
           "path": "clip.mp4",
           "line": 12,
-          "column": 1
+          "column": 1,
+          "file": "current"
         }
       ],
       "characters": [
@@ -1454,11 +999,16 @@
           "poses": [
             {
               "name": "normal",
-              "path": "pixel.png"
+              "path": "pixel.png",
+              "line": 15,
+              "column": 3,
+              "file": "current"
             }
           ],
           "line": 13,
-          "column": 1
+          "column": 1,
+          "endLine": 16,
+          "file": "current"
         },
         {
           "kind": "character",
@@ -1466,18 +1016,70 @@
           "poses": [
             {
               "name": "normal",
-              "path": "pixel.png"
+              "path": "pixel.png",
+              "line": 19,
+              "column": 3,
+              "file": "current"
             }
           ],
-          "line": 14,
-          "column": 1
+          "line": 17,
+          "column": 1,
+          "endLine": 20,
+          "file": "current"
         }
       ],
       "globals": [
         {
           "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:hero"
+          },
+          "name": "hero",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Hero",
+                  "line": 14,
+                  "column": 10,
+                  "file": "current"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:friend"
+          },
+          "name": "friend",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Friend",
+                  "line": 18,
+                  "column": 10,
+                  "file": "current"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "op": "declare",
           "type": "int",
           "name": "x",
+          "constant": false,
           "initial": {
             "kind": "integer",
             "value": "9007199254740993"
@@ -1490,8 +1092,9 @@
             {
               "kind": "literal",
               "value": "room",
-              "line": 16,
-              "column": 4
+              "line": 22,
+              "column": 4,
+              "file": "current"
             }
           ]
         },
@@ -1502,8 +1105,9 @@
             {
               "kind": "literal",
               "value": "music",
-              "line": 17,
-              "column": 5
+              "line": 23,
+              "column": 5,
+              "file": "current"
             }
           ]
         },
@@ -1514,14 +1118,16 @@
             {
               "kind": "literal",
               "value": "se",
-              "line": 18,
-              "column": 6
+              "line": 24,
+              "column": 6,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "sound",
-              "line": 18,
-              "column": 9
+              "line": 24,
+              "column": 9,
+              "file": "current"
             }
           ]
         },
@@ -1532,14 +1138,16 @@
             {
               "kind": "literal",
               "value": "se",
-              "line": 19,
-              "column": 6
+              "line": 25,
+              "column": 6,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "flac",
-              "line": 19,
-              "column": 9
+              "line": 25,
+              "column": 9,
+              "file": "current"
             }
           ]
         },
@@ -1550,14 +1158,16 @@
             {
               "kind": "literal",
               "value": "se",
-              "line": 20,
-              "column": 6
+              "line": 26,
+              "column": 6,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "vorbis",
-              "line": 20,
-              "column": 9
+              "line": 26,
+              "column": 9,
+              "file": "current"
             }
           ]
         },
@@ -1568,14 +1178,16 @@
             {
               "kind": "literal",
               "value": "se",
-              "line": 21,
-              "column": 6
+              "line": 27,
+              "column": 6,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "mpthree",
-              "line": 21,
-              "column": 9
+              "line": 27,
+              "column": 9,
+              "file": "current"
             }
           ]
         },
@@ -1586,146 +1198,23 @@
             {
               "kind": "literal",
               "value": "image",
-              "line": 22,
-              "column": 6
+              "line": 28,
+              "column": 6,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "jpeg",
-              "line": 22,
-              "column": 12
+              "line": 28,
+              "column": 12,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "center",
-              "line": 22,
-              "column": 17
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "show",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "image",
-              "line": 23,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "webp",
-              "line": 23,
-              "column": 12
-            },
-            {
-              "kind": "literal",
-              "value": "center",
-              "line": 23,
-              "column": 17
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "show",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "image",
-              "line": 24,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "gif",
-              "line": 24,
-              "column": 12
-            },
-            {
-              "kind": "literal",
-              "value": "center",
-              "line": 24,
-              "column": 16
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "clear",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "image",
-              "line": 25,
-              "column": 7
-            },
-            {
-              "kind": "literal",
-              "value": "jpeg",
-              "line": 25,
-              "column": 13
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "clear",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "image",
-              "line": 26,
-              "column": 7
-            },
-            {
-              "kind": "literal",
-              "value": "webp",
-              "line": 26,
-              "column": 13
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "clear",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "image",
-              "line": 27,
-              "column": 7
-            },
-            {
-              "kind": "literal",
-              "value": "gif",
-              "line": 27,
-              "column": 13
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "show",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "image",
               "line": 28,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "first",
-              "line": 28,
-              "column": 12
-            },
-            {
-              "kind": "literal",
-              "value": "left",
-              "line": 28,
-              "column": 18
+              "column": 17,
+              "file": "current"
             }
           ]
         },
@@ -1737,19 +1226,163 @@
               "kind": "literal",
               "value": "image",
               "line": 29,
-              "column": 6
+              "column": 6,
+              "file": "current"
+            },
+            {
+              "kind": "literal",
+              "value": "webp",
+              "line": 29,
+              "column": 12,
+              "file": "current"
+            },
+            {
+              "kind": "literal",
+              "value": "center",
+              "line": 29,
+              "column": 17,
+              "file": "current"
+            }
+          ]
+        },
+        {
+          "op": "command",
+          "name": "show",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "image",
+              "line": 30,
+              "column": 6,
+              "file": "current"
+            },
+            {
+              "kind": "literal",
+              "value": "gif",
+              "line": 30,
+              "column": 12,
+              "file": "current"
+            },
+            {
+              "kind": "literal",
+              "value": "center",
+              "line": 30,
+              "column": 16,
+              "file": "current"
+            }
+          ]
+        },
+        {
+          "op": "command",
+          "name": "clear",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "image",
+              "line": 31,
+              "column": 7,
+              "file": "current"
+            },
+            {
+              "kind": "literal",
+              "value": "jpeg",
+              "line": 31,
+              "column": 13,
+              "file": "current"
+            }
+          ]
+        },
+        {
+          "op": "command",
+          "name": "clear",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "image",
+              "line": 32,
+              "column": 7,
+              "file": "current"
+            },
+            {
+              "kind": "literal",
+              "value": "webp",
+              "line": 32,
+              "column": 13,
+              "file": "current"
+            }
+          ]
+        },
+        {
+          "op": "command",
+          "name": "clear",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "image",
+              "line": 33,
+              "column": 7,
+              "file": "current"
+            },
+            {
+              "kind": "literal",
+              "value": "gif",
+              "line": 33,
+              "column": 13,
+              "file": "current"
+            }
+          ]
+        },
+        {
+          "op": "command",
+          "name": "show",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "image",
+              "line": 34,
+              "column": 6,
+              "file": "current"
+            },
+            {
+              "kind": "literal",
+              "value": "first",
+              "line": 34,
+              "column": 12,
+              "file": "current"
+            },
+            {
+              "kind": "literal",
+              "value": "left",
+              "line": 34,
+              "column": 18,
+              "file": "current"
+            }
+          ]
+        },
+        {
+          "op": "command",
+          "name": "show",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "image",
+              "line": 35,
+              "column": 6,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "second",
-              "line": 29,
-              "column": 12
+              "line": 35,
+              "column": 12,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "right",
-              "line": 29,
-              "column": 19
+              "line": 35,
+              "column": 19,
+              "file": "current"
             }
           ]
         },
@@ -1759,39 +1392,31 @@
           "args": [
             {
               "kind": "literal",
-              "value": "char",
-              "line": 30,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "hero",
-              "line": 30,
-              "column": 11
+              "value": "hero.normal",
+              "line": 36,
+              "column": 6,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "left",
-              "line": 30,
-              "column": 16
-            },
-            {
-              "kind": "literal",
-              "value": "normal",
-              "line": 30,
-              "column": 21
+              "line": 36,
+              "column": 18,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "fade",
-              "line": 30,
-              "column": 28
+              "line": 36,
+              "column": 23,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": 10,
-              "line": 30,
-              "column": 33
+              "line": 36,
+              "column": 28,
+              "file": "current"
             }
           ]
         },
@@ -1801,51 +1426,37 @@
           "args": [
             {
               "kind": "literal",
-              "value": "char",
-              "line": 31,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "friend",
-              "line": 31,
-              "column": 11
+              "value": "friend.normal",
+              "line": 37,
+              "column": 6,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "right",
-              "line": 31,
-              "column": 18
-            },
-            {
-              "kind": "literal",
-              "value": "normal",
-              "line": 31,
-              "column": 24
+              "line": 37,
+              "column": 20,
+              "file": "current"
             }
           ]
         },
         {
           "op": "command",
-          "name": "char",
+          "name": "show",
           "args": [
             {
               "kind": "literal",
-              "value": "hero",
-              "line": 32,
-              "column": 6
+              "value": "hero.normal",
+              "line": 38,
+              "column": 6,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "center",
-              "line": 32,
-              "column": 11
-            },
-            {
-              "kind": "literal",
-              "value": "normal",
-              "line": 32,
-              "column": 18
+              "line": 38,
+              "column": 18,
+              "file": "current"
             }
           ]
         },
@@ -1856,32 +1467,16 @@
             {
               "kind": "literal",
               "value": "image",
-              "line": 33,
-              "column": 7
+              "line": 39,
+              "column": 7,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "first",
-              "line": 33,
-              "column": 13
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "clear",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "char",
-              "line": 34,
-              "column": 7
-            },
-            {
-              "kind": "literal",
-              "value": "friend",
-              "line": 34,
-              "column": 12
+              "line": 39,
+              "column": 13,
+              "file": "current"
             }
           ]
         },
@@ -1891,27 +1486,37 @@
           "args": [
             {
               "kind": "literal",
-              "value": "char",
-              "line": 35,
-              "column": 6
-            },
+              "value": "friend",
+              "line": 40,
+              "column": 6,
+              "file": "current"
+            }
+          ]
+        },
+        {
+          "op": "command",
+          "name": "hide",
+          "args": [
             {
               "kind": "literal",
               "value": "hero",
-              "line": 35,
-              "column": 11
+              "line": 41,
+              "column": 6,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "fade",
-              "line": 35,
-              "column": 16
+              "line": 41,
+              "column": 11,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": 10,
-              "line": 35,
-              "column": 21
+              "line": 41,
+              "column": 16,
+              "file": "current"
             }
           ]
         },
@@ -1922,20 +1527,23 @@
             {
               "kind": "literal",
               "value": "fade",
-              "line": 36,
-              "column": 8
+              "line": 42,
+              "column": 8,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "white",
-              "line": 36,
-              "column": 13
+              "line": 42,
+              "column": 13,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": 10,
-              "line": 36,
-              "column": 19
+              "line": 42,
+              "column": 19,
+              "file": "current"
             }
           ]
         },
@@ -1946,20 +1554,23 @@
             {
               "kind": "literal",
               "value": "video",
-              "line": 37,
-              "column": 6
+              "line": 43,
+              "column": 6,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "clip",
-              "line": 37,
-              "column": 12
+              "line": 43,
+              "column": 12,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "blocking",
-              "line": 37,
-              "column": 17
+              "line": 43,
+              "column": 17,
+              "file": "current"
             }
           ]
         },
@@ -1970,20 +1581,23 @@
             {
               "kind": "literal",
               "value": "video",
-              "line": 38,
-              "column": 6
+              "line": 44,
+              "column": 6,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "clip",
-              "line": 38,
-              "column": 12
+              "line": 44,
+              "column": 12,
+              "file": "current"
             },
             {
               "kind": "literal",
               "value": "async",
-              "line": 38,
-              "column": 17
+              "line": 44,
+              "column": 17,
+              "file": "current"
             }
           ]
         },
@@ -1994,8 +1608,9 @@
             {
               "kind": "literal",
               "value": 500,
-              "line": 39,
-              "column": 6
+              "line": 45,
+              "column": 6,
+              "file": "current"
             }
           ]
         },
@@ -2006,8 +1621,9 @@
             {
               "kind": "literal",
               "value": "bgm",
-              "line": 40,
-              "column": 7
+              "line": 46,
+              "column": 7,
+              "file": "current"
             }
           ]
         },
@@ -2018,8 +1634,9 @@
             {
               "kind": "literal",
               "value": "bg",
-              "line": 41,
-              "column": 7
+              "line": 47,
+              "column": 7,
+              "file": "current"
             }
           ]
         },
@@ -2028,16 +1645,18 @@
           "prompt": {
             "kind": "literal",
             "value": "test",
-            "line": 42,
-            "column": 8
+            "line": 48,
+            "column": 8,
+            "file": "current"
           },
           "options": [
             {
               "label": {
                 "kind": "literal",
                 "value": "continue",
-                "line": 42,
-                "column": 17
+                "line": 48,
+                "column": 17,
+                "file": "current"
               },
               "body": [
                 {
@@ -2047,8 +1666,9 @@
                     {
                       "kind": "literal",
                       "value": "none",
-                      "line": 42,
-                      "column": 30
+                      "line": 48,
+                      "column": 30,
+                      "file": "current"
                     },
                     {
                       "kind": "call",
@@ -2069,601 +1689,47 @@
       ],
       "functions": [],
       "scenes": [],
-      "instructions": [
-        {
-          "op": "declare",
-          "type": "int",
-          "name": "x",
-          "initial": {
-            "kind": "integer",
-            "value": "9007199254740993"
-          }
-        },
-        {
-          "op": "command",
-          "name": "bg",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "room",
-              "line": 16,
-              "column": 4
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "bgm",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "music",
-              "line": 17,
-              "column": 5
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "play",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "se",
-              "line": 18,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "sound",
-              "line": 18,
-              "column": 9
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "play",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "se",
-              "line": 19,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "flac",
-              "line": 19,
-              "column": 9
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "play",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "se",
-              "line": 20,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "vorbis",
-              "line": 20,
-              "column": 9
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "play",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "se",
-              "line": 21,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "mpthree",
-              "line": 21,
-              "column": 9
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "show",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "image",
-              "line": 22,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "jpeg",
-              "line": 22,
-              "column": 12
-            },
-            {
-              "kind": "literal",
-              "value": "center",
-              "line": 22,
-              "column": 17
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "show",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "image",
-              "line": 23,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "webp",
-              "line": 23,
-              "column": 12
-            },
-            {
-              "kind": "literal",
-              "value": "center",
-              "line": 23,
-              "column": 17
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "show",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "image",
-              "line": 24,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "gif",
-              "line": 24,
-              "column": 12
-            },
-            {
-              "kind": "literal",
-              "value": "center",
-              "line": 24,
-              "column": 16
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "clear",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "image",
-              "line": 25,
-              "column": 7
-            },
-            {
-              "kind": "literal",
-              "value": "jpeg",
-              "line": 25,
-              "column": 13
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "clear",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "image",
-              "line": 26,
-              "column": 7
-            },
-            {
-              "kind": "literal",
-              "value": "webp",
-              "line": 26,
-              "column": 13
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "clear",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "image",
-              "line": 27,
-              "column": 7
-            },
-            {
-              "kind": "literal",
-              "value": "gif",
-              "line": 27,
-              "column": 13
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "show",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "image",
-              "line": 28,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "first",
-              "line": 28,
-              "column": 12
-            },
-            {
-              "kind": "literal",
-              "value": "left",
-              "line": 28,
-              "column": 18
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "show",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "image",
-              "line": 29,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "second",
-              "line": 29,
-              "column": 12
-            },
-            {
-              "kind": "literal",
-              "value": "right",
-              "line": 29,
-              "column": 19
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "show",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "char",
-              "line": 30,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "hero",
-              "line": 30,
-              "column": 11
-            },
-            {
-              "kind": "literal",
-              "value": "left",
-              "line": 30,
-              "column": 16
-            },
-            {
-              "kind": "literal",
-              "value": "normal",
-              "line": 30,
-              "column": 21
-            },
-            {
-              "kind": "literal",
-              "value": "fade",
-              "line": 30,
-              "column": 28
-            },
-            {
-              "kind": "literal",
-              "value": 10,
-              "line": 30,
-              "column": 33
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "show",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "char",
-              "line": 31,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "friend",
-              "line": 31,
-              "column": 11
-            },
-            {
-              "kind": "literal",
-              "value": "right",
-              "line": 31,
-              "column": 18
-            },
-            {
-              "kind": "literal",
-              "value": "normal",
-              "line": 31,
-              "column": 24
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "char",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "hero",
-              "line": 32,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "center",
-              "line": 32,
-              "column": 11
-            },
-            {
-              "kind": "literal",
-              "value": "normal",
-              "line": 32,
-              "column": 18
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "clear",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "image",
-              "line": 33,
-              "column": 7
-            },
-            {
-              "kind": "literal",
-              "value": "first",
-              "line": 33,
-              "column": 13
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "clear",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "char",
-              "line": 34,
-              "column": 7
-            },
-            {
-              "kind": "literal",
-              "value": "friend",
-              "line": 34,
-              "column": 12
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "hide",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "char",
-              "line": 35,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "hero",
-              "line": 35,
-              "column": 11
-            },
-            {
-              "kind": "literal",
-              "value": "fade",
-              "line": 35,
-              "column": 16
-            },
-            {
-              "kind": "literal",
-              "value": 10,
-              "line": 35,
-              "column": 21
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "effect",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "fade",
-              "line": 36,
-              "column": 8
-            },
-            {
-              "kind": "literal",
-              "value": "white",
-              "line": 36,
-              "column": 13
-            },
-            {
-              "kind": "literal",
-              "value": 10,
-              "line": 36,
-              "column": 19
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "play",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "video",
-              "line": 37,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "clip",
-              "line": 37,
-              "column": 12
-            },
-            {
-              "kind": "literal",
-              "value": "blocking",
-              "line": 37,
-              "column": 17
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "play",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "video",
-              "line": 38,
-              "column": 6
-            },
-            {
-              "kind": "literal",
-              "value": "clip",
-              "line": 38,
-              "column": 12
-            },
-            {
-              "kind": "literal",
-              "value": "async",
-              "line": 38,
-              "column": 17
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "wait",
-          "args": [
-            {
-              "kind": "literal",
-              "value": 500,
-              "line": 39,
-              "column": 6
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "clear",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "bgm",
-              "line": 40,
-              "column": 7
-            }
-          ]
-        },
-        {
-          "op": "command",
-          "name": "clear",
-          "args": [
-            {
-              "kind": "literal",
-              "value": "bg",
-              "line": 41,
-              "column": 7
-            }
-          ]
-        },
-        {
-          "op": "choice",
-          "prompt": {
-            "kind": "literal",
-            "value": "test",
-            "line": 42,
-            "column": 8
-          },
-          "options": [
-            {
-              "label": {
-                "kind": "literal",
-                "value": "continue",
-                "line": 42,
-                "column": 17
-              },
-              "body": [
-                {
-                  "op": "command",
-                  "name": "say",
-                  "args": [
-                    {
-                      "kind": "literal",
-                      "value": "none",
-                      "line": 42,
-                      "column": 30
-                    },
-                    {
-                      "kind": "call",
-                      "name": "str",
-                      "args": [
-                        {
-                          "kind": "load",
-                          "name": "x"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
-      ],
       "variables": [
+        {
+          "name": "hero",
+          "type": {
+            "kind": "struct",
+            "name": "character:hero"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 13,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "friend",
+          "type": {
+            "kind": "struct",
+            "name": "character:friend"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 17,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [],
+          "mutable": true
+        },
         {
           "name": "x",
           "type": "int",
@@ -2673,7 +1739,7 @@
             {
               "scope": "global",
               "container": "global",
-              "line": 15,
+              "line": 21,
               "column": 1,
               "kind": "definition"
             }
@@ -2682,14 +1748,16 @@
             {
               "scope": "local",
               "container": "global:choice1",
-              "line": 42,
+              "line": 48,
               "column": 43,
               "kind": "expression"
             }
           ],
           "mutable": true
         }
-      ]
+      ],
+      "includes": []
     }
-  }
+  },
+  "native_ui": {}
 }

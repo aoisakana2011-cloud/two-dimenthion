@@ -1,5 +1,6 @@
 /* Local-only editor server. Project data is separate from editor files. */
 const http = require('node:http');
+const { spawn } = require('node:child_process');
 const { compileProject, resolveProjectScript, projectContext } = require('../tools/project');
 const { pack } = require('../tools/pack');
 const fs = require('node:fs/promises');
@@ -9,11 +10,12 @@ const path = require('node:path');
 const EDIT_ROOT = __dirname;
 const REPO_ROOT = path.resolve(EDIT_ROOT, '..');
 const RECENT_FILE = path.join(os.homedir(), '.novel-editor', 'recent.json');
-const { projectLayout, projectOption, looksLikeProject, seedEmptyProject } = require('../tools/project-layout');
+const { projectLayout, projectOption, looksLikeProject, seedEmptyProject, parseSettings, settingTemplate } = require('../tools/project-layout');
+const { readStaticVariables } = require('../tools/static-variables');
 let layout = projectLayout(projectOption(require.main === module ? process.argv.slice(2) : []));
 let PROJECT_ROOT = layout.projectRoot;
 let SCENES_ROOT = layout.scenesRoot;
-let SCENE_CONFIG = path.join(SCENES_ROOT, 'config.txt');
+let SETTING_FILE = layout.settingFile;
 let DATA_ROOT = layout.dataRoot;
 let VARIABLES_FILE = path.join(DATA_ROOT, 'variables.json');
 let ASSETS_FILE = path.join(DATA_ROOT, 'assets.json');
@@ -25,7 +27,7 @@ function bindLayout(root) {
   layout = projectLayout(root);
   PROJECT_ROOT = layout.projectRoot;
   SCENES_ROOT = layout.scenesRoot;
-  SCENE_CONFIG = path.join(SCENES_ROOT, 'config.txt');
+  SETTING_FILE = layout.settingFile;
   DATA_ROOT = layout.dataRoot;
   VARIABLES_FILE = path.join(DATA_ROOT, 'variables.json');
   ASSETS_FILE = path.join(DATA_ROOT, 'assets.json');
@@ -87,7 +89,105 @@ async function rememberProject(root) {
 }
 
 async function projectInfo() {
-  return { title: layout.title, projectRoot: PROJECT_ROOT, recent: await readRecentProjects() };
+  return { title: layout.title, projectRoot: PROJECT_ROOT, settings: layout.settings, recent: await readRecentProjects() };
+}
+
+function playerUiThemeFile() {
+  const relative = layout.settings.native_ui_theme;
+  if (!relative) throw Error('再生機UIテーマが設定されていません');
+  const root = path.resolve(ASSETS_ROOT);
+  const file = path.resolve(root, relative);
+  if (path.relative(root, file).startsWith('..') || path.isAbsolute(path.relative(root, file))) throw Error('再生機UIテーマのパスが不正です');
+  return file;
+}
+
+async function playerUiTheme() {
+  const file = playerUiThemeFile();
+  const theme = JSON.parse(await fs.readFile(file, 'utf8'));
+  if (theme.version !== 1) throw Error('再生機UIテーマのバージョンが不正です');
+  return { path: layout.settings.native_ui_theme, theme };
+}
+
+async function updatePlayerUiTheme(theme) {
+  if (theme?.version === 1 && theme.screen && theme.dialog?.message && theme.dialog?.nameplate?.text && theme.choices) {
+    await fs.writeFile(playerUiThemeFile(), JSON.stringify(theme, null, 2) + '\n', 'utf8');
+    return { ok: true, theme };
+  }
+  if (!theme || theme.version !== 1 || !theme.dialog || !theme.choice) throw Error('再生機UIテーマの形式が不正です');
+  const image = (value) => {
+    const text = String(value || '').replaceAll('\\', '/');
+    if (!text || path.posix.isAbsolute(text) || text.split('/').some((part) => !part || part === '.' || part === '..')) throw Error('UI画像のパスが不正です');
+    return text;
+  };
+  const number = (value, name, minimum = 0) => {
+    if (!Number.isInteger(value) || value < minimum || value > 10000) throw Error(`${name} は有効な整数にしてください`);
+    return value;
+  };
+  const color = (value) => {
+    if (!Array.isArray(value) || value.length !== 4 || value.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) throw Error('文字色はRGBA形式にしてください');
+    return value;
+  };
+  const next = {
+    version: 1,
+    backdrop: { bottom_fog: Boolean(theme.backdrop?.bottom_fog), fog_color: color(theme.backdrop?.fog_color || [255, 250, 253, 255]), fog_height: number(theme.backdrop?.fog_height ?? 300, '靄の高さ', 1), fog_opacity: number(theme.backdrop?.fog_opacity ?? 220, '靄の濃さ') },
+    dialog: {
+      image: image(theme.dialog.image), x: number(theme.dialog.x, '会話欄のX座標'), y: number(theme.dialog.y, '会話欄のY座標'), width: number(theme.dialog.width, '会話欄の幅', 1), height: number(theme.dialog.height, '会話欄の高さ', 1), bottom: number(theme.dialog.bottom, '会話欄の下余白'),
+      speaker: { x: number(theme.dialog.speaker?.x, '話者名のX座標'), y: number(theme.dialog.speaker?.y, '話者名のY座標'), size: number(theme.dialog.speaker?.size, '話者名の文字サイズ', 1) },
+      text: { x: number(theme.dialog.text?.x, '本文のX座標'), y: number(theme.dialog.text?.y, '本文のY座標'), size: number(theme.dialog.text?.size, '本文の文字サイズ', 1), color: color(theme.dialog.text?.color) },
+    },
+    choice: {
+      image: image(theme.choice.image), active_image: image(theme.choice.active_image), width: number(theme.choice.width, '選択肢の幅', 1), height: number(theme.choice.height, '選択肢の高さ', 1), gap: number(theme.choice.gap, '選択肢の間隔'), bottom_gap: number(theme.choice.bottom_gap, '選択肢の下余白'), top_min: number(theme.choice.top_min, '選択肢の上余白'),
+      text: { x: number(theme.choice.text?.x, '選択肢本文のX座標'), y: number(theme.choice.text?.y, '選択肢本文のY座標'), size: number(theme.choice.text?.size, '選択肢本文の文字サイズ', 1), color: color(theme.choice.text?.color) },
+    },
+  };
+  await fs.writeFile(playerUiThemeFile(), JSON.stringify(next, null, 2) + '\n', 'utf8');
+  return { ok: true, theme: next };
+}
+
+async function updateProjectSettings(values) {
+  const next = { ...layout.settings };
+  const keys = ['scenario_dir', 'asset_dir', 'start_file', 'native_ui_theme'];
+  for (const key of keys) {
+    if (values[key] !== undefined) next[key] = String(values[key]).trim();
+  }
+  const title = values.title === undefined ? layout.title : String(values.title).replace(/[\r\n]/g, '').trim();
+  const source = [
+    '# Novel Script project settings',
+    '# すべて作品フォルダーからの相対パス。/ を使用する。',
+    `scenario_dir = ${next.scenario_dir}`,
+    `asset_dir = ${next.asset_dir}`,
+    `start_file = ${next.start_file}`,
+    `title = ${title}`,
+    ...['native_ui_theme'].filter((key) => next[key]).map((key) => `${key} = ${next[key]}`),
+  ].join('\n') + '\n';
+  parseSettings(source);
+  await fs.writeFile(SETTING_FILE, source, 'utf8');
+  bindLayout(PROJECT_ROOT);
+  await fs.mkdir(SCENES_ROOT, { recursive: true });
+  await fs.mkdir(ASSETS_ROOT, { recursive: true });
+  await fs.mkdir(DATA_ROOT, { recursive: true });
+  return projectInfo();
+}
+
+async function playWithNativeEngine(name) {
+  const scene = sceneName(name);
+  if (!scene) throw Error('再生するシーンを指定してください');
+  await fs.access(scenePath(scene));
+  const executable = path.join(REPO_ROOT, 'native', 'build', 'Release', 'novel_player.exe');
+  try { await fs.access(executable); }
+  catch { throw Error('native player が見つかりません。npm.cmd run native:build を実行してください'); }
+  await fs.mkdir(NATIVE_PACKAGES_ROOT, { recursive: true });
+  const packageName = path.basename(scene, path.extname(scene)) + '.nsp.json';
+  const packagePath = path.join(NATIVE_PACKAGES_ROOT, packageName);
+  await pack(scenePath(scene), packagePath, { projectRoot: PROJECT_ROOT });
+  const child = spawn(executable, [packagePath], {
+    cwd: path.dirname(executable),
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: false,
+  });
+  child.unref();
+  return { ok: true, package: '.novel/build/' + packageName };
 }
 
 async function listDriveRoots() {
@@ -142,8 +242,8 @@ async function browseDirectories(requested) {
 }
 
 async function prepareProject() {
+  try { await fs.access(SETTING_FILE); } catch { await fs.writeFile(SETTING_FILE, settingTemplate(path.basename(PROJECT_ROOT)), 'utf8'); bindLayout(PROJECT_ROOT); }
   await fs.mkdir(SCENES_ROOT, { recursive: true });
-  try { await fs.access(SCENE_CONFIG); } catch { await fs.writeFile(SCENE_CONFIG, `# Scene project settings\nstart_scene = main.tds\ntitle = ${layout.title}\n`, 'utf8'); }
   await fs.mkdir(ASSETS_ROOT, { recursive: true });
   await fs.mkdir(DATA_ROOT, { recursive: true });
   for (const schema of ['variables.schema.json', 'assets.schema.json']) {
@@ -192,8 +292,12 @@ function text(response, status, value) {
 function sceneName(value) {
   if (typeof value !== 'string') return null;
   let name = value.trim().replaceAll('\\', '/');
-  if (name.startsWith('/') || name.includes('..') || !/^[A-Za-z0-9][A-Za-z0-9_./-]{0,159}$/.test(name)) return null;
-  if (name.split('/').some((part) => !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/.test(part))) return null;
+  const parts = name.split('/');
+  const safeDirectory = (part) => part.length <= 120 && part !== '.' && part !== '..' && !/[<>:"|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part);
+  if (name.startsWith('/') || name.length > 240 || parts.some((part) => !part)) return null;
+  const file = parts.pop();
+  if (parts.some((part) => !safeDirectory(part)) || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/.test(file)) return null;
+  name = [...parts, file].join('/');
   return ALLOWED_EXTENSIONS.has(path.extname(name).toLowerCase()) ? name : `${name}.tds`;
 }
 
@@ -233,16 +337,22 @@ async function listScenes() {
 async function globalVariableTable(excludeName = '') {
   const { parse } = require('../dist');
   const { inferValueType } = require('../dist/checker/type-checker');
-  const table = new Map();
+  const configured = await readStaticVariables(DATA_ROOT);
+  const table = new Map(configured.table);
   table.readonlyNames = new Set();
+  for (const name of configured.table.readonlyNames) table.readonlyNames.add(name);
+  table.staticDeclarations = configured.declarations;
   const owners = new Map();
+  for (const name of configured.table.keys()) owners.set(name, '.novel/variables.json');
   const scripts = [];
   for (const name of await listScenes()) {
     if (name === excludeName) continue;
     const script = parse(await fs.readFile(path.join(SCENES_ROOT, name), 'utf8'));
     scripts.push(script);
+    const implicitGlobals = name.toLowerCase() === 'main.tds';
     for (const statement of script.globals) {
       if (statement.kind !== 'declare') continue;
+      if (!implicitGlobals && !statement.global) continue;
       if (statement.type === 'infer') continue;
       const owner = owners.get(statement.name);
       if (owner) throw new Error(`変数 '${statement.name}' は '${owner}' で既に宣言されています。'${name}' では set を使用してください`);
@@ -251,7 +361,7 @@ async function globalVariableTable(excludeName = '') {
       owners.set(statement.name, name);
     }
   }
-  const pending = scripts.flatMap((script) => script.globals.filter((statement) => statement.kind === 'declare' && statement.type === 'infer').map((statement) => ({ statement, functions: script.functions })));
+  const pending = scripts.flatMap((script) => script.globals.filter((statement) => statement.kind === 'declare' && statement.type === 'infer' && statement.global).map((statement) => ({ statement, functions: script.functions })));
   let lastError;
   while (pending.length) {
     let progress = false;
@@ -293,7 +403,7 @@ async function listProjectFiles() {
       else result.push({ path: relative, directory: false });
     }
   }
-  for (const directory of ['asset', 'senario']) {
+  for (const directory of [layout.settings.asset_dir, layout.settings.scenario_dir]) {
     result.push({ path: directory, directory: true });
     await visit(path.join(PROJECT_ROOT, directory), directory);
   }
@@ -421,20 +531,24 @@ function validateGraph(graph, start, end) {
 }
 
 async function readSceneConfig() {
-  const config = { start_scene: '' };
+  const config = { ...layout.settings };
   try {
-    const source = await fs.readFile(SCENE_CONFIG, 'utf8');
-    for (const raw of source.split(/\r?\n/)) {
-      const line = raw.replace(/#.*/, '').trim();
-      const match = /^([A-Za-z][A-Za-z0-9_-]*)\s*=\s*(.*)$/.exec(line);
-      if (match) config[match[1]] = match[2].trim();
-    }
+    Object.assign(config, parseSettings(await fs.readFile(SETTING_FILE, 'utf8')));
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  config.start_scene = config.start_file;
   return config;
 }
 
 async function rebuildVariables() {
+  const configured = await readStaticVariables(DATA_ROOT);
   const entries = new Map();
+  for (const declaration of configured.declarations) {
+    entries.set(JSON.stringify(['global', 'global', declaration.name]), {
+      name: declaration.name, type: declaration.type, scope: 'global', definedIn: 'global',
+      definitions: [{ scope: 'global', container: 'global', kind: 'definition', file: '.novel/variables.json' }],
+      references: [], mutable: !declaration.constant, static: true,
+    });
+  }
   for (const name of await listScenes()) {
     try {
       const globalVariables = await globalVariableTable(name);
@@ -455,7 +569,7 @@ async function rebuildVariables() {
   }
   await fs.mkdir(DATA_ROOT, { recursive: true });
   const variables = [...entries.values()];
-  await fs.writeFile(VARIABLES_FILE, JSON.stringify({ $schema: './variables.schema.json', variables }, null, 2) + '\n', 'utf8');
+  await fs.writeFile(VARIABLES_FILE, JSON.stringify({ $schema: './variables.schema.json', staticVariables: configured.source.staticVariables || [], variables }, null, 2) + '\n', 'utf8');
   return variables;
 }
 
@@ -651,7 +765,7 @@ async function serveStatic(response, pathname) {
     return;
   }
   const relative = pathname === '/' ? 'index.html' : pathname.slice(1);
-  if (!['index.html', 'editor.js', 'styles.css', 'player.html', 'player.js', 'runtime.js', 'player.css', 'flow.html', 'flow.js', 'flow-validation.js', 'flow.css', 'engine.html'].includes(relative)) {
+  if (!['index.html', 'editor.js', 'styles.css', 'player.html', 'player.js', 'runtime.js', 'player.css', 'flow.html', 'flow.js', 'flow-validation.js', 'flow.css', 'engine.html', 'assets/desktop-icon.png'].includes(relative)) {
     text(response, 404, 'Not found');
     return;
   }
@@ -682,8 +796,20 @@ async function handleApi(request, response, url) {
   if (request.method === 'GET' && url.pathname === '/api/scenes') {
     return json(response, 200, { scenes: await listScenes() });
   }
-  if (request.method === 'GET' && url.pathname === '/api/files') return json(response, 200, { title: layout.title, projectRoot: PROJECT_ROOT, files: await listProjectFiles() });
+  if (request.method === 'GET' && url.pathname === '/api/files') return json(response, 200, { title: layout.title, projectRoot: PROJECT_ROOT, scenarioDir: layout.settings.scenario_dir, files: await listProjectFiles() });
   if (request.method === 'GET' && url.pathname === '/api/project') return json(response, 200, await projectInfo());
+  if (request.method === 'PUT' && url.pathname === '/api/project/settings') {
+    try { return json(response, 200, { ok: true, ...(await updateProjectSettings(await readJson(request))) }); }
+    catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
+  }
+  if (request.method === 'GET' && url.pathname === '/api/player-ui') {
+    try { return json(response, 200, await playerUiTheme()); }
+    catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
+  }
+  if (request.method === 'PUT' && url.pathname === '/api/player-ui') {
+    try { return json(response, 200, await updatePlayerUiTheme((await readJson(request)).theme)); }
+    catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
+  }
   if (request.method === 'GET' && url.pathname === '/api/browse') {
     try { return json(response, 200, await browseDirectories(url.searchParams.get('path') || '')); }
     catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
@@ -699,7 +825,8 @@ async function handleApi(request, response, url) {
   }
   if (request.method === 'DELETE' && url.pathname === '/api/file') {
     const body = await readJson(request); const name = String(body.path || '').replaceAll('\\', '/');
-    if (!/^(asset|senario)\/[A-Za-z0-9_./-]+$/.test(name) || name.includes('..')) return json(response, 400, { error: '削除できないパスです' });
+    const permittedRoots = [layout.settings.asset_dir, layout.settings.scenario_dir];
+    if (!permittedRoots.some((root) => name.startsWith(`${root}/`)) || !/^[A-Za-z0-9_./-]+$/.test(name) || name.includes('..')) return json(response, 400, { error: '削除できないパスです' });
     const target = path.resolve(PROJECT_ROOT, name); const roots = [ASSETS_ROOT, SCENES_ROOT];
     if (!roots.some((root) => target.startsWith(`${path.resolve(root)}${path.sep}`))) return json(response, 400, { error: '削除できない場所です' });
     await fs.unlink(target);
@@ -757,7 +884,7 @@ async function handleApi(request, response, url) {
   }
   if (request.method === 'PUT' && url.pathname === '/api/scene') {
     const body = await readJson(request);
-    const name = sceneName(String(body.name || '').replace(/^senario\//, ''));
+    const name = sceneName(String(body.name || '').replace(new RegExp(`^${layout.settings.scenario_dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`), ''));
     if (!name) return json(response, 400, { error: 'ファイル名は英数字・._- を使ってください。' });
     if (typeof body.source !== 'string') return json(response, 400, { error: '保存する本文がありません。' });
     if (Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'ファイルは 2 MB 以下にしてください。' });
@@ -801,6 +928,14 @@ async function handleApi(request, response, url) {
         assetsRoot: ASSETS_ROOT,
       });
       return json(response, 200, { ok: true, name: packageName, path: `.novel/build/${packageName}` });
+    } catch (error) {
+      return json(response, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  if (request.method === 'POST' && url.pathname === '/api/native-play') {
+    try {
+      const body = await readJson(request);
+      return json(response, 200, await playWithNativeEngine(body.name));
     } catch (error) {
       return json(response, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
     }

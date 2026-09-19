@@ -36,7 +36,7 @@
     "source": "fn f(n: int) -> int {\nif n == 1 { return 1 } else { int x = 2 }\nreturn x\n}\nint result = f(0)"
   },
   "recursion_say": {
-    "source": "fn f() -> str {\nsay { f() }\nreturn \"x\"\n}"
+      "source": "fn f() -> str {\nreturn f()\n}"
   },
   "conversion": {
     "source": "int result = int(\"+-1\")"
@@ -51,10 +51,10 @@
     "source": "fn f() -> int {\nint x = 0\nwhile x < 1 { set x = x + 1 }\n}\nint result = f()"
   },
   "say_expression": {
-    "source": "str message = \"hello\"\nsay message + \"!\""
+    "source": "str message = \"hello\"\nsay narrator message + \"!\""
   },
   "goto_hyphen": {
-    "source": "goto chapter-1.tds"
+    "source": "goto \"chapter-1.tds\""
   },
   "struct_return": {
     "source": "struct User {\nname: str\n}\nfn f(u: User) -> User { return u }\nUser a = {\"name\": \"A\"}\nUser b = f(a)"
@@ -76,19 +76,19 @@
   },
   "init_call": {
     "files": {
-      "main.tds": "int result = f()\nfn f() -> int { return x }\ngoto next.tds",
-      "next.tds": "int x = 1"
+      "main.tds": "int result = f()\nfn f() -> int { return x }\ngoto \"next.tds\"",
+      "next.tds": "global int x = 1"
     }
   },
   "init_after_goto": {
     "files": {
-      "main.tds": "goto next.tds\nint x = 1",
-      "next.tds": "say narrator str(x)"
+      "main.tds": "goto \"next.tds\"\nint x = 1",
+        "next.tds": "say narrator str(x)"
     }
   },
   "external_const": {
     "files": {
-      "main.tds": "const int x = 1\ngoto next.tds",
+      "main.tds": "const int x = 1\ngoto \"next.tds\"",
       "next.tds": "set x = 2"
     }
   }

@@ -30,7 +30,7 @@ class Lexer {
             this.advance();
             return this.token('symbol', pair, start);
         }
-        if ('{}[]=():,+-*/%<>!.'.includes(c)) {
+        if ('{}[]=():,+-*/%<>!.\\'.includes(c)) {
             this.advance();
             return this.token('symbol', c, start);
         }
