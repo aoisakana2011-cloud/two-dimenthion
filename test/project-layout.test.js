@@ -12,6 +12,7 @@ const {checkTypes} = require('../dist');
 test('project includes expose struct declarations to the including scene', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-include-struct-'));
   t.after(() => fs.rm(dir, {recursive: true, force: true}));
+  seedEmptyProject(dir);
   const layout = projectLayout(dir);
   await fs.mkdir(layout.scenesRoot, {recursive: true});
   await fs.writeFile(path.join(layout.scenesRoot, 'common.tds'), `
@@ -41,17 +42,18 @@ test('project scene paths reject empty directory components', () => {
   assert.throws(() => sceneFile('chapter//next.tds'), /Invalid scene path/);
   assert.throws(() => sceneFile('con.tds'), /Invalid scene path/);
   assert.throws(() => sceneFile('chapter/next.'), /Invalid scene path/);
+  assert.throws(() => sceneFile('chapter/next.txt'), /\.tds/);
 });
 
 test('setting.txt fixes layout and entry file at the project root',async t=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'novel-settings-'));
   t.after(()=>fs.rm(dir,{recursive:true,force:true}));
-  await fs.writeFile(path.join(dir,'setting.txt'),'scenario_dir = story/scripts\nasset_dir = media\nstart_file = opening/intro.txt\ntitle = Configured title\n');
+  await fs.writeFile(path.join(dir,'setting.txt'),'scenario_dir = story/scripts\nasset_dir = media\nstart_file = opening/intro.tds\ntitle = Configured title\n');
   const layout=projectLayout(dir);
   assert.equal(layout.scenesRoot,path.join(dir,'story','scripts'));
   assert.equal(layout.assetsRoot,path.join(dir,'media'));
   assert.equal(layout.title,'Configured title');
-  assert.equal(entryFile(layout),path.join(dir,'story','scripts','opening','intro.txt'));
+  assert.equal(entryFile(layout),path.join(dir,'story','scripts','opening','intro.tds'));
   await fs.mkdir(path.dirname(entryFile(layout)),{recursive:true});
   await fs.writeFile(entryFile(layout),'say "start"');
   assert.equal(layoutForInput(entryFile(layout)).projectRoot,dir);
@@ -98,7 +100,9 @@ test('CLI packaging rejects an external .novel junction',async t=>{
   const parent=await fs.mkdtemp(path.join(os.tmpdir(),'novel-pack-data-link-'));
   t.after(()=>fs.rm(parent,{recursive:true,force:true}));
   const project=path.join(parent,'project'),outside=path.join(parent,'outside-data');
+  seedEmptyProject(project);
   const layout=projectLayout(project);
+  await fs.rm(layout.dataRoot,{recursive:true,force:true});
   await fs.mkdir(layout.scenesRoot,{recursive:true});
   await fs.mkdir(layout.assetsRoot,{recursive:true});
   await fs.mkdir(outside,{recursive:true});
@@ -113,6 +117,7 @@ test('CLI packaging rejects linked scene inputs and linked asset output folders'
   const parent=await fs.mkdtemp(path.join(os.tmpdir(),'novel-pack-link-'));
   t.after(()=>fs.rm(parent,{recursive:true,force:true}));
   const project=path.join(parent,'project'),outside=path.join(parent,'outside');
+  seedEmptyProject(project);
   const layout=projectLayout(project);
   await fs.mkdir(layout.scenesRoot,{recursive:true});
   await fs.mkdir(layout.assetsRoot,{recursive:true});
@@ -134,8 +139,9 @@ test('CLI packaging rejects linked scene inputs and linked asset output folders'
 test('arbitrary title: editor CRUD, assets, project build and CLI use the same project',async t=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'novel-作品 空白-'));
   t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  seedEmptyProject(dir);
   const layout=projectLayout(dir);
-  await fs.mkdir(path.join(layout.scenesRoot,'chapter'),{recursive:true});await fs.mkdir(layout.assetsRoot);
+  await fs.mkdir(path.join(layout.scenesRoot,'chapter'),{recursive:true});await fs.mkdir(layout.assetsRoot,{recursive:true});
   await fs.copyFile(path.resolve(__dirname,'../native/engine_data/ui/dialogue_box.png'),path.join(layout.assetsRoot,'pixel.png'));
   await fs.copyFile(path.join(layout.assetsRoot,'pixel.png'),path.join(layout.assetsRoot,'video-placeholder.mp4'));
   const source='asset image logo = "asset/pixel.png"\nshow image logo center\ngoto chapter/next.tds';

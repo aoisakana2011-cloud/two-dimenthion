@@ -9,7 +9,7 @@
         "kind": "asset",
         "type": "bg",
         "name": "room",
-        "path": "pixel.png",
+        "path": "asset/pixel.png",
         "line": 1,
         "column": 1,
         "file": "current"
@@ -18,7 +18,7 @@
         "kind": "asset",
         "type": "image",
         "name": "first",
-        "path": "pixel.png",
+        "path": "asset/pixel.png",
         "line": 2,
         "column": 1,
         "file": "current"
@@ -27,7 +27,7 @@
         "kind": "asset",
         "type": "image",
         "name": "second",
-        "path": "pixel.png",
+        "path": "asset/pixel.png",
         "line": 3,
         "column": 1,
         "file": "current"
@@ -36,7 +36,7 @@
         "kind": "asset",
         "type": "image",
         "name": "jpeg",
-        "path": "pixel.jpg",
+        "path": "asset/pixel.jpg",
         "line": 4,
         "column": 1,
         "file": "current"
@@ -45,7 +45,7 @@
         "kind": "asset",
         "type": "image",
         "name": "webp",
-        "path": "pixel.webp",
+        "path": "asset/pixel.webp",
         "line": 5,
         "column": 1,
         "file": "current"
@@ -54,7 +54,7 @@
         "kind": "asset",
         "type": "image",
         "name": "gif",
-        "path": "pixel.gif",
+        "path": "asset/pixel.gif",
         "line": 6,
         "column": 1,
         "file": "current"
@@ -63,7 +63,7 @@
         "kind": "asset",
         "type": "bgm",
         "name": "music",
-        "path": "tone.wav",
+        "path": "asset/tone.wav",
         "line": 7,
         "column": 1,
         "file": "current"
@@ -72,7 +72,7 @@
         "kind": "asset",
         "type": "se",
         "name": "sound",
-        "path": "tone.wav",
+        "path": "asset/tone.wav",
         "line": 8,
         "column": 1,
         "file": "current"
@@ -81,7 +81,7 @@
         "kind": "asset",
         "type": "voice",
         "name": "narrator_voice",
-        "path": "tone.wav",
+        "path": "asset/tone.wav",
         "line": 9,
         "column": 1,
         "file": "current"
@@ -90,7 +90,7 @@
         "kind": "asset",
         "type": "se",
         "name": "flac",
-        "path": "tone.flac",
+        "path": "asset/tone.flac",
         "line": 10,
         "column": 1,
         "file": "current"
@@ -99,7 +99,7 @@
         "kind": "asset",
         "type": "se",
         "name": "vorbis",
-        "path": "tone.ogg",
+        "path": "asset/tone.ogg",
         "line": 11,
         "column": 1,
         "file": "current"
@@ -108,7 +108,7 @@
         "kind": "asset",
         "type": "se",
         "name": "mpthree",
-        "path": "tone.mp3",
+        "path": "asset/tone.mp3",
         "line": 12,
         "column": 1,
         "file": "current"
@@ -117,7 +117,7 @@
         "kind": "asset",
         "type": "video",
         "name": "clip",
-        "path": "clip.mp4",
+        "path": "asset/clip.mp4",
         "line": 13,
         "column": 1,
         "file": "current"
@@ -130,7 +130,7 @@
         "poses": [
           {
             "name": "normal",
-            "path": "pixel.png",
+            "path": "asset/pixel.png",
             "line": 16,
             "column": 3,
             "file": "current"
@@ -148,7 +148,7 @@
         "poses": [
           {
             "name": "normal",
-            "path": "pixel.png",
+            "path": "asset/pixel.png",
             "line": 20,
             "column": 3,
             "file": "current"
@@ -730,7 +730,7 @@
           "kind": "asset",
           "type": "bg",
           "name": "room",
-          "path": "pixel.png",
+          "path": "asset/pixel.png",
           "line": 1,
           "column": 1,
           "file": "current"
@@ -739,7 +739,7 @@
           "kind": "asset",
           "type": "image",
           "name": "first",
-          "path": "pixel.png",
+          "path": "asset/pixel.png",
           "line": 2,
           "column": 1,
           "file": "current"
@@ -748,7 +748,7 @@
           "kind": "asset",
           "type": "image",
           "name": "second",
-          "path": "pixel.png",
+          "path": "asset/pixel.png",
           "line": 3,
           "column": 1,
           "file": "current"
@@ -757,7 +757,7 @@
           "kind": "asset",
           "type": "image",
           "name": "jpeg",
-          "path": "pixel.jpg",
+          "path": "asset/pixel.jpg",
           "line": 4,
           "column": 1,
           "file": "current"
@@ -766,7 +766,7 @@
           "kind": "asset",
           "type": "image",
           "name": "webp",
-          "path": "pixel.webp",
+          "path": "asset/pixel.webp",
           "line": 5,
           "column": 1,
           "file": "current"
@@ -775,7 +775,7 @@
           "kind": "asset",
           "type": "image",
           "name": "gif",
-          "path": "pixel.gif",
+          "path": "asset/pixel.gif",
           "line": 6,
           "column": 1,
           "file": "current"
@@ -784,7 +784,7 @@
           "kind": "asset",
           "type": "bgm",
           "name": "music",
-          "path": "tone.wav",
+          "path": "asset/tone.wav",
           "line": 7,
           "column": 1,
           "file": "current"
@@ -793,7 +793,7 @@
           "kind": "asset",
           "type": "se",
           "name": "sound",
-          "path": "tone.wav",
+          "path": "asset/tone.wav",
           "line": 8,
           "column": 1,
           "file": "current"
@@ -802,7 +802,7 @@
           "kind": "asset",
           "type": "voice",
           "name": "narrator_voice",
-          "path": "tone.wav",
+          "path": "asset/tone.wav",
           "line": 9,
           "column": 1,
           "file": "current"
@@ -811,7 +811,7 @@
           "kind": "asset",
           "type": "se",
           "name": "flac",
-          "path": "tone.flac",
+          "path": "asset/tone.flac",
           "line": 10,
           "column": 1,
           "file": "current"
@@ -820,7 +820,7 @@
           "kind": "asset",
           "type": "se",
           "name": "vorbis",
-          "path": "tone.ogg",
+          "path": "asset/tone.ogg",
           "line": 11,
           "column": 1,
           "file": "current"
@@ -829,7 +829,7 @@
           "kind": "asset",
           "type": "se",
           "name": "mpthree",
-          "path": "tone.mp3",
+          "path": "asset/tone.mp3",
           "line": 12,
           "column": 1,
           "file": "current"
@@ -838,7 +838,7 @@
           "kind": "asset",
           "type": "video",
           "name": "clip",
-          "path": "clip.mp4",
+          "path": "asset/clip.mp4",
           "line": 13,
           "column": 1,
           "file": "current"
@@ -851,7 +851,7 @@
           "poses": [
             {
               "name": "normal",
-              "path": "pixel.png",
+              "path": "asset/pixel.png",
               "line": 16,
               "column": 3,
               "file": "current"
@@ -869,7 +869,7 @@
           "poses": [
             {
               "name": "normal",
-              "path": "pixel.png",
+              "path": "asset/pixel.png",
               "line": 20,
               "column": 3,
               "file": "current"

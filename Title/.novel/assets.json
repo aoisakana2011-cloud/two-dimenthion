@@ -3,14 +3,28 @@
   "assets": [
     {
       "type": "char",
-      "name": "akari",
-      "pose": "d",
-      "path": "asset/char/aokami.png",
-      "definedIn": "main.tds"
+      "name": "sora",
+      "pose": "normal",
+      "path": "asset/char/aokami-transparent.png",
+      "definedIn": "routes/true.tds"
+    },
+    {
+      "type": "char",
+      "name": "nene",
+      "pose": "normal",
+      "path": "asset/char/hatena-transparent.png",
+      "definedIn": "routes/true.tds"
+    },
+    {
+      "type": "char",
+      "name": "nene",
+      "pose": "smile",
+      "path": "asset/char/tundere.png",
+      "definedIn": "routes/true.tds"
     },
     {
       "type": "bg",
-      "name": "s",
+      "name": "courtyard",
       "path": "asset/bg/mori.jpg",
       "definedIn": "main.tds"
     }

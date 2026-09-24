@@ -44,12 +44,6 @@
         tokens.push({ kind: 'string', value: source.slice(start, index), start, end: index });
         continue;
       }
-      const hyphenated = source.slice(index).match(/^(?:far-left|far-right)\b/);
-      if (hyphenated) {
-        index += hyphenated[0].length;
-        tokens.push({ kind: 'word', value: hyphenated[0], start, end: index });
-        continue;
-      }
       const pair = source.slice(index, index + 2);
       if (MULTI_SYMBOLS.has(pair)) {
         index += 2;

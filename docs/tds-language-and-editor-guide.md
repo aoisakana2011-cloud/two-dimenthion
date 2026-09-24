@@ -23,7 +23,7 @@ start_file = main.tds
 title = My Novel
 ~~~
 
-パスはプロジェクトルートからの相対パスです。絶対パス、.. による脱出、プロジェクト外のリンク参照は使えません。シナリオ拡張子は .tds または .txt です。
+パスはプロジェクトルートからの相対パスです。絶対パス、.. による脱出、プロジェクト外のリンク参照は使えません。シナリオ拡張子は .tds のみです。
 
 ### ファイルの置き方
 
@@ -65,7 +65,7 @@ Project/
 
 シナリオの `include` と外部 `goto` は、現在のファイルの場所ではなく `scenario_dir` を基準に解決します。`goto next_scene` のように拡張子もパス区切りもない名前だけを指定した場合は、同じファイル内のscene名です。外部ファイルの名前には空白、空のパス要素、`.`、`..`、Windows予約名を使わないでください。
 
-素材は作品外へ出られない相対パスで指定します。`asset/`（または互換的な `assets/`）を含めた表記を推奨し、実体は `asset_dir` 配下に配置します。絶対パス、空のディレクトリ要素、`.`、`..`、末尾が空白・ドットの名前、Windows予約名、種別に合わない拡張子は診断対象です。
+素材は `asset/` から始まる作品ルート相対パスで指定し、実体は `asset_dir` 配下に配置します。`assets/`、絶対パス、空のディレクトリ要素、`.`、`..`、末尾が空白・ドットの名前、Windows予約名、種別に合わない拡張子は診断対象です。
 
 ## 基本規則
 
@@ -227,7 +227,7 @@ goto のパスは / に正規化され、シナリオフォルダー内に限定
 ~~~tds
 bg classroom
 bgm morning
-bgm morning instant
+bgm morning
 clear bg
 clear bgm
 ~~~
@@ -237,14 +237,14 @@ clear bgm
 ~~~tds
 show hero.normal center
 show hero.smile left fade 250
-show hero.sad far-right instant
+show hero.sad far_right
 hide hero
 hide hero fade 250
 show image logo right
 clear image logo
 ~~~
 
-位置は far_left、left、center、right、far_right。互換上 far-left/far-right も使えます。新規記述はアンダースコア版を推奨します。同じslotへのshowは置き換えです。
+位置は far_left、left、center、right、far_right。同じslotへのshowは置き換えです。
 
 音声・動画:
 

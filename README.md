@@ -19,7 +19,7 @@ npm.cmd run editor
 ```text
 Title/                  # 名前は自由
   asset/                # 画像・音声・動画
-  senario/              # .tds / .txt シナリオ
+  senario/              # .tds シナリオ
   setting.txt           # scenario_dir / asset_dir / start_file / title
   .novel/               # 生成メタデータとbuild成果物
 Edit/                   # エディター本体

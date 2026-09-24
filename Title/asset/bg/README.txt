@@ -1,1 +1,1 @@
-Background images used by: asset bg <name> = "asset/bg/<file>"
+背景素材です。main.tdsではcourtyardとしてasset/bg/mori.jpgを使用します。

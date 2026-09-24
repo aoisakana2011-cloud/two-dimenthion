@@ -9,10 +9,6 @@
 
 文字欄の画像パスは `engine.txt` の次の項目です。
 
-```text
-dialog.background_image = ui/dialogue_box.png
-```
-
 実ファイルは `native/engine_data/ui/dialogue_box.png` に配置します。
 
 `font.path` にはWindowsのシステムフォント、またはこのフォルダーからの

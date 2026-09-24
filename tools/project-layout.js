@@ -65,7 +65,8 @@ function ensureProjectDirectory(projectRoot, directory, key) {
   if (!isInside(realRoot, fs.realpathSync(target))) throw Error(`${key} は作品フォルダー外を参照できません`);
 }
 function parseSettings(source) {
-  const settings = { ...DEFAULT_SETTINGS };
+  const settings = {};
+  const seen = new Set();
   for (const raw of source.split(/\r?\n/)) {
     const line = raw.replace(/#.*/, '').trim();
     if (!line) continue;
@@ -74,23 +75,20 @@ function parseSettings(source) {
     const [, key, value] = match;
     if (!Object.hasOwn(DEFAULT_SETTINGS, key) && key !== 'title') throw Error(`setting.txt の設定項目 '${key}' は未対応です`);
     settings[key] = value;
+    seen.add(key);
   }
+  if (['scenario_dir', 'asset_dir', 'start_file'].some((key) => !seen.has(key))) throw Error('setting.txt requires scenario_dir, asset_dir, and start_file');
   settings.scenario_dir = safeRelative(settings.scenario_dir, 'scenario_dir');
   settings.asset_dir = safeRelative(settings.asset_dir, 'asset_dir');
   settings.start_file = safeRelative(settings.start_file, 'start_file');
   if (settings.native_ui_theme) settings.native_ui_theme = safeRelative(settings.native_ui_theme, 'native_ui_theme');
-  if (!/\.(tds|txt)$/i.test(settings.start_file)) throw Error('start_file は .tds または .txt を指定してください');
+  if (!/\.tds$/i.test(settings.start_file)) throw Error('start_file は .tds を指定してください');
   return settings;
 }
 function readSettings(projectRoot) {
   const settingFile = path.join(projectRoot, SETTING_FILE);
-  try {
-    assertProjectSettingFile(projectRoot);
-    return parseSettings(fs.readFileSync(settingFile, 'utf8'));
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-    return { ...DEFAULT_SETTINGS };
-  }
+  assertProjectSettingFile(projectRoot);
+  return parseSettings(fs.readFileSync(settingFile, 'utf8'));
 }
 function settingTemplate(title) {
   return `# Novel Script project settings\n# すべて作品フォルダーからの相対パス。/ を使用する。\nscenario_dir = senario\nasset_dir = asset\nstart_file = main.tds\ntitle = ${title}\n`;
@@ -109,6 +107,7 @@ function layoutForInput(input) {
   const file = path.resolve(input);
   let directory = path.dirname(file);
   while (directory !== path.dirname(directory)) {
+    if (!fs.existsSync(path.join(directory, SETTING_FILE))) { directory = path.dirname(directory); continue; }
     const layout = projectLayout(directory);
     const relative = path.relative(layout.scenesRoot, file);
     if (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith('..' + path.sep)) return layout;
@@ -119,7 +118,7 @@ function layoutForInput(input) {
 function entryFile(layout) {
   const file = path.resolve(layout.scenesRoot, layout.settings.start_file);
   const relative = path.relative(layout.scenesRoot, file);
-  if (path.isAbsolute(relative) || relative === '..' || relative.startsWith('..' + path.sep)) throw Error('start_scene は senario 内を指定してください');
+  if (path.isAbsolute(relative) || relative === '..' || relative.startsWith('..' + path.sep)) throw Error('start_file は scenario_dir 内を指定してください');
   return file;
 }
 function positionalArguments(args) {
@@ -128,16 +127,14 @@ function positionalArguments(args) {
   return result;
 }
 function looksLikeProject(root) {
-  const layout = projectLayout(root);
-  return fs.existsSync(layout.settingFile) || fs.existsSync(layout.scenesRoot) || fs.existsSync(layout.assetsRoot) || fs.existsSync(layout.dataRoot);
+  return fs.existsSync(path.join(path.resolve(root), SETTING_FILE));
 }
 function seedEmptyProject(root) {
-  const layout = projectLayout(root);
-  if (!fs.existsSync(layout.settingFile)) {
-    fs.mkdirSync(layout.projectRoot, { recursive: true });
-    ensureProjectFile(layout.projectRoot, layout.settingFile, settingTemplate(path.basename(layout.projectRoot)), 'setting.txt');
-    return seedEmptyProject(root);
-  }
+  const projectRoot = path.resolve(root);
+  const settingFile = path.join(projectRoot, SETTING_FILE);
+  fs.mkdirSync(projectRoot, { recursive: true });
+  ensureProjectFile(projectRoot, settingFile, settingTemplate(path.basename(projectRoot)), 'setting.txt');
+  const layout = projectLayout(projectRoot);
   ensureProjectDirectory(layout.projectRoot, layout.scenesRoot, 'scenario_dir');
   ensureProjectDirectory(layout.projectRoot, layout.assetsRoot, 'asset_dir');
   ensureProjectDirectory(layout.projectRoot, layout.dataRoot, '.novel');

@@ -1,22 +1,120 @@
-int i = 0
-struct Player {
-  name: str
-  coins: int
+asset bg courtyard = "asset/bg/mori.jpg"
+
+character sora {
+  name = "ソラ"
+  affection = 0
+  pose normal = "asset/char/aokami-transparent.png"
 }
-asset bg s = "asset/bg/mori.jpg"
-character kenji {
-  name = "kenji"
+
+character nene {
+  name = "ネネ"
+  pose normal = "asset/char/hatena-transparent.png"
+  pose smile = "asset/char/tundere.png"
 }
-character akari {
-  name = "明莉"
-  pose d = "asset/char/aokami.png"
+
+fn add_affection(amount: int) -> int {
+  return affection + amount
 }
-bg s
+
+fn add_sora(amount: int) -> int {
+  return sora_affection + amount
+}
+
+fn add_nene(amount: int) -> int {
+  return nene_affection + amount
+}
+
+fn find_clue() -> int {
+  return clue + 1
+}
+
+fn announce_day(day: int) -> none {
+  say narrator "物語の{day}日目"
+  return
+}
+
+fn remember(text: str) -> none {
+  say narrator "記憶: {text}"
+  return
+}
+
+fn encourage() -> int {
+  return affection + 2
+}
+
+include chapters/chapter01.tds
+include chapters/chapter02.tds
+include chapters/chapter03.tds
+include chapters/chapter04.tds
+include routes/sora.tds
+include routes/nene.tds
+include routes/common.tds
+include routes/after.tds
+include routes/summer.tds
+include gaiden/letter.tds
+include gaiden/memory.tds
+include gaiden/future.tds
+include gaiden/origin.tds
+include gaiden/epilogue.tds
+include chapters/interlude01.tds
+include chapters/interlude02.tds
+include appendix/club.tds
+include appendix/archive.tds
+include appendix/dream.tds
+include appendix/voices.tds
+include chapters/chapter05.tds
+include chapters/chapter06.tds
+include chapters/chapter07.tds
+include chapters/chapter08.tds
+include routes/true.tds
+include routes/ensemble.tds
+include gaiden/teacher.tds
+include gaiden/childhood.tds
+include gaiden/after-ten-years.tds
+include appendix/locations.tds
+include appendix/chronology.tds
+include appendix/unused-melodies.tds
+
+global int affection = 0
+global int sora_affection = 0
+global int nene_affection = 0
+global int clue = 0
+global int chapter = 1
+global str route = "common"
+
 scene main {
-  say "hello"
-  say akari "hello"
-  say kenji "hello"
-  say "{i}"
-  say "{akari.name}"
-  say "{kenji.name}"
+  bg courtyard
+  effect fade black 300
+  say narrator "雨上がりの帰り道"
+  say narrator "この町には、誰も知らない音楽室がある。"
+  set chapter = 1
+  goto "chapters/chapter01.tds"
+}
+
+scene final_common {
+  say narrator "三人で見つけた歌は、町の小さな舞台で披露された。"
+  say narrator "過去の記憶は、未来へ渡す物語になった。"
+  say narrator "END - 雨上がりの合唱"
+  wait 300
+}
+
+scene final_sora {
+  say sora "あの日の鍵が、私たちをここまで連れてきたんだね。"
+  say narrator "ソラと主人公は、完成した楽譜を新しい部室に飾った。"
+  say narrator "END - 青い旋律"
+  wait 300
+}
+
+scene final_nene {
+  say nene "今度は、私たちの歌を最初から作ろう。"
+  say narrator "ネネの笑顔とともに、新しい季節が始まった。"
+  say narrator "END - 星の譜面"
+  wait 300
+}
+
+scene final_quiet {
+  say narrator "答えを急がないことも、ひとつの選択だった。"
+  say narrator "雨の季節は、またいつか戻ってくる。"
+  say narrator "END - 静かな約束"
+  wait 300
 }

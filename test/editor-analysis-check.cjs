@@ -169,7 +169,7 @@ const assert = require('node:assert/strict');
     await editor.press('Enter');
     assert.equal(await editor.inputValue(), 'say narrator ""');
     assert.ok((await page.locator('#scene-name').inputValue()).length > 0);
-    await editor.fill('character aokami {\n  name = "蒼神"\n  pose normal = "assets/char/aokami.png"\n}\nshow ao');
+    await editor.fill('character aokami {\n  name = "蒼神"\n  pose normal = "asset/char/aokami.png"\n}\nshow ao');
     await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('aokami'));
     await editor.press('Enter');
     assert.match(await editor.inputValue(), /show aokami\.$/);
@@ -185,10 +185,10 @@ const assert = require('node:assert/strict');
     await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('far_left'));
     await editor.press('Enter');
     assert.equal(await editor.inputValue(), 'show aokami.normal far_left ');
-    await editor.fill('show aokami.normal far-');
-    await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('far-left'));
+    await editor.fill('show aokami.normal far_');
+    await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('far_left'));
     await editor.press('Enter');
-    assert.equal(await editor.inputValue(), 'show aokami.normal far-left ');
+    assert.equal(await editor.inputValue(), 'show aokami.normal far_left ');
     const formattedCompletionSource = 'scene main{\nshow aokami.normal far\n}';
     const formattedCompletion = 'scene main {\n  show aokami.normal far\n}';
     await editor.fill(formattedCompletionSource);
@@ -204,10 +204,10 @@ const assert = require('node:assert/strict');
     await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('far_right'));
     await editor.press('Enter');
     assert.equal(await editor.inputValue(), 'show image placeholder far_right ');
-    await editor.fill('show image placeholder far-');
-    await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('far-right'));
+    await editor.fill('show image placeholder far_');
+    await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('far_right'));
     await editor.press('Enter');
-    assert.equal(await editor.inputValue(), 'show image placeholder far-left ');
+    assert.equal(await editor.inputValue(), 'show image placeholder far_left ');
     await editor.fill('play voice greeting blo');
     await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('blocking'));
     await editor.press('Enter');
@@ -276,14 +276,14 @@ scene analysis {
     const continuedSyntaxDiagnostics = await page.locator('#result').textContent();
     assert.match(continuedSyntaxDiagnostics, /line 1:/);
     assert.match(continuedSyntaxDiagnostics, /line 2:/);
-    await editor.fill('asset bg missing = "assets/__missing_diagnostic_jump__.png"\nscene start { bg missing }');
+    await editor.fill('asset bg missing = "asset/__missing_diagnostic_jump__.png"\nscene start { bg missing }');
     await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('project-error'));
     const projectErrorLink = page.locator('#result .diagnostic-link').filter({ hasText: 'project-error' }).first();
     assert.equal(await projectErrorLink.getAttribute('title'), 'クリックして該当行へ移動');
     await projectErrorLink.click();
     assert.equal(await editor.evaluate((element) => document.activeElement === element), true);
-    const missingAssetSource = 'asset bg missing = "assets/__missing_diagnostic_jump__.png"\nscene start { bg missing }';
-    assert.equal(await editor.evaluate((element) => element.selectionStart), missingAssetSource.indexOf('assets/__missing_diagnostic_jump__.png'));
+    const missingAssetSource = 'asset bg missing = "asset/__missing_diagnostic_jump__.png"\nscene start { bg missing }';
+    assert.equal(await editor.evaluate((element) => element.selectionStart), missingAssetSource.indexOf('asset/__missing_diagnostic_jump__.png'));
     const linkedUnreachableSource = 'scene start {\ngoto ending\nsay narrator "dead"\n}\nscene ending { wait 1 }';
     await editor.fill(linkedUnreachableSource);
     await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('unreachable-code'));
@@ -433,8 +433,8 @@ scene analysis {
       ['if score>=-1{say narrator "signed"}', 'if score >= -1 {\n  say narrator "signed"\n}'],
       ['if not(score==1){return(-1)}', 'if not (score == 1) {\n  return (-1)\n}'],
       ['choice(route){"ok"{say narrator "choice"}}', 'choice (route) {\n  "ok" {\n    say narrator "choice"\n  }\n}'],
-      ['show hero.normal far-left', 'show hero.normal far-left'],
-      ['show image splash far-right', 'show image splash far-right'],
+      ['show hero.normal far_left', 'show hero.normal far_left'],
+      ['show image splash far_right', 'show image splash far_right'],
       ['set item[0]=fn("a,b") # keep {comment}', 'set item[0] = fn("a,b")  # keep {comment}'],
       ['if ready { set data = { "key": 1 } }', 'if ready {\n  set data = { "key": 1 }\n}'],
       ['dict[int] data = {\n1: 2\n}', 'dict[int] data = {\n  1: 2\n}'],
@@ -449,8 +449,8 @@ scene analysis {
       ['if ready { set data = fn({ "x": 1 }) }', 'if ready {\n  set data = fn({ "x": 1 })\n}'],
       ['if ready { say narrator "x" } # trailing block comment', 'if ready {\n  say narrator "x"\n}  # trailing block comment'],
       ['if ready { say narrator "x" } // trailing block comment', 'if ready {\n  say narrator "x"\n}  // trailing block comment'],
-      ['character hero { name="Hero"\npose normal="hero.png"\n}', 'character hero {\n  name = "Hero"\n  pose normal = "hero.png"\n}'],
-      ['character hero { name="Hero"\npose normal="hero.png" }', 'character hero {\n  name = "Hero"\n  pose normal = "hero.png"\n}'],
+      ['character hero { name="Hero"\npose normal="asset/hero.png"\n}', 'character hero {\n  name = "Hero"\n  pose normal = "asset/hero.png"\n}'],
+      ['character hero { name="Hero"\npose normal="asset/hero.png" }', 'character hero {\n  name = "Hero"\n  pose normal = "asset/hero.png"\n}'],
       ['struct Player{name:str\ncoins:int}\nPlayer p={"name":"Y","coins":0}', 'struct Player {\n  name: str\n  coins: int\n}\nPlayer p = { "name": "Y", "coins": 0 }'],
       ['set __NOVEL_EDITOR_CURSOR__value=1', 'set __NOVEL_EDITOR_CURSOR__value = 1'],
       ['fn build() -> dict[str] { return { "x": "y" } }', 'fn build() -> dict[str] {\n  return { "x": "y" }\n}'],
@@ -515,8 +515,8 @@ scene analysis {
       'scene main{if 1==1{say narrator "yes"}\n\nelif 1==0{say narrator "maybe"}\n\nelse{say narrator "no"}}',
       'fn check(score: int) -> int { if not(score==1){ return(-1) } return(0) }',
       'str route="go"\nscene main{choice(route){"ok"{say narrator "selected"}}}',
-      'character hero {\nname="Hero"\npose normal="asset/char/aokami.png"\n}\nscene main{show hero.normal far-left}',
-      'asset image splash="asset/char/aokami.png"\nscene main{show image splash far-right}',
+      'character hero {\nname="Hero"\npose normal="asset/char/aokami.png"\n}\nscene main{show hero.normal far_left}',
+      'asset image splash="asset/char/aokami.png"\nscene main{show image splash far_right}',
     ];
     const withoutLocations = (value) => {
       if (Array.isArray(value)) return value.map(withoutLocations);
@@ -626,7 +626,7 @@ scene analysis {
     await editor.fill('scene virtual_close {\n  say narrator "line"\n  ');
     await editor.evaluate((element) => element.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: '}' })));
     assert.equal(await editor.inputValue(), 'scene virtual_close {\n  say narrator "line"\n}');
-    await editor.fill(`asset bg school = "assets/bg/school.jpg"
+    await editor.fill(`asset bg school = "asset/bg/school.jpg"
 fn greet(name: str) -> none {
   # greeting
   say narrator "Hello {name}"
@@ -636,17 +636,17 @@ scene start { greet("range") }`);
     for (const selector of ['.hl-keyword', '.hl-type', '.hl-function', '.hl-declaration', '.hl-scene', '.hl-asset', '.hl-string', '.hl-interpolation', '.hl-comment', '.hl-punctuation']) {
       assert.ok(await page.locator(`#highlight ${selector}`).count() >= 1, `Missing syntax scope ${selector}`);
     }
-    await editor.fill(`asset bg school = "assets/bg/school.jpg"
+    await editor.fill(`asset bg school = "asset/bg/school.jpg"
 fn greet(name: str) -> none {
   # greeting
   say narrator "Hello {name}"
 }
 scene start {
   greet("range")
-  show hero.normal far-left
+  show hero.normal far_left
 }`);
     await page.waitForTimeout(100);
-    assert.ok(await page.locator('#highlight .hl-builtin').filter({ hasText: 'far-left' }).count() >= 1);
+    assert.ok(await page.locator('#highlight .hl-builtin').filter({ hasText: 'far_left' }).count() >= 1);
     assert.equal(await page.locator('#highlight .hl-string').first().evaluate((element) => getComputedStyle(element).color), 'rgb(156, 220, 254)');
     assert.deepEqual(pageErrors, []);
     console.log('PASS editor: grammar-aware autocomplete, Ctrl+Shift+F formatting, live diagnostics, scoped syntax highlighting');

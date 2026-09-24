@@ -1,5 +1,0 @@
-# first/test
-scene first{
-  say "hello"
-  goto "first/test1.tds"
-}

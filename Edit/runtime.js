@@ -57,7 +57,8 @@
       if (duration < 0n) throw Error('演出時間は0以上でなければなりません');
       return transitionWith(args[offset], duration);
     }
-    return { type: 'instant', durationMs: 0 };
+    if (args[offset] === undefined) return { type: 'instant', durationMs: 0 };
+    throw Error(`Unknown transition '${args[offset]}'`);
   }
   function beginTransition(state, transition) {
     const startedAt = state.logicalTimeMs;
@@ -103,8 +104,6 @@
     action.endedAt = state.logicalTimeMs;
   }
   function normalizeSlot(slot) {
-    if (slot === 'far-left') return 'far_left';
-    if (slot === 'far-right') return 'far_right';
     if (!DEFAULT_SLOTS.includes(slot)) throw Error(`未知の配置場所 '${slot}' です`);
     return slot;
   }

@@ -15,7 +15,7 @@ function applyPlayerUi(themePath, theme) {
   const stage = $('stage'), dialogue = $('dialogue'), speaker = $('speaker'), speakerText = $('speaker-text'), text = $('text'), choiceBox = $('choices');
   stage.style.width = `${screen.width}px`; stage.style.height = `${screen.height}px`;
   Object.assign(dialogue.style, { left: `${dialog.x}px`, top: `${dialog.y}px`, right: 'auto', bottom: 'auto', width: `${dialog.width}px`, height: `${dialog.height}px`, minHeight: '0', padding: '0', border: dialog.image ? '0' : '1px solid #8ab8d8', borderRadius: dialog.image ? '0' : '12px', background: uiBackground(themePath, dialog.image, '#07111ddd') });
-  Object.assign(text.style, { position: 'absolute', left: `${dialog.message.x}px`, top: `${dialog.message.y}px`, width: `${dialog.message.width}px`, height: `${dialog.message.height}px`, overflow: 'hidden', fontSize: `${dialog.message.size}px`, color: `rgba(${dialog.message.color.join(',')})` });
+  Object.assign(text.style, { position: 'absolute', left: `${dialog.message.x}px`, top: `${dialog.message.y}px`, width: `${dialog.message.width}px`, height: `${dialog.message.height}px`, overflowX: 'hidden', overflowY: 'auto', fontSize: `${dialog.message.size}px`, color: `rgba(${dialog.message.color.join(',')})` });
   Object.assign(speaker.style, { position: 'absolute', display: 'grid', placeItems: 'center', left: `${dialog.nameplate.x}px`, top: `${dialog.nameplate.y}px`, width: `${dialog.nameplate.width}px`, height: `${dialog.nameplate.height}px`, color: `rgba(${dialog.nameplate.text.color.join(',')})`, fontSize: `${dialog.nameplate.text.size}px`, background: uiBackground(themePath, dialog.nameplate.image, '#1d344dcc'), borderRadius: dialog.nameplate.image ? '0' : '6px' });
   Object.assign(speakerText.style, { position: 'absolute', left: `${dialog.nameplate.text.x || 0}px`, top: `${dialog.nameplate.text.y || 0}px`, width: `${dialog.nameplate.text.width}px`, height: `${dialog.nameplate.text.height}px`, display: 'grid', placeItems: 'center', overflow: 'hidden' });
   Object.assign(choiceBox.style, { position: 'absolute', left: `${choices.x - dialog.x}px`, top: `${choices.y - dialog.y}px`, width: `${choices.width}px`, height: `${choices.height}px`, overflowY: 'auto', overflowX: 'hidden' });
@@ -33,9 +33,24 @@ function applyPlayerUi(themePath, theme) {
     for (let row = 0; row < fogLayer.height; row++) {
       const t = (row + 1) / fogLayer.height;
       context.fillStyle = `rgba(${r},${g},${b},${a / 255 * 210 / 255 * t * t})`;
-      context.fillRect(0, fogLayer.height - row - 1, fogLayer.width, 1);
+      context.fillRect(0, row, fogLayer.width, 1);
     }
   }
+  const fitStage = () => {
+    const portrait = innerHeight > innerWidth;
+    const scale = portrait
+      ? Math.min(innerWidth / screen.height, innerHeight / screen.width)
+      : Math.min(innerWidth / screen.width, innerHeight / screen.height);
+    stage.style.position = 'fixed';
+    stage.style.left = '50%';
+    stage.style.top = '50%';
+    stage.style.margin = '0';
+    stage.style.transformOrigin = 'center center';
+    stage.style.transform = `translate(-50%, -50%) ${portrait ? 'rotate(90deg) ' : ''}scale(${scale})`;
+  };
+  fitStage();
+  window.addEventListener('resize', fitStage);
+  window.visualViewport?.addEventListener('resize', fitStage);
 }
 
 function makeChoice(label, index) {
@@ -75,7 +90,7 @@ function url(type, name, pose) {
     const c = runtime.program?.characters?.find((x) => x.name === name);
     a = c?.poses?.find((x) => x.name === pose) || a;
   }
-  return a ? `/asset/${a.path.replace(/^assets?[\\/]/, '').replaceAll('\\', '/')}` : name;
+  return a ? `/asset/${a.path.replace(/^asset[\\/]/, '').replaceAll('\\', '/')}` : name;
 }
 function slotClass(slot) {
   return slot === 'far_left' ? 'far-left' : slot === 'far_right' ? 'far-right' : slot;
@@ -230,6 +245,7 @@ const runtime = new NovelRuntime.Runtime({
       }
       $('speaker-text').textContent = speaker;
       $('text').textContent = await rt.textAsync(args[1]);
+      $('text').scrollTop = 0;
       await new Promise(resolve => { $('next').onclick = () => { $('next').onclick = null; resolve(); }; });
     } else if (name === 'wait') {
       if (args[0] < 0n || args[0] > 2147483647n) throw Error('待機時間が不正です');
@@ -253,6 +269,6 @@ const runtime = new NovelRuntime.Runtime({
   const ui = await (await fetch('/api/player-ui')).json();
   applyPlayerUi(ui.path, ui.theme);
   const settings = await (await fetch('/api/scene-config')).json();
-  const name = new URLSearchParams(location.search).get('source') || settings.start_scene || 'main.tds';
+  const name = new URLSearchParams(location.search).get('source') || settings.start_file;
   await runtime.run(await loadScene(name));
 })().catch(error => { $('speaker-text').textContent = 'PLAYER ERROR'; $('text').textContent = error.message; $('choices').replaceChildren(); });

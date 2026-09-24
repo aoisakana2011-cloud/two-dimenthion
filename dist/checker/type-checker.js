@@ -18,8 +18,12 @@ const ALLOWED_EXTENSIONS = {
 function validAssetPath(path) {
     if (!path || /^(?:[A-Za-z]:|[\\/])/.test(path))
         return false;
+    if (path.includes('\\'))
+        return false;
     const parts = path.replace(/\\/g, '/').split('/');
-    return parts.every((part) => part.length > 0 && part !== '.' && part !== '..' && !/[<>:"|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part));
+    if (parts.length < 2 || parts[0] !== 'asset')
+        return false;
+    return parts.slice(1).every((part) => part.length > 0 && part !== '.' && part !== '..' && !/[<>:"|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part));
 }
 function typeName(type) {
     if (typeof type === 'string')
@@ -269,8 +273,6 @@ function checkDuration(expression, variables, ctx, loc, label) {
 function checkFade(args, variables, ctx, loc) {
     if (!args.length)
         return;
-    if (args.length === 1 && args[0].kind === 'literal' && args[0].value === 'instant')
-        return;
     if (args.length === 2 && args[0].kind === 'literal' && args[0].value === 'fade' && expressionType(args[1], variables, ctx) === 'int')
         checkDuration(args[1], variables, ctx, loc, 'fade の時間');
     if (args.length !== 2 || args[0].kind !== 'literal' || args[0].value !== 'fade' || expressionType(args[1], variables, ctx) !== 'int')
@@ -279,13 +281,11 @@ function checkFade(args, variables, ctx, loc) {
 function checkAudioTransition(args, variables, ctx, loc) {
     if (!args.length)
         return;
-    if (args.length === 1 && args[0].kind === 'literal' && args[0].value === 'instant')
-        return;
     if (args.length === 2 && args[0].kind === 'literal' && args[0].value === 'crossfade' && expressionType(args[1], variables, ctx) === 'int') {
         checkDuration(args[1], variables, ctx, loc, 'crossfade の時間');
         return;
     }
-    throw new TypeCheckError(`${loc}: 音声遷移は instant または crossfade <int> で指定してください`);
+    throw new TypeCheckError(`${loc}: 音声遷移は crossfade <int> で指定してください`);
 }
 function checkCommand(name, args, variables, ctx, locStr) {
     const getArgStr = (idx) => {
@@ -297,11 +297,6 @@ function checkCommand(name, args, variables, ctx, locStr) {
     if (name === 'show' && args[0]?.kind === 'literal' && args[0].value !== 'image' && !/^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$/.test(String(args[0].value))) {
         throw new TypeCheckError(`${locStr}: show は show <character>.<pose> <position> または show image <id> <position> を使用してください`);
     }
-    // Keep the legacy instant transition spelling compatible with the one-argument commands.
-    if (name === 'bgm' && args.length === 2 && args[1].kind === 'literal' && args[1].value === 'instant')
-        args = args.slice(0, 1);
-    if (name === 'play' && args[0]?.kind === 'literal' && args[0].value === 'bgm' && args.length === 3 && args[2].kind === 'literal' && args[2].value === 'instant')
-        args = args.slice(0, 2);
     switch (name) {
         case 'bg': {
             if (args.length !== 1)
@@ -355,7 +350,7 @@ function checkCommand(name, args, variables, ctx, locStr) {
                     throw new TypeCheckError(`${locStr}: show は show <character>.<pose> <position> で指定してください`);
                 const [, charName, pose] = poseReference;
                 const pos = getArgStr(1);
-                if (!['far_left', 'left', 'center', 'right', 'far_right', 'far-left', 'far-right'].includes(pos))
+                if (!['far_left', 'left', 'center', 'right', 'far_right'].includes(pos))
                     throw new TypeCheckError(`${locStr}: 不正な表示位置 '${pos}' です`);
                 const charDef = ctx.characters.get(charName);
                 if (!charDef)
@@ -377,7 +372,7 @@ function checkCommand(name, args, variables, ctx, locStr) {
                     throw new TypeCheckError(`${locStr}: 未定義の画像アセット '${imgName}' です`);
                 if (args.length >= 3) {
                     const pos = getArgStr(2);
-                    if (!['far_left', 'left', 'center', 'right', 'far_right', 'far-left', 'far-right'].includes(pos))
+                    if (!['far_left', 'left', 'center', 'right', 'far_right'].includes(pos))
                         throw new TypeCheckError(`${locStr}: 不正な配置位置 '${pos}' です`);
                 }
             }

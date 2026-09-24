@@ -25,7 +25,7 @@ async function projectGlobalVariables(scenesRoot, dataRoot) {
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
       const file = path.join(directory, entry.name);
       if (entry.isDirectory()) await visit(file);
-      else if (entry.isFile() && /\.(tds|txt)$/i.test(entry.name) && entry.name.toLowerCase() !== 'config.txt') {
+      else if (entry.isFile() && entry.name.toLowerCase().endsWith('.tds')) {
         const relative = path.relative(scenesRoot, file).replaceAll('\\', '/');
         const safeFile = await inside(scenesRoot, relative);
         const script = parse(await fs.readFile(safeFile, 'utf8'));
@@ -155,7 +155,7 @@ async function pack(input, output, roots = {}) {
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
   };
   for (const asset of new Set(Object.values(files).flatMap(assetPaths))) {
-    const relative = asset.replace(/^assets?[\\/]/, '').replaceAll('\\', '/');
+    const relative = asset.replace(/^asset[\\/]/, '').replaceAll('\\', '/');
     const source = await inside(assetsRoot, relative);
     const target = path.resolve(path.dirname(destination), 'asset', relative);
     await ensureOutputDirectory(path.dirname(target));

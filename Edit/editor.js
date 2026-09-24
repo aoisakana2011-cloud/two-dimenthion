@@ -167,12 +167,6 @@ function highlightSource(source) {
       push('string', source.slice(start, i), closed);
       continue;
     }
-    const hyphenatedLiteral = source.slice(i).match(/^(?:far-left|far-right)\b/);
-    if (hyphenatedLiteral) {
-      for (let offset = 0; offset < hyphenatedLiteral[0].length; offset++) i++;
-      push('word', hyphenatedLiteral[0]);
-      continue;
-    }
     if (/[0-9]/.test(c)) { const start = i++; while (i < source.length && /[0-9]/.test(source[i])) i++; push('number', source.slice(start, i)); continue; }
     if (/[A-Za-z_]/.test(c)) { const start = i++; while (i < source.length && /[A-Za-z0-9_]/.test(source[i])) i++; push('word', source.slice(start, i)); continue; }
     const pair = source.slice(i, i + 2);
@@ -185,7 +179,7 @@ function highlightSource(source) {
   const significant = tokens.filter((token) => token.kind !== 'space' && token.kind !== 'comment');
   const keywords = new Set(['scene', 'asset', 'character', 'pose', 'struct', 'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'clear', 'play', 'wait', 'effect', 'const', 'global', 'set', 'unset', 'if', 'elif', 'else', 'and', 'or', 'not', 'for', 'from', 'to', 'step', 'while', 'choice', 'fn', 'return', 'goto', 'include']);
   const types = new Set(['int', 'str', 'none', 'dict']);
-  const builtins = new Set(['narrator', 'left', 'center', 'right', 'far_left', 'far_right', 'far-left', 'far-right', 'fade', 'black', 'white', 'async', 'blocking', 'voice', 'video', 'image', 'se']);
+  const builtins = new Set(['narrator', 'left', 'center', 'right', 'far_left', 'far_right', 'fade', 'black', 'white', 'async', 'blocking', 'voice', 'video', 'image', 'se']);
   for (const token of significant) {
     if (token.kind !== 'word') continue;
     if (types.has(token.value)) token.role = 'type';
@@ -648,13 +642,13 @@ function candidatesFor(context) {
     const poses = charDefs.get(args[0].slice(0, -1));
     return poses && poses.size ? [...poses] : ['normal', 'smile', 'sad', 'angry'];
   }
-  if (command === 'show' && args.length === 1 && args[0].includes('.')) return ['far_left', 'left', 'center', 'right', 'far_right', 'far-left', 'far-right'];
+  if (command === 'show' && args.length === 1 && args[0].includes('.')) return ['far_left', 'left', 'center', 'right', 'far_right'];
   if (command === 'show' && args.length === 2 && args[0].includes('.')) return ['fade'];
   if (command === 'show' && args[0] === 'image' && args.length === 1) {
     const imgs = projectAssets.filter((a) => a.type === 'image').map((a) => a.name);
     return [...new Set([...imgs, ...(catalog.image || [])])];
   }
-  if (command === 'show' && args[0] === 'image' && args.length === 2) return ['far_left', 'left', 'center', 'right', 'far_right', 'far-left', 'far-right'];
+  if (command === 'show' && args[0] === 'image' && args.length === 2) return ['far_left', 'left', 'center', 'right', 'far_right'];
   if (command === 'hide') {
     if (args.length === 0) return [...charDefs.keys()];
     if (args.length === 1) return ['fade'];
@@ -1032,12 +1026,6 @@ function formatTokens(line) {
         if (line[index++] === '"') break;
       }
       tokens.push({ kind: 'string', value: line.slice(start, index) });
-      continue;
-    }
-    const hyphenatedLiteral = line.slice(index).match(/^(?:far-left|far-right)\b/);
-    if (hyphenatedLiteral) {
-      tokens.push({ kind: 'word', value: hyphenatedLiteral[0] });
-      index += hyphenatedLiteral[0].length;
       continue;
     }
     if (/[A-Za-z_]/.test(char)) {
@@ -2296,7 +2284,7 @@ const syntaxRecipes = {
   say: { description: '話者を省略できるのは本文が文字列リテラルの場合だけです。変数や関数呼び出しを本文にする場合は話者を書きます。', snippet: 'say narrator "¦本文"\n' },
   bg: { description: 'asset bg で宣言済みの背景名を指定します。ここではパスを直接書きません。', snippet: 'bg ¦background\n' },
   bgm: { description: 'asset bgm で宣言済みの BGM 名を指定します。', snippet: 'bgm ¦music\n' },
-  show: { description: 'character の pose を表示します。位置は far_left / left / center / right / far_right（far-left / far-right も可）を使えます。', snippet: 'show hero.normal center¦\n' },
+  show: { description: 'character の pose を表示します。位置は far_left / left / center / right / far_right を使えます。', snippet: 'show hero.normal center¦\n' },
   hide: { description: '表示中の立ち絵を消します。', snippet: 'hide ¦hero\n' },
   if: { description: '条件が真のときだけブロックを実行します。', snippet: 'if ¦condition {\n  \n}\n' },
   for: { description: '開始から終了まで繰り返します。step は省略できます。', snippet: 'for i from 0 to ¦10 {\n  \n}\n' },

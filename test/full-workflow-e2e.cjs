@@ -42,12 +42,13 @@ async function stopServer(child) {
   const bootstrap = path.join(tempRoot, 'bootstrap');
   const projectName = 'E2E title';
   const projectRoot = path.join(tempRoot, projectName);
-  await Promise.all([fs.mkdir(home), fs.mkdir(bootstrap)]);
+  await fs.mkdir(home);
   const env = { ...process.env, USERPROFILE: home, HOME: home };
   let server;
   let browser;
   try {
-    server = await startServer(bootstrap, env);
+    const startupProject = path.join(root, 'Title');
+    server = await startServer(startupProject, env);
     browser = await chromium.launch({ channel: 'msedge', headless: true });
     const context = await browser.newContext();
     const editorPage = await context.newPage();
@@ -61,7 +62,7 @@ async function stopServer(child) {
     // state isolated under the temporary home directory.
     await editorPage.locator('[data-menu="file"]').click();
     await editorPage.locator('[data-menu-action="new-project"]').click();
-    await editorPage.waitForFunction((expected) => document.querySelector('#project-picker-path')?.value === expected, bootstrap);
+    await editorPage.waitForFunction((expected) => document.querySelector('#project-picker-path')?.value === expected, startupProject);
     await editorPage.locator('#project-picker-path').fill(tempRoot);
     await editorPage.locator('#project-picker-go').click();
     await editorPage.waitForFunction((expected) => document.querySelector('#project-picker-path')?.value === expected, tempRoot);

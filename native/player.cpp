@@ -73,8 +73,7 @@ struct Engine {
             for (const auto& c : runtime.program.at("characters")) if (c.at("name") == id) for (const auto& p : c.at("poses")) if (p.at("name") == pose) relative = p.at("path");
         } else for (const auto& a : runtime.program.at("assets")) if (a.at("type") == type && a.at("name") == id) relative = a.at("path");
         std::replace(relative.begin(), relative.end(), '\\', '/');
-        if (relative.starts_with("assets/")) relative.erase(0, 7);
-        else if (relative.starts_with("asset/")) relative.erase(0, 6);
+        if (relative.starts_with("asset/")) relative.erase(0, 6);
         if (relative.empty()) throw std::runtime_error("Unknown asset: " + id);
         auto base = fs::weakly_canonical(root / "asset"), resolved = fs::canonical(base / fs::u8path(relative));
         auto rel = resolved.lexically_relative(base);
@@ -191,12 +190,7 @@ struct Engine {
         if (fontPath.is_relative()) fontPath = data / fontPath;
         font = TTF_OpenFont(utf8Path(fontPath).c_str(), number("font.size",24));
         if (!font) throw std::runtime_error(SDL_GetError());
-        if (config.contains("dialog.background_image")) dialog = image(data / fs::u8path(config["dialog.background_image"]));
         applyUiTheme(nativeUi, theme, true);
-        if (nativeUi.contains("native_dialog_image")) dialog = skinImage(nativeUi.at("native_dialog_image").get<std::string>());
-        if (nativeUi.contains("native_speaker_image")) speakerSkin = skinImage(nativeUi.at("native_speaker_image").get<std::string>());
-        if (nativeUi.contains("native_choice_image")) choiceSkin = skinImage(nativeUi.at("native_choice_image").get<std::string>());
-        if (nativeUi.contains("native_choice_active_image")) choiceActiveSkin = skinImage(nativeUi.at("native_choice_active_image").get<std::string>());
         mixer = MIX_CreateMixerDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,nullptr);
         if (!mixer) throw std::runtime_error(SDL_GetError());
     }
@@ -295,7 +289,7 @@ struct Engine {
     void sprite(const Sprite& s) {
         float w,h; SDL_GetTextureSize(s.texture,&w,&h);
         float scale = std::min(float(height)/h, float(width)/w); w *= scale; h *= scale;
-        const auto slot = s.position == "far-left" ? "far_left" : s.position == "far-right" ? "far_right" : s.position.c_str();
+        const auto slot = s.position.c_str();
         const float center = slot == std::string("far_left") ? 0.08f : slot == std::string("left") ? 0.26f : slot == std::string("right") ? 0.74f : slot == std::string("far_right") ? 0.92f : 0.50f;
         float x = width * center - w / 2.0f;
         SDL_FRect rect{x,height-h,w,h}; SDL_SetTextureAlphaModFloat(s.texture,s.alpha);
@@ -394,7 +388,7 @@ struct Engine {
                 const auto dot=s(0).find('.');
                 if(dot==std::string::npos) throw std::runtime_error("show requires character.pose or image id");
                 const auto id=s(0).substr(0,dot), pose=s(0).substr(dot+1);
-                const auto position=s(1)=="far_left"?"far-left":s(1)=="far_right"?"far-right":s(1);
+                const auto position=s(1);
                 for(auto it=characters.begin();it!=characters.end();) {
                     if(it->first!=id && it->second.position==position) it=characters.erase(it); else ++it;
                 }
@@ -418,13 +412,15 @@ int run(const fs::path& packagePath, const std::string& mode) {
         if(package.value("format","")!="novel-script-package" || package.at("version")!=1)throw std::runtime_error("Unsupported package format/version");
         novel::Runtime runtime;
         runtime.load=[&](std::string name){
-            if(!name.ends_with(".tds")&&!name.ends_with(".txt"))name+=".tds";
+            if(name.ends_with(".txt")) throw std::runtime_error("Legacy .txt scene files are not supported");
+            if(!name.ends_with(".tds"))name+=".tds";
             if(!package.contains("files")||!package["files"].contains(name))throw std::runtime_error("Missing packaged scene: "+name);
             std::set<std::string> visited;
             std::function<void(const json&, json&)> mergeIncludes = [&](const json& source, json& target){
                 for(const auto& include : source.value("includes", json::array())) {
                     auto includeName = include.get<std::string>();
-                    if(!includeName.ends_with(".tds")&&!includeName.ends_with(".txt"))includeName += ".tds";
+                    if(includeName.ends_with(".txt")) throw std::runtime_error("Legacy .txt scene files are not supported");
+                    if(!includeName.ends_with(".tds"))includeName += ".tds";
                     if(!package["files"].contains(includeName) || !visited.insert(includeName).second) continue;
                     const auto& dependency = package["files"][includeName];
                     mergeIncludes(dependency, target);

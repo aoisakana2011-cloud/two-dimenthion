@@ -38,7 +38,7 @@ function bindLayout(root) {
 const INITIAL_PORT = Number(process.env.PORT || 4173);
 const MAX_PORT_ATTEMPTS = 10;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
-const ALLOWED_EXTENSIONS = new Set(['.tds', '.txt']);
+const ALLOWED_EXTENSIONS = new Set(['.tds']);
 const CONTENT_TYPES = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -118,7 +118,7 @@ async function playerUiTheme() {
     return { path: '', theme: JSON.parse(JSON.stringify(DEFAULT_PLAYER_UI_THEME)) };
   }
   const theme = JSON.parse(await fs.readFile(await safeAssetPath(layout.settings.native_ui_theme), 'utf8'));
-  if (theme.version !== 1) throw Error('再生機UIテーマのバージョンが不正です');
+  if (theme.version !== 1 || !theme.screen || !theme.dialog?.message || !theme.dialog?.nameplate?.text || !theme.choices) throw Error('再生機UIテーマは現行のscreen/dialog/choices形式で指定してください');
   return { path: layout.settings.native_ui_theme, theme };
 }
 
@@ -132,35 +132,7 @@ async function updatePlayerUiTheme(theme) {
     await fs.writeFile(await playerUiThemeWriteFile(), JSON.stringify(theme, null, 2) + '\n', 'utf8');
     return { ok: true, theme };
   }
-  if (!theme || theme.version !== 1 || !theme.dialog || !theme.choice) throw Error('再生機UIテーマの形式が不正です');
-  const image = (value) => {
-    const text = String(value || '').replaceAll('\\', '/');
-    if (!text || path.posix.isAbsolute(text) || text.split('/').some((part) => !part || part === '.' || part === '..')) throw Error('UI画像のパスが不正です');
-    return text;
-  };
-  const number = (value, name, minimum = 0) => {
-    if (!Number.isInteger(value) || value < minimum || value > 10000) throw Error(`${name} は有効な整数にしてください`);
-    return value;
-  };
-  const color = (value) => {
-    if (!Array.isArray(value) || value.length !== 4 || value.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) throw Error('文字色はRGBA形式にしてください');
-    return value;
-  };
-  const next = {
-    version: 1,
-    backdrop: { bottom_fog: Boolean(theme.backdrop?.bottom_fog), fog_color: color(theme.backdrop?.fog_color || [255, 250, 253, 255]), fog_height: number(theme.backdrop?.fog_height ?? 300, '靄の高さ', 1), fog_opacity: number(theme.backdrop?.fog_opacity ?? 220, '靄の濃さ') },
-    dialog: {
-      image: image(theme.dialog.image), x: number(theme.dialog.x, '会話欄のX座標'), y: number(theme.dialog.y, '会話欄のY座標'), width: number(theme.dialog.width, '会話欄の幅', 1), height: number(theme.dialog.height, '会話欄の高さ', 1), bottom: number(theme.dialog.bottom, '会話欄の下余白'),
-      speaker: { x: number(theme.dialog.speaker?.x, '話者名のX座標'), y: number(theme.dialog.speaker?.y, '話者名のY座標'), size: number(theme.dialog.speaker?.size, '話者名の文字サイズ', 1) },
-      text: { x: number(theme.dialog.text?.x, '本文のX座標'), y: number(theme.dialog.text?.y, '本文のY座標'), size: number(theme.dialog.text?.size, '本文の文字サイズ', 1), color: color(theme.dialog.text?.color) },
-    },
-    choice: {
-      image: image(theme.choice.image), active_image: image(theme.choice.active_image), width: number(theme.choice.width, '選択肢の幅', 1), height: number(theme.choice.height, '選択肢の高さ', 1), gap: number(theme.choice.gap, '選択肢の間隔'), bottom_gap: number(theme.choice.bottom_gap, '選択肢の下余白'), top_min: number(theme.choice.top_min, '選択肢の上余白'),
-      text: { x: number(theme.choice.text?.x, '選択肢本文のX座標'), y: number(theme.choice.text?.y, '選択肢本文のY座標'), size: number(theme.choice.text?.size, '選択肢本文の文字サイズ', 1), color: color(theme.choice.text?.color) },
-    },
-  };
-  await fs.writeFile(await playerUiThemeWriteFile(), JSON.stringify(next, null, 2) + '\n', 'utf8');
-  return { ok: true, theme: next };
+  throw Error('再生機UIテーマは現行のscreen/dialog/choices形式で指定してください');
 }
 
 async function updateProjectSettings(values) {
@@ -233,7 +205,7 @@ async function imagePathsForProject() {
   const addFile = (file) => { if (/\.(?:png|jpe?g|webp|bmp|gif|tiff?)$/i.test(file)) found.add(path.resolve(file)); };
   const add = async (relativePath) => {
     if (typeof relativePath !== 'string' || !relativePath.trim()) return;
-    const normalized = relativePath.replaceAll('\\', '/').replace(/^assets?\//i, '');
+    const normalized = relativePath.replaceAll('\\', '/').replace(/^asset\//i, '');
     const file = await safeAssetPath(normalized);
     const rel = path.relative(path.resolve(ASSETS_ROOT), file);
     if (!rel || rel === '.' || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw Error(`素材パスがassetフォルダー外です: ${relativePath}`);
@@ -413,6 +385,7 @@ function sceneName(value) {
   if (name.startsWith('/') || name.length > 240 || parts.some((part) => !part)) return null;
   const file = parts.pop();
   if (parts.some((part) => !safeDirectory(part)) || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/.test(file)) return null;
+  if (/\.txt$/i.test(file)) return null;
   name = [...parts, file].join('/');
   return ALLOWED_EXTENSIONS.has(path.extname(name).toLowerCase()) ? name : `${name}.tds`;
 }
@@ -447,7 +420,7 @@ async function listScenes() {
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory() && !entry.isSymbolicLink()) await visit(path.join(directory, entry.name), relative);
-      else if (entry.isFile() && relative.toLowerCase() !== 'config.txt' && ALLOWED_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+      else if (entry.isFile() && ALLOWED_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
         try { await safeScenePath(relative); result.push(relative); }
         catch { /* Ignore links, aliases, and paths outside the scene file rules. */ }
       }
@@ -595,7 +568,7 @@ async function sceneGraph() {
     for (const target of reachability.externalGotos) addEdge(name, sceneName(target) || target, 'goto');
   }
   const config = await readSceneConfig();
-  const start = sceneName(config.start_scene || '');
+  const start = sceneName(config.start_file || '');
   const reachableFiles = new Set(), pending = start ? [start] : [];
   while (pending.length) {
     const id = pending.pop();
@@ -710,7 +683,6 @@ async function readSceneConfig() {
     assertProjectSettingFile(PROJECT_ROOT);
     Object.assign(config, parseSettings(await fs.readFile(SETTING_FILE, 'utf8')));
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  config.start_scene = config.start_file;
   return config;
 }
 
@@ -970,7 +942,7 @@ async function validateSourceAssets(script, file) {
   const diagnostics = [];
   for (const entry of entries) {
     try {
-      await inside(ASSETS_ROOT, String(entry.path || '').replace(/^assets?[\\/]/, ''));
+      await inside(ASSETS_ROOT, String(entry.path || '').replace(/^asset[\\/]/, ''));
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       diagnostics.push({

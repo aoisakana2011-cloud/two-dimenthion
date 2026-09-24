@@ -12,7 +12,7 @@ Status: Cross-layer audit pass completed for the repository flows listed below. 
 - Verification: `npm.cmd run desktop:package:win` created `release/Novel Script Editor-win32-x64/`; package inspection found the editor executable, Native executable, SDL3.dll, 27 Release runtime files, and engine_data. Packaged server smoke reached `http://127.0.0.1:4291`.
 - Syntax/encoding boundary (2026-09-24): the compiler Lexer now accepts only a leading UTF-8 BOM as file metadata without shifting line/column locations; BOMs appearing inside source remain invalid. This closes the gap between formatter normalization and direct IDE/CLI compilation. The syntax reference was synchronized with the implemented include-defined struct visibility rule.
 - Verification: `npm.cmd test` passed 229 tests with 0 failures and 2 expected native skips (227 passed); editor-analysis, Browser, Native SDL smoke, and full-workflow E2E all passed.
-- Syntax-boundary audit (2026-09-24): include-defined struct types are now collected before parsing and merged into the project AST; complete goto paths, include paths, duplicate dictionary keys, ordinary-string escape sequences, CRLF/CR/U+2028/U+2029 line separators, empty path components, Windows-reserved names, and non-canonical asset paths were tested and hardened. Asset/path strings retain the existing Windows-backslash compatibility contract.
+- Syntax-boundary audit (2026-09-24): include-defined struct types are now collected before parsing and merged into the project AST; complete goto paths, include paths, duplicate dictionary keys, ordinary-string escape sequences, CRLF/CR/U+2028/U+2029 line separators, empty path components, Windows-reserved names, and non-canonical asset paths were tested and hardened. Asset paths now require the canonical `asset/` prefix and forward slashes.
 - Verification: `npm.cmd test` passed 228 tests with 0 failures and 2 expected native skips (226 passed); editor-analysis, Browser, Native SDL smoke, and full-workflow E2E all passed.
 - Remaining audit candidate: syntax recovery still masks one entire source line per parse error; same-line multiple-error recovery is not yet a separate diagnostic contract.
 
@@ -97,12 +97,12 @@ Status: Cross-layer audit pass completed for the repository flows listed below. 
 - Branch-chain selection anchoring (2026-09-24): Editor regression coverage now selects a branch body across blank-line removal and verifies both selection endpoints remain attached to the same text after formatting.
 - Keyword-parenthesis spacing (2026-09-24): formatter spacing now separates keyword-led parenthesized expressions (`not (...)`, `return (...)`, `choice (...)`) from ordinary function calls, with direct editor regressions for each structural form.
 - Keyword-parenthesis semantic preservation (2026-09-24): compile-equivalence coverage now includes parenthesized `not`/`return` expressions and a parenthesized choice prompt.
-- Hyphenated position preservation (2026-09-24): formatter tokenization now treats legacy `far-left`/`far-right` positions as atomic literals instead of binary subtraction, with show-character/show-image and compile-equivalence regressions.
-- Hyphenated position completion (2026-09-24): IDE autocomplete now offers both legacy hyphenated and canonical underscored position spellings, matching Lexer, Formatter, and type-checker compatibility.
-- Image-position completion parity (2026-09-24): `show image` now exposes the same legacy and canonical position candidates as character display, with a real `far-right` completion regression.
+- Position formatting (2026-09-24): formatter tokenization and compile-equivalence regressions cover the canonical underscored positions.
+- Position completion (2026-09-24): IDE autocomplete offers only the canonical underscored position spellings.
+- Image-position completion parity (2026-09-24): `show image` exposes the same canonical position candidates as character display.
 - Position syntax-highlighting parity (2026-09-24): canonical and legacy position names are now classified as IDE builtins, and the `show` command help documents both accepted spellings.
-- Image position semantic preservation (2026-09-24): semantic formatting coverage now compiles an image asset displayed with legacy `far-right`, extending compatibility verification beyond character poses.
-- Position tokenizer parity (2026-09-24): syntax highlighting now tokenizes `far-left`/`far-right` atomically and classifies them as builtins, with a DOM-level highlight regression.
+- Image position semantic preservation (2026-09-24): semantic formatting coverage compiles an image asset displayed with canonical `far_right`, extending verification beyond character poses.
+- Position tokenizer parity (2026-09-24): syntax highlighting classifies canonical underscored positions as builtins, with a DOM-level highlight regression.
 - Whole-document selection coverage (2026-09-24): formatting a complete document selection now has an end-to-end regression proving canonical indentation, final newline preservation, and selection endpoints at 0 and the formatted document length.
 - Verification: `npm.cmd test` passed 217 tests with 0 failures and 2 expected native skips (215 passed); editor-analysis, Browser, Native SDL smoke, and full-workflow E2E all passed.
 - If/elif/else chain coverage (2026-09-24): compact conditional chains now have canonical multiline regression coverage; each branch body expands independently while `} elif {` and `} else {` remain joined.
@@ -507,7 +507,7 @@ Remaining compiler risk: the differential corpus covers generated branches, loop
 
 - JavaScriptランタイムに背景・立ち絵・画像・BGM・SE・Voice・画面効果を保持する統一 `SceneState` を追加し、シーン遷移後も状態を維持するようにした。
 - 立ち絵と画像の標準配置を `far_left` / `left` / `center` / `right` / `far_right` の5スロットへ拡張し、同一slotへの表示を新しい演出で原子的に置換するようBrowser/Nativeを揃えた。
-- `show ... instant` を既存のfade構文と互換に追加し、演出状態更新をBrowserホストへ通知するようにした。
+- 演出引数を省略した場合を即時演出として扱い、`fade` を指定した場合だけ時間付き演出にする正規形へ統一した。
 - 回帰テストを追加し、SceneStateのslot置換、BGM状態、goto後の状態保持を確認した。
 - Verification after the implementation and ledger update: `npm.cmd test` with `NOVEL_NATIVE_EXE` passed 180/180 with 0 failures and 0 skips; native build and SDL smoke also passed.
 

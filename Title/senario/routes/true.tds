@@ -1,0 +1,245 @@
+scene route_true_s01 {
+  say narrator "真エンド・全員の旋律・記録 1"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say sora "この記録を、次の世代へ渡したい。"
+  say nene "忘れないためには、言葉にすることが大切だね。"
+  say narrator "二人は古いノートのページを一枚ずつめくった。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 4 {
+    say narrator "散らばっていた断片が、ひとつの物語になった。"
+  } else {
+    say narrator "まだ空白がある。続きを探す必要がある。"
+  }
+  say sora "次のページに進もう。"
+  say nene "うん、最後まで一緒に。"
+  wait 50
+  goto route_true_s02
+}
+
+scene route_true_s02 {
+  say narrator "真エンド・全員の旋律・記録 2"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say sora "この記録を、次の世代へ渡したい。"
+  say nene "忘れないためには、言葉にすることが大切だね。"
+  say narrator "二人は古いノートのページを一枚ずつめくった。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 5 {
+    say narrator "散らばっていた断片が、ひとつの物語になった。"
+  } else {
+    say narrator "まだ空白がある。続きを探す必要がある。"
+  }
+  say sora "次のページに進もう。"
+  say nene "うん、最後まで一緒に。"
+  wait 50
+  goto route_true_s03
+}
+
+scene route_true_s03 {
+  say narrator "真エンド・全員の旋律・記録 3"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say sora "この記録を、次の世代へ渡したい。"
+  say nene "忘れないためには、言葉にすることが大切だね。"
+  say narrator "二人は古いノートのページを一枚ずつめくった。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 6 {
+    say narrator "散らばっていた断片が、ひとつの物語になった。"
+  } else {
+    say narrator "まだ空白がある。続きを探す必要がある。"
+  }
+  say sora "次のページに進もう。"
+  say nene "うん、最後まで一緒に。"
+  wait 50
+  goto route_true_s04
+}
+
+scene route_true_s04 {
+  say narrator "真エンド・全員の旋律・記録 4"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say sora "この記録を、次の世代へ渡したい。"
+  say nene "忘れないためには、言葉にすることが大切だね。"
+  say narrator "二人は古いノートのページを一枚ずつめくった。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 7 {
+    say narrator "散らばっていた断片が、ひとつの物語になった。"
+  } else {
+    say narrator "まだ空白がある。続きを探す必要がある。"
+  }
+  say sora "次のページに進もう。"
+  say nene "うん、最後まで一緒に。"
+  wait 50
+  goto route_true_s05
+}
+
+scene route_true_s05 {
+  say narrator "真エンド・全員の旋律・記録 5"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say sora "この記録を、次の世代へ渡したい。"
+  say nene "忘れないためには、言葉にすることが大切だね。"
+  say narrator "二人は古いノートのページを一枚ずつめくった。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 8 {
+    say narrator "散らばっていた断片が、ひとつの物語になった。"
+  } else {
+    say narrator "まだ空白がある。続きを探す必要がある。"
+  }
+  say sora "次のページに進もう。"
+  say nene "うん、最後まで一緒に。"
+  wait 50
+  goto route_true_s06
+}
+
+scene route_true_s06 {
+  say narrator "真エンド・全員の旋律・記録 6"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say sora "この記録を、次の世代へ渡したい。"
+  say nene "忘れないためには、言葉にすることが大切だね。"
+  say narrator "二人は古いノートのページを一枚ずつめくった。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 9 {
+    say narrator "散らばっていた断片が、ひとつの物語になった。"
+  } else {
+    say narrator "まだ空白がある。続きを探す必要がある。"
+  }
+  say sora "次のページに進もう。"
+  say nene "うん、最後まで一緒に。"
+  wait 50
+  goto route_true_s07
+}
+
+scene route_true_s07 {
+  say narrator "真エンド・全員の旋律・記録 7"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say sora "この記録を、次の世代へ渡したい。"
+  say nene "忘れないためには、言葉にすることが大切だね。"
+  say narrator "二人は古いノートのページを一枚ずつめくった。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 10 {
+    say narrator "散らばっていた断片が、ひとつの物語になった。"
+  } else {
+    say narrator "まだ空白がある。続きを探す必要がある。"
+  }
+  say sora "次のページに進もう。"
+  say nene "うん、最後まで一緒に。"
+  wait 50
+  goto route_true_s08
+}
+
+scene route_true_s08 {
+  say narrator "真エンド・全員の旋律・記録 8"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say sora "この記録を、次の世代へ渡したい。"
+  say nene "忘れないためには、言葉にすることが大切だね。"
+  say narrator "二人は古いノートのページを一枚ずつめくった。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 11 {
+    say narrator "散らばっていた断片が、ひとつの物語になった。"
+  } else {
+    say narrator "まだ空白がある。続きを探す必要がある。"
+  }
+  say sora "次のページに進もう。"
+  say nene "うん、最後まで一緒に。"
+  wait 50
+  goto route_true_s09
+}
+
+scene route_true_s09 {
+  say narrator "真エンド・全員の旋律・記録 9"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say sora "この記録を、次の世代へ渡したい。"
+  say nene "忘れないためには、言葉にすることが大切だね。"
+  say narrator "二人は古いノートのページを一枚ずつめくった。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 12 {
+    say narrator "散らばっていた断片が、ひとつの物語になった。"
+  } else {
+    say narrator "まだ空白がある。続きを探す必要がある。"
+  }
+  say sora "次のページに進もう。"
+  say nene "うん、最後まで一緒に。"
+  wait 50
+  goto route_true_s10
+}
+
+scene route_true_s10 {
+  say narrator "真エンド・全員の旋律・記録 10"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say sora "この記録を、次の世代へ渡したい。"
+  say nene "忘れないためには、言葉にすることが大切だね。"
+  say narrator "二人は古いノートのページを一枚ずつめくった。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 13 {
+    say narrator "散らばっていた断片が、ひとつの物語になった。"
+  } else {
+    say narrator "まだ空白がある。続きを探す必要がある。"
+  }
+  say sora "次のページに進もう。"
+  say nene "うん、最後まで一緒に。"
+  wait 50
+  goto route_true_s11
+}
+
+scene route_true_s11 {
+  say narrator "真エンド・全員の旋律・記録 11"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say sora "この記録を、次の世代へ渡したい。"
+  say nene "忘れないためには、言葉にすることが大切だね。"
+  say narrator "二人は古いノートのページを一枚ずつめくった。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 14 {
+    say narrator "散らばっていた断片が、ひとつの物語になった。"
+  } else {
+    say narrator "まだ空白がある。続きを探す必要がある。"
+  }
+  say sora "次のページに進もう。"
+  say nene "うん、最後まで一緒に。"
+  wait 50
+  goto route_true_s12
+}
+
+scene route_true_s12 {
+  say narrator "真エンド・全員の旋律・記録 12"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say sora "この記録を、次の世代へ渡したい。"
+  say nene "忘れないためには、言葉にすることが大切だね。"
+  say narrator "二人は古いノートのページを一枚ずつめくった。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 15 {
+    say narrator "散らばっていた断片が、ひとつの物語になった。"
+  } else {
+    say narrator "まだ空白がある。続きを探す必要がある。"
+  }
+  say sora "次のページに進もう。"
+  say nene "うん、最後まで一緒に。"
+  wait 50
+  goto route_true_end
+}
+
+scene route_true_end {
+  say narrator "この資料は、新しい章の始まりを示していた。"
+  wait 100
+}
+

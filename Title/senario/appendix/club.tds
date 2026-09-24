@@ -1,0 +1,195 @@
+scene appendix_club_s01 {
+  say narrator "資料編・合唱部日誌・資料1"
+  say sora "この記録も、物語の一部なんだね。"
+  say nene "未来の誰かが読んでくれるといいな。"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say narrator "古い紙の匂いと、雨の音が静かに残っている。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 5 {
+    say narrator "散らばった記録が、ひとつの歴史になった。"
+  } else {
+    say narrator "まだ空白のページが残っている。"
+  }
+  say narrator "ページを閉じ、次の資料へ進む。"
+  wait 50
+  goto appendix_club_s02
+}
+
+scene appendix_club_s02 {
+  say narrator "資料編・合唱部日誌・資料2"
+  say sora "この記録も、物語の一部なんだね。"
+  say nene "未来の誰かが読んでくれるといいな。"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say narrator "古い紙の匂いと、雨の音が静かに残っている。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 5 {
+    say narrator "散らばった記録が、ひとつの歴史になった。"
+  } else {
+    say narrator "まだ空白のページが残っている。"
+  }
+  say narrator "ページを閉じ、次の資料へ進む。"
+  wait 50
+  goto appendix_club_s03
+}
+
+scene appendix_club_s03 {
+  say narrator "資料編・合唱部日誌・資料3"
+  say sora "この記録も、物語の一部なんだね。"
+  say nene "未来の誰かが読んでくれるといいな。"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say narrator "古い紙の匂いと、雨の音が静かに残っている。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 5 {
+    say narrator "散らばった記録が、ひとつの歴史になった。"
+  } else {
+    say narrator "まだ空白のページが残っている。"
+  }
+  say narrator "ページを閉じ、次の資料へ進む。"
+  wait 50
+  goto appendix_club_s04
+}
+
+scene appendix_club_s04 {
+  say narrator "資料編・合唱部日誌・資料4"
+  say sora "この記録も、物語の一部なんだね。"
+  say nene "未来の誰かが読んでくれるといいな。"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say narrator "古い紙の匂いと、雨の音が静かに残っている。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 5 {
+    say narrator "散らばった記録が、ひとつの歴史になった。"
+  } else {
+    say narrator "まだ空白のページが残っている。"
+  }
+  say narrator "ページを閉じ、次の資料へ進む。"
+  wait 50
+  goto appendix_club_s05
+}
+
+scene appendix_club_s05 {
+  say narrator "資料編・合唱部日誌・資料5"
+  say sora "この記録も、物語の一部なんだね。"
+  say nene "未来の誰かが読んでくれるといいな。"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say narrator "古い紙の匂いと、雨の音が静かに残っている。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 5 {
+    say narrator "散らばった記録が、ひとつの歴史になった。"
+  } else {
+    say narrator "まだ空白のページが残っている。"
+  }
+  say narrator "ページを閉じ、次の資料へ進む。"
+  wait 50
+  goto appendix_club_s06
+}
+
+scene appendix_club_s06 {
+  say narrator "資料編・合唱部日誌・資料6"
+  say sora "この記録も、物語の一部なんだね。"
+  say nene "未来の誰かが読んでくれるといいな。"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say narrator "古い紙の匂いと、雨の音が静かに残っている。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 5 {
+    say narrator "散らばった記録が、ひとつの歴史になった。"
+  } else {
+    say narrator "まだ空白のページが残っている。"
+  }
+  say narrator "ページを閉じ、次の資料へ進む。"
+  wait 50
+  goto appendix_club_s07
+}
+
+scene appendix_club_s07 {
+  say narrator "資料編・合唱部日誌・資料7"
+  say sora "この記録も、物語の一部なんだね。"
+  say nene "未来の誰かが読んでくれるといいな。"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say narrator "古い紙の匂いと、雨の音が静かに残っている。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 5 {
+    say narrator "散らばった記録が、ひとつの歴史になった。"
+  } else {
+    say narrator "まだ空白のページが残っている。"
+  }
+  say narrator "ページを閉じ、次の資料へ進む。"
+  wait 50
+  goto appendix_club_s08
+}
+
+scene appendix_club_s08 {
+  say narrator "資料編・合唱部日誌・資料8"
+  say sora "この記録も、物語の一部なんだね。"
+  say nene "未来の誰かが読んでくれるといいな。"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say narrator "古い紙の匂いと、雨の音が静かに残っている。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 5 {
+    say narrator "散らばった記録が、ひとつの歴史になった。"
+  } else {
+    say narrator "まだ空白のページが残っている。"
+  }
+  say narrator "ページを閉じ、次の資料へ進む。"
+  wait 50
+  goto appendix_club_s09
+}
+
+scene appendix_club_s09 {
+  say narrator "資料編・合唱部日誌・資料9"
+  say sora "この記録も、物語の一部なんだね。"
+  say nene "未来の誰かが読んでくれるといいな。"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say narrator "古い紙の匂いと、雨の音が静かに残っている。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 5 {
+    say narrator "散らばった記録が、ひとつの歴史になった。"
+  } else {
+    say narrator "まだ空白のページが残っている。"
+  }
+  say narrator "ページを閉じ、次の資料へ進む。"
+  wait 50
+  goto appendix_club_s10
+}
+
+scene appendix_club_s10 {
+  say narrator "資料編・合唱部日誌・資料10"
+  say sora "この記録も、物語の一部なんだね。"
+  say nene "未来の誰かが読んでくれるといいな。"
+  show sora.normal left fade 100
+  show nene.normal right fade 100
+  say narrator "古い紙の匂いと、雨の音が静かに残っている。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 5 {
+    say narrator "散らばった記録が、ひとつの歴史になった。"
+  } else {
+    say narrator "まだ空白のページが残っている。"
+  }
+  say narrator "ページを閉じ、次の資料へ進む。"
+  wait 50
+  goto appendix_club_end
+}
+
+scene appendix_club_end {
+  say narrator "資料は保存され、いつでも読み返せるようになった。"
+  wait 100
+}
+

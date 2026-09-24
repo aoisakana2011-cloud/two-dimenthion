@@ -3,5 +3,5 @@
 scenario_dir = senario
 asset_dir = asset
 start_file = main.tds
-title = Missa
+title = 雨上がりの帰り道
 native_ui_theme = ui/player-ui.json

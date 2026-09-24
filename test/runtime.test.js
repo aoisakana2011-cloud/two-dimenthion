@@ -41,19 +41,19 @@ test('editor validation returns file-aware syntax diagnostics before compilation
 });
 
 test('editor validation rejects unsupported timed voice modes', async () => {
-  const report = await validateEditorSource('asset voice greeting = "missing.wav"\nplay voice greeting later', 'voice-contract.tds');
+  const report = await validateEditorSource('asset voice greeting = "asset/missing.wav"\nplay voice greeting later', 'voice-contract.tds');
   assert.equal(report.ok, false);
   assert.ok(report.diagnostics.some((diagnostic) => diagnostic.severity === 'error' && /voice|blocking|async/i.test(diagnostic.message)));
 });
 
 test('editor project diagnostics retain the source column of a missing asset', async () => {
-  const source = 'asset bg missing = "missing-background.png"';
+  const source = 'asset bg missing = "asset/missing-background.png"';
   const report = await validateEditorSource(source, 'asset-location.tds');
   const diagnostic = report.diagnostics.find((item) => item.code === 'project-error');
   assert.ok(diagnostic);
   assert.equal(diagnostic.line, 1);
-  assert.equal(diagnostic.column, source.indexOf('missing-background.png') + 1);
-  assert.equal(diagnostic.endColumn, diagnostic.column + 'missing-background.png'.length);
+  assert.equal(diagnostic.column, source.indexOf('asset/missing-background.png') + 1);
+  assert.equal(diagnostic.endColumn, diagnostic.column + 'asset/missing-background.png'.length);
 });
 
 test('editor project diagnostics locate missing goto and include targets', async () => {
@@ -75,7 +75,7 @@ test('editor project diagnostics locate missing goto and include targets', async
 });
 
 test('editor validation keeps independent asset diagnostics beside type errors', async () => {
-  const source = 'asset bg missing = "missing-background.png"\nsay narrator unknown_value';
+  const source = 'asset bg missing = "asset/missing-background.png"\nsay narrator unknown_value';
   const report = await validateEditorSource(source, 'mixed-errors.tds');
   assert.deepEqual(report.diagnostics.map((item) => [item.code, item.line]), [
     ['project-error', 1],
@@ -169,7 +169,7 @@ test('character fields persist as runtime state and support dotted interpolation
     character ayase {
       name = "綾瀬"
       affection = 0
-      pose smile = "assets/char/ayase/smile.png"
+      pose smile = "asset/char/ayase/smile.png"
     }
     set ayase.affection = ayase.affection + 2
   `);
@@ -264,8 +264,8 @@ test('choice selection is recorded before branch SceneState effects', async () =
     sceneState: async (state, event) => { if (event?.name === 'choice') events.push({ state, event }); },
   });
   await rt.run(program(`
-    asset bg first = "first.png"
-    asset bg second = "second.png"
+    asset bg first = "asset/first.png"
+    asset bg second = "asset/second.png"
     choice "route" {
       "first" { bg first }
       "second" { bg second }
@@ -300,18 +300,18 @@ test('runtime rejects writes to const variables', async () => {
 
 test('runtime keeps a unified scene state and replaces a slot atomically', async () => {
   const rt = await run(`
-    asset bgm theme = "theme.ogg"
+    asset bgm theme = "asset/theme.ogg"
     character hero {
       name = "Hero"
-      pose normal = "hero.png"
+      pose normal = "asset/hero.png"
     }
     character friend {
       name = "Friend"
-      pose normal = "friend.png"
+      pose normal = "asset/friend.png"
     }
-    bgm theme instant
+    bgm theme
     show hero.normal far_left
-    show friend.normal far_left instant
+    show friend.normal far_left
   `);
   assert.equal(rt.sceneState.audio.bgm.asset, 'theme');
   assert.equal(rt.sceneState.slots.far_left, 'friend');
@@ -322,7 +322,7 @@ test('runtime keeps a unified scene state and replaces a slot atomically', async
 
 test('scene state tracks blocking transition time and leaves instant actions complete', async () => {
   const rt = await run(`
-    asset se click = "click.wav"
+    asset se click = "asset/click.wav"
     effect fade white 10
     wait 5
     play se click
@@ -350,7 +350,7 @@ test('scene state registers blocking character fades and commits hide after comp
   const rt = await run(`
     character hero {
       name = "Hero"
-      pose normal = "hero.png"
+      pose normal = "asset/hero.png"
     }
     show hero.normal left fade 10
     hide hero fade 5
@@ -367,9 +367,9 @@ test('scene state registers blocking character fades and commits hide after comp
 
 test('scene state records concurrent audio and blocking or async video actions', async () => {
   const rt = await run(`
-    asset se click = "click.wav"
-    asset voice hello = "hello.wav"
-    asset video intro = "intro.mp4"
+    asset se click = "asset/click.wav"
+    asset voice hello = "asset/hello.wav"
+    asset video intro = "asset/intro.mp4"
     play se click
     play voice hello
     play video intro async
@@ -390,7 +390,7 @@ test('scene state records concurrent audio and blocking or async video actions',
 
 test('scene state can stop an async media action when its presentation layer is replaced', async () => {
   const rt = await run(`
-    asset video first = "first.mp4"
+    asset video first = "asset/first.mp4"
     play video first async
   `);
   const action = Object.values(rt.sceneState.actions).find((item) => item.kind === 'video');
@@ -402,8 +402,8 @@ test('scene state can stop an async media action when its presentation layer is 
 
 test('scene state records replacement and clear reasons for BGM actions', async () => {
   const rt = await run(`
-    asset bgm first = "first.ogg"
-    asset bgm second = "second.ogg"
+    asset bgm first = "asset/first.ogg"
+    asset bgm second = "asset/second.ogg"
     bgm first
     bgm second
     clear bgm
@@ -424,8 +424,8 @@ test('BGM operations expose replacement and clear action provenance to hosts', a
     choice: async () => 0,
   });
   await rt.run(program(`
-    asset bgm first = "first.ogg"
-    asset bgm second = "second.ogg"
+    asset bgm first = "asset/first.ogg"
+    asset bgm second = "asset/second.ogg"
     bgm first
     play bgm second
     clear bgm
@@ -444,8 +444,8 @@ test('background operations expose replacement and clear provenance to hosts', a
     choice: async () => 0,
   });
   await rt.run(program(`
-    asset bg first = "first.png"
-    asset bg second = "second.png"
+    asset bg first = "asset/first.png"
+    asset bg second = "asset/second.png"
     bg first
     bg second
     clear bg
@@ -458,7 +458,7 @@ test('background operations expose replacement and clear provenance to hosts', a
 
 test('scene state survives goto transfers', async () => {
   const rt = await run(`
-    asset bgm theme = "theme.ogg"
+    asset bgm theme = "asset/theme.ogg"
     bgm theme
     scene start {
       goto next
@@ -477,7 +477,7 @@ test('goto transfers are recorded before the destination continues with inherite
     sceneState: async (state, event) => { if (event?.name === 'goto') events.push(event); },
   });
   await rt.run(program(`
-    asset bg first = "first.png"
+    asset bg first = "asset/first.png"
     scene start {
       bg first
       goto next
@@ -503,7 +503,7 @@ test('external goto transfers preserve SceneState across loaded programs', async
     sceneState: async (state, event) => { if (event?.name === 'goto') events.push(event); },
   });
   await rt.run(program(`
-    asset bg first = "first.png"
+    asset bg first = "asset/first.png"
     bg first
     goto "next.tds"
   `));
@@ -1054,12 +1054,12 @@ test('package includes external scenes, validates assets and remains JSON serial
   const scenesRoot = path.join(dir, 'scenes'), assetsRoot = path.join(dir, 'assets');
   await fs.mkdir(scenesRoot); await fs.mkdir(assetsRoot);
   await fs.writeFile(path.join(assetsRoot, 'hero.png'), 'placeholder');
-  await fs.writeFile(path.join(scenesRoot, 'main.tds'), 'character hero {\nname = "Hero"\npose normal = "assets/hero.png"\n}\nint route = 7\ngoto "next.tds"');
+  await fs.writeFile(path.join(scenesRoot, 'main.tds'), 'character hero {\nname = "Hero"\npose normal = "asset/hero.png"\n}\nint route = 7\ngoto "next.tds"');
   await fs.writeFile(path.join(scenesRoot, 'next.tds'), 'show hero.normal center\nsay narrator str(route)\nint a = 9007199254740993');
   await fs.writeFile(path.join(scenesRoot, 'unused.tds'), 'say narrator "compiled even when unreachable"');
   const data = await pack(path.join(scenesRoot, 'main.tds'), path.join(dir, 'out/game.json'), { scenesRoot, assetsRoot });
   assert.ok(data.files['unused.tds']);
-  assert.equal(data.files['next.tds'].characters.find((character) => character.name === 'hero').poses[0].path, 'assets/hero.png');
+  assert.equal(data.files['next.tds'].characters.find((character) => character.name === 'hero').poses[0].path, 'asset/hero.png');
   assert.equal(data.files['next.tds'].globals.find((entry) => entry.name === 'a').initial.value, '9007199254740993');
   assert.equal(data.files['next.tds'].globals.find((entry) => entry.name === 'say').args[1].name, 'str');
   await assert.rejects(compileProject('asset bg x = "missing.png"', assetsRoot, scenesRoot), /アセット/);

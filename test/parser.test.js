@@ -4,14 +4,14 @@ const { parse, compile, checkTypes, analyzeScript } = require('../dist');
 
 test('parses and compiles assets, globals, characters, functions and scenes', () => {
   const script = parse(`
-    asset bg school = "assets/bg/school.jpg"
-    asset bgm peaceful = "assets/bgm/peaceful.ogg"
-    asset se door = "assets/se/door.wav"
+    asset bg school = "asset/bg/school.jpg"
+    asset bgm peaceful = "asset/bgm/peaceful.ogg"
+    asset se door = "asset/se/door.wav"
     character heroine {
       name = "Heroine"
       affection = 0
-      pose normal = "assets/chara/heroine/normal.png"
-      pose smile = "assets/chara/heroine/smile.png"
+      pose normal = "asset/chara/heroine/normal.png"
+      pose smile = "asset/chara/heroine/smile.png"
     }
     int score = 0
     dict[int] stats = { "hp": 100 }
@@ -95,8 +95,8 @@ test('character fields are typed runtime state with dotted interpolation', () =>
     character ayase {
       name = "綾瀬"
       affection = 0
-      pose normal = "assets/char/ayase/normal.png"
-      pose smile = "assets/char/ayase/smile.png"
+      pose normal = "asset/char/ayase/normal.png"
+      pose smile = "asset/char/ayase/smile.png"
     }
     set ayase.affection = ayase.affection + 1
     say ayase "{ayase.name}: {ayase.affection}"
@@ -112,11 +112,11 @@ test('character fields are typed runtime state with dotted interpolation', () =>
     ['ayase.smile', 'center'],
     ['ayase'],
   ]);
-  assert.throws(() => checkTypes(parse('character ayase {\nname = "A"\npose normal = "a.png"\n}\nshow ayase.missing center')), /ポーズ/);
+  assert.throws(() => checkTypes(parse('character ayase {\nname = "A"\npose normal = "asset/a.png"\n}\nshow ayase.missing center')), /ポーズ/);
 });
 
 test('character declarations require a string name and constant primitive fields', () => {
-  assert.throws(() => checkTypes(parse('character ayase { pose normal = "a.png" }')), /name/);
+  assert.throws(() => checkTypes(parse('character ayase { pose normal = "asset/a.png" }')), /name/);
   assert.throws(() => checkTypes(parse('character ayase { name = 1 }')), /str.*name/);
   assert.throws(() => checkTypes(parse('character ayase {\nname = "A"\naffection = score\n}\nint score = 0')), /定数/);
 });
@@ -133,7 +133,7 @@ test('reports independent type errors on later lines instead of stopping at the 
   const declarations = analyzeScript(parse('int first = "bad"\nint second = "also bad"'));
   assert.deepEqual(declarations.filter((item) => item.severity === 'error').map((item) => item.line), [1, 2]);
 
-  const definitionAndBody = analyzeScript(parse('character hero {\npose normal = "a.png"\n}\nscene main {\nwait "bad"\n}'));
+  const definitionAndBody = analyzeScript(parse('character hero {\npose normal = "asset/a.png"\n}\nscene main {\nwait "bad"\n}'));
   assert.deepEqual(definitionAndBody.filter((item) => item.severity === 'error').map((item) => item.line), [1, 5]);
 });
 
@@ -141,18 +141,18 @@ test('rejects statically invalid non-negative timing values before runtime', () 
   assert.throws(() => checkTypes(parse('scene main { wait -1 }')), /2147483647/);
   assert.throws(() => checkTypes(parse('scene main { wait 2147483648 }')), /2147483647/);
   assert.throws(() => checkTypes(parse('scene main { effect fade black -1 }')), /2147483647/);
-  assert.throws(() => checkTypes(parse('character hero {\nname = "Hero"\npose normal = "hero.png"\n}\nscene main { show hero.normal center fade 2147483648 }')), /2147483647/);
+  assert.throws(() => checkTypes(parse('character hero {\nname = "Hero"\npose normal = "asset/hero.png"\n}\nscene main { show hero.normal center fade 2147483648 }')), /2147483647/);
 });
 
 test('supports explicit blocking and async voice playback modes', () => {
-  const source = 'asset voice greeting = "voice.wav"\nplay voice greeting blocking\nplay voice greeting async';
+  const source = 'asset voice greeting = "asset/voice.wav"\nplay voice greeting blocking\nplay voice greeting async';
   assert.doesNotThrow(() => checkTypes(parse(source)));
   const commands = compile(parse(source)).globals.filter((instruction) => instruction.op === 'command');
   assert.deepEqual(commands.map((instruction) => instruction.args.map((argument) => argument.value)), [
     ['voice', 'greeting', 'blocking'],
     ['voice', 'greeting', 'async'],
   ]);
-  assert.throws(() => checkTypes(parse('asset voice greeting = "voice.wav"\nplay voice greeting later')), /voice/);
+  assert.throws(() => checkTypes(parse('asset voice greeting = "asset/voice.wav"\nplay voice greeting later')), /voice/);
 });
 
 test('parses and type-checks named structs with field access', () => {
@@ -230,9 +230,8 @@ test('accepts a leading UTF-8 BOM without shifting token locations', () => {
   assert.throws(() => parse('say narrator "before"\uFEFF\nsay narrator "after"'), /Unexpected character/);
 });
 
-test('preserves Windows backslashes in asset paths', () => {
-  const program = compile(parse('asset bg school = "assets\\bg\\mori.jpg"'));
-  assert.equal(program.assets[0].path, 'assets\\bg\\mori.jpg');
+test('rejects non-canonical Windows separators in asset paths', () => {
+  assert.throws(() => compile(parse('asset bg school = "asset\\bg\\mori.jpg"')), /アセットパス|asset.*path/i);
 });
 
 test('reports malformed dictionary and blocks at exact locations', () => {
@@ -241,20 +240,19 @@ test('reports malformed dictionary and blocks at exact locations', () => {
   assert.throws(() => parse('scene broken {\n  say narrator "x"\n'), /Expected '}'/);
 });
 
-test('rejects unknown escapes in ordinary strings but preserves path compatibility', () => {
+test('rejects unknown escapes and non-canonical asset paths', () => {
   assert.throws(() => parse(String.raw`say "hello\q"`), /Unknown escape sequence/);
-  const program = compile(parse(String.raw`asset bg school = "assets\q\mori.jpg"`));
-  assert.equal(program.assets[0].path, String.raw`assets\q\mori.jpg`);
+  assert.throws(() => compile(parse(String.raw`asset bg school = "asset\q\mori.jpg"`)), /アセットパス|asset.*path/i);
 });
 
 test('preserves engine commands and scene transitions for the browser player', () => {
   const program = compile(parse(`
-    asset bgm theme = "assets/bgm/theme.ogg"
-    asset se click = "assets/se/click.wav"
-    asset voice hello = "assets/voice/hello.wav"
+    asset bgm theme = "asset/bgm/theme.ogg"
+    asset se click = "asset/se/click.wav"
+    asset voice hello = "asset/voice/hello.wav"
     character hero {
       name = "Hero"
-      pose normal = "assets/chara/hero/normal.png"
+      pose normal = "asset/chara/hero/normal.png"
     }
     int route = 0
     scene start {
@@ -277,7 +275,7 @@ test('preserves engine commands and scene transitions for the browser player', (
   const instructions = program.scenes[0].instructions;
   assert.deepEqual(instructions.map((item) => item.op), ['command', 'command', 'command', 'command', 'command', 'choice', 'goto']);
   assert.equal(instructions[6].scene, 'ending');
-  assert.equal(program.characters[0].poses[0].path, 'assets/chara/hero/normal.png');
+  assert.equal(program.characters[0].poses[0].path, 'asset/chara/hero/normal.png');
 });
 
 test('rejects an initializer whose type does not match its declaration', () => {
@@ -480,11 +478,11 @@ test('analyzes constant if branches and unreachable statements', () => {
 test('warns about statically conflicting character slots without rejecting intentional switches', () => {
   const diagnostics = analyzeScript(parse(`
     character hero {
-      pose normal = "hero-normal.png"
-      pose smile = "hero-smile.png"
+      pose normal = "asset/hero-normal.png"
+      pose smile = "asset/hero-smile.png"
     }
     character friend {
-      pose normal = "friend-normal.png"
+      pose normal = "asset/friend-normal.png"
     }
     scene main {
       show hero.normal left
@@ -504,7 +502,7 @@ test('warns when hide targets a character that is not currently shown', () => {
   const diagnostics = analyzeScript(parse(`
     character hero {
       name = "Hero"
-      pose normal = "hero.png"
+      pose normal = "asset/hero.png"
     }
     scene main {
       hide hero
@@ -521,7 +519,7 @@ test('warns when hide targets a character that is not currently shown', () => {
 
 test('warns when clear image targets an image that is not currently shown', () => {
   const diagnostics = analyzeScript(parse(`
-    asset image logo = "logo.png"
+    asset image logo = "asset/logo.png"
     scene main {
       clear image logo
       show image logo center
@@ -538,8 +536,8 @@ test('warns when clear image targets an image that is not currently shown', () =
 
 test('warns when distinct images occupy the same slot', () => {
   const diagnostics = analyzeScript(parse(`
-    asset image first = "first.png"
-    asset image second = "second.png"
+    asset image first = "asset/first.png"
+    asset image second = "asset/second.png"
     scene main {
       show image first center
       show image second center
@@ -557,8 +555,8 @@ test('warns when distinct images occupy the same slot', () => {
 
 test('checks character slot conflicts independently on branch and loop paths', () => {
   const diagnostics = analyzeScript(parse(`
-    character hero { pose normal = "hero.png" }
-    character friend { pose normal = "friend.png" }
+    character hero { pose normal = "asset/hero.png" }
+    character friend { pose normal = "asset/friend.png" }
     scene main {
       if n == 1 {
         show hero.normal center
@@ -578,7 +576,7 @@ test('checks character slot conflicts independently on branch and loop paths', (
 test('warns when a branch-dependent character hide is a no-op on one path', () => {
   const diagnostics = analyzeScript(parse(`
     int route = 0
-    character hero { pose normal = "hero.png" }
+    character hero { pose normal = "asset/hero.png" }
     scene main {
       if route == 1 {
         show hero.normal center
@@ -598,9 +596,9 @@ test('warns when a branch-dependent character hide is a no-op on one path', () =
 test('reports each possible branch occupant when a later show replaces a merged slot', () => {
   const diagnostics = analyzeScript(parse(`
     int route = 0
-    character hero { pose normal = "hero.png" }
-    character friend { pose normal = "friend.png" }
-    character rival { pose normal = "rival.png" }
+    character hero { pose normal = "asset/hero.png" }
+    character friend { pose normal = "asset/friend.png" }
+    character rival { pose normal = "asset/rival.png" }
     scene main {
       if route == 1 {
         show hero.normal center
@@ -620,9 +618,9 @@ test('reports each possible branch occupant when a later show replaces a merged 
 test('reports each possible branch image when a later image overlays a merged slot', () => {
   const diagnostics = analyzeScript(parse(`
     int route = 0
-    asset image first = "first.png"
-    asset image second = "second.png"
-    asset image final = "final.png"
+    asset image first = "asset/first.png"
+    asset image second = "asset/second.png"
+    asset image final = "asset/final.png"
     scene main {
       if route == 1 {
         show image first center
@@ -641,8 +639,8 @@ test('reports each possible branch image when a later image overlays a merged sl
 
 test('does not report character slot conflicts after a terminating transfer', () => {
   const diagnostics = analyzeScript(parse(`
-    character hero { pose normal = "hero.png" }
-    character friend { pose normal = "friend.png" }
+    character hero { pose normal = "asset/hero.png" }
+    character friend { pose normal = "asset/friend.png" }
     scene main {
       show hero.normal center
       goto end
@@ -655,10 +653,10 @@ test('does not report character slot conflicts after a terminating transfer', ()
 
 test('warns when background or BGM is replaced without an explicit clear', () => {
   const diagnostics = analyzeScript(parse(`
-    asset bg first = "first.png"
-    asset bg second = "second.png"
-    asset bgm calm = "calm.ogg"
-    asset bgm tense = "tense.ogg"
+    asset bg first = "asset/first.png"
+    asset bg second = "asset/second.png"
+    asset bgm calm = "asset/calm.ogg"
+    asset bgm tense = "asset/tense.ogg"
     scene main {
       bg first
       bg second
@@ -680,8 +678,8 @@ test('warns when background or BGM is replaced without an explicit clear', () =>
 
 test('warns when a new video replaces an active async video layer', () => {
   const diagnostics = analyzeScript(parse(`
-    asset video first = "first.mp4"
-    asset video second = "second.mp4"
+    asset video first = "asset/first.mp4"
+    asset video second = "asset/second.mp4"
     scene main {
       play video first async
       play video second async
@@ -698,7 +696,7 @@ test('warns when a new video replaces an active async video layer', () => {
 test('warns when clear bgm is path-dependent after a branch merge', () => {
   const diagnostics = analyzeScript(parse(`
     int route = 0
-    asset bgm theme = "theme.ogg"
+    asset bgm theme = "asset/theme.ogg"
     scene main {
       clear bgm
       if route == 1 {
@@ -720,7 +718,7 @@ test('warns when clear bgm is path-dependent after a branch merge', () => {
 test('warns when clear bg is path-dependent after a branch merge', () => {
   const diagnostics = analyzeScript(parse(`
     int route = 0
-    asset bg first = "first.png"
+    asset bg first = "asset/first.png"
     scene main {
       clear bg
       if route == 1 {
@@ -775,9 +773,14 @@ test('consumes complete unquoted goto paths with punctuation', () => {
 });
 
 test('rejects non-canonical asset path components', () => {
-  assert.throws(() => checkTypes(parse('asset bg broken = "assets//bg.png"')), /アセットパス|asset.*path/i);
-  assert.throws(() => checkTypes(parse('asset bg broken = "assets/./bg.png"')), /アセットパス|asset.*path/i);
-  assert.throws(() => checkTypes(parse('asset bg broken = "assets/con.png"')), /アセットパス|asset.*path/i);
+  assert.throws(() => checkTypes(parse('asset bg broken = "asset//bg.png"')), /アセットパス|asset.*path/i);
+  assert.throws(() => checkTypes(parse('asset bg broken = "asset/./bg.png"')), /アセットパス|asset.*path/i);
+  assert.throws(() => checkTypes(parse('asset bg broken = "asset/con.png"')), /アセットパス|asset.*path/i);
+});
+
+test('rejects removed compatibility spellings', () => {
+  assert.throws(() => checkTypes(parse('asset bgm music = "asset/bgm/music.ogg"\nbgm music instant')));
+  assert.throws(() => checkTypes(parse('character hero { name = "Hero"\npose normal = "asset/char/hero/normal.png" }\nshow hero.normal far-left')));
 });
 
 test('reports empty unreachable scenes and termination through for and while bodies', () => {

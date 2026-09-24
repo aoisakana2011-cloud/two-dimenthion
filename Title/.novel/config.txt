@@ -1,8 +1,0 @@
-# Novel Script runtime configuration
-#
-# Values use: <key> = <value>
-start_scene = main.tds
-title = Novel Script
-variables = .novel/variables.json
-assets = .novel/assets.json
-assets_root = asset

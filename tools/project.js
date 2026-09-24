@@ -6,13 +6,14 @@ const { parse, compile, tokenize } = require('../dist');
 function sceneFile(name) {
   if (typeof name !== 'string') throw Error('不正なシーンパスです');
   name = name.replaceAll('\\', '/');
+  if (/\.txt$/i.test(name)) throw Error('Only .tds scene files are supported');
   const parts = name.split('/');
   const safeDirectory = (part) => part.length > 0 && part.length <= 120 && part !== '.' && part !== '..' && !/[<>:"|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part);
   const file = parts.pop();
   const safeFile = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$/.test(file) && !/[. ]$/.test(file) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(file);
   if (name.startsWith('/') || parts.some((part) => !safeDirectory(part)) || !safeFile) throw Error('Invalid scene path');
   name = [...parts, file].join('/');
-  return /\.(tds|txt)$/i.test(name) ? name : name + '.tds';
+  return /\.tds$/i.test(name) ? name : name + '.tds';
 }
 async function inside(root, relative) {
   const base = await fs.realpath(root);
@@ -51,7 +52,7 @@ async function validateProgram(program, assetsRoot, scenesRoot) {
   ];
   for (const entry of assetEntries) {
     const asset = entry.path;
-    try { await inside(assetsRoot, asset.replace(/^assets?[\\/]/, '')); }
+    try { await inside(assetsRoot, asset.replace(/^asset[\\/]/, '')); }
     catch (e) { errors.push(`アセット '${asset}' を読み込めません: ${fsErrorMessage(e)} (行 ${entry.line || 1})`); }
   }
   const local = new Set(program.scenes.map(s => s.name));

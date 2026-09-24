@@ -17,11 +17,6 @@ export class Lexer {
     const pair = `${c}${this.peek(1) ?? ''}`;
     if (['==', '!=', '>=', '<=', '->', '=>', '..'].includes(pair)) { this.advance(); this.advance(); return this.token('symbol', pair, start); }
     if ('{}[]=():,+-*/%<>!.\\'.includes(c)) { this.advance(); return this.token('symbol', c, start); }
-    const hyphenatedPosition = this.source.slice(this.offset).match(/^(?:far-left|far-right)\b/);
-    if (hyphenatedPosition) {
-      for (let index = 0; index < hyphenatedPosition[0].length; index++) this.advance();
-      return this.token('word', hyphenatedPosition[0], start);
-    }
     if (this.isAlpha(c)) return this.readWord(start);
     throw this.error(`Unexpected character '${c}'`, start);
   }

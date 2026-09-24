@@ -1,0 +1,200 @@
+scene chapter01_s01 {
+  say narrator "第一章・雨の校舎・第1節"
+  show sora.normal left fade 100
+  say sora "この町には、まだ知らない道がある。"
+  show nene.normal right fade 100
+  say nene "記録を残しておけば、いつか誰かが続きを読めるよ。"
+  say narrator "窓から差す光が、古い楽譜の文字を照らした。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 2 {
+    say narrator "手がかりが増えた。鍵の謎に近づいている。"
+  } else {
+    say narrator "まだ答えは見えない。二人は歩き続けた。"
+  }
+  say sora "次は、あの星印を調べよう。"
+  say nene "うん。急がなくても、忘れなければ大丈夫。"
+  wait 50
+  goto chapter01_s02
+}
+
+scene chapter01_s02 {
+  say narrator "第一章・雨の校舎・第2節"
+  show sora.normal left fade 100
+  say sora "この町には、まだ知らない道がある。"
+  show nene.normal right fade 100
+  say nene "記録を残しておけば、いつか誰かが続きを読めるよ。"
+  say narrator "窓から差す光が、古い楽譜の文字を照らした。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 3 {
+    say narrator "手がかりが増えた。鍵の謎に近づいている。"
+  } else {
+    say narrator "まだ答えは見えない。二人は歩き続けた。"
+  }
+  say sora "次は、あの星印を調べよう。"
+  say nene "うん。急がなくても、忘れなければ大丈夫。"
+  wait 50
+  goto chapter01_s03
+}
+
+scene chapter01_s03 {
+  say narrator "第一章・雨の校舎・第3節"
+  show sora.normal left fade 100
+  say sora "この町には、まだ知らない道がある。"
+  show nene.normal right fade 100
+  say nene "記録を残しておけば、いつか誰かが続きを読めるよ。"
+  say narrator "窓から差す光が、古い楽譜の文字を照らした。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 4 {
+    say narrator "手がかりが増えた。鍵の謎に近づいている。"
+  } else {
+    say narrator "まだ答えは見えない。二人は歩き続けた。"
+  }
+  say sora "次は、あの星印を調べよう。"
+  say nene "うん。急がなくても、忘れなければ大丈夫。"
+  wait 50
+  goto chapter01_s04
+}
+
+scene chapter01_s04 {
+  say narrator "第一章・雨の校舎・第4節"
+  show sora.normal left fade 100
+  say sora "この町には、まだ知らない道がある。"
+  show nene.normal right fade 100
+  say nene "記録を残しておけば、いつか誰かが続きを読めるよ。"
+  say narrator "窓から差す光が、古い楽譜の文字を照らした。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 5 {
+    say narrator "手がかりが増えた。鍵の謎に近づいている。"
+  } else {
+    say narrator "まだ答えは見えない。二人は歩き続けた。"
+  }
+  say sora "次は、あの星印を調べよう。"
+  say nene "うん。急がなくても、忘れなければ大丈夫。"
+  wait 50
+  goto chapter01_s05
+}
+
+scene chapter01_s05 {
+  say narrator "第一章・雨の校舎・第5節"
+  show sora.normal left fade 100
+  say sora "この町には、まだ知らない道がある。"
+  show nene.normal right fade 100
+  say nene "記録を残しておけば、いつか誰かが続きを読めるよ。"
+  say narrator "窓から差す光が、古い楽譜の文字を照らした。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 6 {
+    say narrator "手がかりが増えた。鍵の謎に近づいている。"
+  } else {
+    say narrator "まだ答えは見えない。二人は歩き続けた。"
+  }
+  say sora "次は、あの星印を調べよう。"
+  say nene "うん。急がなくても、忘れなければ大丈夫。"
+  wait 50
+  goto chapter01_s06
+}
+
+scene chapter01_s06 {
+  say narrator "第一章・雨の校舎・第6節"
+  show sora.normal left fade 100
+  say sora "この町には、まだ知らない道がある。"
+  show nene.normal right fade 100
+  say nene "記録を残しておけば、いつか誰かが続きを読めるよ。"
+  say narrator "窓から差す光が、古い楽譜の文字を照らした。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 7 {
+    say narrator "手がかりが増えた。鍵の謎に近づいている。"
+  } else {
+    say narrator "まだ答えは見えない。二人は歩き続けた。"
+  }
+  say sora "次は、あの星印を調べよう。"
+  say nene "うん。急がなくても、忘れなければ大丈夫。"
+  wait 50
+  goto chapter01_s07
+}
+
+scene chapter01_s07 {
+  say narrator "第一章・雨の校舎・第7節"
+  show sora.normal left fade 100
+  say sora "この町には、まだ知らない道がある。"
+  show nene.normal right fade 100
+  say nene "記録を残しておけば、いつか誰かが続きを読めるよ。"
+  say narrator "窓から差す光が、古い楽譜の文字を照らした。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 8 {
+    say narrator "手がかりが増えた。鍵の謎に近づいている。"
+  } else {
+    say narrator "まだ答えは見えない。二人は歩き続けた。"
+  }
+  say sora "次は、あの星印を調べよう。"
+  say nene "うん。急がなくても、忘れなければ大丈夫。"
+  wait 50
+  goto chapter01_s08
+}
+
+scene chapter01_s08 {
+  say narrator "第一章・雨の校舎・第8節"
+  show sora.normal left fade 100
+  say sora "この町には、まだ知らない道がある。"
+  show nene.normal right fade 100
+  say nene "記録を残しておけば、いつか誰かが続きを読めるよ。"
+  say narrator "窓から差す光が、古い楽譜の文字を照らした。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 9 {
+    say narrator "手がかりが増えた。鍵の謎に近づいている。"
+  } else {
+    say narrator "まだ答えは見えない。二人は歩き続けた。"
+  }
+  say sora "次は、あの星印を調べよう。"
+  say nene "うん。急がなくても、忘れなければ大丈夫。"
+  wait 50
+  goto chapter01_s09
+}
+
+scene chapter01_s09 {
+  say narrator "第一章・雨の校舎・第9節"
+  show sora.normal left fade 100
+  say sora "この町には、まだ知らない道がある。"
+  show nene.normal right fade 100
+  say nene "記録を残しておけば、いつか誰かが続きを読めるよ。"
+  say narrator "窓から差す光が、古い楽譜の文字を照らした。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 10 {
+    say narrator "手がかりが増えた。鍵の謎に近づいている。"
+  } else {
+    say narrator "まだ答えは見えない。二人は歩き続けた。"
+  }
+  say sora "次は、あの星印を調べよう。"
+  say nene "うん。急がなくても、忘れなければ大丈夫。"
+  wait 50
+  goto chapter01_s10
+}
+
+scene chapter01_s10 {
+  say narrator "第一章・雨の校舎・第10節"
+  show sora.normal left fade 100
+  say sora "この町には、まだ知らない道がある。"
+  show nene.normal right fade 100
+  say nene "記録を残しておけば、いつか誰かが続きを読めるよ。"
+  say narrator "窓から差す光が、古い楽譜の文字を照らした。"
+  set clue = clue + 1
+  set affection = affection + 1
+  if clue >= 11 {
+    say narrator "手がかりが増えた。鍵の謎に近づいている。"
+  } else {
+    say narrator "まだ答えは見えない。二人は歩き続けた。"
+  }
+  say sora "次は、あの星印を調べよう。"
+  say nene "うん。急がなくても、忘れなければ大丈夫。"
+  wait 50
+  goto "chapters/chapter02.tds"
+}
+

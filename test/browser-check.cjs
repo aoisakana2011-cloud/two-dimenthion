@@ -24,16 +24,16 @@ const assert = require('node:assert/strict');
     page.on('request', async request => {
       if (new URL(request.url()).pathname === '/api/compile') compiledSceneName = request.postDataJSON()?.name || '';
     });
-    let source = `asset image first = "${relative}"
- asset image second = "${relative}"
- asset voice greeting = "${audioRelative}"
+    let source = `asset image first = "asset/${relative}"
+ asset image second = "asset/${relative}"
+ asset voice greeting = "asset/${audioRelative}"
 character hero {
   name = "Hero"
-  pose normal = "${relative}"
+  pose normal = "asset/${relative}"
 }
 character friend {
   name = "Friend"
-  pose normal = "${relative}"
+  pose normal = "asset/${relative}"
 }
 str result = str(9007199254740992 + 1)
 fn answer() -> int { int n = 7
@@ -91,9 +91,9 @@ choice "choose" {
     assert.ok(reservedReport.diagnostics.some(item => item.severity === 'error' && /予約語/.test(item.message)));
     const slotSource = `character hero {
   name = "Hero"
-  pose normal = "assets/char/aokami.png"
+  pose normal = "asset/char/aokami.png"
 }
-show hero.normal far_left instant`;
+show hero.normal far_left`;
     const slotValidation = await page.request.post(base + '/api/validate', { data: { name: '__audit.tds', source: slotSource } });
     const slotReport = await slotValidation.json();
     assert.equal(slotReport.ok, true, slotReport.error);

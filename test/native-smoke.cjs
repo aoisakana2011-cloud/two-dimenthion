@@ -12,26 +12,26 @@ const { pack } = require('../tools/pack');
   for (const extension of ['flac', 'ogg', 'mp3']) encode(['-i', path.join(assetsRoot, 'tone.wav'), path.join(assetsRoot, `tone.${extension}`)]);
   for (const extension of ['jpg', 'webp', 'gif']) encode(['-i', path.join(assetsRoot, 'pixel.png'), '-vf', 'scale=160:90', '-frames:v', '1', path.join(assetsRoot, `pixel.${extension}`)]);
   encode(['-f', 'lavfi', '-i', 'color=c=blue:s=160x90:d=0.4:r=25', '-i', path.join(assetsRoot, 'tone.wav'), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', path.join(assetsRoot, 'clip.mp4')]);
-  const source = `asset bg room = "pixel.png"
-asset image first = "pixel.png"
-asset image second = "pixel.png"
-asset image jpeg = "pixel.jpg"
-asset image webp = "pixel.webp"
-asset image gif = "pixel.gif"
-asset bgm music = "tone.wav"
-asset se sound = "tone.wav"
-asset voice narrator_voice = "tone.wav"
-asset se flac = "tone.flac"
-asset se vorbis = "tone.ogg"
-asset se mpthree = "tone.mp3"
-asset video clip = "clip.mp4"
+  const source = `asset bg room = "asset/pixel.png"
+asset image first = "asset/pixel.png"
+asset image second = "asset/pixel.png"
+asset image jpeg = "asset/pixel.jpg"
+asset image webp = "asset/pixel.webp"
+asset image gif = "asset/pixel.gif"
+asset bgm music = "asset/tone.wav"
+asset se sound = "asset/tone.wav"
+asset voice narrator_voice = "asset/tone.wav"
+asset se flac = "asset/tone.flac"
+asset se vorbis = "asset/tone.ogg"
+asset se mpthree = "asset/tone.mp3"
+asset video clip = "asset/clip.mp4"
 character hero {
   name = "Hero"
-  pose normal = "pixel.png"
+  pose normal = "asset/pixel.png"
 }
 character friend {
   name = "Friend"
-  pose normal = "pixel.png"
+  pose normal = "asset/pixel.png"
 }
 int x = 9007199254740993
 bg room
