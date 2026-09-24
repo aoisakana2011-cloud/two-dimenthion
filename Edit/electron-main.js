@@ -9,12 +9,18 @@ const serverPath = path.join(__dirname, 'server.js');
 let editorServer = null;
 let mainWindow = null;
 let quitting = false;
+let closeSavePending = false;
 
 function startEditorServer() {
   return new Promise((resolve, reject) => {
+    const packagedProject = path.join(app.getPath('documents'), 'Novel Script Projects', 'Title');
     editorServer = spawn(process.execPath, [serverPath], {
       cwd: projectRoot,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
+        ...(app.isPackaged && !process.env.NOVEL_PROJECT_ROOT ? { NOVEL_PROJECT_ROOT: packagedProject } : {}),
+      },
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -54,6 +60,28 @@ function createWindow(url) {
       sandbox: true,
     },
   });
+  mainWindow.on('close', (event) => {
+    if (quitting) return;
+    event.preventDefault();
+    if (closeSavePending) return;
+    closeSavePending = true;
+    mainWindow.setEnabled(false);
+    mainWindow.webContents.executeJavaScript('window.novelEditorApi?.saveAll ? window.novelEditorApi.saveAll() : Promise.resolve()')
+      .then(() => {
+        quitting = true;
+        mainWindow.destroy();
+      })
+      .catch(async (error) => {
+        closeSavePending = false;
+        if (!mainWindow.isDestroyed()) mainWindow.setEnabled(true);
+        await dialog.showMessageBox(mainWindow, {
+          type: 'error',
+          title: 'Save failed',
+          message: 'The editor could not save your changes. The window will stay open.',
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      });
+  });
   const editorUrl = new URL(url);
   editorUrl.searchParams.set('desktop', '1');
   mainWindow.loadURL(editorUrl.toString());
@@ -73,7 +101,12 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (!quitting && mainWindow && !mainWindow.isDestroyed()) {
+    event.preventDefault();
+    mainWindow.close();
+    return;
+  }
   quitting = true;
   editorServer?.kill();
 });

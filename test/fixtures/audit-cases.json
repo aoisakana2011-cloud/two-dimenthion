@@ -23,6 +23,9 @@
   "dictionary_side_effect": {
     "source": "dict[int] d = {\"x\": 0, \"y\": 0}\nfn change() -> int { set d[\"y\"] = 9\nreturn 1 }\nset d[\"x\"] = change()"
   },
+  "dictionary_evaluation_order": {
+    "source": "dict[int] values = {\"0\": 0, \"1\": 0}\nint order = 0\nfn value() -> int { set order = order * 10 + 1\nreturn 7 }\nfn key() -> str { set order = order * 10 + 2\nreturn \"1\" }\nset values[key()] = value()\nint result = values[\"1\"]"
+  },
   "const_unset": {
     "source": "const dict[int] d = {\"x\": 1}\nunset d[\"x\"]"
   },
@@ -91,5 +94,8 @@
       "main.tds": "const int x = 1\ngoto \"next.tds\"",
       "next.tds": "set x = 2"
     }
+  },
+  "interpolation_side_effect": {
+    "source": "int state = 0\nfn mutate() -> str { set state = 1\nreturn \"ok\" }\nchoice \"{mutate()}\" {\n\"continue\" { }\n}"
   }
 }

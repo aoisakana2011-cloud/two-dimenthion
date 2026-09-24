@@ -15,8 +15,8 @@ const invalid = {
 };
 const expected = {
   loop: {x:3,hits:1}, condition_effect:{x:1,result:1}, argument_effect:{x:1,result:1},
-  dictionary_alias:{a:{x:1},b:{x:2},result:1}, dictionary_parameter:{a:{x:1},result:1},
-  dictionary_empty:{a:{}}, dictionary_side_effect:{d:{x:1,y:9}},
+  dictionary_alias:{a:{x:1},b:{x:2},result:1}, dictionary_parameter:{a:{x:1},result:1}, interpolation_side_effect:{state:1},
+  dictionary_empty:{a:{}}, dictionary_side_effect:{d:{x:1,y:9}}, dictionary_evaluation_order:{values:{'0':0,'1':7},order:12,result:7},
   const_alias:{a:{x:1},b:{x:2}}, reachable_return:{result:2},
   newline_character:{hero:{name:'Hero'}}, newline_struct:{}, say_expression:{message:'hello'},
   const_shadow:{x:1,result:2}, include_global:{x:1}, include_order:{x:1,result:1},
@@ -73,6 +73,13 @@ test('audit: loop conditions remain dynamic and finite loops preserve following 
   assert.equal(rt.get('hits'),1n);assert.equal(rt.get('result'),4n);
 });
 
+test('audit: a while condition changed by its body remains finite after compilation',async()=>{
+  const source='fn finite() -> int {\nint value = 0\nwhile value < 1 { set value = value + 1 }\nreturn value\n}\nint result = finite()';
+  const rt=new Runtime();
+  await rt.run(compile(parse(source)));
+  assert.equal(rt.get('result'),1n);
+});
+
 test('audit: recursion in unset keys is rejected',()=>{
   assert.throws(()=>compile(parse('dict[int] d = {"x":1}\nfn f() -> str { unset d[f()]\nreturn "x" }')),/再帰/);
 });
@@ -82,10 +89,8 @@ test('audit: empty and mixed dictionaries are checked in assignments, arguments 
   assert.throws(()=>compile(parse('fn f(x: dict[str]) -> none {}\nf({"x":1,"y":"s"})')),/辞書.*型/);
 });
 
-test('audit: removed say forms are rejected while ordinary brace placement remains accepted',()=>{
+test('audit: current syntax accepts ordinary brace placement',()=>{
   assert.doesNotThrow(()=>compile(parse('character hero\n{\nname = "Hero"\n}\nstruct Person\n{\nname: str\n}\nchoice "choose"\n{\n"ok" { say narrator "hello" }\n}')));
-  assert.throws(()=>parse('say hero\n{\n"hello"\n}'), /quoted text/);
-  assert.throws(()=>parse('say hero'), /quoted text/);
 });
 
 test('audit: includes retain functions on external transfers and initialize dependencies first',async t=>{
@@ -107,6 +112,8 @@ test('audit: flow skips dead loops and short-circuited reads but rejects live fu
   await fs.mkdir(scenesRoot);await fs.mkdir(assetsRoot);
   await fs.writeFile(path.join(scenesRoot,'later.tds'),'global int later = 1');
   await fs.writeFile(path.join(scenesRoot,'main.tds'),'while 1 == 2 { say narrator str(later) }\nif 1 == 2 and later == 1 { wait 1 }');
+  await pack(path.join(scenesRoot,'main.tds'),path.join(dir,'game.nsp.json'),{scenesRoot,assetsRoot});
+  await fs.writeFile(path.join(scenesRoot,'main.tds'),'if int("0") == 1 and later == 1 { wait 1 }');
   await pack(path.join(scenesRoot,'main.tds'),path.join(dir,'game.nsp.json'),{scenesRoot,assetsRoot});
   await fs.writeFile(path.join(scenesRoot,'main.tds'),'fn read_later() -> int { return later }\nint result = read_later()');
   await assert.rejects(pack(path.join(scenesRoot,'main.tds'),path.join(dir,'game.nsp.json'),{scenesRoot,assetsRoot}),/初期化前.*later/);

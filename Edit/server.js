@@ -1,27 +1,29 @@
 /* Local-only editor server. Project data is separate from editor files. */
 const http = require('node:http');
 const { spawn } = require('node:child_process');
-const { compileProject, resolveProjectScript, projectContext } = require('../tools/project');
+const { compileProject, resolveProjectScript, projectContext, inside } = require('../tools/project');
 const { pack } = require('../tools/pack');
 const fs = require('node:fs/promises');
+const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
 
 const EDIT_ROOT = __dirname;
 const REPO_ROOT = path.resolve(EDIT_ROOT, '..');
 const RECENT_FILE = path.join(os.homedir(), '.novel-editor', 'recent.json');
-const { projectLayout, projectOption, looksLikeProject, seedEmptyProject, parseSettings, settingTemplate } = require('../tools/project-layout');
+const { projectLayout, projectOption, looksLikeProject, seedEmptyProject, parseSettings, settingTemplate, assertProjectSettingFile } = require('../tools/project-layout');
 const { readStaticVariables } = require('../tools/static-variables');
 let layout = projectLayout(projectOption(require.main === module ? process.argv.slice(2) : []));
 let PROJECT_ROOT = layout.projectRoot;
 let SCENES_ROOT = layout.scenesRoot;
 let SETTING_FILE = layout.settingFile;
 let DATA_ROOT = layout.dataRoot;
-let VARIABLES_FILE = path.join(DATA_ROOT, 'variables.json');
-let ASSETS_FILE = path.join(DATA_ROOT, 'assets.json');
 let ASSETS_ROOT = layout.assetsRoot;
 let NATIVE_PACKAGES_ROOT = layout.buildRoot;
 const CATALOG_FILE = path.join(EDIT_ROOT, 'catalog.txt');
+const NATIVE_EXE = path.join(REPO_ROOT, 'native', 'build', 'Release', 'novel_player.exe');
+const IMAGE_CHECK_EXE = path.join(REPO_ROOT, 'native', 'build', 'Release', 'check_image.exe');
+let nativeBuildInFlight = null;
 
 function bindLayout(root) {
   layout = projectLayout(root);
@@ -29,8 +31,6 @@ function bindLayout(root) {
   SCENES_ROOT = layout.scenesRoot;
   SETTING_FILE = layout.settingFile;
   DATA_ROOT = layout.dataRoot;
-  VARIABLES_FILE = path.join(DATA_ROOT, 'variables.json');
-  ASSETS_FILE = path.join(DATA_ROOT, 'assets.json');
   ASSETS_ROOT = layout.assetsRoot;
   NATIVE_PACKAGES_ROOT = layout.buildRoot;
   return layout;
@@ -43,6 +43,7 @@ const CONTENT_TYPES = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
+  '.md': 'text/markdown; charset=utf-8',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -56,6 +57,26 @@ const CONTENT_TYPES = {
   '.webm': 'video/webm',
 };
 const HIDDEN_BROWSE = new Set(['$recycle.bin', 'system volume information', 'node_modules']);
+const DEFAULT_PLAYER_UI_THEME = Object.freeze({
+  version: 1,
+  screen: {
+    width: 1280,
+    height: 720,
+    backdrop: { bottomFog: { enabled: false, color: [255, 250, 253, 255], height: 300 } },
+  },
+  dialog: {
+    image: '', x: 48, y: 500, width: 1184, height: 190,
+    message: { x: 28, y: 48, width: 1128, height: 112, size: 24, color: [255, 255, 255, 255] },
+    nameplate: {
+      x: 24, y: -46, width: 240, height: 40, image: '',
+      text: { x: 0, y: 0, width: 240, height: 40, size: 22, color: [255, 255, 255, 255] },
+    },
+  },
+  choices: {
+    x: 330, y: 220, width: 620, height: 240, itemHeight: 48, gap: 10, image: '', activeImage: '',
+    text: { x: 24, y: 0, width: 572, height: 48, size: 20, color: [255, 255, 255, 255] },
+  },
+});
 
 function isEditorTree(root) {
   const resolved = path.resolve(root);
@@ -92,25 +113,23 @@ async function projectInfo() {
   return { title: layout.title, projectRoot: PROJECT_ROOT, settings: layout.settings, recent: await readRecentProjects() };
 }
 
-function playerUiThemeFile() {
-  const relative = layout.settings.native_ui_theme;
-  if (!relative) throw Error('再生機UIテーマが設定されていません');
-  const root = path.resolve(ASSETS_ROOT);
-  const file = path.resolve(root, relative);
-  if (path.relative(root, file).startsWith('..') || path.isAbsolute(path.relative(root, file))) throw Error('再生機UIテーマのパスが不正です');
-  return file;
-}
-
 async function playerUiTheme() {
-  const file = playerUiThemeFile();
-  const theme = JSON.parse(await fs.readFile(file, 'utf8'));
+  if (!layout.settings.native_ui_theme) {
+    return { path: '', theme: JSON.parse(JSON.stringify(DEFAULT_PLAYER_UI_THEME)) };
+  }
+  const theme = JSON.parse(await fs.readFile(await safeAssetPath(layout.settings.native_ui_theme), 'utf8'));
   if (theme.version !== 1) throw Error('再生機UIテーマのバージョンが不正です');
   return { path: layout.settings.native_ui_theme, theme };
 }
 
+async function playerUiThemeWriteFile() {
+  if (!layout.settings.native_ui_theme) await updateProjectSettings({ native_ui_theme: 'ui/player-ui.json' });
+  return safeAssetPath(layout.settings.native_ui_theme, { createParents: true });
+}
+
 async function updatePlayerUiTheme(theme) {
   if (theme?.version === 1 && theme.screen && theme.dialog?.message && theme.dialog?.nameplate?.text && theme.choices) {
-    await fs.writeFile(playerUiThemeFile(), JSON.stringify(theme, null, 2) + '\n', 'utf8');
+    await fs.writeFile(await playerUiThemeWriteFile(), JSON.stringify(theme, null, 2) + '\n', 'utf8');
     return { ok: true, theme };
   }
   if (!theme || theme.version !== 1 || !theme.dialog || !theme.choice) throw Error('再生機UIテーマの形式が不正です');
@@ -140,7 +159,7 @@ async function updatePlayerUiTheme(theme) {
       text: { x: number(theme.choice.text?.x, '選択肢本文のX座標'), y: number(theme.choice.text?.y, '選択肢本文のY座標'), size: number(theme.choice.text?.size, '選択肢本文の文字サイズ', 1), color: color(theme.choice.text?.color) },
     },
   };
-  await fs.writeFile(playerUiThemeFile(), JSON.stringify(next, null, 2) + '\n', 'utf8');
+  await fs.writeFile(await playerUiThemeWriteFile(), JSON.stringify(next, null, 2) + '\n', 'utf8');
   return { ok: true, theme: next };
 }
 
@@ -161,27 +180,114 @@ async function updateProjectSettings(values) {
     ...['native_ui_theme'].filter((key) => next[key]).map((key) => `${key} = ${next[key]}`),
   ].join('\n') + '\n';
   parseSettings(source);
+  await ensureProjectDirectory(path.resolve(PROJECT_ROOT, next.scenario_dir), 'scenario_dir');
+  await ensureProjectDirectory(path.resolve(PROJECT_ROOT, next.asset_dir), 'asset_dir');
+  await ensureProjectDirectory(DATA_ROOT, '.novel');
+  assertProjectSettingFile(PROJECT_ROOT);
   await fs.writeFile(SETTING_FILE, source, 'utf8');
   bindLayout(PROJECT_ROOT);
-  await fs.mkdir(SCENES_ROOT, { recursive: true });
-  await fs.mkdir(ASSETS_ROOT, { recursive: true });
-  await fs.mkdir(DATA_ROOT, { recursive: true });
   return projectInfo();
+}
+
+function runTool(command, args, options = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { cwd: options.cwd || REPO_ROOT, env: options.env || process.env, shell: options.shell || false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    const append = (chunk) => { output += String(chunk); if (output.length > 2_000_000) output = output.slice(-2_000_000); };
+    child.stdout.on('data', append); child.stderr.on('data', append);
+    child.once('error', (error) => resolve({ code: 1, output: `${output}\n${error.message}`.trim() }));
+    child.once('close', (code) => resolve({ code: code ?? 1, output: output.trim() }));
+  });
+}
+
+async function nativeRuntimeExists() {
+  try { await fs.access(NATIVE_EXE); return true; }
+  catch { return false; }
+}
+
+function ensureNativeBuild() {
+  if (!nativeBuildInFlight) {
+    nativeBuildInFlight = nativeRuntimeExists().then((exists) => {
+      if (exists) return { code: 0, output: '配布済みNativeランタイムを使用します。' };
+      return runTool(process.execPath, [path.join(REPO_ROOT, 'tools', 'native-build.js')]);
+    })
+      .then((result) => { if (result.code !== 0) throw Error(`ネイティブビルドに失敗しました。\n${result.output}`); return result; })
+      .finally(() => { nativeBuildInFlight = null; });
+  }
+  return nativeBuildInFlight;
+}
+
+async function runNativeTests() {
+  const build = await ensureNativeBuild();
+  const env = { ...process.env, NOVEL_NATIVE_EXE: NATIVE_EXE };
+  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const tests = await runTool(npm, ['test'], { env, shell: process.platform === 'win32' });
+  const output = [`[native build]\n${build.output}`, `[npm test]\n${tests.output}`].filter((part) => part.trim()).join('\n\n');
+  if (tests.code !== 0) return { ok: false, stage: 'tests', output };
+  const smoke = await runTool(process.execPath, [path.join(REPO_ROOT, 'test', 'native-smoke.cjs')], { env });
+  return { ok: smoke.code === 0, stage: smoke.code === 0 ? 'complete' : 'native-smoke', output: [output, `[native smoke]\n${smoke.output}`].filter((part) => part.trim()).join('\n\n') };
+}
+
+async function imagePathsForProject() {
+  const found = new Set();
+  const addFile = (file) => { if (/\.(?:png|jpe?g|webp|bmp|gif|tiff?)$/i.test(file)) found.add(path.resolve(file)); };
+  const add = async (relativePath) => {
+    if (typeof relativePath !== 'string' || !relativePath.trim()) return;
+    const normalized = relativePath.replaceAll('\\', '/').replace(/^assets?\//i, '');
+    const file = await safeAssetPath(normalized);
+    const rel = path.relative(path.resolve(ASSETS_ROOT), file);
+    if (!rel || rel === '.' || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw Error(`素材パスがassetフォルダー外です: ${relativePath}`);
+    addFile(file);
+  };
+  const scan = async (directory) => {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) await scan(file);
+      else if (entry.isFile()) addFile(file);
+    }
+  };
+  await ensureProjectDirectory(ASSETS_ROOT, 'asset_dir');
+  await scan(await realProjectDirectory(ASSETS_ROOT, 'asset_dir'));
+  const catalog = JSON.parse(await fs.readFile(await safeDataPath('assets.json', { createParents: true }), 'utf8'));
+  for (const asset of catalog.assets || []) if (['bg', 'char', 'image'].includes(asset.type)) await add(asset.path);
+  if (layout.settings.native_ui_theme) {
+    const themeRelative = layout.settings.native_ui_theme.replaceAll('\\', '/');
+    const themePath = await safeAssetPath(themeRelative);
+    const rel = path.relative(path.resolve(ASSETS_ROOT), themePath);
+    if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw Error('再生UIテーマのパスがassetフォルダー外です');
+    const theme = JSON.parse(await fs.readFile(themePath, 'utf8'));
+    const directory = path.posix.dirname(themeRelative);
+    for (const image of [theme.dialog?.image, theme.dialog?.nameplate?.image, theme.choices?.image, theme.choices?.activeImage]) if (typeof image === 'string' && image) await add(path.posix.join(directory, image));
+  }
+  return [...found].sort();
+}
+
+async function checkProjectImages() {
+  await ensureNativeBuild();
+  await rebuildAssets();
+  const files = await imagePathsForProject();
+  if (!files.length) return { ok: true, stage: 'complete', output: '検査対象の画像素材がありません。' };
+  const reports = [];
+  for (let i = 0; i < files.length; i += 80) {
+    const result = await runTool(IMAGE_CHECK_EXE, files.slice(i, i + 80));
+    if (result.output) reports.push(result.output);
+    if (result.code !== 0) return { ok: false, stage: 'image-check', output: `${reports.join('\n')}\n\n画像 ${files.length}件中、${Math.min(i + 80, files.length)}件を検査しました。` };
+  }
+  return { ok: true, stage: 'complete', output: `${files.length}件の画像をネイティブ側で読み込みました。\n${reports.join('\n')}` };
 }
 
 async function playWithNativeEngine(name) {
   const scene = sceneName(name);
   if (!scene) throw Error('再生するシーンを指定してください');
-  await fs.access(scenePath(scene));
-  const executable = path.join(REPO_ROOT, 'native', 'build', 'Release', 'novel_player.exe');
-  try { await fs.access(executable); }
-  catch { throw Error('native player が見つかりません。npm.cmd run native:build を実行してください'); }
-  await fs.mkdir(NATIVE_PACKAGES_ROOT, { recursive: true });
+  const sourceFile = await safeScenePath(scene);
+  await fs.access(sourceFile);
+  await ensureNativeBuild();
+  await ensureProjectDirectory(NATIVE_PACKAGES_ROOT, '.novel/build');
   const packageName = path.basename(scene, path.extname(scene)) + '.nsp.json';
-  const packagePath = path.join(NATIVE_PACKAGES_ROOT, packageName);
-  await pack(scenePath(scene), packagePath, { projectRoot: PROJECT_ROOT });
-  const child = spawn(executable, [packagePath], {
-    cwd: path.dirname(executable),
+  const packagePath = await safeBuildPath(packageName, { createParents: true });
+  await pack(sourceFile, packagePath, { projectRoot: PROJECT_ROOT });
+  const child = spawn(NATIVE_EXE, [packagePath], {
+    cwd: path.dirname(NATIVE_EXE),
     detached: true,
     stdio: 'ignore',
     windowsHide: false,
@@ -242,12 +348,18 @@ async function browseDirectories(requested) {
 }
 
 async function prepareProject() {
-  try { await fs.access(SETTING_FILE); } catch { await fs.writeFile(SETTING_FILE, settingTemplate(path.basename(PROJECT_ROOT)), 'utf8'); bindLayout(PROJECT_ROOT); }
-  await fs.mkdir(SCENES_ROOT, { recursive: true });
-  await fs.mkdir(ASSETS_ROOT, { recursive: true });
-  await fs.mkdir(DATA_ROOT, { recursive: true });
+  try { assertProjectSettingFile(PROJECT_ROOT); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    await fs.mkdir(PROJECT_ROOT, { recursive: true });
+    await fs.writeFile(SETTING_FILE, settingTemplate(path.basename(PROJECT_ROOT)), { encoding: 'utf8', flag: 'wx' });
+    bindLayout(PROJECT_ROOT);
+  }
+  await ensureProjectDirectory(SCENES_ROOT, 'scenario_dir');
+  await ensureProjectDirectory(ASSETS_ROOT, 'asset_dir');
+  await ensureProjectDirectory(DATA_ROOT, '.novel');
   for (const schema of ['variables.schema.json', 'assets.schema.json']) {
-    try { await fs.copyFile(path.join(EDIT_ROOT, 'schemas', schema), path.join(DATA_ROOT, schema), require('node:fs').constants.COPYFILE_EXCL); }
+    try { await fs.copyFile(path.join(EDIT_ROOT, 'schemas', schema), await safeDataPath(schema, { createParents: true }), require('node:fs').constants.COPYFILE_EXCL); }
     catch (error) { if (error.code !== 'EEXIST') throw error; }
   }
   await rebuildVariables();
@@ -282,6 +394,10 @@ async function openProjectFolder(requested, create = false) {
 function json(response, status, value) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   response.end(JSON.stringify(value));
+}
+
+function sceneRevision(source) {
+  return crypto.createHash('sha256').update(String(source), 'utf8').digest('hex');
 }
 
 function text(response, status, value) {
@@ -323,31 +439,44 @@ async function readJson(request) {
 
 async function listScenes() {
   const result = [];
+  const root = await realProjectDirectory(SCENES_ROOT, 'scenario_dir');
   async function visit(directory, prefix = '') {
+    const info = await fs.lstat(directory);
+    const resolvedDirectory = await fs.realpath(directory);
+    if (!info.isDirectory() || info.isSymbolicLink() || !isPathInside(root, resolvedDirectory)) throw outsideProjectPath('シナリオパス');
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) await visit(path.join(directory, entry.name), relative);
-      else if (relative.toLowerCase() !== 'config.txt' && ALLOWED_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) result.push(relative);
+      if (entry.isDirectory() && !entry.isSymbolicLink()) await visit(path.join(directory, entry.name), relative);
+      else if (entry.isFile() && relative.toLowerCase() !== 'config.txt' && ALLOWED_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+        try { await safeScenePath(relative); result.push(relative); }
+        catch { /* Ignore links, aliases, and paths outside the scene file rules. */ }
+      }
     }
   }
   await visit(SCENES_ROOT);
   return result.sort((left, right) => left.localeCompare(right, 'ja'));
 }
 
+async function readSceneSource(name) {
+  return fs.readFile(await safeScenePath(name), 'utf8');
+}
+
 async function globalVariableTable(excludeName = '') {
   const { parse } = require('../dist');
   const { inferValueType } = require('../dist/checker/type-checker');
+  await safeDataPath('variables.json', { createParents: true });
   const configured = await readStaticVariables(DATA_ROOT);
   const table = new Map(configured.table);
   table.readonlyNames = new Set();
   for (const name of configured.table.readonlyNames) table.readonlyNames.add(name);
   table.staticDeclarations = configured.declarations;
+  table.constraints = new Map(configured.table.constraints || []);
   const owners = new Map();
   for (const name of configured.table.keys()) owners.set(name, '.novel/variables.json');
   const scripts = [];
   for (const name of await listScenes()) {
     if (name === excludeName) continue;
-    const script = parse(await fs.readFile(path.join(SCENES_ROOT, name), 'utf8'));
+    const script = parse(await readSceneSource(name));
     scripts.push(script);
     const implicitGlobals = name.toLowerCase() === 'main.tds';
     for (const statement of script.globals) {
@@ -384,7 +513,7 @@ async function globalCharacterTable(excludeName = '') {
   const characters = new Map();
   for (const name of await listScenes()) {
     if (name === excludeName) continue;
-    const script = parse(await fs.readFile(path.join(SCENES_ROOT, name), 'utf8'));
+    const script = parse(await readSceneSource(name));
     for (const character of script.characters) {
       if (characters.has(character.name)) throw new Error(`キャラクター '${character.name}' が複数ファイルで宣言されています`);
       const fields = Object.fromEntries(character.properties.map((property) => [property.name, property.value.kind === 'literal' && typeof property.value.value === 'string' ? 'str' : 'int']));
@@ -414,27 +543,56 @@ async function sceneGraph() {
   const { sceneReachability } = require('../dist/checker/analyzer');
   const nodes = [];
   const edges = [];
-  const includes = new Map();
+  const addEdge = (from, to, kind) => {
+    if (!to || edges.some((edge) => edge.from === from && edge.to === to && edge.kind === kind)) return;
+    edges.push({ from, to, kind });
+  };
+  const diagnosticForError = (error, file) => ({
+    code: 'project-error', severity: 'error',
+    message: error instanceof Error ? error.message : String(error),
+    file, line: Number(error?.line || 1), column: Number(error?.column || 1),
+  });
   for (const name of await listScenes()) {
-    const source = await fs.readFile(path.join(SCENES_ROOT, name), 'utf8');
+    const source = await readSceneSource(name);
     let ast;
     try {
       ast = await resolveProjectScript(source, SCENES_ROOT, new Set(), name);
-    } catch {
-      nodes.push({ id: name, label: name, variables: [], error: true });
+    } catch (error) {
+      nodes.push({ id: name, label: name, variables: [], diagnostics: [diagnosticForError(error, name)], error: true });
       continue;
     }
     const reachability = sceneReachability(ast);
-    includes.set(name, new Set(ast.includes.map((target) => sceneName(target)).filter(Boolean)));
+    for (const target of ast.includes.map((value) => sceneName(value)).filter(Boolean)) addEdge(name, target, 'include');
+    let diagnostics = [];
+    try {
+      const report = await validate(source, name);
+      diagnostics = Array.isArray(report.diagnostics) ? report.diagnostics : [];
+    } catch (error) {
+      diagnostics = [diagnosticForError(error, name)];
+    }
+    let error = diagnostics.some((item) => item.severity === 'error');
+    let variables = [];
     try {
       const globalVariables = await globalVariableTable(name);
       const characters = await globalCharacterTable(name);
       const program = await compileProject(source, ASSETS_ROOT, SCENES_ROOT, globalVariables, characters, name);
-      nodes.push({ id: name, label: name, variables: program.variables.map((variable) => ({ ...variable, file: name })) });
-    } catch {
-      nodes.push({ id: name, label: name, variables: [], error: true });
+      variables = program.variables.map((variable) => ({ ...variable, file: name }));
+    } catch (compileError) {
+      error = true;
+      if (!diagnostics.some((item) => item.severity === 'error')) diagnostics.push(diagnosticForError(compileError, name));
     }
-    for (const target of reachability.externalGotos) edges.push({ from: name, to: sceneName(target) || target });
+    nodes.push({
+      id: name,
+      label: name,
+      variables,
+      diagnostics,
+      error,
+      scenes: {
+        total: ast.scenes.length,
+        reachable: reachability.reachableScenes.size,
+      },
+    });
+    for (const target of reachability.externalGotos) addEdge(name, sceneName(target) || target, 'goto');
   }
   const config = await readSceneConfig();
   const start = sceneName(config.start_scene || '');
@@ -443,11 +601,22 @@ async function sceneGraph() {
     const id = pending.pop();
     if (reachableFiles.has(id)) continue;
     reachableFiles.add(id);
-    edges.filter((edge) => edge.from === id).forEach((edge) => pending.push(edge.to));
-    for (const included of includes.get(id) || []) pending.push(included);
+    edges.filter((edge) => edge.from === id && nodes.some((node) => node.id === edge.to)).forEach((edge) => pending.push(edge.to));
   }
   nodes.forEach((node) => { node.reachable = !start || reachableFiles.has(node.id); });
-  return { nodes, edges };
+  return {
+    version: 2,
+    start,
+    nodes,
+    edges,
+    summary: {
+      nodes: nodes.length,
+      reachable: nodes.filter((node) => node.reachable).length,
+      transitions: edges.filter((edge) => edge.kind === 'goto').length,
+      includes: edges.filter((edge) => edge.kind === 'include').length,
+      diagnostics: nodes.reduce((count, node) => count + (node.diagnostics?.length || 0), 0),
+    },
+  };
 }
 
 async function validateFlow(start, end) {
@@ -473,7 +642,7 @@ function validateGraph(graph, start, end) {
       pathFound = currentPath;
       break;
     }
-    const nextNodes = graph.edges.filter((e) => e.from === tail).map((e) => e.to);
+    const nextNodes = graph.edges.filter((e) => e.from === tail && (!e.kind || e.kind === 'goto' || e.kind === 'include')).map((e) => e.to);
     for (const next of nextNodes) {
       if (!visited.has(next)) {
         visited.add(next);
@@ -486,7 +655,12 @@ function validateGraph(graph, start, end) {
   if (!pathFound) return { ok: false, errors: [{ file: end, message: '開始ファイルから終了ファイルへの経路がありません。' }] };
   // Validate every branch in the selected range, but do not continue beyond end.
   const reachable = new Set(), pending = [start];
-  while (pending.length) { const id = pending.pop(); if (reachable.has(id)) continue; reachable.add(id); if (id !== end) graph.edges.filter(e => e.from === id).forEach(e => pending.push(e.to)); }
+  while (pending.length) {
+    const id = pending.pop();
+    if (reachable.has(id)) continue;
+    reachable.add(id);
+    if (id !== end) graph.edges.filter((edge) => edge.from === id && (!edge.kind || edge.kind === 'goto' || edge.kind === 'include')).forEach((edge) => pending.push(edge.to));
+  }
   const checkOrder = [...reachable];
   const errors = [];
 
@@ -533,6 +707,7 @@ function validateGraph(graph, start, end) {
 async function readSceneConfig() {
   const config = { ...layout.settings };
   try {
+    assertProjectSettingFile(PROJECT_ROOT);
     Object.assign(config, parseSettings(await fs.readFile(SETTING_FILE, 'utf8')));
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
   config.start_scene = config.start_file;
@@ -540,6 +715,7 @@ async function readSceneConfig() {
 }
 
 async function rebuildVariables() {
+  const variablesFile = await safeDataPath('variables.json', { createParents: true });
   const configured = await readStaticVariables(DATA_ROOT);
   const entries = new Map();
   for (const declaration of configured.declarations) {
@@ -554,7 +730,7 @@ async function rebuildVariables() {
       const globalVariables = await globalVariableTable(name);
       const characters = await globalCharacterTable(name);
       const { parse, compile } = require('../dist');
-      const source = await fs.readFile(path.join(SCENES_ROOT, name), 'utf8');
+      const source = await readSceneSource(name);
       for (const variable of compile(parse(source), globalVariables, characters).variables) {
         const definitions = (variable.definitions || []).map((location) => ({ ...location, file: name }));
         const references = (variable.references || []).map((reference) => ({ ...reference, file: name }));
@@ -567,28 +743,27 @@ async function rebuildVariables() {
       }
     } catch { /* Invalid files remain available for editor validation. */ }
   }
-  await fs.mkdir(DATA_ROOT, { recursive: true });
   const variables = [...entries.values()];
-  await fs.writeFile(VARIABLES_FILE, JSON.stringify({ $schema: './variables.schema.json', staticVariables: configured.source.staticVariables || [], variables }, null, 2) + '\n', 'utf8');
+  await fs.writeFile(variablesFile, JSON.stringify({ $schema: './variables.schema.json', staticVariables: configured.source.staticVariables || [], variables }, null, 2) + '\n', 'utf8');
   return variables;
 }
 
 async function rebuildAssets() {
+  const assetsFile = await safeDataPath('assets.json', { createParents: true });
   const assets = new Map();
   for (const name of await listScenes()) {
     try {
       const globalVariables = await globalVariableTable(name);
       const characters = await globalCharacterTable(name);
       const { parse, compile } = require('../dist');
-      const source = await fs.readFile(path.join(SCENES_ROOT, name), 'utf8');
+      const source = await readSceneSource(name);
       const program = compile(parse(source), globalVariables, characters);
       program.assets.forEach((asset) => assets.set(`${asset.type}:${asset.name}`, { type: asset.type, name: asset.name, path: asset.path, definedIn: name }));
       program.characters.forEach((character) => character.poses.forEach((pose) => assets.set(`char:${character.name}.${pose.name}`, { type: 'char', name: character.name, pose: pose.name, path: pose.path, definedIn: name })));
     } catch { /* Invalid files remain available for editor validation. */ }
   }
   const result = [...assets.values()];
-  await fs.mkdir(DATA_ROOT, { recursive: true });
-  await fs.writeFile(ASSETS_FILE, JSON.stringify({ $schema: './assets.schema.json', assets: result }, null, 2) + '\n', 'utf8');
+  await fs.writeFile(assetsFile, JSON.stringify({ $schema: './assets.schema.json', assets: result }, null, 2) + '\n', 'utf8');
   return result;
 }
 
@@ -598,6 +773,142 @@ function scenePath(value) {
   const root = path.resolve(SCENES_ROOT);
   const target = path.resolve(root, name);
   return target.startsWith(`${root}${path.sep}`) ? target : null;
+}
+
+function isPathInside(root, target) {
+  const relative = path.relative(root, target);
+  return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`));
+}
+
+function outsideProjectPath(label) {
+  const error = new Error(`${label} は作品フォルダー外を参照できません`);
+  error.code = 'EPATHOUTSIDE';
+  return error;
+}
+
+function assertRegularProjectFile(info, label) {
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1) throw outsideProjectPath(label);
+}
+
+async function realProjectDirectory(directory, label) {
+  const projectRoot = await fs.realpath(PROJECT_ROOT);
+  const resolved = await fs.realpath(directory);
+  if (!isPathInside(projectRoot, resolved)) throw outsideProjectPath(label);
+  return resolved;
+}
+
+async function ensureProjectDirectory(directory, label) {
+  const lexicalProjectRoot = path.resolve(PROJECT_ROOT);
+  const target = path.resolve(directory);
+  if (!isPathInside(lexicalProjectRoot, target)) throw outsideProjectPath(label);
+  const projectRoot = await fs.realpath(PROJECT_ROOT);
+  let probe = target;
+  while (true) {
+    try {
+      const resolved = await fs.realpath(probe);
+      if (!isPathInside(projectRoot, resolved)) throw outsideProjectPath(label);
+      break;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      const parent = path.dirname(probe);
+      if (parent === probe) throw error;
+      probe = parent;
+    }
+  }
+  await fs.mkdir(target, { recursive: true });
+  return realProjectDirectory(target, label);
+}
+
+async function safeScenePath(value, { createParents = false } = {}) {
+  const target = scenePath(value);
+  if (!target) throw new Error('無効なシナリオファイル名です');
+  const root = await realProjectDirectory(SCENES_ROOT, 'scenario_dir');
+
+  // Check existing ancestors before mkdir so a symlink cannot redirect even
+  // directory creation outside the selected project.
+  let probe = path.dirname(target);
+  while (true) {
+    try {
+      const resolved = await fs.realpath(probe);
+      if (!isPathInside(root, resolved)) throw outsideProjectPath('シナリオパス');
+      break;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      const parent = path.dirname(probe);
+      if (parent === probe) throw error;
+      probe = parent;
+    }
+  }
+
+  if (createParents) {
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    const resolvedParent = await fs.realpath(path.dirname(target));
+    if (!isPathInside(root, resolvedParent)) throw outsideProjectPath('シナリオパス');
+  }
+
+  try {
+    const info = await fs.lstat(target);
+    assertRegularProjectFile(info, 'シナリオパス');
+    const resolved = await fs.realpath(target);
+    if (!isPathInside(root, resolved)) throw outsideProjectPath('シナリオパス');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  return target;
+}
+
+async function safeAssetPath(relative, { createParents = false } = {}) {
+  const requested = path.resolve(ASSETS_ROOT, relative);
+  const lexicalRoot = path.resolve(ASSETS_ROOT);
+  if (requested === lexicalRoot || !isPathInside(lexicalRoot, requested)) throw outsideProjectPath('素材パス');
+  if (createParents) await ensureProjectDirectory(path.dirname(requested), 'asset_dir');
+  const root = await realProjectDirectory(ASSETS_ROOT, 'asset_dir');
+  try {
+    const info = await fs.lstat(requested);
+    assertRegularProjectFile(info, '素材パス');
+    const resolved = await fs.realpath(requested);
+    if (!isPathInside(root, resolved)) throw outsideProjectPath('素材パス');
+    return resolved;
+  } catch (error) {
+    if (error.code !== 'ENOENT' || !createParents) throw error;
+    return requested;
+  }
+}
+
+async function safeBuildPath(relative, { createParents = false } = {}) {
+  const requested = path.resolve(NATIVE_PACKAGES_ROOT, relative);
+  const lexicalRoot = path.resolve(NATIVE_PACKAGES_ROOT);
+  if (requested === lexicalRoot || !isPathInside(lexicalRoot, requested)) throw outsideProjectPath('.novel/build');
+  if (createParents) await ensureProjectDirectory(path.dirname(requested), '.novel/build');
+  const root = await realProjectDirectory(NATIVE_PACKAGES_ROOT, '.novel/build');
+  try {
+    const info = await fs.lstat(requested);
+    assertRegularProjectFile(info, '.novel/build');
+    const resolved = await fs.realpath(requested);
+    if (!isPathInside(root, resolved)) throw outsideProjectPath('.novel/build');
+    return resolved;
+  } catch (error) {
+    if (error.code !== 'ENOENT' || !createParents) throw error;
+    return requested;
+  }
+}
+
+async function safeDataPath(relative, { createParents = false } = {}) {
+  const requested = path.resolve(DATA_ROOT, relative);
+  const lexicalRoot = path.resolve(DATA_ROOT);
+  if (requested === lexicalRoot || !isPathInside(lexicalRoot, requested)) throw outsideProjectPath('.novel');
+  if (createParents) await ensureProjectDirectory(path.dirname(requested), '.novel');
+  const root = await realProjectDirectory(DATA_ROOT, '.novel');
+  try {
+    const info = await fs.lstat(requested);
+    assertRegularProjectFile(info, '.novel');
+    const resolved = await fs.realpath(requested);
+    if (!isPathInside(root, resolved)) throw outsideProjectPath('.novel');
+    return resolved;
+  } catch (error) {
+    if (error.code !== 'ENOENT' || !createParents) throw error;
+    return requested;
+  }
 }
 
 function parseCatalog(source) {
@@ -623,10 +934,14 @@ async function readCatalog() {
   return { source, catalog: parseCatalog(source) };
 }
 
+function splitSourceLines(source) {
+  return source.split(/\r\n|[\r\n\u2028\u2029]/);
+}
+
 function collectSyntaxDiagnostics(source, file = 'current') {
   const { parse } = require('../dist');
   const diagnostics = [];
-  const lines = source.split(/\r?\n/);
+  const lines = splitSourceLines(source);
   const maskedLines = [...lines];
   const removed = new Set();
   for (let attempt = 0; attempt < Math.min(lines.length, 100); attempt++) {
@@ -637,9 +952,33 @@ function collectSyntaxDiagnostics(source, file = 'current') {
       const column = Number(error?.token?.column || message.match(/column\s+(\d+)/i)?.[1] || 1);
       const index = line - 1;
       if (index < 0 || index >= maskedLines.length || removed.has(index)) break;
-      diagnostics.push({ code: 'syntax-error', severity: 'error', message, file, line, column });
+      const tokenLength = String(error?.token?.value || '').length;
+      const endColumn = error?.token ? column + Math.max(1, tokenLength) : Math.max(column, lines[index].length + 1);
+      diagnostics.push({ code: 'syntax-error', severity: 'error', message, file, line, column, endColumn });
       removed.add(index);
       maskedLines[index] = ' '.repeat(maskedLines[index].length);
+    }
+  }
+  return diagnostics;
+}
+
+async function validateSourceAssets(script, file) {
+  const entries = [
+    ...(script.assets || []).map((asset) => ({ path: asset.path, line: asset.line, column: asset.column })),
+    ...(script.characters || []).filter((character) => !character.external).flatMap((character) => character.poses.map((pose) => ({ path: pose.path, line: pose.line || character.line, column: pose.column || character.column }))),
+  ];
+  const diagnostics = [];
+  for (const entry of entries) {
+    try {
+      await inside(ASSETS_ROOT, String(entry.path || '').replace(/^assets?[\\/]/, ''));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      diagnostics.push({
+        code: 'project-error', severity: 'error',
+        message: `アセット '${entry.path}' を読み込めません: ${reason}`,
+        file, line: Number(entry.line) || 1, column: Number(entry.column) || 1,
+        endColumn: (Number(entry.column) || 1) + String(entry.path || '').length,
+      });
     }
   }
   return diagnostics;
@@ -653,33 +992,63 @@ async function validate(source, name = '') {
     const { parse } = require('../dist');
     const { analyzeScript } = require('../dist/checker/analyzer');
     const ast = await resolveProjectScript(source, SCENES_ROOT, new Set(), sourceFile);
+    const sourceAssetDiagnostics = await validateSourceAssets(ast, sourceFile);
     const globalVariables = await globalVariableTable(name);
     const characters = await globalCharacterTable(name);
     const context = projectContext(ast, globalVariables, characters, sourceFile);
-    const diagnostics = analyzeScript(ast, sourceFile, context.globals, context.characters);
-    if (diagnostics.some((item) => item.severity === 'error')) return { ok: false, diagnostics, error: diagnostics.find((item) => item.severity === 'error').message };
+    const staticDeclarations = globalVariables.staticDeclarations || [];
+    const analysisScript = staticDeclarations.length
+      ? { ...ast, globals: [...staticDeclarations, ...ast.globals], body: [...staticDeclarations, ...ast.body] }
+      : ast;
+    const diagnostics = analyzeScript(analysisScript, sourceFile, context.globals, context.characters);
+    if (diagnostics.some((item) => item.severity === 'error')) {
+      const combinedDiagnostics = [...diagnostics, ...sourceAssetDiagnostics].sort((left, right) => (left.line - right.line) || (left.column - right.column));
+      return { ok: false, diagnostics: combinedDiagnostics, error: combinedDiagnostics.find((item) => item.severity === 'error').message };
+    }
     try {
-      const program = await compileProject(source, ASSETS_ROOT, SCENES_ROOT, globalVariables, characters, sourceFile);
+      // Keep live IDE validation on the exact same compiler entry point as
+      // /api/compile and the player loader.  This prevents the editor from
+      // accepting a script that only the project compiler can reject.
+      const program = await compileSource(source, sourceFile);
       return { ok: true, diagnostics, statements: ast.body.length, instructions: program.globals.length };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const projectDiagnostics = message.split(/\r?\n/).filter(Boolean).map((entry) => {
         const assetPath = entry.match(/(?:asset|アセット)\s*'([^']+)'/)?.[1] || entry.match(/'(assets[\\/][^']+)'/)?.[1];
-        const assetLine = assetPath ? source.split(/\r?\n/).findIndex((line) => line.includes(assetPath)) + 1 : 0;
+        const sourceLines = splitSourceLines(source);
+        const assetLineIndex = assetPath ? sourceLines.findIndex((line) => line.includes(assetPath)) : -1;
+        const assetLine = assetLineIndex >= 0 ? assetLineIndex + 1 : 0;
+        const assetColumn = assetLineIndex >= 0 ? sourceLines[assetLineIndex].indexOf(assetPath) + 1 : 1;
         const line = Number(entry.match(/line\s+(\d+)/i)?.[1] || entry.match(/行\s*(\d+)/)?.[1] || assetLine || 1);
-        return { code: 'project-error', severity: 'error', message: entry, file: sourceFile, line, column: 1 };
+        const referencedPath = assetPath || entry.match(/'([^']+\.(?:tds|txt))'/i)?.[1];
+        const referencedLineIndex = referencedPath ? sourceLines.findIndex((lineText) => lineText.includes(referencedPath)) : -1;
+        const reportedLine = referencedLineIndex >= 0 ? referencedLineIndex + 1 : line;
+        const locationLine = referencedLineIndex >= 0 ? sourceLines[referencedLineIndex] : '';
+        const column = referencedLineIndex >= 0 ? locationLine.indexOf(referencedPath) + 1 : (line === assetLine ? assetColumn : 1);
+        const endColumn = referencedPath ? column + referencedPath.length : column;
+        return { code: 'project-error', severity: 'error', message: entry, file: sourceFile, line: reportedLine, column, endColumn };
       });
       diagnostics.push(...projectDiagnostics);
       return { ok: false, diagnostics, error: message };
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, diagnostics: [{ code: 'syntax-error', severity: 'error', message, file: name || 'current', line: Number(message.match(/line\s+(\d+)/i)?.[1] || 1), column: Number(message.match(/column\s+(\d+)/i)?.[1] || 1) }], error: message };
+    const projectResolutionError = error?.code === 'ENOENT' || error?.code === 'EISDIR' || /(?:lstat|realpath).*no such file|no such file.*(?:lstat|realpath)/i.test(message);
+    const sourceLines = splitSourceLines(source);
+    const includeLineIndex = sourceLines.findIndex((lineText) => /^\s*include\b/i.test(lineText));
+    const includeTarget = includeLineIndex >= 0 ? sourceLines[includeLineIndex].match(/^\s*include\s+["']?([^\s"']+)/i)?.[1] : '';
+    const line = Number(message.match(/line\s+(\d+)/i)?.[1] || (includeLineIndex >= 0 ? includeLineIndex + 1 : 1));
+    const lineText = sourceLines[line - 1] || '';
+    const column = includeTarget && lineText.includes(includeTarget)
+      ? lineText.indexOf(includeTarget) + 1
+      : Number(message.match(/column\s+(\d+)/i)?.[1] || (includeLineIndex >= 0 ? lineText.indexOf('include') + 1 : 1));
+    const endColumn = includeTarget ? column + includeTarget.length : column;
+    return { ok: false, diagnostics: [{ code: projectResolutionError ? 'project-error' : 'syntax-error', severity: 'error', message, file: name || 'current', line, column, endColumn }], error: message };
   }
 }
 
 async function compileSource(source, name = '') {
-  return compileProject(source, ASSETS_ROOT, SCENES_ROOT, await globalVariableTable(name), await globalCharacterTable(name));
+  return compileProject(source, ASSETS_ROOT, SCENES_ROOT, await globalVariableTable(name), await globalCharacterTable(name), name || 'current');
 }
 
 async function buildWholeProject(name) {
@@ -695,28 +1064,29 @@ async function buildWholeProject(name) {
 
   const diagnostics = [];
   for (const file of sceneFiles) {
-    const source = await fs.readFile(path.join(SCENES_ROOT, file), 'utf8');
+    const source = await readSceneSource(file);
     diagnostics.push(...collectSyntaxDiagnostics(source, file));
   }
 
   if (!diagnostics.length) {
     for (const file of sceneFiles) {
-      const source = await fs.readFile(path.join(SCENES_ROOT, file), 'utf8');
+      const source = await readSceneSource(file);
       const report = await validate(source, file);
       diagnostics.push(...(report.diagnostics || []));
     }
   }
 
   const uniqueDiagnostics = [...new Map(diagnostics.map((item) => [
-    JSON.stringify([item.code, item.severity, item.file, item.line, item.column, item.endLine, item.message]), item,
+    JSON.stringify([item.code, item.severity, item.file, item.line, item.column, item.endLine, item.endColumn, item.message]), item,
   ])).values()];
   const firstError = uniqueDiagnostics.find((item) => item.severity === 'error');
   if (firstError) return { ok: false, build: true, fileCount: sceneFiles.length, diagnostics: uniqueDiagnostics, error: firstError.message };
 
   try {
-    await fs.mkdir(NATIVE_PACKAGES_ROOT, { recursive: true });
+    await ensureProjectDirectory(NATIVE_PACKAGES_ROOT, '.novel/build');
     const packageName = `${path.basename(entry, path.extname(entry))}.nsp.json`;
-    const data = await pack(scenePath(entry), path.join(NATIVE_PACKAGES_ROOT, packageName), { scenesRoot: SCENES_ROOT, assetsRoot: ASSETS_ROOT });
+    const packagePath = await safeBuildPath(packageName, { createParents: true });
+    const data = await pack(scenePath(entry), packagePath, { projectRoot: PROJECT_ROOT, scenesRoot: SCENES_ROOT, assetsRoot: ASSETS_ROOT });
     return {
       ok: true, build: true, fileCount: sceneFiles.length, diagnostics: uniqueDiagnostics,
       name: packageName, path: `.novel/build/${packageName}`,
@@ -735,13 +1105,8 @@ async function buildWholeProject(name) {
 async function serveStatic(response, pathname) {
   if (pathname === '/asset' || pathname.startsWith('/asset/')) {
     const relative = decodeURIComponent(pathname.slice('/asset/'.length));
-    const requested = path.resolve(ASSETS_ROOT, relative);
-    const root = path.resolve(ASSETS_ROOT);
-    if (!requested.startsWith(`${root}${path.sep}`)) {
-      text(response, 403, 'Forbidden');
-      return;
-    }
     try {
+      const requested = await safeAssetPath(relative);
       const stat = await fs.stat(requested);
       if (!stat.isFile()) {
         text(response, 404, 'Not found');
@@ -756,6 +1121,10 @@ async function serveStatic(response, pathname) {
       response.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'no-store' });
       response.end(await fs.readFile(requested));
     } catch (error) {
+      if (error?.code === 'EPATHOUTSIDE') {
+        text(response, 403, 'Forbidden');
+        return;
+      }
       if (error && error.code === 'ENOENT') {
         text(response, 404, 'Not found');
         return;
@@ -765,20 +1134,22 @@ async function serveStatic(response, pathname) {
     return;
   }
   const relative = pathname === '/' ? 'index.html' : pathname.slice(1);
-  if (!['index.html', 'editor.js', 'styles.css', 'player.html', 'player.js', 'runtime.js', 'player.css', 'flow.html', 'flow.js', 'flow-validation.js', 'flow.css', 'engine.html', 'assets/desktop-icon.png'].includes(relative)) {
+  if (!['index.html', 'editor.js', 'styles.css', 'player.html', 'player.js', 'runtime.js', 'player.css', 'flow.html', 'flow.js', 'flow-validation.js', 'flow.css', 'engine.html', 'assets/desktop-icon.png', 'shared/formatter.js', 'docs/tds-language-and-editor-guide.md'].includes(relative)) {
     text(response, 404, 'Not found');
     return;
   }
   const extension = path.extname(relative);
   response.writeHead(200, { 'Content-Type': CONTENT_TYPES[extension], 'Cache-Control': 'no-store' });
-  response.end(await fs.readFile(path.join(EDIT_ROOT, relative)));
+  const root = relative.startsWith('shared/') || relative.startsWith('docs/') ? REPO_ROOT : EDIT_ROOT;
+  response.end(await fs.readFile(path.join(root, relative)));
 }
 
 async function serveNativePackage(response, url) {
   const name = nativePackageName(url.searchParams.get('name'));
   if (!name) return json(response, 400, { error: 'Invalid native package name' });
-  const file = path.join(NATIVE_PACKAGES_ROOT, name);
   try {
+    const file = await safeBuildPath(name).catch((error) => { if (error?.code === 'EPATHOUTSIDE') return ''; throw error; });
+    if (!file) return json(response, 403, { error: 'Invalid native package path' });
     const data = await fs.readFile(file);
     response.writeHead(200, {
       'Content-Type': 'application/json; charset=utf-8',
@@ -825,11 +1196,22 @@ async function handleApi(request, response, url) {
   }
   if (request.method === 'DELETE' && url.pathname === '/api/file') {
     const body = await readJson(request); const name = String(body.path || '').replaceAll('\\', '/');
-    const permittedRoots = [layout.settings.asset_dir, layout.settings.scenario_dir];
-    if (!permittedRoots.some((root) => name.startsWith(`${root}/`)) || !/^[A-Za-z0-9_./-]+$/.test(name) || name.includes('..')) return json(response, 400, { error: '削除できないパスです' });
-    const target = path.resolve(PROJECT_ROOT, name); const roots = [ASSETS_ROOT, SCENES_ROOT];
-    if (!roots.some((root) => target.startsWith(`${path.resolve(root)}${path.sep}`))) return json(response, 400, { error: '削除できない場所です' });
-    await fs.unlink(target);
+    if (!/^[A-Za-z0-9_./-]+$/.test(name) || name.split('/').some((part) => !part || part === '.' || part === '..')) return json(response, 400, { error: '削除できないパスです' });
+    const assetPrefix = `${layout.settings.asset_dir}/`;
+    const scenePrefix = `${layout.settings.scenario_dir}/`;
+    try {
+      const target = name.startsWith(assetPrefix)
+        ? await safeAssetPath(name.slice(assetPrefix.length))
+        : name.startsWith(scenePrefix)
+          ? await safeScenePath(name.slice(scenePrefix.length))
+          : null;
+      if (!target) return json(response, 400, { error: '削除できない場所です' });
+      const info = await fs.lstat(target);
+      if (!info.isFile()) return json(response, 400, { error: 'ファイルだけ削除できます' });
+      await fs.unlink(target);
+    } catch (error) {
+      return json(response, error?.code === 'ENOENT' ? 404 : 400, { error: error instanceof Error ? error.message : String(error) });
+    }
     await rebuildVariables();
     await rebuildAssets();
     return json(response, 200, { ok: true });
@@ -840,46 +1222,34 @@ async function handleApi(request, response, url) {
     return json(response, 200, await readSceneConfig());
   }
   if (request.method === 'GET' && url.pathname === '/api/variables') {
-    try { return json(response, 200, JSON.parse(await fs.readFile(VARIABLES_FILE, 'utf8'))); }
-    catch { return json(response, 200, { variables: [] }); }
+    try { return json(response, 200, JSON.parse(await fs.readFile(await safeDataPath('variables.json', { createParents: true }), 'utf8'))); }
+    catch (error) {
+      if (error?.code === 'ENOENT') return json(response, 200, { variables: [] });
+      if (error?.code === 'EPATHOUTSIDE' || error instanceof SyntaxError) return json(response, 400, { error: 'Project variables metadata is invalid or outside the project.' });
+      return json(response, 500, { error: 'Could not read project variables metadata.' });
+    }
   }
   if (request.method === 'GET' && url.pathname === '/api/assets') {
-    try { return json(response, 200, JSON.parse(await fs.readFile(ASSETS_FILE, 'utf8'))); }
-    catch { return json(response, 200, { assets: [] }); }
+    try { return json(response, 200, JSON.parse(await fs.readFile(await safeDataPath('assets.json', { createParents: true }), 'utf8'))); }
+    catch (error) {
+      if (error?.code === 'ENOENT') return json(response, 200, { assets: [] });
+      if (error?.code === 'EPATHOUTSIDE' || error instanceof SyntaxError) return json(response, 400, { error: 'Project assets metadata is invalid or outside the project.' });
+      return json(response, 500, { error: 'Could not read project assets metadata.' });
+    }
   }
   if (request.method === 'GET' && url.pathname === '/api/catalog') {
     return json(response, 200, await readCatalog());
-  }
-  if (request.method === 'GET' && url.pathname === '/api/engine-settings') {
-    const file = path.join(EDIT_ROOT, '..', 'native', 'engine_data', 'engine.txt');
-    const out = {}; try { for (const line of (await fs.readFile(file, 'utf8')).split(/\r?\n/)) { const i = line.indexOf('='); if (i > 0 && !line.trimStart().startsWith('#')) out[line.slice(0, i).trim()] = line.slice(i + 1).trim(); } } catch {}
-    return json(response, 200, out);
-  }
-  if (request.method === 'PUT' && url.pathname === '/api/engine-settings') {
-    const body = await readJson(request); const file = path.join(EDIT_ROOT, '..', 'native', 'engine_data', 'engine.txt');
-    const allowed = ['dialog.x','dialog.y','dialog.width','dialog.height','dialog.speaker_x','dialog.text_x','dialog.speaker_y','dialog.text_y','dialog.speaker_size','dialog.text_size','dialog.text_color','dialog.background_image','font.path','font.size','window.title','window.width','window.height'];
-    // 既存設定を読み込んでマージ
-    const current = {};
-    try {
-      for (const line of (await fs.readFile(file, 'utf8')).split(/\r?\n/)) {
-        const i = line.indexOf('=');
-        if (i > 0 && !line.trimStart().startsWith('#')) current[line.slice(0, i).trim()] = line.slice(i + 1).trim();
-      }
-    } catch {}
-    for (const key of allowed) {
-      if (body[key] !== undefined) current[key] = String(body[key]);
-    }
-    await fs.writeFile(file, Object.entries(current).map(([k, v]) => `${k}=${v}`).join('\n') + '\n', 'utf8');
-    return json(response, 200, { ok: true });
   }
   if (request.method === 'GET' && url.pathname === '/api/scene') {
     const name = sceneName(url.searchParams.get('name'));
     if (!name) return json(response, 400, { error: '無効なファイル名です。' });
     try {
-      return json(response, 200, { name, source: await fs.readFile(scenePath(name), 'utf8') });
+      const target = await safeScenePath(name);
+      const source = await fs.readFile(target, 'utf8');
+      return json(response, 200, { name, source, revision: sceneRevision(source) });
     } catch (error) {
       if (error && error.code === 'ENOENT') return json(response, 404, { error: 'ファイルが見つかりません。' });
-      throw error;
+      return json(response, 400, { error: error instanceof Error ? error.message : String(error) });
     }
   }
   if (request.method === 'PUT' && url.pathname === '/api/scene') {
@@ -888,6 +1258,20 @@ async function handleApi(request, response, url) {
     if (!name) return json(response, 400, { error: 'ファイル名は英数字・._- を使ってください。' });
     if (typeof body.source !== 'string') return json(response, 400, { error: '保存する本文がありません。' });
     if (Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'ファイルは 2 MB 以下にしてください。' });
+    if (body.expectedRevision !== undefined && typeof body.expectedRevision !== 'string') return json(response, 400, { error: 'Invalid scene revision.' });
+    let target;
+    try { target = await safeScenePath(name, { createParents: true }); }
+    catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
+    if (body.expectedRevision !== undefined) {
+      try {
+        const currentSource = await fs.readFile(target, 'utf8');
+        const currentRevision = sceneRevision(currentSource);
+        if (currentRevision !== body.expectedRevision) return json(response, 409, { error: 'Scene changed externally; reload before saving.', code: 'SCENE_CONFLICT', revision: currentRevision });
+      } catch (error) {
+        if (error?.code !== 'ENOENT') return json(response, 400, { error: error instanceof Error ? error.message : String(error) });
+        return json(response, 409, { error: 'Scene was created or removed externally; reload before saving.', code: 'SCENE_CONFLICT' });
+      }
+    }
     try { await compileSource(body.source, name); }
     catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -895,14 +1279,12 @@ async function handleApi(request, response, url) {
       // プロジェクト全体の変数契約を壊すため書き込み前に拒否する。
       if (/既に宣言|再宣言/.test(message)) return json(response, 400, { error: message });
     }
-    const target = scenePath(name);
-    await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.writeFile(target, body.source, 'utf8');
     await fs.mkdir(DATA_ROOT, { recursive: true });
     // 保存した1ファイルだけでなく全ファイルの集計を実行して更新
     await rebuildVariables();
     await rebuildAssets();
-    return json(response, 200, { ok: true, name });
+    return json(response, 200, { ok: true, name, revision: sceneRevision(body.source) });
   }
   if (request.method === 'POST' && url.pathname === '/api/validate') {
     const body = await readJson(request);
@@ -920,10 +1302,12 @@ async function handleApi(request, response, url) {
     const name = sceneName(body.name);
     if (!name) return json(response, 400, { error: 'Invalid scene name' });
     try {
-      await fs.access(scenePath(name));
-      await fs.mkdir(NATIVE_PACKAGES_ROOT, { recursive: true });
+      const sourceFile = await safeScenePath(name);
+      await fs.access(sourceFile);
+      await ensureProjectDirectory(NATIVE_PACKAGES_ROOT, '.novel/build');
       const packageName = `${path.basename(name, path.extname(name))}.nsp.json`;
-      await pack(scenePath(name), path.join(NATIVE_PACKAGES_ROOT, packageName), {
+      await pack(sourceFile, await safeBuildPath(packageName, { createParents: true }), {
+        projectRoot: PROJECT_ROOT,
         scenesRoot: SCENES_ROOT,
         assetsRoot: ASSETS_ROOT,
       });
@@ -939,6 +1323,18 @@ async function handleApi(request, response, url) {
     } catch (error) {
       return json(response, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
     }
+  }
+  if (request.method === 'POST' && url.pathname === '/api/native-tools/build') {
+    try { const result = await ensureNativeBuild(); return json(response, 200, { ok: true, stage: 'complete', output: result.output }); }
+    catch (error) { return json(response, 200, { ok: false, stage: 'build', output: error instanceof Error ? error.message : String(error) }); }
+  }
+  if (request.method === 'POST' && url.pathname === '/api/native-tools/test') {
+    try { return json(response, 200, await runNativeTests()); }
+    catch (error) { return json(response, 200, { ok: false, stage: 'build', output: error instanceof Error ? error.message : String(error) }); }
+  }
+  if (request.method === 'POST' && url.pathname === '/api/native-tools/images') {
+    try { return json(response, 200, await checkProjectImages()); }
+    catch (error) { return json(response, 200, { ok: false, stage: 'image-check', output: error instanceof Error ? error.message : String(error) }); }
   }
   if (request.method === 'POST' && url.pathname === '/api/project-build') {
     const body = await readJson(request);
@@ -965,7 +1361,7 @@ async function main() {
       else text(response, 405, 'Method not allowed');
     } catch (error) {
       console.error(error);
-      json(response, 500, { error: error instanceof Error ? error.message : '予期しないエラーです。' });
+      json(response, error?.code === 'EPATHOUTSIDE' ? 403 : 500, { error: error instanceof Error ? error.message : '予期しないエラーです。' });
     }
   });
   listenOnAvailablePort(server, INITIAL_PORT);
@@ -992,7 +1388,7 @@ function listenOnAvailablePort(server, port, attempts = 0) {
   server.listen(port, '127.0.0.1');
 }
 
-module.exports = { sceneGraph, validateGraph, validateFlow, compileSource, buildWholeProject, collectSyntaxDiagnostics, handleApi, serveStatic };
+module.exports = { sceneGraph, validate, validateGraph, validateFlow, compileSource, buildWholeProject, collectSyntaxDiagnostics, handleApi, serveStatic };
 if (require.main === module) main().catch((error) => {
   console.error(error);
   process.exitCode = 1;

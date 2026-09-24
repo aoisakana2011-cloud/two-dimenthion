@@ -8,6 +8,8 @@ yarn-error.log*
 *.tsbuildinfo
 coverage/
 release/
+__pycache__/
+*.pyc
 
 # Generated project output
 dist/

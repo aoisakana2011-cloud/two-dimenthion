@@ -9,6 +9,8 @@
     "build": "tsc",
     "test": "npm run build && node --test test/*.test.js",
     "editor": "npm run build && node Edit/server.js",
+    "format": "node tools/format.js",
+    "benchmark:formatter": "node test/formatter-benchmark.cjs",
     "desktop": "npm run build && node Edit/launch-electron.js",
     "desktop:package:win": "npm run build && node tools/package-electron.js",
     "pack": "npm run build && node tools/pack.js",

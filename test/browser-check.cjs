@@ -7,7 +7,9 @@ const assert = require('node:assert/strict');
   const root = path.resolve(__dirname, '../Title/asset');
   const dir = await fs.mkdtemp(path.join(root, '__audit_'));
   const relative = path.basename(dir) + '/pixel.png';
-  await fs.copyFile(path.resolve(__dirname, '../native/engine_data/ui/dialogue_box.png'), path.join(dir, 'pixel.png'));
+   await fs.copyFile(path.resolve(__dirname, '../native/engine_data/ui/dialogue_box.png'), path.join(dir, 'pixel.png'));
+   const audioRelative = path.basename(dir) + '/tone.ogg';
+   await fs.copyFile(path.resolve(__dirname, '../build/audit-smoke/assets/tone.ogg'), path.join(dir, 'tone.ogg'));
   const server = http.createServer(async (req, res) => {
     try { const url = new URL(req.url, 'http://127.0.0.1'); if (url.pathname.startsWith('/api/')) await handleApi(req, res, url); else await serveStatic(res, url.pathname); }
     catch (error) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: error.message })); }
@@ -23,7 +25,8 @@ const assert = require('node:assert/strict');
       if (new URL(request.url()).pathname === '/api/compile') compiledSceneName = request.postDataJSON()?.name || '';
     });
     let source = `asset image first = "${relative}"
-asset image second = "${relative}"
+ asset image second = "${relative}"
+ asset voice greeting = "${audioRelative}"
 character hero {
   name = "Hero"
   pose normal = "${relative}"
@@ -36,7 +39,8 @@ str result = str(9007199254740992 + 1)
 fn answer() -> int { int n = 7
 return n }
 show image first left
-show image second right
+ show image second right
+ play voice greeting blocking
 show hero.normal left fade 10
 show friend.normal right
 clear image first
@@ -70,12 +74,33 @@ choice "choose" {
       source = auditCases[id].source + '\nsay narrator ' + expression;
       await page.reload();
       await page.waitForFunction(value => document.querySelector('#text').textContent === value, expected);
-      assert.equal(await page.locator('#speaker').textContent(), 'narrator', id);
+      // Narrator lines intentionally suppress the speaker nameplate text.
+      assert.equal(await page.locator('#speaker').textContent(), '', id);
     }
+    source = auditCases.interpolation_side_effect.source + '\nsay narrator str(state)';
+    await page.reload();
+    await page.locator('.choice').click();
+    await page.waitForFunction(() => document.querySelector('#text').textContent === '1');
     const invalidConst = await page.request.post(base + '/api/validate', { data: { name: '__audit.tds', source: 'const dict[int] d = {"x":1}\nunset d["x"]' } });
     const constReport = await invalidConst.json();
     assert.equal(constReport.ok, false);
     assert.ok(constReport.diagnostics.some(item => item.severity === 'error' && /const/.test(item.message)));
+    const reservedName = await page.request.post(base + '/api/validate', { data: { name: '__audit.tds', source: 'int const = 1' } });
+    const reservedReport = await reservedName.json();
+    assert.equal(reservedReport.ok, false);
+    assert.ok(reservedReport.diagnostics.some(item => item.severity === 'error' && /予約語/.test(item.message)));
+    const slotSource = `character hero {
+  name = "Hero"
+  pose normal = "assets/char/aokami.png"
+}
+show hero.normal far_left instant`;
+    const slotValidation = await page.request.post(base + '/api/validate', { data: { name: '__audit.tds', source: slotSource } });
+    const slotReport = await slotValidation.json();
+    assert.equal(slotReport.ok, true, slotReport.error);
+    const slotCompile = await page.request.post(base + '/api/compile', { data: { name: '__audit.tds', source: slotSource } });
+    const slotCompiled = await slotCompile.json();
+    assert.equal(slotCompiled.ok, true, slotCompiled.error);
+    assert.deepEqual(slotCompiled.program.globals.at(-1).args.slice(0, 2).map(argument => argument.value), ['hero.normal', 'far_left']);
     source = 'choice { "bad" { int x = 1 / 0 } }';
     await page.reload(); await page.locator('.choice').click();
     await page.waitForFunction(() => document.querySelector('#speaker').textContent === 'PLAYER ERROR');

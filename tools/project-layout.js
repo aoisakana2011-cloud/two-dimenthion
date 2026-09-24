@@ -6,8 +6,63 @@ const SETTING_FILE = 'setting.txt';
 const DEFAULT_SETTINGS = Object.freeze({ scenario_dir: 'senario', asset_dir: 'asset', start_file: 'main.tds', native_ui_theme: '' });
 function safeRelative(value, key) {
   const text = String(value || '').trim().replaceAll('\\', '/');
-  if (!text || path.posix.isAbsolute(text) || text.split('/').some((part) => !part || part === '.' || part === '..')) throw Error(`${key} は作品フォルダー内の相対パスを指定してください`);
+  if (!text || path.posix.isAbsolute(text) || path.win32.isAbsolute(text) || /^[A-Za-z]:/.test(text) || text.split('/').some((part) => !part || part === '.' || part === '..')) throw Error(`${key} は作品フォルダー内の相対パスを指定してください`);
   return text;
+}
+function isInside(root, target) {
+  const relative = path.relative(root, target);
+  return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith('..' + path.sep));
+}
+function assertProjectDirectory(projectRoot, directory, key) {
+  const lexicalRoot = path.resolve(projectRoot);
+  const target = path.resolve(directory);
+  if (!isInside(lexicalRoot, target)) throw Error(`${key} は作品フォルダー内を指定してください`);
+  const realRoot = fs.realpathSync(projectRoot);
+  const realTarget = fs.realpathSync(target);
+  if (!isInside(realRoot, realTarget)) throw Error(`${key} は作品フォルダー外を参照できません`);
+  return realTarget;
+}
+function assertProjectSettingFile(projectRoot) {
+  const settingFile = path.join(projectRoot, SETTING_FILE);
+  const info = fs.lstatSync(settingFile);
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1) throw Error('setting.txt はプロジェクト内の通常ファイルである必要があります');
+  const realRoot = fs.realpathSync(projectRoot);
+  const realFile = fs.realpathSync(settingFile);
+  if (!isInside(realRoot, realFile)) throw Error('setting.txt はプロジェクト外を参照できません');
+  return settingFile;
+}
+function ensureProjectFile(projectRoot, file, contents, label) {
+  const validate = () => {
+    const info = fs.lstatSync(file);
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1) throw Error(`${label} は作品フォルダー内の通常ファイルである必要があります`);
+    const realFile = fs.realpathSync(file);
+    if (!isInside(fs.realpathSync(projectRoot), realFile)) throw Error(`${label} は作品フォルダー外を参照できません`);
+  };
+  try { validate(); return; }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  try { fs.writeFileSync(file, contents, { encoding: 'utf8', flag: 'wx' }); }
+  catch (error) { if (error.code !== 'EEXIST') throw error; }
+  validate();
+}
+function ensureProjectDirectory(projectRoot, directory, key) {
+  const lexicalRoot = path.resolve(projectRoot);
+  const target = path.resolve(directory);
+  if (!isInside(lexicalRoot, target)) throw Error(`${key} は作品フォルダー内のパスを指定してください`);
+  const realRoot = fs.realpathSync(projectRoot);
+  let probe = target;
+  while (true) {
+    try {
+      if (!isInside(realRoot, fs.realpathSync(probe))) throw Error(`${key} は作品フォルダー外を参照できません`);
+      break;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      const parent = path.dirname(probe);
+      if (parent === probe) throw error;
+      probe = parent;
+    }
+  }
+  fs.mkdirSync(target, { recursive: true });
+  if (!isInside(realRoot, fs.realpathSync(target))) throw Error(`${key} は作品フォルダー外を参照できません`);
 }
 function parseSettings(source) {
   const settings = { ...DEFAULT_SETTINGS };
@@ -29,8 +84,13 @@ function parseSettings(source) {
 }
 function readSettings(projectRoot) {
   const settingFile = path.join(projectRoot, SETTING_FILE);
-  if (fs.existsSync(settingFile)) return parseSettings(fs.readFileSync(settingFile, 'utf8'));
-  return { ...DEFAULT_SETTINGS };
+  try {
+    assertProjectSettingFile(projectRoot);
+    return parseSettings(fs.readFileSync(settingFile, 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return { ...DEFAULT_SETTINGS };
+  }
 }
 function settingTemplate(title) {
   return `# Novel Script project settings\n# すべて作品フォルダーからの相対パス。/ を使用する。\nscenario_dir = senario\nasset_dir = asset\nstart_file = main.tds\ntitle = ${title}\n`;
@@ -75,20 +135,20 @@ function seedEmptyProject(root) {
   const layout = projectLayout(root);
   if (!fs.existsSync(layout.settingFile)) {
     fs.mkdirSync(layout.projectRoot, { recursive: true });
-    fs.writeFileSync(layout.settingFile, settingTemplate(path.basename(layout.projectRoot)), 'utf8');
+    ensureProjectFile(layout.projectRoot, layout.settingFile, settingTemplate(path.basename(layout.projectRoot)), 'setting.txt');
     return seedEmptyProject(root);
   }
-  fs.mkdirSync(layout.scenesRoot, { recursive: true });
-  fs.mkdirSync(layout.assetsRoot, { recursive: true });
-  fs.mkdirSync(layout.dataRoot, { recursive: true });
+  ensureProjectDirectory(layout.projectRoot, layout.scenesRoot, 'scenario_dir');
+  ensureProjectDirectory(layout.projectRoot, layout.assetsRoot, 'asset_dir');
+  ensureProjectDirectory(layout.projectRoot, layout.dataRoot, '.novel');
   for (const kind of ['bg', 'bgm', 'char', 'image', 'se', 'video', 'voice']) {
     const directory = path.join(layout.assetsRoot, kind);
-    fs.mkdirSync(directory, { recursive: true });
+    ensureProjectDirectory(layout.projectRoot, directory, 'asset_dir');
     const readme = path.join(directory, 'README.txt');
-    if (!fs.existsSync(readme)) fs.writeFileSync(readme, `${kind} assets\n`, 'utf8');
+    ensureProjectFile(layout.projectRoot, readme, `${kind} assets\n`, 'asset README');
   }
   const main = path.join(layout.scenesRoot, 'main.tds');
-  if (!fs.existsSync(main)) fs.writeFileSync(main, 'scene main {\n  say narrator "新しい作品を始めます。"\n}\n', 'utf8');
+  ensureProjectFile(layout.projectRoot, main, 'scene main {\n  say narrator "新しい作品を始めます。"\n}\n', 'main.tds');
   return layout;
 }
-module.exports = { projectLayout, projectOption, layoutForInput, entryFile, positionalArguments, looksLikeProject, seedEmptyProject, parseSettings, settingTemplate };
+module.exports = { projectLayout, projectOption, layoutForInput, entryFile, positionalArguments, looksLikeProject, seedEmptyProject, parseSettings, settingTemplate, assertProjectSettingFile, assertProjectDirectory, ensureProjectDirectory };

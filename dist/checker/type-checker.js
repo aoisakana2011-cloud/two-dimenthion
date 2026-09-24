@@ -16,7 +16,10 @@ const ALLOWED_EXTENSIONS = {
     video: ['.mp4', '.webm'],
 };
 function validAssetPath(path) {
-    return !!path && !/^(?:[A-Za-z]:|[\\/])/.test(path) && !path.replace(/\\/g, '/').split('/').includes('..');
+    if (!path || /^(?:[A-Za-z]:|[\\/])/.test(path))
+        return false;
+    const parts = path.replace(/\\/g, '/').split('/');
+    return parts.every((part) => part.length > 0 && part !== '.' && part !== '..' && !/[<>:"|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part));
 }
 function typeName(type) {
     if (typeof type === 'string')
@@ -40,11 +43,40 @@ function characterPropertyType(expression) {
 function interpolationNames(value) {
     return [...value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(\(\))?\}/g)].map((match) => `${match[1]}${match[2] || ''}`);
 }
-function getLocStr(node, file = 'current') {
-    return `line ${node?.line ?? 1}`;
+function getLocStr(node) {
+    return `line ${node?.line ?? 1}, column ${node?.column ?? 1}`;
+}
+function knownStringValue(expression, knownStrings) {
+    if (!expression)
+        return undefined;
+    if (expression.kind === 'literal')
+        return typeof expression.value === 'string' ? expression.value : undefined;
+    if (expression.kind === 'variable')
+        return knownStrings?.get(expression.name);
+    if (expression.kind === 'binary' && expression.operator === '+') {
+        const left = knownStringValue(expression.left, knownStrings), right = knownStringValue(expression.right, knownStrings);
+        return left !== undefined && right !== undefined ? left + right : undefined;
+    }
+    return undefined;
+}
+function validateNestedInterpolations(value, variables, ctx, seen = new Set()) {
+    for (const path of interpolationNames(value)) {
+        if (path.endsWith('()'))
+            continue;
+        const name = path.split('.')[0];
+        const nested = ctx.knownStrings?.get(name);
+        if (nested !== undefined && !seen.has(name)) {
+            const next = new Set(seen);
+            next.add(name);
+            // The ordinary literal check validates this expansion's functions,
+            // variables and struct fields; recurse to cover another known template.
+            expressionType({ kind: 'literal', value: nested, line: 1, column: 1 }, variables, { ...ctx, knownStrings: new Map() });
+            validateNestedInterpolations(nested, variables, ctx, next);
+        }
+    }
 }
 function expressionType(expression, variables, ctx, expected) {
-    const loc = getLocStr(expression, ctx.file);
+    const loc = getLocStr(expression);
     if (expression.kind === 'literal') {
         if (typeof expression.value === 'string') {
             for (const path of interpolationNames(expression.value)) {
@@ -72,11 +104,14 @@ function expressionType(expression, variables, ctx, expected) {
                     current = next;
                 }
             }
+            validateNestedInterpolations(expression.value, variables, ctx);
             return 'str';
         }
         return 'int';
     }
     if (expression.kind === 'variable') {
+        if (ctx.ambiguous?.has(expression.name))
+            throw new TypeCheckError(`${loc}: 蝙九お繝ｩ繧ｼ繝ｼ (${ctx.file}): 蛻・ｲ舌�螟画焚 '${expression.name}' 縺ｮ蝙九′蜿門ｾ励〒縺阪∪縺帙ｓ`);
         const type = variables.get(expression.name);
         if (!type)
             throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 未定義の変数 '${expression.name}' です`);
@@ -154,6 +189,12 @@ function expressionType(expression, variables, ctx, expected) {
         return targetType.value;
     }
     if (expression.kind === 'dict') {
+        const keys = new Set();
+        for (const entry of expression.entries) {
+            if (keys.has(entry.key))
+                throw new TypeCheckError(`${loc}: duplicate dictionary key '${entry.key}'`);
+            keys.add(entry.key);
+        }
         const types = expression.entries.map((entry) => expressionType(entry.value, variables, ctx));
         if (expected && typeof expected !== 'string') {
             if (expected.kind === 'struct')
@@ -210,17 +251,41 @@ function inferValueType(expression, variables = new Map(), functions = []) {
     return inferred;
 }
 function checkCondition(expression, variables, ctx) {
-    const loc = getLocStr(expression, ctx.file);
+    const loc = getLocStr(expression);
     const type = expressionType(expression, variables, ctx);
     if (type !== 'bool') {
         throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 条件式には比較演算子（== / != / > / >= / < / <=）または論理式が必要です`);
     }
 }
+const MAX_DURATION_MS = 2147483647n;
+function checkDuration(expression, variables, ctx, loc, label) {
+    if (expressionType(expression, variables, ctx) !== 'int')
+        return;
+    const value = staticValue(expression);
+    if (typeof value === 'bigint' && (value < 0n || value > MAX_DURATION_MS)) {
+        throw new TypeCheckError(`${loc}: ${label} は 0 以上 2147483647 以下でなければなりません`);
+    }
+}
 function checkFade(args, variables, ctx, loc) {
     if (!args.length)
         return;
+    if (args.length === 1 && args[0].kind === 'literal' && args[0].value === 'instant')
+        return;
+    if (args.length === 2 && args[0].kind === 'literal' && args[0].value === 'fade' && expressionType(args[1], variables, ctx) === 'int')
+        checkDuration(args[1], variables, ctx, loc, 'fade の時間');
     if (args.length !== 2 || args[0].kind !== 'literal' || args[0].value !== 'fade' || expressionType(args[1], variables, ctx) !== 'int')
         throw new TypeCheckError(`${loc}: 演出は fade <int> で指定してください`);
+}
+function checkAudioTransition(args, variables, ctx, loc) {
+    if (!args.length)
+        return;
+    if (args.length === 1 && args[0].kind === 'literal' && args[0].value === 'instant')
+        return;
+    if (args.length === 2 && args[0].kind === 'literal' && args[0].value === 'crossfade' && expressionType(args[1], variables, ctx) === 'int') {
+        checkDuration(args[1], variables, ctx, loc, 'crossfade の時間');
+        return;
+    }
+    throw new TypeCheckError(`${loc}: 音声遷移は instant または crossfade <int> で指定してください`);
 }
 function checkCommand(name, args, variables, ctx, locStr) {
     const getArgStr = (idx) => {
@@ -229,13 +294,14 @@ function checkCommand(name, args, variables, ctx, locStr) {
             return a.value;
         throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): コマンド '${name}' の第 ${idx + 1} 引数はリテラル識別子でなければなりません`);
     };
-    if (name === 'char')
-        throw new TypeCheckError(`${locStr}: char は廃止されました。show <character>.<pose> <position> を使用してください`);
-    if (name === 'hide' && args[0]?.kind === 'literal' && args[0].value === 'char')
-        throw new TypeCheckError(`${locStr}: hide char は廃止されました。hide <character> を使用してください`);
     if (name === 'show' && args[0]?.kind === 'literal' && args[0].value !== 'image' && !/^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$/.test(String(args[0].value))) {
         throw new TypeCheckError(`${locStr}: show は show <character>.<pose> <position> または show image <id> <position> を使用してください`);
     }
+    // Keep the legacy instant transition spelling compatible with the one-argument commands.
+    if (name === 'bgm' && args.length === 2 && args[1].kind === 'literal' && args[1].value === 'instant')
+        args = args.slice(0, 1);
+    if (name === 'play' && args[0]?.kind === 'literal' && args[0].value === 'bgm' && args.length === 3 && args[2].kind === 'literal' && args[2].value === 'instant')
+        args = args.slice(0, 2);
     switch (name) {
         case 'bg': {
             if (args.length !== 1)
@@ -263,6 +329,14 @@ function checkCommand(name, args, variables, ctx, locStr) {
                 throw new TypeCheckError(`${locStr}: 未知の再生種別 '${kind}' です`);
             const id = getArgStr(1);
             const asset = ctx.assets.get(id);
+            if (kind === 'voice' && args.length >= 3) {
+                if (args.length !== 3)
+                    throw new TypeCheckError(`${locStr}: voice の引数は voice <id> [blocking|async] です`);
+                const mode = getArgStr(2);
+                if (mode !== 'blocking' && mode !== 'async')
+                    throw new TypeCheckError(`${locStr}: voice再生モードは blocking または async で指定してください`);
+                args = args.slice(0, 2);
+            }
             if (!asset || asset.type !== kind)
                 throw new TypeCheckError(`${locStr}: 未定義または型が異なるアセット '${id}' (期待: ${kind}) です`);
             if (args.length > (kind === 'video' ? 3 : 2))
@@ -281,7 +355,7 @@ function checkCommand(name, args, variables, ctx, locStr) {
                     throw new TypeCheckError(`${locStr}: show は show <character>.<pose> <position> で指定してください`);
                 const [, charName, pose] = poseReference;
                 const pos = getArgStr(1);
-                if (!['left', 'center', 'right'].includes(pos))
+                if (!['far_left', 'left', 'center', 'right', 'far_right', 'far-left', 'far-right'].includes(pos))
                     throw new TypeCheckError(`${locStr}: 不正な表示位置 '${pos}' です`);
                 const charDef = ctx.characters.get(charName);
                 if (!charDef)
@@ -303,7 +377,7 @@ function checkCommand(name, args, variables, ctx, locStr) {
                     throw new TypeCheckError(`${locStr}: 未定義の画像アセット '${imgName}' です`);
                 if (args.length >= 3) {
                     const pos = getArgStr(2);
-                    if (!['left', 'center', 'right'].includes(pos))
+                    if (!['far_left', 'left', 'center', 'right', 'far_right', 'far-left', 'far-right'].includes(pos))
                         throw new TypeCheckError(`${locStr}: 不正な配置位置 '${pos}' です`);
                 }
             }
@@ -337,11 +411,14 @@ function checkCommand(name, args, variables, ctx, locStr) {
             if (args.length !== 1)
                 throw new TypeCheckError(`${locStr}: wait は時間を1つ指定してください`);
             const waitType = expressionType(args[0], variables, ctx);
+            checkDuration(args[0], variables, ctx, locStr, 'wait の時間');
             if (waitType !== 'int')
                 throw new TypeCheckError(`${locStr}: wait の引数は int でなければなりません`);
             break;
         }
         case 'effect': {
+            if (args[2] && expressionType(args[2], variables, ctx) === 'int')
+                checkDuration(args[2], variables, ctx, locStr, 'effect の時間');
             if (args.length > 3 || args.length < 2 || getArgStr(0) !== 'fade')
                 throw new TypeCheckError(`${locStr}: effect は effect fade <color> [<ms>] を指定してください`);
             if (!['black', 'white'].includes(getArgStr(1)))
@@ -365,13 +442,96 @@ function checkCommand(name, args, variables, ctx, locStr) {
         default: throw new TypeCheckError(`${locStr}: 未知の命令 '${name}' です`);
     }
 }
+function staticValue(expression) {
+    if (expression.kind === 'literal')
+        return typeof expression.value === 'string' ? expression.value : BigInt(expression.value);
+    if (expression.kind === 'call') {
+        const argument = expression.args.length === 1 ? staticValue(expression.args[0]) : undefined;
+        if (expression.name === 'str' && typeof argument === 'bigint')
+            return String(argument);
+        if (expression.name === 'int' && typeof argument === 'string' && /^[+-]?\d+$/.test(argument))
+            return BigInt(argument);
+        return undefined;
+    }
+    if (expression.kind === 'unary') {
+        const value = staticValue(expression.value);
+        if (expression.operator === 'not' && typeof value === 'boolean')
+            return !value;
+        if ((expression.operator === '+' || expression.operator === '-') && typeof value === 'bigint')
+            return expression.operator === '-' ? -value : value;
+        return undefined;
+    }
+    if (expression.kind !== 'binary')
+        return undefined;
+    const left = staticValue(expression.left);
+    if (expression.operator === 'and' && typeof left === 'boolean')
+        return left ? staticValue(expression.right) : false;
+    if (expression.operator === 'or' && typeof left === 'boolean')
+        return left ? true : staticValue(expression.right);
+    const right = staticValue(expression.right);
+    if (left === undefined || right === undefined)
+        return undefined;
+    if (expression.operator === '==')
+        return left === right;
+    if (expression.operator === '!=')
+        return left !== right;
+    if (typeof left === 'bigint' && typeof right === 'bigint') {
+        if (expression.operator === '>')
+            return left > right;
+        if (expression.operator === '>=')
+            return left >= right;
+        if (expression.operator === '<')
+            return left < right;
+        if (expression.operator === '<=')
+            return left <= right;
+        if (expression.operator === '+')
+            return left + right;
+        if (expression.operator === '-')
+            return left - right;
+        if (expression.operator === '*')
+            return left * right;
+        if (expression.operator === '/' && right !== 0n)
+            return left / right;
+        if (expression.operator === '%' && right !== 0n)
+            return left % right;
+    }
+    if (expression.operator === '+' && typeof left === 'string' && typeof right === 'string')
+        return left + right;
+    return undefined;
+}
+function alwaysTrueCondition(expression) {
+    return staticValue(expression) === true;
+}
+function staticallyRunsFor(statement) {
+    const start = staticValue(statement.start);
+    const stop = staticValue(statement.stop);
+    const step = staticValue(statement.step);
+    if (typeof start !== 'bigint' || typeof stop !== 'bigint' || typeof step !== 'bigint' || step === 0n)
+        return false;
+    return !((start < stop && step < 0n) || (start > stop && step > 0n));
+}
 function exitsBlock(statements) {
-    return statements.some((statement) => statement.kind === 'return' || statement.kind === 'goto' ||
-        (statement.kind === 'if' && statement.otherwise.length > 0 && exitsBlock(statement.body) && statement.elseIf.every((branch) => exitsBlock(branch.body)) && exitsBlock(statement.otherwise)));
+    return statements.some((statement) => {
+        if (statement.kind === 'return' || statement.kind === 'goto')
+            return true;
+        if (statement.kind === 'if') {
+            return statement.otherwise.length > 0
+                && exitsBlock(statement.body)
+                && statement.elseIf.every((branch) => exitsBlock(branch.body))
+                && exitsBlock(statement.otherwise);
+        }
+        if (statement.kind === 'while')
+            return alwaysTrueCondition(statement.condition.expression) && exitsBlock(statement.body);
+        if (statement.kind === 'for')
+            return staticallyRunsFor(statement) && exitsBlock(statement.body);
+        if (statement.kind === 'choice')
+            return statement.options.length > 0 && statement.options.every((option) => exitsBlock(option.body));
+        return false;
+    });
 }
 function checkStatements(statements, variables, ctx, options) {
     for (const statement of statements) {
-        const locStr = getLocStr(statement, ctx.file);
+        const locStr = getLocStr(statement);
         try {
             if (statement.kind === 'declare') {
                 if (statement.global && ctx.locals) {
@@ -380,7 +540,7 @@ function checkStatements(statements, variables, ctx, options) {
                 if (!options.allowDeclaration) {
                     throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): scene 直下での変数宣言は禁止されています（選択肢ブロック内またはグローバルで宣言してください）`);
                 }
-                const duplicateLocal = ctx.locals?.has(statement.name) || false;
+                const duplicateLocal = ctx.declaredLocals?.has(statement.name) || ctx.locals?.has(statement.name) || false;
                 const shadowsScenarioVariable = variables.has(statement.name) && !ctx.currentFunction;
                 if (duplicateLocal || shadowsScenarioVariable) {
                     throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 変数 '${statement.name}' は既に宣言されています。再宣言せず set を使用してください`);
@@ -422,12 +582,24 @@ function checkStatements(statements, variables, ctx, options) {
                     throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): let '${statement.name}' には初期値が必要です`);
                 }
                 variables.set(statement.name, statement.type);
+                ctx.ambiguous?.delete(statement.name);
+                ctx.declaredLocals?.add(statement.name);
                 ctx.readonly?.delete(statement.name);
                 if (statement.constant)
                     ctx.readonly?.add(statement.name);
                 ctx.locals?.add(statement.name);
+                if (ctx.knownStrings) {
+                    const initialString = statement.type === 'str' ? knownStringValue(statement.initial, ctx.knownStrings) : undefined;
+                    if (initialString !== undefined)
+                        ctx.knownStrings.set(statement.name, initialString);
+                    else
+                        ctx.knownStrings.delete(statement.name);
+                }
             }
             if (statement.kind === 'set') {
+                if (statement.target.kind === 'variable' && ctx.ambiguous?.has(statement.target.name)) {
+                    throw new TypeCheckError(`${locStr}: 蝙九お繝ｩ繧ｼ繝ｼ (${ctx.file}): 蛻・ｲ舌�螟画焚 '${statement.target.name}' 縺ｮ蝙九′蜿門ｾ励〒縺阪∪縺帙ｓ`);
+                }
                 const expected = statement.target.kind === 'variable' ? variables.get(statement.target.name) : expressionType(statement.target, variables, ctx);
                 const exprType = expressionType(statement.value, variables, ctx, expected === 'bool' ? undefined : expected);
                 if (statement.target.kind === 'variable') {
@@ -440,6 +612,14 @@ function checkStatements(statements, variables, ctx, options) {
                     }
                     if (!sameType(varType, exprType)) {
                         throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 変数 '${statement.target.name}' (${typeName(varType)}) に ${typeName(exprType)} は代入できません`);
+                    }
+                    if (ctx.knownStrings) {
+                        const varType = variables.get(statement.target.name);
+                        const assignedString = varType === 'str' ? knownStringValue(statement.value, ctx.knownStrings) : undefined;
+                        if (assignedString !== undefined)
+                            ctx.knownStrings.set(statement.target.name, assignedString);
+                        else
+                            ctx.knownStrings.delete(statement.target.name);
                     }
                 }
                 else if (statement.target.kind === 'index') {
@@ -490,13 +670,22 @@ function checkStatements(statements, variables, ctx, options) {
                 const baseNames = new Set(variables.keys());
                 const branchVariables = [];
                 const branchReadonly = [];
+                const branchStrings = [];
+                const branchStates = [];
                 const checkBranch = (body) => {
                     const branch = new Map(variables);
                     const readonly = new Set(ctx.readonly);
-                    checkStatements(body, branch, { ...ctx, locals: ctx.locals ? new Set(ctx.locals) : undefined, readonly }, options);
-                    if (!exitsBlock(body)) {
+                    const strings = new Map(ctx.knownStrings);
+                    const locals = ctx.locals ? new Set(ctx.locals) : undefined;
+                    const declaredLocals = ctx.declaredLocals ? new Set(ctx.declaredLocals) : undefined;
+                    const ambiguous = ctx.ambiguous ? new Set(ctx.ambiguous) : undefined;
+                    checkStatements(body, branch, { ...ctx, locals, declaredLocals, readonly, knownStrings: strings, ambiguous }, options);
+                    const fallsThrough = !exitsBlock(body);
+                    branchStates.push({ variables: branch, readonly, strings, locals, declaredLocals, ambiguous, fallsThrough });
+                    if (fallsThrough) {
                         branchVariables.push(branch);
                         branchReadonly.push(readonly);
+                        branchStrings.push(strings);
                     }
                 };
                 checkBranch(statement.body);
@@ -507,8 +696,64 @@ function checkStatements(statements, variables, ctx, options) {
                 if (statement.otherwise.length)
                     checkBranch(statement.otherwise);
                 else {
-                    branchVariables.push(new Map(variables));
-                    branchReadonly.push(new Set(ctx.readonly));
+                    const variablesAfterIf = new Map(variables);
+                    const readonlyAfterIf = new Set(ctx.readonly);
+                    const stringsAfterIf = new Map(ctx.knownStrings);
+                    const localsAfterIf = ctx.locals ? new Set(ctx.locals) : undefined;
+                    const declaredLocalsAfterIf = ctx.declaredLocals ? new Set(ctx.declaredLocals) : undefined;
+                    const ambiguousAfterIf = ctx.ambiguous ? new Set(ctx.ambiguous) : undefined;
+                    branchStates.push({ variables: variablesAfterIf, readonly: readonlyAfterIf, strings: stringsAfterIf, locals: localsAfterIf, declaredLocals: declaredLocalsAfterIf, ambiguous: ambiguousAfterIf, fallsThrough: true });
+                    branchVariables.push(variablesAfterIf);
+                    branchReadonly.push(readonlyAfterIf);
+                    branchStrings.push(stringsAfterIf);
+                }
+                if (ctx.declaredLocals)
+                    for (const branch of branchStates)
+                        branch.declaredLocals?.forEach((name) => ctx.declaredLocals.add(name));
+                // A literal condition makes only one branch reachable. Keep checking all
+                // branches for diagnostics, but use the reachable branch's bindings for
+                // every statement that follows the if. This is especially important for
+                // function-local declarations shadowing a global with another type.
+                const conditions = [statement.condition.expression, ...statement.elseIf.map((branch) => branch.condition.expression)];
+                let selectedBranch;
+                let staticallySelected = true;
+                for (let index = 0; index < conditions.length; index += 1) {
+                    const value = staticValue(conditions[index]);
+                    if (value === true) {
+                        selectedBranch = index;
+                        break;
+                    }
+                    if (value !== false) {
+                        staticallySelected = false;
+                        break;
+                    }
+                }
+                if (staticallySelected) {
+                    if (selectedBranch === undefined)
+                        selectedBranch = statement.otherwise.length ? conditions.length : conditions.length;
+                    const selected = branchStates[selectedBranch];
+                    if (selected?.fallsThrough) {
+                        variables.clear();
+                        for (const [name, type] of selected.variables)
+                            variables.set(name, type);
+                        if (ctx.readonly) {
+                            ctx.readonly.clear();
+                            selected.readonly.forEach((name) => ctx.readonly.add(name));
+                        }
+                        if (ctx.knownStrings) {
+                            ctx.knownStrings.clear();
+                            selected.strings.forEach((value, name) => ctx.knownStrings.set(name, value));
+                        }
+                        if (ctx.locals && selected.locals) {
+                            ctx.locals.clear();
+                            selected.locals.forEach((name) => ctx.locals.add(name));
+                        }
+                        if (ctx.ambiguous && selected.ambiguous) {
+                            ctx.ambiguous.clear();
+                            selected.ambiguous.forEach((name) => ctx.ambiguous.add(name));
+                        }
+                    }
+                    continue;
                 }
                 const candidates = [...(branchVariables[0]?.keys() || [])].filter((name) => !baseNames.has(name));
                 for (const name of candidates) {
@@ -522,6 +767,51 @@ function checkStatements(statements, variables, ctx, options) {
                     if (branchReadonly.some((readonly) => readonly.has(name)))
                         ctx.readonly?.add(name);
                     ctx.locals?.add(name);
+                }
+                const fallthroughStates = branchStates.filter((branch) => branch.fallsThrough);
+                const ambiguousBeforeIf = new Set(ctx.ambiguous || []);
+                const existingNames = new Set(branchVariables.flatMap((branch) => [...branch.keys()].filter((name) => baseNames.has(name))));
+                for (const name of existingNames) {
+                    const types = branchVariables.map((branch) => branch.get(name));
+                    if (types.some((type) => type === undefined))
+                        continue;
+                    if (types.some((type) => !sameType(types[0], type))) {
+                        if (fallthroughStates.some((branch) => branch.readonly.has(name)))
+                            ctx.readonly?.add(name);
+                        ctx.ambiguous?.add(name);
+                        continue;
+                    }
+                    if (fallthroughStates.some((branch) => branch.ambiguous?.has(name))) {
+                        if (fallthroughStates.some((branch) => branch.readonly.has(name)))
+                            ctx.readonly?.add(name);
+                        ctx.ambiguous?.add(name);
+                        continue;
+                    }
+                    variables.set(name, types[0]);
+                    if (fallthroughStates.every((branch) => branch.readonly.has(name)))
+                        ctx.readonly?.add(name);
+                    else if (fallthroughStates.every((branch) => !branch.readonly.has(name)))
+                        ctx.readonly?.delete(name);
+                    else
+                        ctx.readonly?.add(name);
+                    const definitelyLocal = !!ctx.locals && fallthroughStates.length > 0 && fallthroughStates.every((branch) => branch.locals?.has(name));
+                    if (definitelyLocal)
+                        ctx.locals?.add(name);
+                    if (!ambiguousBeforeIf.has(name) || definitelyLocal)
+                        ctx.ambiguous?.delete(name);
+                }
+                if (ctx.knownStrings) {
+                    const names = new Set(branchStrings.flatMap((strings) => [...strings.keys()]));
+                    for (const name of names) {
+                        const first = branchStrings[0]?.get(name);
+                        if (first !== undefined && branchStrings.every((strings) => strings.get(name) === first))
+                            ctx.knownStrings.set(name, first);
+                        else
+                            ctx.knownStrings.delete(name);
+                    }
+                    for (const name of [...ctx.knownStrings.keys()])
+                        if (!branchStrings.every((strings) => strings.has(name) && strings.get(name) === ctx.knownStrings.get(name)))
+                            ctx.knownStrings.delete(name);
                 }
             }
             if (statement.kind === 'for') {
@@ -537,18 +827,76 @@ function checkStatements(statements, variables, ctx, options) {
                 loopReadonly.delete(statement.name);
                 const loopLocals = new Set(ctx.locals || variables.keys());
                 loopLocals.add(statement.name);
-                checkStatements(statement.body, loopVars, { ...ctx, locals: loopLocals, readonly: loopReadonly }, options);
-                for (const [name, type] of loopVars)
-                    if (name !== statement.name && !variables.has(name)) {
-                        variables.set(name, type);
-                        ctx.locals?.add(name);
+                const loopDeclaredLocals = ctx.declaredLocals ? new Set(ctx.declaredLocals) : undefined;
+                const loopAmbiguous = ctx.ambiguous ? new Set(ctx.ambiguous) : undefined;
+                checkStatements(statement.body, loopVars, { ...ctx, locals: loopLocals, declaredLocals: loopDeclaredLocals, readonly: loopReadonly, knownStrings: new Map(ctx.knownStrings), ambiguous: loopAmbiguous }, options);
+                if (ctx.declaredLocals)
+                    loopDeclaredLocals?.forEach((name) => ctx.declaredLocals.add(name));
+                ctx.knownStrings?.clear();
+                // A dynamic range may execute zero times, so declarations made only in
+                // the body are not definitely initialized after the loop. Merge them
+                // only when a literal range is known to execute at least once and the
+                // body itself can fall through.
+                const guaranteedRun = staticallyRunsFor(statement) && !exitsBlock(statement.body);
+                for (const [name, type] of variables) {
+                    if (name === statement.name)
+                        continue;
+                    const loopType = loopVars.get(name);
+                    if (!loopType)
+                        continue;
+                    if (guaranteedRun) {
+                        if (!loopAmbiguous?.has(name) && !sameType(type, loopType))
+                            variables.set(name, loopType);
                         if (loopReadonly.has(name))
                             ctx.readonly?.add(name);
+                        else
+                            ctx.readonly?.delete(name);
                     }
+                    else {
+                        if (loopAmbiguous?.has(name) || !sameType(type, loopType))
+                            ctx.ambiguous?.add(name);
+                        if (loopReadonly.has(name) || ctx.readonly?.has(name))
+                            ctx.readonly?.add(name);
+                        else
+                            ctx.readonly?.delete(name);
+                    }
+                }
+                if (guaranteedRun) {
+                    for (const [name, type] of loopVars)
+                        if (name !== statement.name && !variables.has(name)) {
+                            variables.set(name, type);
+                            ctx.locals?.add(name);
+                            if (loopReadonly.has(name))
+                                ctx.readonly?.add(name);
+                        }
+                }
             }
             if (statement.kind === 'while') {
                 checkCondition(statement.condition.expression, variables, ctx);
-                checkStatements(statement.body, new Map(variables), { ...ctx, locals: ctx.locals ? new Set(ctx.locals) : undefined, readonly: ctx.readonly ? new Set(ctx.readonly) : undefined }, options);
+                const loopVars = new Map(variables);
+                const loopReadonly = ctx.readonly ? new Set(ctx.readonly) : new Set();
+                const loopDeclaredLocals = ctx.declaredLocals ? new Set(ctx.declaredLocals) : undefined;
+                const loopAmbiguous = ctx.ambiguous ? new Set(ctx.ambiguous) : undefined;
+                checkStatements(statement.body, loopVars, { ...ctx, locals: ctx.locals ? new Set(ctx.locals) : undefined, declaredLocals: loopDeclaredLocals, readonly: loopReadonly, knownStrings: new Map(ctx.knownStrings), ambiguous: loopAmbiguous }, options);
+                if (ctx.declaredLocals)
+                    loopDeclaredLocals?.forEach((name) => ctx.declaredLocals.add(name));
+                // A dynamic while may execute zero times, but when it does execute its
+                // declarations remain in the function frame. Reject a post-loop use
+                // whose type or mutability would depend on that choice.
+                if (staticValue(statement.condition.expression) === undefined) {
+                    for (const [name, type] of variables) {
+                        const loopType = loopVars.get(name);
+                        if (!loopType)
+                            continue;
+                        if (loopAmbiguous?.has(name) || !sameType(type, loopType))
+                            ctx.ambiguous?.add(name);
+                        if (loopReadonly.has(name) || ctx.readonly?.has(name))
+                            ctx.readonly?.add(name);
+                        else
+                            ctx.readonly?.delete(name);
+                    }
+                }
+                ctx.knownStrings?.clear();
             }
             if (statement.kind === 'choice') {
                 if (!options.allowChoice) {
@@ -566,8 +914,9 @@ function checkStatements(statements, variables, ctx, options) {
                     if (labelType !== 'str')
                         throw new TypeCheckError(`${locStr}: 選択肢のラベルは str でなければなりません`);
                     // choice ブロック内では変数宣言を許可
-                    checkStatements(option.body, new Map(variables), { ...ctx, locals: new Set(), readonly: ctx.readonly ? new Set(ctx.readonly) : undefined }, { ...options, allowDeclaration: true });
+                    checkStatements(option.body, new Map(variables), { ...ctx, locals: new Set(), declaredLocals: new Set(), readonly: ctx.readonly ? new Set(ctx.readonly) : undefined, knownStrings: new Map(ctx.knownStrings) }, { ...options, allowDeclaration: true });
                 }
+                ctx.knownStrings?.clear();
             }
             if (statement.kind === 'call') {
                 expressionType({ kind: 'call', name: statement.name, args: statement.args, line: statement.line, column: statement.column }, variables, ctx);
@@ -608,71 +957,153 @@ function checkStatements(statements, variables, ctx, options) {
         }
     }
 }
-function checkRecursion(functions) {
+function staticGlobalStrings(statements) {
+    const known = new Map();
+    for (const statement of statements) {
+        if (statement.kind === 'declare') {
+            const value = knownStringValue(statement.initial, known);
+            if (typeof value === 'string')
+                known.set(statement.name, value);
+            else
+                known.delete(statement.name);
+        }
+        else if (statement.kind === 'set' && statement.target.kind === 'variable') {
+            const value = knownStringValue(statement.value, known);
+            if (typeof value === 'string')
+                known.set(statement.target.name, value);
+            else
+                known.delete(statement.target.name);
+        }
+        else if (statement.kind === 'call' || statement.kind === 'command' || statement.kind === 'goto'
+            || statement.kind === 'if' || statement.kind === 'for' || statement.kind === 'while' || statement.kind === 'choice') {
+            // A control-flow transfer or call can change a global string before the
+            // function runs. Keep recursion analysis sound by discarding stale facts.
+            known.clear();
+        }
+    }
+    return known;
+}
+function checkRecursion(functions, initialStrings = new Map()) {
     const callGraph = new Map();
     for (const fn of functions) {
         const called = new Set();
-        const visitExpr = (e) => {
+        const inspectTemplate = (value) => {
+            for (const path of interpolationNames(value))
+                if (path.endsWith('()'))
+                    called.add(path.slice(0, -2));
+        };
+        const visitExpr = (e, knownStrings) => {
+            if (e.kind === 'literal' && typeof e.value === 'string') {
+                inspectTemplate(e.value);
+            }
+            if (e.kind === 'variable') {
+                const value = knownStrings.get(e.name);
+                if (value !== undefined)
+                    inspectTemplate(value);
+            }
             if (e.kind === 'call') {
                 called.add(e.name);
-                e.args.forEach(visitExpr);
+                e.args.forEach((arg) => visitExpr(arg, knownStrings));
             }
             if (e.kind === 'binary') {
-                visitExpr(e.left);
-                visitExpr(e.right);
+                visitExpr(e.left, knownStrings);
+                visitExpr(e.right, knownStrings);
+                const value = knownStringValue(e, knownStrings);
+                if (value !== undefined)
+                    inspectTemplate(value);
             }
             if (e.kind === 'unary')
-                visitExpr(e.value);
+                visitExpr(e.value, knownStrings);
             if (e.kind === 'index') {
-                visitExpr(e.target);
-                visitExpr(e.key);
+                visitExpr(e.target, knownStrings);
+                visitExpr(e.key, knownStrings);
             }
             if (e.kind === 'dict')
-                e.entries.forEach((ent) => visitExpr(ent.value));
+                e.entries.forEach((ent) => visitExpr(ent.value, knownStrings));
         };
-        const visitStmt = (s) => {
+        const visitBlock = (statements, knownStrings) => {
+            statements.forEach((statement) => visitStmt(statement, knownStrings));
+        };
+        const mergeKnownStrings = (target, paths) => {
+            for (const name of [...target.keys()]) {
+                const value = paths[0]?.get(name);
+                if (value === undefined || paths.some((path) => path.get(name) !== value))
+                    target.delete(name);
+            }
+            for (const [name, value] of paths[0] || [])
+                if (paths.every((path) => path.get(name) === value))
+                    target.set(name, value);
+        };
+        const visitStmt = (s, knownStrings) => {
             if (s.kind === 'call') {
                 called.add(s.name);
-                s.args.forEach(visitExpr);
+                s.args.forEach((arg) => visitExpr(arg, knownStrings));
             }
-            if (s.kind === 'declare' && s.initial)
-                visitExpr(s.initial);
+            if (s.kind === 'declare' && s.initial) {
+                visitExpr(s.initial, knownStrings);
+                const value = knownStringValue(s.initial, knownStrings);
+                if (typeof value === 'string')
+                    knownStrings.set(s.name, value);
+                else
+                    knownStrings.delete(s.name);
+            }
             if (s.kind === 'set') {
-                visitExpr(s.value);
+                visitExpr(s.value, knownStrings);
                 if (s.target.kind === 'index') {
-                    visitExpr(s.target.target);
-                    visitExpr(s.target.key);
+                    visitExpr(s.target.target, knownStrings);
+                    visitExpr(s.target.key, knownStrings);
+                }
+                if (s.target.kind === 'variable') {
+                    const value = knownStringValue(s.value, knownStrings);
+                    if (typeof value === 'string')
+                        knownStrings.set(s.target.name, value);
+                    else
+                        knownStrings.delete(s.target.name);
                 }
             }
             if (s.kind === 'command')
-                s.args.forEach(visitExpr);
+                s.args.forEach((arg) => visitExpr(arg, knownStrings));
             if (s.kind === 'unset')
-                visitExpr(s.target);
+                visitExpr(s.target, knownStrings);
             if (s.kind === 'if') {
-                visitExpr(s.condition.expression);
-                s.body.forEach(visitStmt);
-                s.elseIf.forEach((b) => { visitExpr(b.condition.expression); b.body.forEach(visitStmt); });
-                s.otherwise.forEach(visitStmt);
+                visitExpr(s.condition.expression, knownStrings);
+                const paths = [s.body, ...s.elseIf.map((branch) => branch.body), s.otherwise].map((body) => {
+                    const path = new Map(knownStrings);
+                    visitBlock(body, path);
+                    return path;
+                });
+                mergeKnownStrings(knownStrings, paths);
             }
             if (s.kind === 'for') {
-                visitExpr(s.start);
-                visitExpr(s.stop);
-                visitExpr(s.step);
-                s.body.forEach(visitStmt);
+                visitExpr(s.start, knownStrings);
+                visitExpr(s.stop, knownStrings);
+                visitExpr(s.step, knownStrings);
+                visitBlock(s.body, new Map(knownStrings));
+                knownStrings.clear();
             }
             if (s.kind === 'while') {
-                visitExpr(s.condition.expression);
-                s.body.forEach(visitStmt);
+                visitExpr(s.condition.expression, knownStrings);
+                visitBlock(s.body, new Map(knownStrings));
+                knownStrings.clear();
             }
             if (s.kind === 'choice') {
                 if (s.prompt)
-                    visitExpr(s.prompt);
-                s.options.forEach((o) => { visitExpr(o.label); o.body.forEach(visitStmt); });
+                    visitExpr(s.prompt, knownStrings);
+                const paths = s.options.map((option) => {
+                    visitExpr(option.label, knownStrings);
+                    const path = new Map(knownStrings);
+                    visitBlock(option.body, path);
+                    return path;
+                });
+                if (paths.length)
+                    mergeKnownStrings(knownStrings, paths);
             }
             if (s.kind === 'return' && s.value)
-                visitExpr(s.value);
+                visitExpr(s.value, knownStrings);
         };
-        fn.body.forEach(visitStmt);
+        const functionStrings = new Map(initialStrings);
+        fn.params.forEach((param) => functionStrings.delete(param.name));
+        visitBlock(fn.body, functionStrings);
         callGraph.set(fn.name, called);
     }
     // サイクル検出 (DFS)
@@ -727,28 +1158,28 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
     for (const struct of script.structs) {
         capture(() => {
             if (declaredStructs.has(struct.name))
-                throw new TypeCheckError(`${getLocStr(struct, file)}: struct '${struct.name}' が重複しています`);
+                throw new TypeCheckError(`${getLocStr(struct)}: struct '${struct.name}' が重複しています`);
             declaredStructs.add(struct.name);
             for (const [field, fieldType] of Object.entries(struct.fields)) {
                 if (fieldType !== 'int' && fieldType !== 'str')
-                    throw new TypeCheckError(`${getLocStr(struct, file)}: struct フィールド '${field}' の型が不正です`);
+                    throw new TypeCheckError(`${getLocStr(struct)}: struct フィールド '${field}' の型が不正です`);
             }
         });
     }
     for (const asset of script.assets) {
         capture(() => {
             if (declaredAssets.has(asset.name)) {
-                throw new TypeCheckError(`${getLocStr(asset, file)}: アセット '${asset.name}' が重複して宣言されています`);
+                throw new TypeCheckError(`${getLocStr(asset)}: アセット '${asset.name}' が重複して宣言されています`);
             }
             // パス検証 (項目23)
             if (!validAssetPath(asset.path)) {
-                throw new TypeCheckError(`${getLocStr(asset, file)}: アセットパス '${asset.path}' はプロジェクト外を参照できません`);
+                throw new TypeCheckError(`${getLocStr(asset)}: アセットパス '${asset.path}' はプロジェクト外を参照できません`);
             }
             const dotIdx = asset.path.lastIndexOf('.');
             const ext = dotIdx >= 0 ? asset.path.slice(dotIdx).toLowerCase() : '';
             const allowed = ALLOWED_EXTENSIONS[asset.type] || [];
             if (!allowed.includes(ext)) {
-                throw new TypeCheckError(`${getLocStr(asset, file)}: アセット '${asset.name}' (${asset.type}) の拡張子 '${ext}' は不正です`);
+                throw new TypeCheckError(`${getLocStr(asset)}: アセット '${asset.name}' (${asset.type}) の拡張子 '${ext}' は不正です`);
             }
             declaredAssets.add(asset.name);
         });
@@ -756,29 +1187,29 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
     for (const char of script.characters) {
         capture(() => {
             if (externalGlobals.has(char.name))
-                throw new TypeCheckError(`${getLocStr(char, file)}: character '${char.name}' とグローバル変数 '${char.name}' の名前が重複しています`);
+                throw new TypeCheckError(`${getLocStr(char)}: character '${char.name}' とグローバル変数 '${char.name}' の名前が重複しています`);
             if (declaredCharacters.has(char.name)) {
-                throw new TypeCheckError(`${getLocStr(char, file)}: キャラクター '${char.name}' が重複して宣言されています`);
+                throw new TypeCheckError(`${getLocStr(char)}: キャラクター '${char.name}' が重複して宣言されています`);
             }
             declaredCharacters.add(char.name);
             const properties = new Set();
             for (const property of char.properties) {
                 if (properties.has(property.name))
-                    throw new TypeCheckError(`${getLocStr(property, file)}: キャラクター '${char.name}' のフィールド '${property.name}' が重複しています`);
+                    throw new TypeCheckError(`${getLocStr(property)}: キャラクター '${char.name}' のフィールド '${property.name}' が重複しています`);
                 if (!characterPropertyType(property.value))
-                    throw new TypeCheckError(`${getLocStr(property, file)}: キャラクターフィールド '${property.name}' は int または str の定数で指定してください`);
+                    throw new TypeCheckError(`${getLocStr(property)}: キャラクターフィールド '${property.name}' は int または str の定数で指定してください`);
                 properties.add(property.name);
             }
             const displayName = char.properties.find((property) => property.name === 'name');
             if (!displayName || characterPropertyType(displayName.value) !== 'str')
-                throw new TypeCheckError(`${getLocStr(char, file)}: character '${char.name}' には str の name フィールドが必要です`);
+                throw new TypeCheckError(`${getLocStr(char)}: character '${char.name}' には str の name フィールドが必要です`);
             const poses = new Set();
             for (const pose of char.poses) {
                 if (poses.has(pose.name)) {
-                    throw new TypeCheckError(`${getLocStr(char, file)}: キャラクター '${char.name}' の表情 '${pose.name}' が重複しています`);
+                    throw new TypeCheckError(`${getLocStr(char)}: キャラクター '${char.name}' の表情 '${pose.name}' が重複しています`);
                 }
                 if (!validAssetPath(pose.path)) {
-                    throw new TypeCheckError(`${getLocStr(char, file)}: 表情パス '${pose.path}' はプロジェクト外を参照できません`);
+                    throw new TypeCheckError(`${getLocStr(char)}: 表情パス '${pose.path}' はプロジェクト外を参照できません`);
                 }
                 if (!ALLOWED_EXTENSIONS.char.some(ext => pose.path.toLowerCase().endsWith(ext)))
                     throw new TypeCheckError(`表情 '${pose.name}' の拡張子が不正です`);
@@ -789,7 +1220,7 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
     for (const fn of script.functions) {
         capture(() => {
             if (declaredFunctions.has(fn.name)) {
-                throw new TypeCheckError(`${getLocStr(fn, file)}: 関数 '${fn.name}' が重複して宣言されています`);
+                throw new TypeCheckError(`${getLocStr(fn)}: 関数 '${fn.name}' が重複して宣言されています`);
             }
             declaredFunctions.add(fn.name);
         });
@@ -797,13 +1228,13 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
     for (const sc of script.scenes) {
         capture(() => {
             if (declaredScenes.has(sc.name)) {
-                throw new TypeCheckError(`${getLocStr(sc, file)}: シーン '${sc.name}' が重複して宣言されています`);
+                throw new TypeCheckError(`${getLocStr(sc)}: シーン '${sc.name}' が重複して宣言されています`);
             }
             declaredScenes.add(sc.name);
         });
     }
     // 2. 再帰検査
-    capture(() => checkRecursion(script.functions));
+    capture(() => checkRecursion(script.functions, staticGlobalStrings(script.globals)));
     // 3. コンテキスト構築
     const globals = new Map(externalGlobals);
     const functions = new Map();
@@ -835,6 +1266,8 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
         structs,
         externalGlobals: new Set(externalGlobals.keys()),
         readonly: new Set([...externalGlobals.readonlyNames || []].filter((name) => externalGlobals.has(name))),
+        knownStrings: new Map(),
+        ambiguous: new Set(),
         errors,
     };
     // グローバル文（変数宣言）の検証
@@ -842,7 +1275,7 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
         capture(() => {
             if (stmt.kind === 'declare') {
                 if (declaredGlobals.has(stmt.name)) {
-                    throw new TypeCheckError(`${getLocStr(stmt, file)}: グローバル変数 '${stmt.name}' が重複して宣言されています`);
+                    throw new TypeCheckError(`${getLocStr(stmt)}: グローバル変数 '${stmt.name}' が重複して宣言されています`);
                 }
                 declaredGlobals.add(stmt.name);
             }
@@ -857,18 +1290,25 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
             const paramNames = new Set();
             for (const param of fn.params) {
                 if (paramNames.has(param.name)) {
-                    throw new TypeCheckError(`${getLocStr(fn, file)}: 関数 '${fn.name}' の引数名 '${param.name}' が重複しています`);
+                    throw new TypeCheckError(`${getLocStr(fn)}: 関数 '${fn.name}' の引数名 '${param.name}' が重複しています`);
                 }
                 paramNames.add(param.name);
                 fnVars.set(param.name, param.type);
             }
-            const fnCtx = { ...ctx, currentFunction: fn, locals: paramNames };
+            // Function bodies execute after the file globals have been initialized.
+            // Carry their statically known string templates into the function scope so
+            // an interpolation such as `{template}` is checked for nested variables
+            // and zero-argument calls even when it appears only inside the function.
+            const fnCtx = { ...ctx, currentFunction: fn, locals: paramNames, declaredLocals: new Set(paramNames), knownStrings: new Map(ctx.knownStrings), ambiguous: new Set() };
             checkStatements(fn.body, fnVars, { ...fnCtx, readonly: new Set([...ctx.readonly || []].filter((name) => !paramNames.has(name))) }, { allowGoto: false, allowChoice: false, allowReturn: true, allowDeclaration: true });
         });
     }
     // シーンの検証（scene直下での変数宣言は禁止）
     for (const scene of script.scenes) {
         const sceneVars = new Map(globals);
-        checkStatements(scene.body, sceneVars, ctx, { allowGoto: true, allowChoice: true, allowReturn: false, allowDeclaration: false });
+        // A scene runs after the file globals, just like a function call. Keep
+        // statically known global templates available for nested interpolation
+        // validation in scene-local dialogue and choices.
+        checkStatements(scene.body, sceneVars, { ...ctx, knownStrings: new Map(ctx.knownStrings), ambiguous: new Set() }, { allowGoto: true, allowChoice: true, allowReturn: false, allowDeclaration: false });
     }
 }

@@ -13,10 +13,10 @@ const PRECEDENCE = {
     '*': 60, '/': 60, '%': 60,
 };
 const KEYWORDS = new Set([
-    'scene', 'asset', 'character', 'int', 'str', 'dict', 'set', 'unset', 'say', 'bg', 'bgm', 'show', 'hide',
-    'clear', 'play', 'effect', 'wait', 'if', 'elif', 'else', 'and', 'or', 'not', 'choice', 'for', 'from', 'to',
-    'step', 'while', 'fn', 'return', 'goto', 'none', 'int', 'str', 'dict', 'async', 'blocking', 'voice', 'video',
-    'include', 'struct', 'pose', 'global',
+    'scene', 'asset', 'character', 'struct', 'pose', 'include', 'int', 'str', 'dict', 'none', 'global', 'const', 'let',
+    'set', 'unset', 'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'image', 'clear', 'play', 'se', 'effect', 'wait',
+    'if', 'elif', 'else', 'and', 'or', 'not', 'choice', 'for', 'from', 'to', 'step', 'while',
+    'fn', 'return', 'goto', 'async', 'blocking', 'voice', 'video',
 ]);
 class ParseError extends Error {
     token;
@@ -28,16 +28,40 @@ class ParseError extends Error {
 }
 exports.ParseError = ParseError;
 class Parser {
-    source;
     current;
     lexer;
     buffered = [];
     lastBlockEndLine = 1;
+    lastBlockEndColumn = 1;
     declaredStructs = new Set();
-    constructor(source) {
-        this.source = source;
+    constructor(source, knownStructs = []) {
+        for (const name of knownStructs)
+            this.declaredStructs.add(name);
+        this.discoverStructNames(source);
         this.lexer = new lexer_1.Lexer(source);
         this.current = this.lexer.next();
+    }
+    discoverStructNames(source) {
+        const lexer = new lexer_1.Lexer(source);
+        let depth = 0;
+        let expectName = false;
+        while (true) {
+            const token = lexer.next();
+            if (expectName) {
+                if (depth === 0 && token.type === 'word')
+                    this.declaredStructs.add(token.value);
+                expectName = false;
+            }
+            else if (depth === 0 && token.type === 'word' && token.value === 'struct') {
+                expectName = true;
+            }
+            if (token.value === '{')
+                depth++;
+            else if (token.value === '}')
+                depth = Math.max(0, depth - 1);
+            if (token.type === 'eof')
+                break;
+        }
     }
     parse() {
         const assets = [];
@@ -87,8 +111,14 @@ class Parser {
         if (this.current.type === 'string')
             return this.take().value;
         const parts = [];
-        while (!this.at('newline') && !this.at('eof'))
-            parts.push(this.take().value);
+        let previous;
+        while (!this.at('newline') && !this.at('eof')) {
+            const token = this.current;
+            if (previous && token.offset > previous.offset + previous.value.length)
+                throw this.error('Include path cannot contain spaces');
+            previous = this.take();
+            parts.push(previous.value);
+        }
         const value = parts.join('');
         if (!value)
             throw this.error('Expected include path');
@@ -130,7 +160,7 @@ class Parser {
             this.skipLines();
         }
         const closing = this.take();
-        return { kind: 'character', name, properties, poses, line: start.line, column: start.column, endLine: closing.line };
+        return { kind: 'character', name, properties, poses, line: start.line, column: start.column, endLine: closing.line, endColumn: closing.column };
     }
     parseStruct() {
         const start = this.take();
@@ -173,12 +203,14 @@ class Parser {
         this.expect(')');
         this.expect('->');
         const returnType = this.parseType(true);
-        return { kind: 'function', name, returnType, params, body: this.parseBraced(), line: start.line, column: start.column };
+        const body = this.parseBraced();
+        return { kind: 'function', name, returnType, params, body, line: start.line, column: start.column, endLine: this.lastBlockEndLine, endColumn: this.lastBlockEndColumn };
     }
     parseScene() {
         const start = this.take();
         const name = this.expectIdentifier('Expected scene name');
-        return { kind: 'scene', name, body: this.parseBraced(), line: start.line, column: start.column };
+        const body = this.parseBraced();
+        return { kind: 'scene', name, body, line: start.line, column: start.column, endLine: this.lastBlockEndLine, endColumn: this.lastBlockEndColumn };
     }
     parseType(allowNone) {
         const word = this.expectWord('Expected type');
@@ -198,16 +230,6 @@ class Parser {
     }
     peekToken() { if (!this.buffered.length)
         this.buffered.push(this.lexer.next()); return this.buffered[0]; }
-    peekContent() {
-        let index = 0;
-        while (true) {
-            if (index === this.buffered.length)
-                this.buffered.push(this.lexer.next());
-            if (this.buffered[index].type !== 'newline')
-                return this.buffered[index];
-            index++;
-        }
-    }
     parseStatement() {
         const token = this.current;
         if (token.type !== 'word')
@@ -245,7 +267,6 @@ class Parser {
                 this.expect('=');
                 return { kind: 'declare', name, type, constant: command === 'const', initial: this.parseExpression(), line: token.line, column: token.column };
             }
-            case 'let': throw this.error('let は廃止されました。型名（int / str / dict）を使用してください');
             case 'set': {
                 this.take();
                 const target = this.parseAssignable();
@@ -260,6 +281,7 @@ class Parser {
                 this.take();
                 const first = { condition: this.parseCondition(), body: this.parseBraced() };
                 let endLine = this.lastBlockEndLine;
+                let endColumn = this.lastBlockEndColumn;
                 const elseIf = [];
                 let otherwise = [];
                 this.skipLines();
@@ -268,16 +290,18 @@ class Parser {
                         this.take();
                         elseIf.push({ condition: this.parseCondition(), body: this.parseBraced() });
                         endLine = this.lastBlockEndLine;
+                        endColumn = this.lastBlockEndColumn;
                         this.skipLines();
                     }
                     else {
                         this.take();
                         otherwise = this.parseBraced();
                         endLine = this.lastBlockEndLine;
+                        endColumn = this.lastBlockEndColumn;
                         break;
                     }
                 }
-                return { kind: 'if', condition: first.condition, body: first.body, elseIf, otherwise, line: token.line, column: token.column, endLine };
+                return { kind: 'if', condition: first.condition, body: first.body, elseIf, otherwise, line: token.line, column: token.column, endLine, endColumn };
             }
             case 'for': {
                 this.take();
@@ -288,13 +312,13 @@ class Parser {
                 const stop = this.parseExpression();
                 const step = this.atWord('step') ? (this.take(), this.parseExpression()) : literal(1);
                 const body = this.parseBraced();
-                return { kind: 'for', name, start, stop, step, body, line: token.line, column: token.column, endLine: this.lastBlockEndLine };
+                return { kind: 'for', name, start, stop, step, body, line: token.line, column: token.column, endLine: this.lastBlockEndLine, endColumn: this.lastBlockEndColumn };
             }
             case 'while': {
                 this.take();
                 const condition = this.parseCondition();
                 const body = this.parseBraced();
-                return { kind: 'while', condition, body, line: token.line, column: token.column, endLine: this.lastBlockEndLine };
+                return { kind: 'while', condition, body, line: token.line, column: token.column, endLine: this.lastBlockEndLine, endColumn: this.lastBlockEndColumn };
             }
             case 'choice': {
                 this.take();
@@ -313,7 +337,7 @@ class Parser {
                     this.skipLines();
                 }
                 const closing = this.take();
-                return { kind: 'choice', prompt, options, line: token.line, column: token.column, endLine: closing.line };
+                return { kind: 'choice', prompt, options, line: token.line, column: token.column, endLine: closing.line, endColumn: closing.column };
             }
             case 'return': {
                 this.take();
@@ -322,32 +346,32 @@ class Parser {
             case 'goto': {
                 this.take();
                 let scene = '';
-                if (this.current.type === 'string' || this.atValue('(') || (this.current.type === 'word' && (['+', '-', '[', '.'].includes(this.peekToken().value) || (this.peekToken().value === '(' && this.peekToken().offset === this.current.offset + this.current.value.length)) && !['narrator', 'none'].includes(this.current.value))) {
-                    scene = this.take().value;
-                }
-                else {
-                    while (!this.atLineEnd() && !this.atValue('}'))
-                        scene += this.take().value;
+                let previous;
+                while (!this.atLineEnd() && !this.atValue('}')) {
+                    const token = this.current;
+                    if (previous && token.offset > previous.offset + previous.value.length)
+                        throw this.error('Scene path cannot contain spaces');
+                    previous = this.take();
+                    scene += previous.value;
                 }
                 // Source may use Windows separators, but compiled programs and package
                 // keys always use '/'.  Normalize at the language boundary so local
                 // scene lookup and external file loading agree.
                 scene = scene.replaceAll('\\', '/');
                 const parts = scene.split('/');
-                const safeDirectory = (part) => part.length <= 120 && part !== '.' && part !== '..' && !/[<>:"|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part);
+                const safeDirectory = (part) => part.length > 0 && part.length <= 120 && part !== '.' && part !== '..' && !/[<>:"|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part);
                 const file = parts.pop() || '';
-                if (scene.startsWith('/') || parts.some((part) => !safeDirectory(part)) || !/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$/.test(file))
+                const safeFile = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$/.test(file) && !/[. ]$/.test(file) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(file);
+                if (scene.startsWith('/') || parts.some((part) => !safeDirectory(part)) || !safeFile)
                     throw this.error('Invalid scene path');
                 scene = [...parts, file].join('/');
-                return { kind: 'goto', scene, line: token.line, column: token.column };
+                return { kind: 'goto', scene, line: token.line, column: token.column, endLine: this.current.line, endColumn: this.current.column };
             }
             case 'say': {
                 this.take();
                 this.skipLines();
                 let speaker = 'narrator';
                 let textExpr;
-                if (this.atValue('{'))
-                    throw this.error('say does not support block syntax');
                 if (this.current.type === 'string') {
                     textExpr = this.parseExpression();
                 }
@@ -357,8 +381,6 @@ class Parser {
                     if (this.atLineEnd())
                         throw this.error('say requires quoted text');
                     speaker = spkToken.value;
-                    if (this.atValue('{'))
-                        throw this.error('say does not support block syntax');
                     textExpr = this.parseExpression();
                 }
                 else {
@@ -373,6 +395,8 @@ class Parser {
                     ],
                     line: token.line,
                     column: token.column,
+                    endLine: this.current.line,
+                    endColumn: this.current.column,
                 };
             }
             default: {
@@ -386,25 +410,10 @@ class Parser {
                     const args = this.parseCallArgs();
                     return { kind: 'call', name: command, args, line: token.line, column: token.column };
                 }
-                return { kind: 'command', name: command, args: this.parseCommandArgs(command), line: token.line, column: token.column };
+                const args = this.parseCommandArgs(command);
+                return { kind: 'command', name: command, args, line: token.line, column: token.column, endLine: this.current.line, endColumn: this.current.column };
             }
         }
-    }
-    parseSayBlock(token, speaker) {
-        this.expect('{');
-        const lines = [];
-        this.skipLines();
-        while (!this.atValue('}')) {
-            if (this.at('eof'))
-                throw this.error("Expected '}'");
-            lines.push(this.parseExpression());
-            this.endLine();
-            this.skipLines();
-        }
-        const closing = this.take();
-        if (!lines.length)
-            throw this.error('say ブロックには本文を1つ以上指定してください');
-        throw this.error('say block syntax was removed');
     }
     parseAssignable() {
         const token = this.current;
@@ -484,7 +493,7 @@ class Parser {
             expr = { kind: 'literal', value: val, line: token.line, column: token.column };
         }
         else if (token.type === 'string') {
-            this.take();
+            this.rejectUnknownEscapes(this.take());
             expr = { kind: 'literal', value: token.value, line: token.line, column: token.column };
         }
         else if (token.type === 'word') {
@@ -505,6 +514,7 @@ class Parser {
             const entries = [];
             if (!this.atValue('}')) {
                 const keyToken = this.expect('string', 'Dictionary keys must be strings');
+                this.rejectUnknownEscapes(keyToken);
                 this.skipLines();
                 this.expect(':');
                 this.skipLines();
@@ -515,6 +525,7 @@ class Parser {
                     if (this.atValue('}'))
                         break;
                     const next = this.expect('string', 'Dictionary keys must be strings');
+                    this.rejectUnknownEscapes(next);
                     this.skipLines();
                     this.expect(':');
                     this.skipLines();
@@ -557,6 +568,11 @@ class Parser {
             throw new ParseError(`予約語 '${token.value}' は識別子として使用できません`, token);
         }
         return token.value;
+    }
+    rejectUnknownEscapes(token) {
+        const escaped = token.unknownEscapes?.[0];
+        if (escaped)
+            throw new ParseError(`Unknown escape sequence '\\${escaped}'`, token);
     }
     expectWordValue(value) {
         const token = this.expect('word', `Expected '${value}'`);
@@ -634,11 +650,12 @@ class Parser {
         }
         const closing = this.take();
         this.lastBlockEndLine = closing.line;
+        this.lastBlockEndColumn = closing.column;
         return body;
     }
 }
 exports.Parser = Parser;
 const literal = (value) => ({ kind: 'literal', value });
-function parse(source) {
-    return new Parser(source).parse();
+function parse(source, knownStructs = []) {
+    return new Parser(source, knownStructs).parse();
 }

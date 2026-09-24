@@ -4,7 +4,7 @@
 
 ## 最初に読むもの
 
-- [構文リファレンス](syntax-draft.md): 文法、型、命令、移行表、完全例
+- [構文リファレンス](syntax-draft.md): 文法、型、命令、完全例
 - [native player](native/README.md): native build・実行・headless検証
 - `Title/setting.txt`: 作品レイアウトと開始ファイルの設定
 
@@ -102,3 +102,11 @@ npm.cmd run desktop
 ```
 
 Electron はローカルの編集サーバーを自動で起動し、ウィンドウを閉じると停止します。環境変数 `ELECTRON_RUN_AS_NODE` が設定されていても、デスクトップ起動時だけは無効化されます。従来どおりブラウザーで起動する場合は `npm.cmd run editor` を使えます。
+
+Windows配布版は次で作成します。
+
+```powershell
+npm.cmd run desktop:package:win
+```
+
+`release/Novel Script Editor-win32-x64/` に、Editor本体とBrowser/Native再生に必要なNative実行ファイル・DLL・`engine_data` が生成されます。配布版の初回起動時の既定作品は、書き込み可能な `ドキュメント/Novel Script Projects/Title` に作成されます。既存作品はプロジェクト選択から開くか、`NOVEL_PROJECT_ROOT` を指定してください。

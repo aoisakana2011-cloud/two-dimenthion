@@ -1,17 +1,73 @@
 'use strict';
 const $ = id => document.getElementById(id);
+let playerTheme = null;
 function uiAsset(themePath, image) {
+  if (!image) return '';
   const directory = themePath.replaceAll('\\', '/').split('/').slice(0, -1);
   return '/asset/' + [...directory, image].map(encodeURIComponent).join('/');
 }
+function uiBackground(themePath, image, fallback) {
+  return image ? `url("${uiAsset(themePath, image)}") center / 100% 100% no-repeat` : fallback;
+}
 function applyPlayerUi(themePath, theme) {
+  playerTheme = { path: themePath, ...theme };
   const { screen, dialog, choices } = theme;
-  const stage = $('stage'), dialogue = $('dialogue'), speaker = $('speaker'), text = $('text'), choiceBox = $('choices');
+  const stage = $('stage'), dialogue = $('dialogue'), speaker = $('speaker'), speakerText = $('speaker-text'), text = $('text'), choiceBox = $('choices');
   stage.style.width = `${screen.width}px`; stage.style.height = `${screen.height}px`;
-  Object.assign(dialogue.style, { left: `${dialog.x}px`, top: `${dialog.y}px`, right: 'auto', bottom: 'auto', width: `${dialog.width}px`, height: `${dialog.height}px`, minHeight: '0', padding: '0', border: '0', borderRadius: '0', background: `url("${uiAsset(themePath, dialog.image)}") center / 100% 100% no-repeat` });
+  Object.assign(dialogue.style, { left: `${dialog.x}px`, top: `${dialog.y}px`, right: 'auto', bottom: 'auto', width: `${dialog.width}px`, height: `${dialog.height}px`, minHeight: '0', padding: '0', border: dialog.image ? '0' : '1px solid #8ab8d8', borderRadius: dialog.image ? '0' : '12px', background: uiBackground(themePath, dialog.image, '#07111ddd') });
   Object.assign(text.style, { position: 'absolute', left: `${dialog.message.x}px`, top: `${dialog.message.y}px`, width: `${dialog.message.width}px`, height: `${dialog.message.height}px`, overflow: 'hidden', fontSize: `${dialog.message.size}px`, color: `rgba(${dialog.message.color.join(',')})` });
-  Object.assign(speaker.style, { position: 'absolute', display: 'grid', placeItems: 'center', left: `${dialog.nameplate.x}px`, top: `${dialog.nameplate.y}px`, width: `${dialog.nameplate.width}px`, height: `${dialog.nameplate.height}px`, color: `rgba(${dialog.nameplate.text.color.join(',')})`, fontSize: `${dialog.nameplate.text.size}px`, background: `url("${uiAsset(themePath, dialog.nameplate.image)}") center / 100% 100% no-repeat` });
-  Object.assign(choiceBox.style, { position: 'absolute', left: `${choices.x - dialog.x}px`, top: `${choices.y - dialog.y}px`, width: `${choices.width}px`, height: `${choices.height}px`, overflowY: 'auto' });
+  Object.assign(speaker.style, { position: 'absolute', display: 'grid', placeItems: 'center', left: `${dialog.nameplate.x}px`, top: `${dialog.nameplate.y}px`, width: `${dialog.nameplate.width}px`, height: `${dialog.nameplate.height}px`, color: `rgba(${dialog.nameplate.text.color.join(',')})`, fontSize: `${dialog.nameplate.text.size}px`, background: uiBackground(themePath, dialog.nameplate.image, '#1d344dcc'), borderRadius: dialog.nameplate.image ? '0' : '6px' });
+  Object.assign(speakerText.style, { position: 'absolute', left: `${dialog.nameplate.text.x || 0}px`, top: `${dialog.nameplate.text.y || 0}px`, width: `${dialog.nameplate.text.width}px`, height: `${dialog.nameplate.text.height}px`, display: 'grid', placeItems: 'center', overflow: 'hidden' });
+  Object.assign(choiceBox.style, { position: 'absolute', left: `${choices.x - dialog.x}px`, top: `${choices.y - dialog.y}px`, width: `${choices.width}px`, height: `${choices.height}px`, overflowY: 'auto', overflowX: 'hidden' });
+  const fog = screen.backdrop?.bottomFog;
+  let fogLayer = $('bottom-fog');
+  if (!fogLayer) { fogLayer = document.createElement('canvas'); fogLayer.id = 'bottom-fog'; stage.insertBefore(fogLayer, dialogue); }
+  Object.assign(fogLayer.style, { position: 'absolute', left: '0', bottom: '0', pointerEvents: 'none', display: fog?.enabled ? 'block' : 'none' });
+  if (fog?.enabled) {
+    const height = Math.min(Number(fog.height || 300), screen.height * 0.6);
+    fogLayer.width = screen.width; fogLayer.height = Math.ceil(height);
+    fogLayer.style.width = `${screen.width}px`; fogLayer.style.height = `${height}px`;
+    const [r, g, b, a = 255] = fog.color || [255, 250, 253, 255];
+    const context = fogLayer.getContext('2d');
+    context.clearRect(0, 0, fogLayer.width, fogLayer.height);
+    for (let row = 0; row < fogLayer.height; row++) {
+      const t = (row + 1) / fogLayer.height;
+      context.fillStyle = `rgba(${r},${g},${b},${a / 255 * 210 / 255 * t * t})`;
+      context.fillRect(0, fogLayer.height - row - 1, fogLayer.width, 1);
+    }
+  }
+}
+
+function makeChoice(label, index) {
+  const { path, choices } = playerTheme;
+  const button = document.createElement('button');
+  button.className = 'choice';
+  button.type = 'button';
+  button.style.height = `${choices.itemHeight}px`;
+  button.style.margin = `0 0 ${choices.gap}px`;
+  button.style.backgroundImage = choices.image ? `url("${uiAsset(path, choices.image)}")` : 'none';
+  button.style.backgroundSize = '100% 100%';
+  button.style.backgroundColor = choices.image ? 'transparent' : '#10243acc';
+  button.style.border = choices.image ? '0' : '1px solid #8ab8d8';
+  button.style.borderRadius = choices.image ? '0' : '8px';
+  button.style.color = `rgba(${choices.text.color.join(',')})`;
+  button.style.fontSize = `${choices.text.size}px`;
+  button.setAttribute('aria-label', label);
+  const text = document.createElement('span');
+  text.textContent = label;
+  Object.assign(text.style, { position: 'absolute', left: `${choices.text.x}px`, top: `${choices.text.y}px`, width: `${choices.text.width}px`, height: `${choices.text.height}px`, overflow: 'hidden', whiteSpace: 'pre-wrap', textAlign: 'left' });
+  button.append(text);
+  const setActive = active => {
+    const image = active ? choices.activeImage : choices.image;
+    button.style.backgroundImage = image ? `url("${uiAsset(path, image)}")` : 'none';
+    if (!choices.image && !choices.activeImage) button.style.backgroundColor = active ? '#285577' : '#10243acc';
+  };
+  setActive(index === 0);
+  button.addEventListener('mouseenter', () => setActive(true));
+  button.addEventListener('mouseleave', () => setActive(false));
+  button.addEventListener('focus', () => setActive(true));
+  button.addEventListener('blur', () => setActive(false));
+  return button;
 }
 function url(type, name, pose) {
   let a = runtime.program?.assets?.find((x) => x.name === name && x.type === type);
@@ -21,8 +77,11 @@ function url(type, name, pose) {
   }
   return a ? `/asset/${a.path.replace(/^assets?[\\/]/, '').replaceAll('\\', '/')}` : name;
 }
+function slotClass(slot) {
+  return slot === 'far_left' ? 'far-left' : slot === 'far_right' ? 'far-right' : slot;
+}
 
-async function media(type, name) {
+async function media(type, name, mode, operation, runtime) {
   const src = url(type, name);
   if (type === 'bgm') {
     const a = $('bgm');
@@ -30,15 +89,26 @@ async function media(type, name) {
     await a.play();
   } else {
     const a = new Audio(src);
+    let resolveEnded;
+    const ended = new Promise(resolve => { resolveEnded = resolve; });
+    a.onended = () => { a.remove(); runtime?.completeAction(operation?.actionId); resolveEnded(); };
     await a.play();
-    a.onended = () => a.remove();
+    if (mode === 'blocking') await ended;
   }
 }
 
-async function playVideo(name, mode) {
+async function playVideo(name, mode, operation, runtime) {
   const src = url('video', name);
+  const previous = $('active-video');
+  if (previous) {
+    const previousAction = previous.dataset.actionId;
+    previous.pause();
+    previous.remove();
+    runtime?.stopAction(previousAction, 'replaced');
+  }
   const video = document.createElement('video');
   video.id = 'active-video';
+  if (operation?.actionId) video.dataset.actionId = operation.actionId;
   video.src = src;
   video.autoplay = true;
   video.style.position = 'absolute';
@@ -50,12 +120,12 @@ async function playVideo(name, mode) {
   $('stage').append(video);
   if (mode === 'blocking') {
     await new Promise((resolve, reject) => {
-      video.onended = () => { video.remove(); resolve(); };
+      video.onended = () => { video.remove(); runtime?.completeAction(operation?.actionId); resolve(); };
       video.onerror = () => { video.remove(); reject(Error('動画の読み込みに失敗しました')); };
       video.play().catch(reject);
     });
   } else {
-    video.onended = () => video.remove();
+    video.onended = () => { video.remove(); runtime?.completeAction(operation?.actionId); };
     await video.play();
   }
 }
@@ -88,12 +158,16 @@ async function command(c) {
     $('background').style.backgroundImage = `url("${src}")`;
   } else if (showChar) {
     const charName = poseReference[1];
-    const pos = a[1];
+    const pos = slotClass(a[1]);
     const pose = poseReference[2];
     const fadeOffset = 2;
+    document.querySelectorAll(`#characters .actor[data-slot="${CSS.escape(pos)}"]`).forEach(actor => {
+      if (actor.id !== `char-${charName}`) actor.remove();
+    });
     const existing = $(`char-${charName}`);
     const e = existing || Object.assign(document.createElement('img'), { id: `char-${charName}` });
     e.className = `actor ${pos}`;
+    e.dataset.slot = pos;
     e.src = url('char', charName, pose);
     await e.decode();
     if (!e.parentNode) $('characters').append(e);
@@ -113,18 +187,19 @@ async function command(c) {
       bgm.removeAttribute('src');
     } else if (target === 'image') $(`image-${a[1]}`)?.remove();
   } else if (n === 'bgm') {
-    await media('bgm', a[0]);
+    await media('bgm', a[0], undefined, c.operation, c.runtime);
   } else if (n === 'play') {
-    if (a[0] === 'video') await playVideo(a[1], a[2]);
-    else await media(a[0], a[1]);
+    if (a[0] === 'video') await playVideo(a[1], a[2], c.operation, c.runtime);
+    else await media(a[0], a[1], a[2], c.operation, c.runtime);
   } else if (n === 'effect') {
     await applyEffect(a[0], a[1], a[2]);
   } else if (n === 'show' && a[0] === 'image') {
     const imgName = a[1];
-    const pos = a[2];
+    const pos = slotClass(a[2]);
     const e = $(`image-${imgName}`) || document.createElement('img');
     e.id = `image-${imgName}`;
     e.className = `image ${pos}`;
+    e.dataset.slot = pos;
     e.src = url('image', imgName);
     await e.decode();
     $('images').append(e);
@@ -147,25 +222,28 @@ async function loadScene(name) {
 }
 const runtime = new NovelRuntime.Runtime({
   load: loadScene,
-  async command(name, args, rt) {
+  async command(name, args, rt, operation) {
     if (name === 'say') {
       let speaker = args[0] === 'none' || args[0] === 'narrator' ? '' : args[0];
       if (speaker) {
         try { speaker = rt.get(speaker)?.name || speaker; } catch {}
       }
-      $('speaker').textContent = speaker;
+      $('speaker-text').textContent = speaker;
       $('text').textContent = await rt.textAsync(args[1]);
       await new Promise(resolve => { $('next').onclick = () => { $('next').onclick = null; resolve(); }; });
     } else if (name === 'wait') {
       if (args[0] < 0n || args[0] > 2147483647n) throw Error('待機時間が不正です');
       await new Promise(resolve => setTimeout(resolve, Number(args[0])));
-    } else await command({ name, args });
+    } else await command({ name, args, operation, runtime: rt });
+  },
+  sceneState(state) {
+    document.body.dataset.sceneRevision = String(state.revision);
   },
   choice(prompt, labels) {
     $('text').textContent = prompt;
     $('choices').replaceChildren();
     return new Promise(resolve => labels.forEach((label, index) => {
-      const button = document.createElement('button'); button.className = 'choice'; button.textContent = label;
+      const button = makeChoice(label, index);
       button.onclick = () => { $('choices').replaceChildren(); resolve(index); };
       $('choices').append(button);
     }));
@@ -177,4 +255,4 @@ const runtime = new NovelRuntime.Runtime({
   const settings = await (await fetch('/api/scene-config')).json();
   const name = new URLSearchParams(location.search).get('source') || settings.start_scene || 'main.tds';
   await runtime.run(await loadScene(name));
-})().catch(error => { $('speaker').textContent = 'PLAYER ERROR'; $('text').textContent = error.message; $('choices').replaceChildren(); });
+})().catch(error => { $('speaker-text').textContent = 'PLAYER ERROR'; $('text').textContent = error.message; $('choices').replaceChildren(); });

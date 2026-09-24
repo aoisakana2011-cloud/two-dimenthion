@@ -1,21 +1,25 @@
 'use strict';
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { parse, compile } = require('../dist');
+const { parse, compile, tokenize } = require('../dist');
 
 function sceneFile(name) {
   if (typeof name !== 'string') throw Error('不正なシーンパスです');
   name = name.replaceAll('\\', '/');
   const parts = name.split('/');
-  const safeDirectory = (part) => part.length <= 120 && part !== '.' && part !== '..' && !/[<>:"|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part);
+  const safeDirectory = (part) => part.length > 0 && part.length <= 120 && part !== '.' && part !== '..' && !/[<>:"|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part);
   const file = parts.pop();
-  if (name.startsWith('/') || parts.some((part) => !safeDirectory(part)) || !/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$/.test(file)) throw Error('Invalid scene path');
+  const safeFile = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$/.test(file) && !/[. ]$/.test(file) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(file);
+  if (name.startsWith('/') || parts.some((part) => !safeDirectory(part)) || !safeFile) throw Error('Invalid scene path');
   name = [...parts, file].join('/');
   return /\.(tds|txt)$/i.test(name) ? name : name + '.tds';
 }
 async function inside(root, relative) {
   const base = await fs.realpath(root);
-  const resolved = await fs.realpath(path.resolve(base, relative));
+  const requested = path.resolve(base, relative);
+  const info = await fs.lstat(requested);
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1) throw Error('作品ファイルは通常の単独ファイルである必要があります');
+  const resolved = await fs.realpath(requested);
   const rel = path.relative(base, resolved);
   if (path.isAbsolute(rel) || rel === '..' || rel.startsWith('..' + path.sep)) throw Error('プロジェクト外のパスです');
   if (!(await fs.stat(resolved)).isFile()) throw Error('ファイルではありません');
@@ -69,10 +73,65 @@ function tagLocations(value, file, seen = new Set()) {
   return value;
 }
 
+// Includes are resolved after parsing for ordinary declarations, but struct
+// names are needed while parsing typed declarations and function signatures.
+// Read only the top-level token shape here so the main parser can validate the
+// complete syntax while still accepting a type declared by an include.
+function scanTopLevelDeclarations(source) {
+  const tokens = tokenize(source);
+  const structs = [];
+  const includes = [];
+  let depth = 0;
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (depth === 0 && token.type === 'word' && token.value === 'struct') {
+      const name = tokens[index + 1];
+      if (name?.type === 'word') structs.push(name.value);
+    }
+    if (depth === 0 && token.type === 'word' && token.value === 'include') {
+      const next = tokens[index + 1];
+      if (next?.type === 'string') {
+        includes.push(next.value);
+        index += 1;
+      } else {
+        const parts = [];
+        let previous;
+        for (let cursor = index + 1; cursor < tokens.length && tokens[cursor].type !== 'newline' && tokens[cursor].type !== 'eof'; cursor++) {
+          const pathToken = tokens[cursor];
+          if (previous && pathToken.offset > previous.offset + previous.value.length) throw Error('Include path cannot contain spaces');
+          parts.push(pathToken.value);
+          previous = pathToken;
+          index = cursor;
+        }
+        if (parts.length) includes.push(parts.join(''));
+      }
+    }
+    if (token.value === '{') depth++;
+    else if (token.value === '}') depth = Math.max(0, depth - 1);
+    if (token.type === 'eof') break;
+  }
+  return { structs, includes };
+}
+
+async function collectIncludedStructs(source, scenesRoot, seen = new Set()) {
+  const declarations = scanTopLevelDeclarations(source);
+  const discovered = new Set(declarations.structs);
+  for (const include of declarations.includes) {
+    const name = sceneFile(include);
+    if (seen.has(name)) throw Error(`include 縺悟ｾｪ迺ｰ縺励※縺・∪縺・ ${name}`);
+    const file = await inside(scenesRoot, name);
+    const child = await collectIncludedStructs(await fs.readFile(file, 'utf8'), scenesRoot, new Set([...seen, name]));
+    for (const struct of child) discovered.add(struct);
+  }
+  return discovered;
+}
+
 async function resolveProjectScript(source, scenesRoot, seen = new Set(), sourceName = 'current') {
-  const script = tagLocations(parse(source), sourceName);
+  const includedStructs = await collectIncludedStructs(source, scenesRoot, seen);
+  const script = tagLocations(parse(source, includedStructs), sourceName);
   const assets = [...script.assets];
   const characters = [...script.characters];
+  const structs = [...script.structs];
   const globals = [];
   const functions = [...script.functions];
   const scenes = [...script.scenes];
@@ -83,12 +142,14 @@ async function resolveProjectScript(source, scenesRoot, seen = new Set(), source
     const child = await resolveProjectScript(await fs.readFile(file, 'utf8'), scenesRoot, new Set([...seen, name]), name);
     assets.push(...child.assets);
     characters.push(...child.characters);
+    structs.push(...child.structs);
     globals.push(...child.globals);
     functions.push(...child.functions);
     scenes.push(...child.scenes);
   }
   script.assets = assets;
   script.characters = characters;
+  script.structs = structs;
   globals.push(...script.globals);
   script.globals = globals;
   script.functions = functions;
@@ -112,6 +173,7 @@ async function compileProject(source, assetsRoot, scenesRoot, globalVariables = 
 function projectContext(script, globalVariables, characters, sourceName = 'current') {
   const globals = new Map(globalVariables), visibleCharacters = new Map(characters);
   globals.readonlyNames = new Set(globalVariables.readonlyNames || []);
+  globals.constraints = new Map(globalVariables.constraints || []);
   for (const statement of globalVariables.staticDeclarations || []) {
     globals.delete(statement.name);
     globals.readonlyNames.delete(statement.name);

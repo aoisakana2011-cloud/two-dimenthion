@@ -53,6 +53,7 @@ let diagnostics = [];
 let fileInfoBase = '';
 let validationSequence = 0;
 let isDirty = false;
+let sceneRevision = '';
 let middleScroll = null;
 let minimapDrag = null;
 const undoStack = [];
@@ -166,6 +167,12 @@ function highlightSource(source) {
       push('string', source.slice(start, i), closed);
       continue;
     }
+    const hyphenatedLiteral = source.slice(i).match(/^(?:far-left|far-right)\b/);
+    if (hyphenatedLiteral) {
+      for (let offset = 0; offset < hyphenatedLiteral[0].length; offset++) i++;
+      push('word', hyphenatedLiteral[0]);
+      continue;
+    }
     if (/[0-9]/.test(c)) { const start = i++; while (i < source.length && /[0-9]/.test(source[i])) i++; push('number', source.slice(start, i)); continue; }
     if (/[A-Za-z_]/.test(c)) { const start = i++; while (i < source.length && /[A-Za-z0-9_]/.test(source[i])) i++; push('word', source.slice(start, i)); continue; }
     const pair = source.slice(i, i + 2);
@@ -178,7 +185,7 @@ function highlightSource(source) {
   const significant = tokens.filter((token) => token.kind !== 'space' && token.kind !== 'comment');
   const keywords = new Set(['scene', 'asset', 'character', 'pose', 'struct', 'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'clear', 'play', 'wait', 'effect', 'const', 'global', 'set', 'unset', 'if', 'elif', 'else', 'and', 'or', 'not', 'for', 'from', 'to', 'step', 'while', 'choice', 'fn', 'return', 'goto', 'include']);
   const types = new Set(['int', 'str', 'none', 'dict']);
-  const builtins = new Set(['narrator', 'left', 'center', 'right', 'fade', 'black', 'white', 'async', 'blocking', 'voice', 'video', 'image', 'se']);
+  const builtins = new Set(['narrator', 'left', 'center', 'right', 'far_left', 'far_right', 'far-left', 'far-right', 'fade', 'black', 'white', 'async', 'blocking', 'voice', 'video', 'image', 'se']);
   for (const token of significant) {
     if (token.kind !== 'word') continue;
     if (types.has(token.value)) token.role = 'type';
@@ -247,7 +254,7 @@ function highlightSource(source) {
 }
 function updateHighlight() { if (!highlight) return; highlight.innerHTML = highlightSource(editor.value); }
 
-const KEYWORDS = ['scene', 'asset', 'character', 'pose', 'struct', 'int', 'str', 'dict', 'const', 'global', 'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'clear', 'play', 'wait', 'effect', 'set', 'unset', 'if', 'elif', 'else', 'and', 'or', 'not', 'for', 'while', 'choice', 'fn', 'return', 'goto', 'include'];
+const KEYWORDS = ['scene', 'asset', 'character', 'pose', 'struct', 'int', 'str', 'dict', 'const', 'global', 'say', 'bg', 'bgm', 'show', 'hide', 'clear', 'play', 'wait', 'effect', 'set', 'unset', 'if', 'elif', 'else', 'and', 'or', 'not', 'for', 'while', 'choice', 'fn', 'return', 'goto', 'include'];
 
 function setStatus(message, kind = '') {
   if (kind !== 'error') document.querySelector('#runtime-error')?.remove();
@@ -275,12 +282,64 @@ function insert(text, separateLine = true) {
   editor.dispatchEvent(new Event('input'));
 }
 
+function adjustSelectionIndent(outdent = false) {
+  const source = editor.value;
+  const start = editor.selectionStart;
+  const end = editor.selectionEnd;
+  const firstLineStart = source.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
+  const selectionEndLineStart = source.lastIndexOf('\n', Math.max(0, end - 1)) + 1;
+  const lastLineStart = end > firstLineStart && end === selectionEndLineStart ? Math.max(firstLineStart, selectionEndLineStart - 1) : selectionEndLineStart;
+  const lineEnd = source.indexOf('\n', lastLineStart) < 0 ? source.length : source.indexOf('\n', lastLineStart);
+  const before = source.slice(0, firstLineStart);
+  const selectedLines = source.slice(firstLineStart, lineEnd).split('\n');
+  const changedLines = selectedLines.map((line) => {
+    if (!outdent) return `  ${line}`;
+    if (line.startsWith('\t')) return line.slice(1);
+    if (line.startsWith('  ')) return line.slice(2);
+    if (line.startsWith(' ')) return line.slice(1);
+    return line;
+  });
+  const replacement = changedLines.join('\n');
+  const after = source.slice(lineEnd);
+  if (replacement === source.slice(firstLineStart, lineEnd)) return false;
+  const lineDeltas = changedLines.map((line, index) => line.length - selectedLines[index].length);
+  const changedLength = replacement.length - (lineEnd - firstLineStart);
+  const mapPosition = (position) => {
+    if (position < firstLineStart) return position;
+    if (position >= lineEnd) return position + changedLength;
+    let mapped = position;
+    let lineStart = firstLineStart;
+    for (let index = 0; index < lineDeltas.length; index++) {
+      if (lineStart > position) break;
+      mapped += lineDeltas[index];
+      lineStart += selectedLines[index].length + 1;
+    }
+    return Math.max(0, mapped);
+  };
+  const nextStart = mapPosition(start);
+  const nextEnd = Math.max(nextStart, mapPosition(end));
+  rememberUndo();
+  editor.value = `${before}${replacement}${after}`;
+  editor.focus();
+  editor.setSelectionRange(nextStart, Math.min(editor.value.length, nextEnd));
+  editor.dispatchEvent(new Event('input'));
+  return true;
+}
+
+function notifySceneFlowRefresh() {
+  const frame = document.querySelector('#scene-flow-frame');
+  if (frame?.src && frame.contentWindow) frame.contentWindow.postMessage({ type: 'scene-flow:refresh' }, location.origin);
+}
+
 async function request(url, options) {
   const response = await fetch(url, options);
   const data = await response.json();
   if (response.ok) document.querySelector('#runtime-error')?.remove();
   if (!response.ok) throw new Error(data.error || '通信に失敗しました。');
-  if (options?.method && options.method !== 'GET' && (url === '/api/scene' || url === '/api/file')) refreshFiles().catch(showError);
+  if (options?.method && options.method !== 'GET' && (url === '/api/scene' || url === '/api/file')) {
+    refreshFiles().catch(showError);
+    notifySceneFlowRefresh();
+  }
   return data;
 }
 
@@ -536,6 +595,8 @@ function completionContext() {
 
   let start = end;
   while (start > lineStart && !/[\s{}"=:><!+\-.]/.test(source[start - 1])) start--;
+  const hyphenatedPositionPrefix = /(?:^|\s)(far-(?:left|right)?)$/.exec(line);
+  if (hyphenatedPositionPrefix) start = lineStart + hyphenatedPositionPrefix.index + hyphenatedPositionPrefix[0].search(/far-/);
   // カーソルが単語の途中にあっても、右側の残りを含めて置換する。
   // 例: i|nt で int を確定したときに "int nt" を作らない。
   let replaceEnd = end;
@@ -546,12 +607,8 @@ function completionContext() {
 }
 
 function candidatesFor(context) {
-  let [command, ...args] = context.words;
+  const [command, ...args] = context.words;
   if (!command) return KEYWORDS;
-  if (command === 'show' && args[0] === 'char') {
-    args = args.slice(1);
-    command = 'char';
-  }
 
   // シナリオおよびプロジェクトで宣言されたキャラクターと表情を抽出
   const charDefs = new Map();
@@ -570,14 +627,6 @@ function candidatesFor(context) {
     }
   }
 
-  if (command === 'char') {
-    if (args.length === 0) return [...charDefs.keys(), ...(catalog.character || [])];
-    if (args.length === 1) return ['left', 'center', 'right'];
-    if (args.length === 2) {
-      const poses = charDefs.get(args[0]);
-      return poses && poses.size ? [...poses] : ['normal', 'smile', 'sad', 'angry'];
-    }
-  }
   if (command === 'say' && args.length === 0) {
     return [...new Set([...charDefs.keys(), 'narrator', 'none'])];
   }
@@ -589,6 +638,7 @@ function candidatesFor(context) {
     const bgms = projectAssets.filter((a) => a.type === 'bgm').map((a) => a.name);
     return [...new Set([...bgms, ...(catalog.bgm || [])])];
   }
+  if (command === 'play' && ['voice', 'video'].includes(args[0]) && args.length === 2) return ['blocking', 'async'];
   if (command === 'play' && ['se', 'voice', 'bgm', 'video'].includes(args[0])) {
     const plays = projectAssets.filter((a) => a.type === args[0]).map((a) => a.name);
     return [...new Set([...plays, ...(catalog[args[0]] || [])])];
@@ -598,28 +648,19 @@ function candidatesFor(context) {
     const poses = charDefs.get(args[0].slice(0, -1));
     return poses && poses.size ? [...poses] : ['normal', 'smile', 'sad', 'angry'];
   }
-  if (command === 'show' && args.length === 1 && args[0].includes('.')) return ['left', 'center', 'right'];
+  if (command === 'show' && args.length === 1 && args[0].includes('.')) return ['far_left', 'left', 'center', 'right', 'far_right', 'far-left', 'far-right'];
   if (command === 'show' && args.length === 2 && args[0].includes('.')) return ['fade'];
-  if (command === 'show' && args[0] !== 'image' && args[0] !== 'char') {
-    if (args.length === 1) return ['at'];
-    if (args.length === 2) return ['left', 'center', 'right'];
-    if (args.length === 3) return ['pose'];
-    if (args.length === 4) {
-      const poses = charDefs.get(args[0]);
-      return poses && poses.size ? [...poses] : ['normal', 'smile', 'sad', 'angry'];
-    }
-    if (args.length === 5) return ['fade'];
-  }
   if (command === 'show' && args[0] === 'image' && args.length === 1) {
     const imgs = projectAssets.filter((a) => a.type === 'image').map((a) => a.name);
     return [...new Set([...imgs, ...(catalog.image || [])])];
   }
+  if (command === 'show' && args[0] === 'image' && args.length === 2) return ['far_left', 'left', 'center', 'right', 'far_right', 'far-left', 'far-right'];
   if (command === 'hide') {
     if (args.length === 0) return [...charDefs.keys()];
-    if (args.length === 1 && args[0] !== 'char') return ['fade'];
-    return args[0] === 'char' ? [...charDefs.keys()] : [];
+    if (args.length === 1) return ['fade'];
+    return [];
   }
-  if (command === 'clear') return ['bg', 'bgm', 'char', 'image'];
+  if (command === 'clear') return ['bg', 'bgm', 'image'];
   if (command === 'goto') {
     const localScenes = [...editor.value.matchAll(/^\s*scene\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/gm)].map(match => match[1]);
     return [...new Set([...localScenes, ...sceneNames])];
@@ -696,7 +737,7 @@ function currentSourceVariable(name) {
   };
 }
 
-function showVariableTooltipLegacy(event) {
+function renderVariableTooltipDetails(event) {
   const rect = editor.getBoundingClientRect();
   const style = getComputedStyle(editor);
   const lineHeight = Number.parseFloat(style.lineHeight) || editorLineHeight();
@@ -895,6 +936,7 @@ async function openScene(name) {
   if (!openTabs.includes(scene.name)) openTabs.push(scene.name);
   sceneName.value = scene.name;
   editor.value = scene.source;
+  sceneRevision = String(scene.revision || '');
   clearEditorHistory();
   updateDirtyState(false);
   updateLineNumbers();
@@ -965,11 +1007,23 @@ updateDirtyState(false); }
   }));
 }
 
+const FORMAT_CURSOR_MARKER = '\uE000NOVEL_EDITOR_CURSOR\uE001';
+const FORMAT_SELECTION_MARKER = '\uE000NOVEL_EDITOR_SELECTION_END\uE001';
+const FORMAT_MARKER_PATTERN = /^(\uE000NOVEL_EDITOR_(?:CURSOR|SELECTION_END)\uE001_*)/;
+
 function formatTokens(line) {
   const tokens = [];
   for (let index = 0; index < line.length;) {
     const char = line[index];
     if (/\s/.test(char)) { index++; continue; }
+    const markerMatch = line.slice(index).match(FORMAT_MARKER_PATTERN);
+    if (markerMatch) {
+      const value = markerMatch[1];
+      const start = index;
+      index += value.length;
+      tokens.push({ kind: 'marker', value, embedded: start > 0 && start + value.length < line.length && !/\s/.test(line[start - 1]) && !/\s/.test(line[start + value.length]) });
+      continue;
+    }
     if (char === '#' || (char === '/' && line[index + 1] === '/')) { tokens.push({ kind: 'comment', value: line.slice(index) }); break; }
     if (char === '"') {
       const start = index++;
@@ -980,7 +1034,19 @@ function formatTokens(line) {
       tokens.push({ kind: 'string', value: line.slice(start, index) });
       continue;
     }
-    if (/[A-Za-z_]/.test(char)) { const start = index++; while (index < line.length && /[A-Za-z0-9_]/.test(line[index])) index++; tokens.push({ kind: 'word', value: line.slice(start, index) }); continue; }
+    const hyphenatedLiteral = line.slice(index).match(/^(?:far-left|far-right)\b/);
+    if (hyphenatedLiteral) {
+      tokens.push({ kind: 'word', value: hyphenatedLiteral[0] });
+      index += hyphenatedLiteral[0].length;
+      continue;
+    }
+    if (/[A-Za-z_]/.test(char)) {
+      const start = index++;
+      while (index < line.length && /[A-Za-z0-9_]/.test(line[index])) index++;
+      const value = line.slice(start, index);
+      tokens.push({ kind: 'word', value });
+      continue;
+    }
     if (/[0-9]/.test(char)) { const start = index++; while (index < line.length && /[0-9]/.test(line[index])) index++; tokens.push({ kind: 'number', value: line.slice(start, index) }); continue; }
     const pair = line.slice(index, index + 2);
     if (['==', '!=', '>=', '<=', '->', '=>', '..'].includes(pair)) { tokens.push({ kind: 'operator', value: pair }); index += 2; continue; }
@@ -989,53 +1055,117 @@ function formatTokens(line) {
     else tokens.push({ kind: 'plain', value: char });
     index++;
   }
-  const unary = tokens.map((token, index) => token.kind === 'operator' && ['+', '-', '!'].includes(token.value)
-    && (index === 0 || tokens[index - 1].kind === 'operator' || ['(', '[', '{', ',', ':'].includes(tokens[index - 1].value)
-      || (tokens[index - 1].kind === 'word' && ['from', 'to', 'step', 'return'].includes(tokens[index - 1].value))));
+  const previousRealIndex = (index) => {
+    let previousIndex = index - 1;
+    while (previousIndex >= 0 && tokens[previousIndex].kind === 'marker') previousIndex--;
+    return previousIndex;
+  };
+  const unary = tokens.map((token, index) => {
+    const previousIndex = previousRealIndex(index);
+    const previous = previousIndex >= 0 ? tokens[previousIndex] : undefined;
+    return token.kind === 'operator' && ['+', '-', '!'].includes(token.value)
+      && (previousIndex < 0 || previous?.kind === 'operator' || ['(', '[', '{', ',', ':'].includes(previous?.value)
+        || (previous?.kind === 'word' && ['from', 'to', 'step', 'return'].includes(previous.value)));
+  });
   let result = '';
   for (let index = 0; index < tokens.length; index++) {
-    const token = tokens[index], previous = tokens[index - 1];
+    const token = tokens[index];
+    let previousIndex = index - 1;
+    while (previousIndex >= 0 && tokens[previousIndex].kind === 'marker') previousIndex--;
+    const previous = previousIndex >= 0 ? tokens[previousIndex] : undefined;
+    if (token.kind === 'marker') { result += token.value; continue; }
     if (token.kind === 'comment') { result += `${result ? '  ' : ''}${token.value}`; continue; }
-    let spaced = index > 0;
+    let spaced = previousIndex >= 0;
+    const embeddedMarker = tokens[index - 1]?.kind === 'marker' && tokens[index - 1].embedded;
+    const markerJoinsToken = embeddedMarker && (
+      (['word', 'number'].includes(previous?.kind) && ['word', 'number'].includes(token.kind))
+      || (previous?.kind === 'operator' && token.kind === 'operator' && ['==', '!=', '>=', '<=', '->', '=>', '..'].includes(`${previous.value}${token.value}`))
+    );
     if (['[', ')', ']', ',', ':', '.'].includes(token.value) || ['(', '[', '.'].includes(previous?.value)) spaced = false;
-    if (token.value === '(' && previous?.kind === 'word' && !['if', 'elif', 'while'].includes(previous.value)) spaced = false;
+    if (token.value === '(' && previous?.kind === 'word' && !['if', 'elif', 'while', 'not', 'return', 'choice'].includes(previous.value)) spaced = false;
     if (token.kind === 'operator') spaced = unary[index] ? !(previous?.kind === 'operator' || ['(', '[', '{', ',', ':'].includes(previous?.value)) : true;
     if (previous?.kind === 'operator') spaced = !unary[index - 1];
+    if (token.kind === 'operator' && unary[index] && previous?.kind === 'operator' && unary[previousIndex]) spaced = true;
     if (token.value === '}') spaced = previous?.value !== '{';
     if (previous?.value === '{') spaced = token.value !== '}';
     if (token.value === '{') spaced = index > 0 && !['(', '[', '{'].includes(previous?.value);
     if (previous?.value === ',' || previous?.value === ':') spaced = true;
+    if (markerJoinsToken) spaced = false;
     result += `${spaced && result && !result.endsWith(' ') ? ' ' : ''}${token.value}`;
   }
-  return { text: result.trimEnd(), tokens: tokens.filter((token) => token.kind !== 'comment') };
+  return { text: result.trimEnd(), tokens: tokens.filter((token) => token.kind !== 'comment' && token.kind !== 'marker') };
+}
+
+function expandStructuralLine(raw, context = []) {
+  const structural = [];
+  let quote = false;
+  let comment = false;
+  let previousBrace = -1;
+  let parenthesisDepth = Number.isInteger(context.parenthesisDepth) ? context.parenthesisDepth : 0;
+  let bracketDepth = Number.isInteger(context.bracketDepth) ? context.bracketDepth : 0;
+  for (let index = 0; index < raw.length; index++) {
+    const char = raw[index];
+    if (comment) continue;
+    if (quote) {
+      if (char === '\\') index++;
+      else if (char === '"') quote = false;
+      continue;
+    }
+    if (char === '"') { quote = true; continue; }
+    if (char === '#' || (char === '/' && raw[index + 1] === '/')) { comment = true; continue; }
+    if (char === '(') { parenthesisDepth++; continue; }
+    if (char === ')') { parenthesisDepth = Math.max(0, parenthesisDepth - 1); continue; }
+    if (char === '[') { bracketDepth++; continue; }
+    if (char === ']') { bracketDepth = Math.max(0, bracketDepth - 1); continue; }
+    if (char === '{') {
+      const before = raw.slice(0, index).trim();
+      const dictionary = parenthesisDepth > 0 || bracketDepth > 0 || /(?:=|:|\[)\s*$/.test(before);
+      const statementPrefix = raw.slice(previousBrace + 1, index).trim();
+      const headerPrefix = raw.slice(0, index).trim();
+      const keyword = /^(\w+)\b/.exec(statementPrefix)?.[1] || '';
+      const statementCommand = /^(?:return|set|unset|say|show|hide|clear|bg|bgm|play|wait|effect|goto|include|global|const|int|str|dict)\b/.test(statementPrefix);
+      const parent = context.at(-1);
+      const choiceExpression = parent?.kind === 'choice' && !statementCommand && /^(?:"(?:\\.|[^"\\])*"|[A-Za-z_][A-Za-z0-9_.]*(?:\s*\([^{}]*\))?|\d+|[+-]|\(|!|not\b)/.test(statementPrefix);
+      const block = !dictionary && (/^(?:scene|fn|if|elif|else|for|while|choice|character|struct)\b/.test(statementPrefix)
+        || (previousBrace < 0 && /^(?:scene|fn|if|elif|else|for|while|choice|character|struct)\b/.test(headerPrefix))
+        || /"[^"\\]*(?:\\.[^"\\]*)*"\s*$/.test(statementPrefix) || choiceExpression);
+      context.push({ block, kind: block ? (choiceExpression ? 'choiceOption' : keyword) : 'literal' });
+      if (block) structural.push({ index, type: 'open' });
+      if (block) previousBrace = index;
+    } else if (char === '}') {
+      const entry = context.pop();
+      if (entry?.block) structural.push({ index, type: 'close' });
+      if (entry?.block) previousBrace = index;
+    }
+  }
+  context.parenthesisDepth = parenthesisDepth;
+  context.bracketDepth = bracketDepth;
+  if (!structural.length) return [raw];
+  const result = [];
+  let cursor = 0;
+  for (const brace of structural) {
+    if (brace.type === 'open') {
+      const before = raw.slice(cursor, brace.index + 1).trim();
+      if (before) result.push(before);
+      cursor = brace.index + 1;
+    } else {
+      const before = raw.slice(cursor, brace.index).trim();
+      if (before) result.push(before);
+      result.push('}');
+      cursor = brace.index + 1;
+    }
+  }
+  const tail = raw.slice(cursor).trim();
+  if (tail) {
+    const trailingComment = /^(?:#|\/\/)/.test(tail);
+    if (trailingComment && result.length) result[result.length - 1] += `  ${tail}`;
+    else result.push(tail);
+  }
+  return result;
 }
 
 function formatSource(source) {
-  const lines = source.replace(/\r\n?/g, '\n').split('\n').flatMap((raw) => {
-    const closingOnly = /^\s*((?:}\s*){2,})(#.*)?$/.exec(raw);
-    if (!closingOnly) return [raw];
-    const count = (closingOnly[1].match(/}/g) || []).length;
-    return Array.from({ length: count }, (_, index) => `}${index === count - 1 && closingOnly[2] ? `  ${closingOnly[2]}` : ''}`);
-  });
-  let indent = 0;
-  const formattedLines = lines.map((raw) => {
-    if (!raw.trim()) return '';
-    const formatted = formatTokens(raw.trim());
-    const leadingClosers = formatted.tokens.findIndex((token) => token.value !== '}');
-    const closeIndent = leadingClosers < 0 ? formatted.tokens.length : leadingClosers;
-    const lineIndent = Math.max(0, indent - closeIndent);
-    const opens = formatted.tokens.filter((token) => token.value === '{').length;
-    const closes = formatted.tokens.filter((token) => token.value === '}').length;
-    indent = Math.max(0, indent + opens - closes);
-    return `${'  '.repeat(lineIndent)}${formatted.text}`;
-  });
-  const joinedLines = [];
-  for (const line of formattedLines) {
-    if (/^\s*(?:else|elif)\b/.test(line) && joinedLines.at(-1)?.trim() === '}') {
-      joinedLines[joinedLines.length - 1] += ` ${line.trimStart()}`;
-    } else joinedLines.push(line);
-  }
-  return joinedLines.join('\n');
+  return window.NovelFormatter.format(source);
 }
 
 // 文字列とコメントを除外して、指定した開き波括弧に対応する閉じ波括弧を探す。
@@ -1065,17 +1195,49 @@ function matchingClosingBrace(source, openingIndex) {
   return -1;
 }
 
-function replaceWithFormattedSource(source, caretOffset = null) {
-  const cursorMarker = '__NOVEL_EDITOR_CURSOR__';
-  const marked = caretOffset === null ? source : `${source.slice(0, caretOffset)}${cursorMarker}${source.slice(caretOffset)}`;
-  const formatted = formatSource(marked);
-  const markerAt = formatted.indexOf(cursorMarker);
-  const nextSource = markerAt < 0 ? formatted : `${formatted.slice(0, markerAt)}${formatted.slice(markerAt + cursorMarker.length)}`;
+function replaceWithFormattedSource(source, caretOffset = null, selectionEnd = caretOffset) {
+  const markerName = (base) => {
+    let marker = base;
+    while (source.includes(marker)) marker += '_';
+    return marker;
+  };
+  const cursorMarker = markerName(FORMAT_CURSOR_MARKER);
+  const selectionMarker = markerName(FORMAT_SELECTION_MARKER);
+  let marked = source;
+  const tracksEndWithoutMarker = caretOffset !== null && caretOffset === source.length && (selectionEnd ?? caretOffset) === caretOffset;
+  let markerStart = null;
+  if (caretOffset !== null && !tracksEndWithoutMarker) {
+    const start = Math.max(0, Math.min(source.length, caretOffset));
+    const end = Math.max(start, Math.min(source.length, selectionEnd ?? start));
+    markerStart = start;
+    marked = `${source.slice(0, start)}${cursorMarker}${source.slice(start, end)}${end > start ? selectionMarker : ''}${source.slice(end)}`;
+  }
+  const moveMarkerAfterInsertedSpaces = (text, marker, offset) => {
+    if (offset === null || offset <= 0 || offset >= source.length || /\s/.test(source[offset - 1]) || /\s/.test(source[offset])) return text;
+    const at = text.indexOf(marker);
+    const after = at + marker.length;
+    if (at < 0 || !/[ \t]/.test(text[after])) return text;
+    let end = after;
+    while (/[ \t]/.test(text[end])) end++;
+    return `${text.slice(0, at)}${text.slice(after, end)}${marker}${text.slice(end)}`;
+  };
+  let formatted = formatSource(marked);
+  formatted = moveMarkerAfterInsertedSpaces(formatted, cursorMarker, markerStart);
+  formatted = formatted.split('\n').map((line) => {
+    const trimmed = line.trim();
+    return [cursorMarker, selectionMarker, `${cursorMarker}${selectionMarker}`].includes(trimmed) ? trimmed : line;
+  }).join('\n');
+  const selectionAt = formatted.indexOf(selectionMarker);
+  let nextSource = formatted;
+  if (selectionAt >= 0) nextSource = `${nextSource.slice(0, selectionAt)}${nextSource.slice(selectionAt + selectionMarker.length)}`;
+  const adjustedMarkerAt = nextSource.indexOf(cursorMarker);
+  if (adjustedMarkerAt >= 0) nextSource = `${nextSource.slice(0, adjustedMarkerAt)}${nextSource.slice(adjustedMarkerAt + cursorMarker.length)}`;
   rememberUndo();
   editor.value = nextSource;
-  const caret = markerAt < 0 ? nextSource.length : markerAt;
+  const caret = adjustedMarkerAt < 0 ? nextSource.length : adjustedMarkerAt;
+  const end = selectionAt < 0 ? caret : selectionAt - cursorMarker.length;
   editor.focus();
-  editor.setSelectionRange(caret, caret);
+  editor.setSelectionRange(caret, Math.max(caret, end));
   editor.dispatchEvent(new Event('input'));
 }
 
@@ -1083,16 +1245,20 @@ function formatCode() {
   const source = editor.value;
   const formatted = formatSource(source);
   if (formatted === source) return;
-  replaceWithFormattedSource(source);
+  replaceWithFormattedSource(source, editor.selectionStart, editor.selectionEnd);
 }
 
 async function saveScene() {
+  // Saving is a durable boundary: persist the same canonical source that the
+  // editor validates and previews, using the cursor-preserving formatter path.
+  formatCode();
   const saved = await request('/api/scene', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: sceneName.value, source: editor.value }),
+    body: JSON.stringify({ name: sceneName.value, source: editor.value, ...(sceneRevision ? { expectedRevision: sceneRevision } : {}) }),
   });
   sceneName.value = saved.name;
+  sceneRevision = String(saved.revision || '');
   if (!openTabs.includes(saved.name)) openTabs.push(saved.name);
   renderEditorTabs(saved.name);
   updateDirtyState(false);
@@ -1115,16 +1281,86 @@ async function saveAllScenes() {
     const name = splitApi.scene?.() || activeSplitScene;
     await splitApi.save();
     if (name && !savedNames.includes(name)) savedNames.push(name);
+    notifySceneFlowRefresh();
   }
   setStatus(savedNames.length ? `${savedNames.length} ファイルを保存しました` : 'すべて保存済みです', 'ok');
   return savedNames;
 }
 
+async function formatProjectScenes() {
+  formatCode();
+  const splitApi = !splitGroup?.hidden ? splitFrame?.contentWindow?.novelEditorApi : null;
+  splitApi?.formatCurrent?.();
+  await saveAllScenes();
+  const { scenes = [] } = await request('/api/scenes', { cache: 'no-store' });
+  const updates = [];
+  for (const name of scenes) {
+    const scene = await request(`/api/scene?name=${encodeURIComponent(name)}`, { cache: 'no-store' });
+    const source = String(scene.source || '');
+    const formatted = formatSource(source);
+    if (formatted === source) continue;
+    updates.push({ name, source, formatted, revision: scene.revision });
+  }
+  const changed = [];
+  let activeUpdate = null;
+  try {
+    for (const update of updates) {
+      activeUpdate = update;
+      await request('/api/scene', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: update.name, source: update.formatted, ...(update.revision ? { expectedRevision: update.revision } : {}) }),
+      });
+      changed.push(update.name);
+      activeUpdate = null;
+    }
+  } catch (error) {
+    const rollbackNames = [...new Set([...changed, ...(activeUpdate ? [activeUpdate.name] : [])])].reverse();
+    for (const name of rollbackNames) {
+      const original = updates.find((update) => update.name === name);
+      if (!original) continue;
+      try {
+        const current = await request(`/api/scene?name=${encodeURIComponent(name)}`, { cache: 'no-store' });
+        // Never undo an unrelated external edit that happened while the
+        // project-wide operation was running. Only revert content that still
+        // equals the formatter output we attempted to write.
+        if (current.source !== original.formatted) continue;
+        await request('/api/scene', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: original.name, source: original.source }),
+        });
+      } catch {
+        // Preserve the original failure; a secondary rollback failure is
+        // surfaced by the next project refresh or explicit save attempt.
+      }
+    }
+    throw error;
+  }
+  await refreshScenes(sceneName.value);
+  await refreshSceneGraph();
+  setStatus(`${changed.length} 繝輔ぃ繧､繝ｫ繧剃ｿ晏ｭ倥＠縺ｾ縺励◆`, 'ok');
+  return changed;
+}
+
+let lastFormatProjectPromise = Promise.resolve([]);
+let formatProjectActive = false;
+
 window.novelEditorApi = {
   save: () => saveScene(),
+  saveAll: () => saveAllScenes(),
   isDirty: () => isDirty,
   focus: () => editor.focus(),
   scene: () => sceneName.value,
+  format: (source) => formatSource(String(source ?? '')),
+  formatCurrent: () => formatCode(),
+  formatProject: () => {
+    if (formatProjectActive) return lastFormatProjectPromise;
+    formatProjectActive = true;
+    lastFormatProjectPromise = formatProjectScenes().finally(() => { formatProjectActive = false; });
+    return lastFormatProjectPromise;
+  },
+  lastFormatProject: () => lastFormatProjectPromise,
 };
 
 async function validate(providedReport = null) {
@@ -1226,7 +1462,9 @@ async function saveAllFromMenu() {
 }
 async function compileProjectFromMenu() {
   setStatus('全ファイルを精査してネイティブビルド中…');
-  await saveAllScenes();
+  // Compilation is a durable project boundary: normalize every scene before
+  // the build reads closed files, not only the scene currently in the editor.
+  await formatProjectScenes();
   const report = await request('/api/project-build', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1419,6 +1657,18 @@ async function playCurrentScene() {
   setStatus('native player を起動しました', 'ok');
   return report;
 }
+async function runNativeTool(action, label) {
+  setStatus(`${label}を実行中...`);
+  const report = await request(`/api/native-tools/${action}`, { method: 'POST' });
+  const output = String(report.output || '').slice(-30000) || `${label}が完了しました。`;
+  setStatus(report.ok ? `${label}が完了しました` : `${label}に失敗しました`, report.ok ? 'ok' : 'error');
+  showWorkbenchMessage(`${report.ok ? '完了' : '失敗'}: ${label}`, output);
+  return report;
+}
+async function runNativeTestSuite() {
+  await saveAllScenes();
+  return runNativeTool('test', 'ビルドと全テスト');
+}
 function createNewSceneDraft() {
   const baseName = 'chapter-new';
   let suffix = 1;
@@ -1428,7 +1678,7 @@ function createNewSceneDraft() {
     name = `${baseName}-${suffix}.tds`;
   }
   sceneName.value = name;
-  editor.value = `# ${name}\r\n\r\n`;
+  editor.value = `# ${name}\n\n`;
   clearEditorHistory();
   updateLineNumbers();
   updateHighlight();
@@ -1446,7 +1696,45 @@ updateSuggestions();
   updateDirtyState(true);
   setStatus('未保存の変更があります');
 });
+function insertFormattedExternalText(text) {
+  const normalized = String(text).replace(/\r\n?/g, '\n');
+  const start = editor.selectionStart;
+  const end = editor.selectionEnd;
+  const source = `${editor.value.slice(0, start)}${normalized}${editor.value.slice(end)}`;
+  replaceWithFormattedSource(source, start + normalized.length, start + normalized.length);
+}
+editor.addEventListener('paste', (event) => {
+  const pasted = event.clipboardData?.getData('text/plain');
+  if (pasted == null) return;
+  event.preventDefault();
+  insertFormattedExternalText(pasted);
+});
+editor.addEventListener('drop', (event) => {
+  const dropped = event.dataTransfer?.getData('text/plain');
+  if (!dropped) return;
+  event.preventDefault();
+  insertFormattedExternalText(dropped);
+});
 editor.addEventListener('beforeinput', (event) => {
+  if (event.inputType === 'insertText' && event.data === '}' && editor.selectionStart === editor.selectionEnd) {
+    const caret = editor.selectionStart;
+    const lineStart = editor.value.lastIndexOf('\n', caret - 1) + 1;
+    const lineEnd = editor.value.indexOf('\n', lineStart) < 0 ? editor.value.length : editor.value.indexOf('\n', lineStart);
+    const beforeCaret = editor.value.slice(lineStart, caret);
+    const afterCaret = editor.value.slice(caret, lineEnd);
+    if (/^\s*$/.test(beforeCaret) && /^\s*$/.test(afterCaret)) {
+      event.preventDefault();
+      replaceWithFormattedSource(`${editor.value.slice(0, caret)}}${editor.value.slice(caret)}`, caret + 1);
+      return;
+    }
+  }
+  if (event.inputType === 'insertLineBreak') {
+    event.preventDefault();
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    replaceWithFormattedSource(`${editor.value.slice(0, start)}\n${editor.value.slice(end)}`, start + 1);
+    return;
+  }
   if (!event.inputType?.startsWith('history')) rememberUndo();
 });
 editor.addEventListener('contextmenu', (event) => {
@@ -1567,7 +1855,7 @@ editor.addEventListener('keydown', (event) => {
     renderSuggestions();
     return;
   }
-  if (event.key === 'Tab' && suggestions.length) {
+  if (event.key === 'Tab' && suggestions.length && !event.shiftKey) {
     event.preventDefault();
     acceptSuggestion();
     return;
@@ -1601,6 +1889,21 @@ editor.addEventListener('keydown', (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
     event.preventDefault();
     saveAllScenes().catch(showError);
+    return;
+  }
+  if (event.key === '}' && !event.ctrlKey && !event.metaKey && !event.altKey && editor.selectionStart === editor.selectionEnd) {
+    const caret = editor.selectionStart;
+    const lineStart = editor.value.lastIndexOf('\n', caret - 1) + 1;
+    const lineEnd = editor.value.indexOf('\n', lineStart) < 0 ? editor.value.length : editor.value.indexOf('\n', lineStart);
+    const beforeCaret = editor.value.slice(lineStart, caret);
+    const afterCaret = editor.value.slice(caret, lineEnd);
+    if (/^\s*$/.test(beforeCaret) && /^\s*$/.test(afterCaret)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const source = `${editor.value.slice(0, caret)}}${editor.value.slice(caret)}`;
+      replaceWithFormattedSource(source, caret + 1);
+      return;
+    }
   }
   if (event.key === 'Enter') {
     const lineStart = editor.value.lastIndexOf('\n', editor.selectionStart - 1) + 1;
@@ -1638,7 +1941,41 @@ editor.addEventListener('keydown', (event) => {
       replaceWithFormattedSource(`${editor.value.slice(0, point)}${insertion}${editor.value.slice(point)}`, point + 3);
       return;
     }
-    const choiceLine = fullLine.match(/^(\s*choice\s+"(?:\\.|[^"\\])*"\s*)$/);
+    if (/^(?:scene|fn|if|elif|else|for|while|character|struct)\b[\s\S]*\{\s*$/.test(trimmedLine)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const caret = lineStart + fullLine.length;
+      const opening = lineStart + fullLine.lastIndexOf('{');
+      const hasClosingBrace = matchingClosingBrace(editor.value, opening) >= caret;
+      const insertion = hasClosingBrace ? '\n' : '\n\n}';
+      replaceWithFormattedSource(`${editor.value.slice(0, caret)}${insertion}${editor.value.slice(caret)}`, caret + 1);
+      return;
+    }
+    const structuralHeader = fullLine.match(/^\s*(?:scene\s+[A-Za-z_][A-Za-z0-9_-]*|fn\s+[A-Za-z_][A-Za-z0-9_-]*\s*\([^{}]*\)(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*(?:\s*\[\s*[A-Za-z_][A-Za-z0-9_]*\s*\])?)?|for\s+.+|while\s+.+|elif\s+.+|character\s+[A-Za-z_][A-Za-z0-9_-]*|struct\s+[A-Za-z_][A-Za-z0-9_-]*|else)\s*$/);
+    if (structuralHeader) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const caret = lineStart + fullLine.length;
+      const point = caret < editor.value.length && editor.value[caret] === '\n' ? caret + 1 : caret;
+      const insertion = ' {\n\n}\n';
+      replaceWithFormattedSource(`${editor.value.slice(0, point)}${insertion}${editor.value.slice(point)}`, point + 3);
+      return;
+    }
+    if (/^choice(?:\s+"(?:\\.|[^"\\])*")?\s*\{\s*$/.test(trimmedLine)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const caret = lineStart + fullLine.length;
+      const opening = lineStart + fullLine.lastIndexOf('{');
+      const hasClosingBrace = matchingClosingBrace(editor.value, opening) >= caret;
+      if (hasClosingBrace) {
+        replaceWithFormattedSource(`${editor.value.slice(0, caret)}\n${editor.value.slice(caret)}`, caret + 1);
+      } else {
+        const block = '\n"" {\n}\n}';
+        replaceWithFormattedSource(`${editor.value.slice(0, caret)}${block}${editor.value.slice(caret)}`, caret + 2);
+      }
+      return;
+    }
+    const choiceLine = fullLine.match(/^(\s*choice(?:\s+"(?:\\.|[^"\\])*"\s*)?)$/);
     if (choiceLine) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -1657,6 +1994,11 @@ editor.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && suggestions.length) {
     event.preventDefault();
     acceptSuggestion();
+    return;
+  }
+  if (event.key === 'Tab' && (event.shiftKey || editor.selectionStart !== editor.selectionEnd)) {
+    event.preventDefault();
+    adjustSelectionIndent(event.shiftKey);
     return;
   }
   if (event.key === 'Tab') {
@@ -1724,6 +2066,12 @@ async function postProjectOpen(folder, create) {
   return { ok: response.ok, status: response.status, data };
 }
 
+async function confirmProjectSwitch() {
+  const splitApi = !splitGroup?.hidden ? splitFrame?.contentWindow?.novelEditorApi : null;
+  if (!isDirty && !splitApi?.isDirty?.()) return true;
+  return uiAsk('未保存の変更があります。作品フォルダーを切り替えますか？', '切り替える');
+}
+
 async function applyOpenedProject(info) {
   currentProjectRoot = info.projectRoot || '';
   hideProjectPicker();
@@ -1732,7 +2080,7 @@ async function applyOpenedProject(info) {
 }
 
 async function openProjectAt(folder, create = false) {
-  if (isDirty && !(await uiAsk('未保存の変更があります。作品フォルダーを切り替えますか？', '切り替える'))) return;
+  if (!(await confirmProjectSwitch())) return;
   const result = await postProjectOpen(folder, create);
   if (result.status === 409 && result.data.needsCreate) {
     if (!await uiAsk(`${result.data.projectRoot}\nはまだ作品フォルダーではありません。ここに新規作品を作成しますか？`, '作成する')) return;
@@ -1795,6 +2143,10 @@ async function showProjectPicker(mode = 'open') {
   const overlay = document.querySelector('#project-picker');
   if (!overlay) return;
   overlay.hidden = false;
+  if (!currentProjectRoot) {
+    const project = await request('/api/project');
+    currentProjectRoot = project.projectRoot || '';
+  }
   await renderProjectPicker(currentProjectRoot || pickerPath);
   document.querySelector('#project-picker-path')?.focus();
 }
@@ -1841,6 +2193,16 @@ Promise.all([request('/api/project'), loadWorkspace(true)])
   .then(([project]) => {
     currentProjectRoot = project.projectRoot || '';
     setStatus('編集を開始できます', 'ok');
+    const startupProjectRoot = currentProjectRoot;
+    const restoreStartupScene = () => {
+      if (currentProjectRoot !== startupProjectRoot || sceneName.value || isDirty) return;
+      const remembered = localStorage.getItem(lastSceneKey());
+      const candidate = selectedScene || remembered;
+      if (candidate && sceneNames.includes(candidate)) openScene(candidate).then(() => { if (!selectedSymbol) return; const match = new RegExp(`^\\s*(?:global\\s+)?(?:int|string|str|bool|struct|const)\\s+${selectedSymbol}\\b`, 'm').exec(editor.value); if (match) revealEditorRange(match.index, match.index + selectedSymbol.length); }).catch(showError);
+      else if (sceneNames.length) openScene(sceneNames[0]).catch(showError);
+    };
+    restoreStartupScene();
+    setTimeout(restoreStartupScene, 800);
   })
   .catch(showError);
 updateLineNumbers();
@@ -1856,12 +2218,6 @@ function revealEditorRange(start, end, lineNumber = null) {
   highlight && (highlight.scrollTop = editor.scrollTop);
   lineNumbers && (lineNumbers.scrollTop = editor.scrollTop);
 }
-setTimeout(() => {
-  const remembered = localStorage.getItem(lastSceneKey());
-  const candidate = selectedScene || remembered;
-  if (candidate && sceneNames.includes(candidate)) openScene(candidate).then(() => { if (!selectedSymbol) return; const match = new RegExp(`^\\s*(?:global\\s+)?(?:int|string|str|bool|struct|const)\\s+${selectedSymbol}\\b`, 'm').exec(editor.value); if (match) revealEditorRange(match.index, match.index + selectedSymbol.length); }).catch(showError);
-  else if (sceneNames.length) openScene(sceneNames[0]).catch(showError);
-}, 800);
 function updateMiniMap() {
   if (!minimap || !minimapContent || !minimapViewport) return;
   const lines = editor.value.split('\n');
@@ -1922,7 +2278,7 @@ const syntaxHints = {
   const: 'const int|str|dict <名前> = <値>',
   global: 'global int|str|dict|const <名前> = <値>',
   set: 'set <既存の変数> = <値>',
-  say: 'say [話者] <str式>（本文は必須、ブロック形式は不可）',
+  say: 'say "文字列リテラル" または say <話者> <str式>（本文は必須）',
   bg: 'bg <背景アセット>', bgm: 'bgm <BGMアセット>', se: 'play se <SEアセット>',
   show: 'show <名前>.<ポーズ> <位置> [fade <ミリ秒>]', hide: 'hide <名前> [fade <ミリ秒>]',
   if: 'if <条件> { ... } else { ... }', elif: 'elif <条件> { ... }', else: 'else { ... }',
@@ -1937,10 +2293,10 @@ const syntaxRecipes = {
   int: { description: '整数のローカル変数です。ファイル間で共有するなら global を付けます。', snippet: 'int count = ¦0\n' },
   str: { description: '文字列のローカル変数です。', snippet: 'str name = "¦"\n' },
   global: { description: '複数ファイルから参照できる共有変数です。トップレベルで宣言します。', snippet: 'global int score = ¦0\n' },
-  say: { description: '話者は省略できます。本文は必須の str 式です。複数行は say を行ごとに書きます。', snippet: 'say narrator "¦本文"\n' },
+  say: { description: '話者を省略できるのは本文が文字列リテラルの場合だけです。変数や関数呼び出しを本文にする場合は話者を書きます。', snippet: 'say narrator "¦本文"\n' },
   bg: { description: 'asset bg で宣言済みの背景名を指定します。ここではパスを直接書きません。', snippet: 'bg ¦background\n' },
   bgm: { description: 'asset bgm で宣言済みの BGM 名を指定します。', snippet: 'bgm ¦music\n' },
-  show: { description: 'character の pose を表示します。位置は left / center / right を使えます。', snippet: 'show hero.normal center¦\n' },
+  show: { description: 'character の pose を表示します。位置は far_left / left / center / right / far_right（far-left / far-right も可）を使えます。', snippet: 'show hero.normal center¦\n' },
   hide: { description: '表示中の立ち絵を消します。', snippet: 'hide ¦hero\n' },
   if: { description: '条件が真のときだけブロックを実行します。', snippet: 'if ¦condition {\n  \n}\n' },
   for: { description: '開始から終了まで繰り返します。step は省略できます。', snippet: 'for i from 0 to ¦10 {\n  \n}\n' },
@@ -1955,7 +2311,16 @@ editor.addEventListener('mousemove', (event) => {
   if (errorText) { editor.title = errorText; return; }
   editor.title = '';
 });
-window.addEventListener('pagehide', () => { if (!isDirty || !sceneName.value) return; fetch('/api/scene', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: sceneName.value, source: editor.value }), keepalive: true }).catch(() => {}); });
+window.addEventListener('pagehide', () => {
+  if (!isDirty || !sceneName.value) return;
+  const source = formatSource(editor.value);
+  fetch('/api/scene', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: sceneName.value, source }),
+    keepalive: true,
+  }).catch(() => {});
+});
 const fileDirtyStyle=document.createElement('style');fileDirtyStyle.textContent='.scene-file{position:relative;padding-right:22px}.scene-file.file-dirty:after{content:"•";position:absolute;top:50%;right:8px;transform:translateY(calc(-50% + 1px));color:#fff;font-size:16px;line-height:1}';document.head.append(fileDirtyStyle);
 const highlightSpacingStyle=document.createElement('style');highlightSpacingStyle.textContent='#highlight{font-size:var(--editor-font-size);line-height:var(--editor-line-height)}.hl-line{font-size:var(--editor-font-size);line-height:var(--editor-line-height)}';document.head.append(highlightSpacingStyle);
 const explorerOnlyDirtyStyle=document.createElement('style');explorerOnlyDirtyStyle.textContent='.document-title .dirty-mark{display:none!important}';document.head.append(explorerOnlyDirtyStyle);
@@ -1991,7 +2356,7 @@ function showLanguageGuide() {
   const sections = [
     ['素材を宣言する', 'asset bg classroom = "asset/bg/classroom.png"\nasset bgm morning = "asset/bgm/morning.ogg"', '素材のパスは宣言時に一度だけ指定します。以後は classroom のような名前を使います。', 'asset'],
     ['背景・音・立ち絵', 'bg classroom\nbgm morning\nshow hero.normal center\nhide hero', 'bg / bgm には、対応する asset 宣言の名前を指定します。', 'bg'],
-    ['台詞', 'say narrator "こんにちは"\nsay "話者を省略した台詞"', '話者は省略できます。', 'say'],
+    ['台詞', 'say narrator "こんにちは"\nsay "話者を省略した台詞"', '話者を省略できるのは本文が文字列リテラルの場合だけです。', 'say'],
     ['変数と共有変数', 'int score = 0\nstr name = "主人公"\nglobal int route = 0', 'global はファイルをまたいで共有します。ローカル変数と同じ名前にはできません。', 'global'],
     ['構造体（struct）', 'struct Player {\n  name: str\n  coins: int\n}\n\nPlayer player = { "name": "ユイ", "coins": 0 }\nset player.coins = player.coins + 10', '複数の固定フィールドを一つの値にまとめる型です。使う前にトップレベルで宣言し、フィールドは int / str で定義します。変数の宣言時は、すべてのフィールドを辞書形式で指定します。', 'struct'],
     ['構造体のコピーと更新', 'Player copy = { "name": "", "coins": 0 }\nset copy = player\nset copy.coins = copy.coins + 10', '構造体の代入はコピーです。別の構造体値や関数の戻り値を受け取るときも、まず { ... } で初期化してから set を使います。フィールドの追加・unset・構造体の入れ子はできません。', 'struct'],
@@ -2151,7 +2516,8 @@ async function showProjectSettings() {
     assetList.append(empty);
   }
   const assetNote = document.createElement('p'); assetNote.className = 'project-settings-note'; assetNote.textContent = '素材は asset フォルダーに置き、.tds の asset / character / pose 宣言で登録します。クリックするとプレビューを開きます。';
-  assets.append(assetTitle, assetList, assetNote);
+  const checkImages = document.createElement('button'); checkImages.type = 'button'; checkImages.className = 'project-settings-save'; checkImages.textContent = '画像読込を検証'; checkImages.addEventListener('click', () => saveAllScenes().then(() => runNativeTool('images', '画像読込を検証')).catch(showError));
+  assets.append(assetTitle, assetList, assetNote, checkImages);
   const footer = document.createElement('footer');
   const save = document.createElement('button'); save.type = 'button'; save.className = 'project-settings-save'; save.textContent = '作品・再生機UI設定を保存';
   save.addEventListener('click', async () => {
@@ -2176,6 +2542,35 @@ async function showProjectSettings() {
   close.focus();
 }
 function guideDescription(title) { const descriptions = { 'シーン': 'scene から始まり、インデントされた命令を上から順に実行します。ファイル名ではなくシーン名を遷移先に使います。', '台詞とコメント': 'say は話者名と文字列を受け取り、画面に台詞を表示します。# 以降はコメントとして無視されます。', '変数について': '変数は型を持ち、宣言後に代入できます。const は再代入できません。', '構造体について': 'struct は複数のフィールドをひとつの値にまとめる型です。フィールド名で値へアクセスします。', 'global 変数': 'global はファイルをまたいで共有する宣言です。関数や分岐ブロックの内部では宣言できません。', '条件分岐': '条件式が true のとき if ブロックを実行し、それ以外は else を実行します。', '繰り返し': 'while は条件が true の間、ブロックを繰り返します。ループ内で値を更新してください。', '選択肢': 'choice の各選択肢は表示文字列と goto 先を対応付けます。', 'シーン遷移': 'goto は指定したシーンへ移動し、return は呼び出し元へ戻ります。', '式と演算子': '数値・文字列・真偽値を組み合わせて式を作れます。型が合わない演算は診断されます。', '素材': '素材パスは asset フォルダーを基準に指定します。存在しない素材はコンパイル時に検出されます。', '構文解析': '入力中は字句解析、構文解析、型チェックが順番に実行され、該当箇所へ診断が表示されます。' }; return descriptions[title] || ''; }
+
+function showLanguageGuide() {
+  document.querySelector('.workbench-message')?.remove();
+  const dialog = document.createElement('section');
+  dialog.className = 'editor-dialog workbench-message language-guide';
+  const heading = document.createElement('strong'); heading.textContent = '.tds 構文ヘルプ';
+  const close = document.createElement('button'); close.type = 'button'; close.className = 'guide-close'; close.setAttribute('aria-label', 'ヘルプを閉じる'); close.textContent = '×'; close.onclick = () => dialog.remove();
+  const intro = document.createElement('p'); intro.className = 'guide-intro'; intro.textContent = '例を貼り付けて編集できます。保存・コンパイル時には構文、型、変数、素材、シーン遷移まで検証されます。';
+  const reference = document.createElement('a'); reference.href = '/docs/tds-language-and-editor-guide.md'; reference.target = '_blank'; reference.rel = 'noopener'; reference.className = 'guide-reference'; reference.textContent = '詳しい構文リファレンスを開く';
+  const sections = [
+    ['最小のシーン', 'scene main {\n  say narrator "こんにちは"\n  goto next\n}\n\nscene next {\n  say narrator "次の場面"\n}', 'sceneで始まり、{ }の中を上から実行します。インデントは半角スペース2個が標準です。'],
+    ['素材と立ち絵', 'asset bg classroom = "asset/bg/classroom.png"\n\ncharacter hero {\n  name = "主人公"\n  pose normal = "asset/char/hero/normal.png"\n}\n\nscene main {\n  bg classroom\n  show hero.normal center\n}', 'assetで素材を登録し、シーンでは登録名を使います。showは character.pose と位置を指定します。'],
+    ['台詞と変数', 'int score = 0\nstr route = "common"\n\nset score = score + 1\nsay narrator "点数: {score}"\nsay "話者を省略すると narrator"', '変数には型と初期値が必要です。constは変更できません。文字列補間は {式} で書きます。'],
+    ['分岐・ループ', 'if score >= 10 {\n  say narrator "成功"\n} else {\n  say narrator "もう一度"\n}\n\nfor i from 0 to 3 step 1 {\n  say narrator "{i}"\n}', 'if/elif/else、for、whileを使えます。ループは値が変化し、実行回数が過大にならないようにします。'],
+    ['選択肢', 'choice "どうする？" {\n  "進む" {\n    goto next\n  }\n  "待つ" {\n    wait 500\n  }\n}', 'choiceの各ラベルの中に処理を書きます。プロンプトは省略できます。'],
+    ['演出', 'bg classroom\nbgm morning\nshow hero.smile left fade 250\nplay se door\nplay voice greeting blocking\neffect fade black 300\nclear bgm', '時間はミリ秒の非負整数です。voice/videoはblockingなら完了を待ち、asyncなら進行を止めません。'],
+    ['エディタ操作', 'Ctrl+S       保存\nCtrl+Z/Y      Undo / Redo\nCtrl+Shift+F  現在シーンを整形\nTab           選択範囲をインデント\nShift+Tab     選択範囲を逆インデント', '整形は2スペース、演算子の空白、辞書とブロックの判別、改行コードを統一します。'],
+    ['困ったとき', '赤い診断: 先に修正する\n黄色い警告: 意図した演出か確認\n素材エラー: asset宣言とファイルを確認\n同じ位置の警告: showの位置を分ける\n保存競合: シーンを再読み込みして差分を確認', 'IDE、Browser、Nativeは同じコンパイラの診断を共有します。'],
+  ];
+  dialog.append(heading, close, intro, reference);
+  sections.forEach(([title, body, descriptionText], index) => {
+    const block = document.createElement('details'); block.className = 'guide-section'; if (index === 0) block.open = true;
+    const summary = document.createElement('summary'); summary.textContent = title;
+    const description = document.createElement('p'); description.textContent = descriptionText;
+    const pre = document.createElement('pre'); pre.textContent = body;
+    block.append(summary, description, pre); dialog.append(block);
+  });
+  document.body.append(dialog); close.focus();
+}
 
 function selectCurrentLine() {
   const start = editor.value.lastIndexOf('\n', Math.max(0, editor.selectionStart - 1)) + 1;
@@ -2206,6 +2601,7 @@ function showSceneFlowView() {
     if (new URLSearchParams(location.search).has('desktop')) flowUrl.searchParams.set('desktop', '1');
     sceneFlowFrame.src = flowUrl.href;
   }
+  notifySceneFlowRefresh();
 }
 window.addEventListener('message', (event) => {
   if (event.origin !== location.origin || event.source !== sceneFlowFrame?.contentWindow) return;
@@ -2303,6 +2699,8 @@ const menuActions = {
   save: () => saveAllFromMenu().catch(showError),
   undo: () => restoreEditorHistory(undoStack, redoStack),
   redo: () => restoreEditorHistory(redoStack, undoStack),
+  format: formatCode,
+  'format-project': () => window.novelEditorApi.formatProject().catch(showError),
   'select-all': () => { editor.select(); editor.focus(); },
   'select-line': selectCurrentLine,
   'toggle-sidebar': () => document.querySelector('.app-shell')?.classList.toggle('sidebar-hidden'),
@@ -2310,6 +2708,8 @@ const menuActions = {
   'scene-flow': showSceneFlowView,
   compile: () => compileProjectFromMenu().catch(showError),
   play: () => playCurrentScene().catch(showError),
+  'native-build': () => runNativeTool('build', 'ネイティブビルド').catch(showError),
+  'native-test': () => runNativeTestSuite().catch(showError),
   language: () => showLanguageGuide(),
   syntax: () => showLanguageGuide(),
   globals: () => showLanguageGuide(),

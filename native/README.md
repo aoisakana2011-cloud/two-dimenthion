@@ -32,7 +32,7 @@ show image logo center
 clear image logo
 ```
 
-`char ...`、`show ... at ... pose ...`、`show char ...`、`hide char ...`、`clear char ...` はnativeでも受理しません。ソース構文・型・プロジェクト構成は [../syntax-draft.md](../syntax-draft.md) を参照してください。
+ソース構文・型・プロジェクト構成は [../syntax-draft.md](../syntax-draft.md) を参照してください。
 
 ## ビルド
 

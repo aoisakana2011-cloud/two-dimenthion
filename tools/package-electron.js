@@ -17,13 +17,14 @@ function ignorePath(filePath) {
     .replaceAll('\\', '/');
   if (!relative || relative === '..' || relative.startsWith('../')) return false;
 
-  const excludedRoots = ['.git', 'node_modules', 'release', 'build', 'test', 'src', 'llama.cpp'];
+  const excludedRoots = ['.git', 'node_modules', 'release', 'build', 'test', 'src', 'llama.cpp', 'Title'];
   if (excludedRoots.some((name) => relative === name || relative.startsWith(`${name}/`))) return true;
 
   if (relative === 'native' || relative === 'native/build' || relative === 'native/build/Release') return false;
   if (relative.startsWith('native/build/Release/')) {
-    const packagedFile = relative.slice('native/build/Release/'.length);
-    return packagedFile === 'check_image.exe' || packagedFile.toLowerCase().endsWith('.pdb');
+    // Keep the prebuilt player, DLLs, image checker, and engine_data together.
+    // Windows resolves the runtime DLLs beside the distributed executable.
+    return false;
   }
   if (relative.startsWith('native/')) return true;
 

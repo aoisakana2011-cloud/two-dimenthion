@@ -20,16 +20,27 @@ const assert = require('node:assert/strict');
     const base = `http://127.0.0.1:${server.address().port}`;
     browser = await chromium.launch({ channel: 'msedge', headless: true });
     const page = await browser.newPage();
+    page.setDefaultTimeout(10_000);
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
+    const saveAllFromMenu = async () => {
+      await page.locator('[data-menu="file"]').click();
+      await page.locator('[data-menu-action="save"]').click();
+    };
     await page.goto(`${base}/index.html`);
     const editor = page.locator('#editor');
     await editor.waitFor();
+    await page.locator('[data-menu="help"]').click();
+    await page.locator('[data-menu-action="syntax"]').click();
+    assert.equal(await page.locator('.language-guide strong').textContent(), '.tds 構文ヘルプ');
+    assert.ok(await page.locator('.language-guide .guide-section').count() >= 8);
+    assert.equal(await page.locator('.language-guide .guide-section').first().getAttribute('open'), '');
+    assert.equal((await page.request.get(`${base}/docs/tds-language-and-editor-guide.md`)).ok(), true);
+    await page.locator('.language-guide .guide-close').click();
     // Startup restores the last/first scene after an 800 ms timer.
     await page.waitForTimeout(1200);
     assert.equal(await page.locator('#split-editor').count(), 0);
     assert.equal(await page.locator('#new-scene').count(), 0);
-    assert.equal(await page.locator('[data-predict="say "] small').textContent(), 'セリフ');
     const topLevelFolder = page.locator('#file-tree > .scene-folder[data-path="senario"]');
     const topLevelContents = topLevelFolder.locator('xpath=following-sibling::div[1]');
     assert.equal(await topLevelContents.getAttribute('hidden'), '');
@@ -54,7 +65,7 @@ const assert = require('node:assert/strict');
     assert.match(await page.locator('.editor-dialog').textContent(), /削除しますか/);
     await page.getByRole('button', { name: 'キャンセル' }).click();
     assert.equal(await page.locator('.editor-tab-split').first().isVisible(), true);
-    assert.equal(await page.locator('.editor-tab-split').first().textContent(), '->|');
+    assert.equal(await page.locator('.editor-tab-split').first().textContent(), '→');
     const leftTabFontSize = await page.locator('#editor-tabs .editor-tab-name').first().evaluate((element) => getComputedStyle(element).fontSize);
     const tabControlCenters = await page.locator('.editor-tab').first().evaluate((tab) => {
       const split = tab.querySelector('.editor-tab-split').getBoundingClientRect();
@@ -66,10 +77,11 @@ const assert = require('node:assert/strict');
     assert.equal(await page.locator('#split-group').isVisible(), true);
     const splitFrame = page.frameLocator('#split-frame');
     await splitFrame.locator('#editor').waitFor();
+    await page.waitForFunction((name) => document.querySelector('#split-frame')?.contentWindow?.document.querySelector('#scene-name')?.value === name, currentScene);
     assert.equal(await splitFrame.locator('html.embedded-editor').count(), 1);
     assert.equal(await page.locator('#editor-tabs .editor-tab').count(), 0);
     assert.equal(await page.locator('#split-tabs .editor-tab').count(), 1);
-    assert.equal(await page.locator('#split-tabs .editor-tab-unsplit').textContent(), '|<-');
+    assert.equal(await page.locator('#split-tabs .editor-tab-unsplit').textContent(), '←');
     assert.equal(await page.locator('#split-tabs .editor-tab-name').evaluate((element) => getComputedStyle(element).fontSize), leftTabFontSize);
     await page.locator('#split-tabs .editor-tab-unsplit').click();
     await page.locator('#editor-tabs .editor-tab').first().waitFor();
@@ -78,10 +90,27 @@ const assert = require('node:assert/strict');
     assert.equal(await page.locator('#split-group').isVisible(), false);
     await page.locator('#editor-tabs .editor-tab-split').click();
     await splitFrame.locator('#editor').waitFor();
+    await page.waitForFunction((name) => document.querySelector('#split-frame')?.contentWindow?.document.querySelector('#scene-name')?.value === name, currentScene);
     assert.equal(await page.locator('#editor-tabs .editor-tab').count(), 0);
     assert.equal(await page.locator('#split-tabs .editor-tab').count(), 1);
+    await splitFrame.locator('#editor').fill('unsaved right pane before project switch');
+    let projectOpenRequests = 0;
+    await page.route('**/api/project/open', async (route) => {
+      projectOpenRequests += 1;
+      return route.fulfill({ json: { ok: true, title: 'unexpected project switch', projectRoot: 'unexpected' } });
+    });
+    await page.locator('[data-menu="file"]').click();
+    await page.locator('[data-menu-action="open-project"]').click();
+    await page.locator('#project-picker-open').click();
+    await page.locator('.editor-dialog').waitFor();
+    assert.equal(projectOpenRequests, 0, 'dirty right pane must be confirmed before the project switch request');
+    await page.locator('.editor-dialog').getByRole('button', { name: 'キャンセル' }).click();
+    assert.equal(await splitFrame.locator('body').evaluate((element) => element.ownerDocument.defaultView.novelEditorApi.isDirty()), true);
+    await page.locator('#project-picker-close').click();
+    await saveAllFromMenu();
+    await page.waitForFunction(() => document.querySelector('#split-frame')?.contentWindow?.novelEditorApi?.isDirty() === false);
     assert.equal(await page.locator('#save-split').count(), 0);
-    assert.equal(await page.locator('#save').textContent(), 'すべて保存');
+    assert.match(await page.locator('[data-menu-action="save"]').textContent(), /すべて保存/);
     const splitControlCenters = await page.locator('#split-tabs .editor-tab').evaluate((tab) => [...tab.querySelectorAll('.editor-tab-unsplit,.editor-tab-close')].map((button) => {
       const rect = button.getBoundingClientRect(); return rect.top + rect.height / 2;
     }));
@@ -100,65 +129,48 @@ const assert = require('node:assert/strict');
     });
     await splitFrame.locator('#editor').fill('unsaved split test');
     assert.equal(await splitFrame.locator('body').evaluate(() => window.novelEditorApi.isDirty()), true);
-    await page.locator('#save').click();
-    await page.waitForFunction(() => document.querySelector('#save')?.textContent === 'すべて保存');
+    await saveAllFromMenu();
+    await page.waitForFunction(() => document.querySelector('#split-frame')?.contentWindow?.novelEditorApi?.isDirty() === false);
     assert.equal(await splitFrame.locator('body').evaluate(() => window.novelEditorApi.isDirty()), false);
     await splitFrame.locator('#editor').fill('unsaved split test 2');
     page.once('dialog', (dialog) => dialog.dismiss());
-    await page.locator('#close-split').click();
+    await page.locator('#split-tabs .editor-tab-close').click();
     assert.equal(await page.locator('#split-group').isVisible(), true);
-    await page.locator('#save').click();
-    await page.waitForFunction(() => document.querySelector('#save')?.textContent === 'すべて保存');
+    await saveAllFromMenu();
+    await page.waitForFunction(() => document.querySelector('#split-frame')?.contentWindow?.novelEditorApi?.isDirty() === false);
     await page.locator('#split-tabs .editor-tab-unsplit').click();
     await page.locator('#editor-tabs .editor-tab').first().waitFor();
     assert.equal(await page.locator('#split-group').isVisible(), false);
-    assert.equal(await page.locator('#native-build').count(), 0);
     let projectBuildRequest;
     await page.route('**/api/project-build', async (route) => {
       projectBuildRequest = route.request().postDataJSON();
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, build: true, fileCount: 2, diagnostics: [], name: 'test.nsp.json', path: 'build/native-packages/test.nsp.json', instructions: 4 }) });
     });
-    await page.locator('#validate').click();
-    await page.waitForFunction(() => document.querySelector('#validate')?.textContent === 'コンパイル');
+    await page.locator('[data-menu="run"]').click();
+    assert.match(await page.locator('[data-menu-popup="run"]').textContent(), /ネイティブビルド/);
+    await page.locator('[data-menu-action="compile"]').click();
+    await page.waitForFunction(() => document.querySelector('#status')?.textContent.includes('ファイル精査完了'));
     assert.equal(projectBuildRequest.name, await page.locator('#scene-name').inputValue());
     assert.match(await page.locator('#result').textContent(), /コンパイル完了: 全 2 ファイル/);
-    assert.deepEqual(await page.locator('[data-predict]').evaluateAll((buttons) => buttons.map((button) => button.dataset.predict)), [
-      'show ', 'say ', 'bgm ', 'play se ', 'choice ', 'if ', 'for ', 'fn ', 'asset ', 'goto ', 'struct ', 'set '
-    ]);
-    assert.equal(await page.locator('[data-predict="fn "]').isVisible(), true);
-    assert.equal(await page.locator('[data-predict="asset "]').isVisible(), false);
-    assert.equal(await page.locator('[data-predict="goto "]').isVisible(), false);
-    assert.equal(await page.locator('[data-predict="struct "]').isVisible(), false);
-    assert.equal(await page.locator('[data-predict="set "]').isVisible(), false);
-    assert.equal(await page.locator('#insert-toggle').textContent(), '展開');
-    assert.equal(await page.locator('#insert-toggle').getAttribute('aria-expanded'), 'false');
-    await page.locator('#insert-toggle').click();
-    assert.equal(await page.locator('[data-predict="asset "]').isVisible(), true);
-    assert.equal(await page.locator('[data-predict="goto "]').isVisible(), true);
-    assert.equal(await page.locator('[data-predict="struct "]').isVisible(), true);
-    assert.equal(await page.locator('[data-predict="set "]').isVisible(), true);
-    assert.equal(await page.locator('#insert-toggle').textContent(), '閉じる');
-    assert.equal(await page.locator('#insert-toggle').getAttribute('aria-expanded'), 'true');
-    await editor.fill('');
-    await page.locator('[data-predict="say "]').click();
+    await editor.fill('ch');
+    await page.waitForFunction(() => ['character', 'choice'].every((word) => [...document.querySelectorAll('#suggestions .suggestion')].some((button) => button.textContent.includes(word))));
+    const chSuggestions = await page.locator('#suggestions .suggestion').allTextContents();
+    assert.equal(chSuggestions.some((word) => word.trim().replace(/^›\s*/, '') === 'char'), false);
+    await editor.fill('a');
+    await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('asset'));
+    const aSuggestions = await page.locator('#suggestions .suggestion').allTextContents();
+    assert.equal(aSuggestions.some((word) => word.trim().replace(/^›\s*/, '') === 'at'), false);
+    await editor.fill('sa');
+    await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('say'));
+    await editor.press('Enter');
     assert.equal(await editor.inputValue(), 'say ');
-    assert.equal(await page.locator('#suggestions').isVisible(), false);
-    await editor.type('n');
-    await page.waitForTimeout(100);
-    assert.equal(await page.locator('#suggestions').isVisible(), false);
-    await editor.type('a');
+    await editor.type('nar');
     await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('narrator'));
-    assert.match(await page.locator('#suggestions .suggestion.active').textContent(), /^Enter › narrator$/);
     await editor.press('Enter');
     assert.equal(await editor.inputValue(), 'say narrator ""');
     assert.ok((await page.locator('#scene-name').inputValue()).length > 0);
-    await editor.fill('character aokami {\n  name = "蒼神"\n  pose normal = "assets/char/aokami.png"\n}\n');
-    await editor.press('End');
-    await page.locator('[data-predict="show "]').click();
-    assert.equal(await page.locator('#suggestions').isVisible(), false);
-    await editor.type('ao');
-    await page.waitForTimeout(200);
-    assert.match(await page.locator('#suggestions').textContent(), /aokami/);
+    await editor.fill('character aokami {\n  name = "蒼神"\n  pose normal = "assets/char/aokami.png"\n}\nshow ao');
+    await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('aokami'));
     await editor.press('Enter');
     assert.match(await editor.inputValue(), /show aokami\.$/);
     await editor.type('no');
@@ -169,22 +181,53 @@ const assert = require('node:assert/strict');
     await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('center'));
     await editor.press('Enter');
     assert.match(await editor.inputValue(), /show aokami\.normal center $/);
-    await editor.fill('c');
-    await page.waitForTimeout(100);
-    assert.equal(await page.locator('#suggestions').isVisible(), false);
+    await editor.fill('show aokami.normal far');
+    await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('far_left'));
+    await editor.press('Enter');
+    assert.equal(await editor.inputValue(), 'show aokami.normal far_left ');
+    await editor.fill('show aokami.normal far-');
+    await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('far-left'));
+    await editor.press('Enter');
+    assert.equal(await editor.inputValue(), 'show aokami.normal far-left ');
+    const formattedCompletionSource = 'scene main{\nshow aokami.normal far\n}';
+    const formattedCompletion = 'scene main {\n  show aokami.normal far\n}';
+    await editor.fill(formattedCompletionSource);
+    const completionCaret = formattedCompletionSource.indexOf('far') + 'far'.length;
+    await editor.evaluate((element, caret) => element.setSelectionRange(caret, caret), completionCaret);
+    await editor.press('Control+Shift+f');
+    assert.equal(await editor.inputValue(), formattedCompletion);
+    assert.equal(await editor.evaluate((element) => element.selectionStart), formattedCompletion.indexOf('far') + 'far'.length);
+    await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('far_left'));
+    await editor.press('Enter');
+    assert.equal(await editor.inputValue(), 'scene main {\n  show aokami.normal far_left\n}');
+    await editor.fill('show image placeholder far_r');
+    await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('far_right'));
+    await editor.press('Enter');
+    assert.equal(await editor.inputValue(), 'show image placeholder far_right ');
+    await editor.fill('show image placeholder far-');
+    await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('far-right'));
+    await editor.press('Enter');
+    assert.equal(await editor.inputValue(), 'show image placeholder far-left ');
+    await editor.fill('play voice greeting blo');
+    await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('blocking'));
+    await editor.press('Enter');
+    assert.equal(await editor.inputValue(), 'play voice greeting blocking ');
     await editor.fill('cho');
-    await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('choice'));
+    await page.waitForFunction(() => {
+      const items = [...document.querySelectorAll('#suggestions .suggestion')].map((button) => button.textContent.trim().replace(/^›\s*/, ''));
+      return items.length === 1 && items[0] === 'choice';
+    });
     await editor.press('Enter');
     assert.equal(await editor.inputValue(), 'choice ');
     await editor.fill('if(score==1)');
     await editor.press('Enter');
-    assert.equal(await editor.inputValue(), 'if(score==1) {\n  \n}\n');
+    assert.equal(await editor.inputValue(), 'if (score == 1) {\n\n}\n');
     await editor.fill(`str editor_title = "文字列"
 scene analysis {
   if 1 == 2 {
     say narrator "到達しない"
   }
-  say narrator title
+  say narrator editor_title
 }`);
     await page.waitForTimeout(1500);
     const resultText = await page.locator('#result').textContent();
@@ -193,11 +236,14 @@ scene analysis {
     assert.ok(await page.locator('#highlight .hl-warning').count() >= 1);
     assert.ok((await page.locator('#highlight .hl-line').nth(3).getAttribute('class')).includes('hl-unreachable'));
     assert.equal((await page.locator('#highlight .hl-line').nth(5).getAttribute('class')).includes('hl-unreachable'), false);
-    await editor.fill('scene start {\n  goto ending\n  say narrator {\n    "first"\n    "second"\n  }\n}\nscene ending { wait 1 }');
-    await page.waitForFunction(() => [2, 3, 4, 5].every((index) => document.querySelectorAll('#highlight .hl-line')[index]?.classList.contains('hl-unreachable')));
+    await editor.fill('asset bg first = "asset/bg/mori.jpg"\nasset bg second = "asset/bg/mori.jpg"\nscene main {\n  bg first\n  bg second\n}');
+    await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('background-replacement'));
+    assert.match(await page.locator('#result').textContent(), /background-replacement/);
+    await editor.fill('scene start {\n  goto ending\n  say narrator "first"\n  say narrator "second"\n}\nscene ending { wait 1 }');
+    await page.waitForFunction(() => [2, 3].every((index) => document.querySelectorAll('#highlight .hl-line')[index]?.classList.contains('hl-unreachable')));
     const unreachableSay = page.locator('#highlight .hl-line');
     const unreachableClasses = await unreachableSay.evaluateAll((rows) => rows.map((row) => row.className));
-    assert.deepEqual(unreachableClasses.slice(2, 6).map((value) => value.includes('hl-unreachable')), [true, true, true, true]);
+    assert.deepEqual(unreachableClasses.slice(2, 4).map((value) => value.includes('hl-unreachable')), [true, true]);
     assert.equal(await unreachableSay.nth(3).locator('.hl-string').evaluate((node) => getComputedStyle(node).color), await unreachableSay.nth(2).evaluate((node) => getComputedStyle(node).color));
     assert.equal(await unreachableSay.nth(2).evaluate((node) => getComputedStyle(node).textDecorationLine), 'none');
     await editor.fill('scene start {\n  goto ending\n  choice "route" {\n    "one" {\n      wait 1\n    }\n    "two" { wait 2 }\n  }\n}\nscene ending { wait 1 }');
@@ -208,16 +254,23 @@ scene analysis {
     assert.doesNotMatch(await page.locator('#file-info').textContent(), /3 line - 8 line/);
     assert.match(await page.locator('#result').textContent(), /unreachable-code\s+3-8 line/);
     assert.doesNotMatch(await page.locator('#result').textContent(), /unreachable-code\s+line 3:/);
-    await editor.fill('scene start {\n  goto live\n  wait 1\n\n  say narrator {\n    "never"\n  }\n}\nscene live { wait 1 }\nscene dead {\n  wait 2\n\n  say narrator "still never"\n}');
-    await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('3-7 line') && document.querySelector('#result')?.textContent.includes('10-14 line'));
+    await editor.fill('scene start {\n  goto live\n  wait 1\n\n  say narrator "never"\n}\nscene live { wait 1 }\nscene dead {\n  wait 2\n\n  say narrator "still never"\n}');
+    await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('3-5 line') && document.querySelector('#result')?.textContent.includes('8-12 line'));
     const collapsedDiagnostics = await page.locator('#result').textContent();
-    assert.match(collapsedDiagnostics, /unreachable-code\s+3-7 line/);
-    assert.match(collapsedDiagnostics, /unreachable-scene\s+10-14 line/);
-    assert.doesNotMatch(collapsedDiagnostics, /unreachable-code\s+11(?:-|\s)line/);
+    assert.match(collapsedDiagnostics, /unreachable-code\s+3-5 line/);
+    assert.match(collapsedDiagnostics, /unreachable-scene\s+8-12 line/);
+    assert.doesNotMatch(collapsedDiagnostics, /unreachable-code\s+9(?:-|\s)line/);
     await editor.fill('scene start {\n  bg missing_one\n  wait "bad"\n  say missing_two "hello"\n}');
     await page.waitForFunction(() => document.querySelectorAll('#result .diagnostic-error').length >= 3);
     const continuedTypeDiagnostics = await page.locator('#result').textContent();
     for (const line of [2, 3, 4]) assert.match(continuedTypeDiagnostics, new RegExp(`line ${line}:`));
+    const unicodeTypeError = 'str result = "😀" + missing';
+    const expectedColumn = unicodeTypeError.indexOf('missing') + 1;
+    await editor.fill(unicodeTypeError);
+    await page.waitForFunction((column) => document.querySelector('#result')?.textContent.includes(`line 1:${column}`), expectedColumn);
+    const unicodeTypeDiagnostic = page.locator('#result .diagnostic-link').filter({ hasText: 'type-error' }).first();
+    await unicodeTypeDiagnostic.click();
+    assert.equal(await editor.evaluate((element) => element.selectionStart), expectedColumn - 1);
     await editor.fill('say narrator "unterminated\nwait (\nsay narrator "valid"');
     await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('syntax-error') && document.querySelectorAll('#result .diagnostic-error').length >= 2);
     const continuedSyntaxDiagnostics = await page.locator('#result').textContent();
@@ -229,11 +282,30 @@ scene analysis {
     assert.equal(await projectErrorLink.getAttribute('title'), 'クリックして該当行へ移動');
     await projectErrorLink.click();
     assert.equal(await editor.evaluate((element) => document.activeElement === element), true);
-    assert.equal(await editor.evaluate((element) => element.selectionStart), 0);
+    const missingAssetSource = 'asset bg missing = "assets/__missing_diagnostic_jump__.png"\nscene start { bg missing }';
+    assert.equal(await editor.evaluate((element) => element.selectionStart), missingAssetSource.indexOf('assets/__missing_diagnostic_jump__.png'));
+    const linkedUnreachableSource = 'scene start {\ngoto ending\nsay narrator "dead"\n}\nscene ending { wait 1 }';
+    await editor.fill(linkedUnreachableSource);
+    await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('unreachable-code'));
+    const unreachableLink = page.locator('#result .diagnostic-link').filter({ hasText: 'unreachable-code' }).first();
+    await unreachableLink.click();
+    assert.equal(await editor.evaluate((element) => element.selectionStart), linkedUnreachableSource.indexOf('say narrator'));
+    await editor.press('Control+Shift+f');
+    const linkedUnreachableFormatted = 'scene start {\n  goto ending\n  say narrator "dead"\n}\nscene ending {\n  wait 1\n}';
+    assert.equal(await editor.inputValue(), linkedUnreachableFormatted);
+    assert.equal(await editor.evaluate((element) => element.selectionStart), linkedUnreachableFormatted.indexOf('say narrator'));
     await editor.fill('scene formatted {\nsay narrator "line"\n}');
     await page.locator('#scene-name').focus();
     await page.keyboard.press('Control+Shift+F');
     assert.equal(await editor.inputValue(), 'scene formatted {\n  say narrator "line"\n}');
+    await editor.fill('scene menu_format{say narrator "menu"}');
+    await page.locator('[data-menu="edit"]').click();
+    await page.locator('[data-menu-action="format"]').click();
+    assert.equal(await editor.inputValue(), 'scene menu_format {\n  say narrator "menu"\n}');
+    await editor.fill('scene project_format{say narrator "project"}');
+    await page.locator('[data-menu="edit"]').click();
+    await page.locator('[data-menu-action="format-project"]').click();
+    await page.waitForFunction(() => document.querySelector('#editor')?.value === 'scene project_format {\n  say narrator "project"\n}');
     const unformatted = 'dict[int] data={"brace":"{ untouched }"}\nif(j==2){\nsay narrator "a  b {j}" # keep  comment\n}\nelse{\nfor i from 2 to 0 step -1{\nsay narrator "miss"\n}\n}';
     const formatted = 'dict[int] data = { "brace": "{ untouched }" }\nif (j == 2) {\n  say narrator "a  b {j}"  # keep  comment\n} else {\n  for i from 2 to 0 step -1 {\n    say narrator "miss"\n  }\n}';
     await editor.fill(unformatted);
@@ -246,6 +318,235 @@ scene analysis {
     await editor.fill('choice "please" {\n  "a" {\n    say narrator "ok"\n    }}');
     await editor.press('Control+Shift+f');
     assert.equal(await editor.inputValue(), 'choice "please" {\n  "a" {\n    say narrator "ok"\n  }\n}');
+    const structuredUnformatted = 'scene nested{\nif ready{\nset value=-1\nsay narrator "text } { # stays inside string" // keep  comment\n}else{\nwhile value>0{\nset value=value-1\n}\n}\n}';
+    const structuredFormatted = 'scene nested {\n  if ready {\n    set value = -1\n    say narrator "text } { # stays inside string"  // keep  comment\n  } else {\n    while value > 0 {\n      set value = value - 1\n    }\n  }\n}';
+    await editor.fill(structuredUnformatted);
+    await editor.press('Control+Shift+f');
+    assert.equal(await editor.inputValue(), structuredFormatted);
+    await editor.press('Control+Shift+f');
+    assert.equal(await editor.inputValue(), structuredFormatted, 'formatting must be idempotent');
+    await editor.fill(structuredUnformatted);
+    const selectedStart = structuredUnformatted.indexOf('say narrator');
+    const selectedEnd = selectedStart + 'say narrator "text'.length;
+    await editor.evaluate((element, range) => element.setSelectionRange(range.start, range.end), { start: selectedStart, end: selectedEnd });
+    await editor.press('Control+Shift+f');
+    const formattedSelectedStart = structuredFormatted.indexOf('say narrator');
+    assert.equal(await editor.evaluate((element) => element.selectionStart), formattedSelectedStart);
+    assert.equal(await editor.evaluate((element) => element.selectionEnd), formattedSelectedStart + 'say narrator "text'.length);
+    await editor.fill(structuredUnformatted);
+    const multiStart = structuredUnformatted.indexOf('if ready');
+    const multiEnd = structuredUnformatted.indexOf('\n}\n}', multiStart);
+    await editor.evaluate((element, range) => element.setSelectionRange(range.start, range.end), { start: multiStart, end: multiEnd });
+    await editor.press('Control+Shift+f');
+    const formattedMultiStart = structuredFormatted.indexOf('if ready');
+    const formattedMultiEnd = structuredFormatted.indexOf('set value = value - 1', formattedMultiStart) + 'set value = value - 1'.length;
+    assert.equal(await editor.evaluate((element) => element.selectionStart), formattedMultiStart);
+    assert.equal(await editor.evaluate((element) => element.selectionEnd), formattedMultiEnd);
+    const markerCollisionSource = 'scene main{\nsay narrator "__NOVEL_EDITOR_CURSOR__ __NOVEL_EDITOR_SELECTION_END__"\n}';
+    const markerCollisionFormatted = 'scene main {\n  say narrator "__NOVEL_EDITOR_CURSOR__ __NOVEL_EDITOR_SELECTION_END__"\n}';
+    await editor.fill(markerCollisionSource);
+    const collisionCaret = markerCollisionSource.indexOf('__NOVEL_EDITOR_SELECTION_END__');
+    await editor.evaluate((element, caret) => element.setSelectionRange(caret, caret), collisionCaret);
+    await editor.press('Control+Shift+f');
+    assert.equal(await editor.inputValue(), markerCollisionFormatted);
+    assert.equal(await editor.evaluate((element) => element.selectionStart), markerCollisionFormatted.indexOf('__NOVEL_EDITOR_SELECTION_END__'));
+    const identifierCaretSource = 'scene main{\nshow hero.normal far_left\n}';
+    const identifierCaretFormatted = 'scene main {\n  show hero.normal far_left\n}';
+    await editor.fill(identifierCaretSource);
+    const identifierCaret = identifierCaretSource.indexOf('far_left') + 'far'.length;
+    await editor.evaluate((element, caret) => element.setSelectionRange(caret, caret), identifierCaret);
+    await editor.press('Control+Shift+f');
+    assert.equal(await editor.inputValue(), identifierCaretFormatted);
+    assert.equal(await editor.evaluate((element) => element.selectionStart), identifierCaretFormatted.indexOf('far_left') + 'far'.length);
+    await editor.fill(identifierCaretSource);
+    const identifierSelectionStart = identifierCaretSource.indexOf('far_left') + 1;
+    const identifierSelectionEnd = identifierCaretSource.indexOf('far_left') + 'far_le'.length;
+    await editor.evaluate((element, range) => element.setSelectionRange(range.start, range.end), { start: identifierSelectionStart, end: identifierSelectionEnd });
+    await editor.press('Control+Shift+f');
+    assert.equal(await editor.inputValue(), identifierCaretFormatted);
+    const formattedIdentifierStart = identifierCaretFormatted.indexOf('far_left') + 1;
+    const formattedIdentifierEnd = identifierCaretFormatted.indexOf('far_left') + 'far_le'.length;
+    assert.equal(await editor.evaluate((element) => element.selectionStart), formattedIdentifierStart);
+    assert.equal(await editor.evaluate((element) => element.selectionEnd), formattedIdentifierEnd);
+    const operatorCaretSource = 'scene main{\nif score>=10{\nsay narrator "ok"\n}\n}';
+    const operatorCaretFormatted = 'scene main {\n  if score >= 10 {\n    say narrator "ok"\n  }\n}';
+    await editor.fill(operatorCaretSource);
+    const operatorCaret = operatorCaretSource.indexOf('>=') + 1;
+    await editor.evaluate((element, caret) => element.setSelectionRange(caret, caret), operatorCaret);
+    await editor.press('Control+Shift+f');
+    assert.equal(await editor.inputValue(), operatorCaretFormatted);
+    assert.equal(await editor.evaluate((element) => element.selectionStart), operatorCaretFormatted.indexOf('>=') + 1);
+    await editor.fill(operatorCaretSource);
+    const operatorSelectionStart = operatorCaretSource.indexOf('>=');
+    const operatorSelectionEnd = operatorSelectionStart + 2;
+    await editor.evaluate((element, range) => element.setSelectionRange(range.start, range.end), { start: operatorSelectionStart, end: operatorSelectionEnd });
+    await editor.press('Control+Shift+f');
+    assert.equal(await editor.inputValue(), operatorCaretFormatted);
+    assert.equal(await editor.evaluate((element) => element.selectionStart), operatorCaretFormatted.indexOf('>='));
+    assert.equal(await editor.evaluate((element) => element.selectionEnd), operatorCaretFormatted.indexOf('>=') + 2);
+    const unaryCaretSource = 'scene main{\nset value=-1\n}';
+    const unaryCaretFormatted = 'scene main {\n  set value = -1\n}';
+    await editor.fill(unaryCaretSource);
+    const unaryCaret = unaryCaretSource.indexOf('-1');
+    await editor.evaluate((element, caret) => element.setSelectionRange(caret, caret), unaryCaret);
+    await editor.press('Control+Shift+f');
+    assert.equal(await editor.inputValue(), unaryCaretFormatted);
+    assert.equal(await editor.evaluate((element) => element.selectionStart), unaryCaretFormatted.indexOf('-1'));
+    const wholeDocumentSource = 'scene whole{\nsay narrator "all"\n}\n';
+    const wholeDocumentFormatted = 'scene whole {\n  say narrator "all"\n}\n';
+    await editor.fill(wholeDocumentSource);
+    await editor.evaluate((element) => element.setSelectionRange(0, element.value.length));
+    await editor.press('Control+Shift+f');
+    assert.equal(await editor.inputValue(), wholeDocumentFormatted);
+    assert.equal(await editor.evaluate((element) => element.selectionStart), 0);
+    assert.equal(await editor.evaluate((element) => element.selectionEnd), wholeDocumentFormatted.length);
+    await editor.fill(structuredUnformatted);
+    await editor.press('Control+Shift+f');
+    assert.equal(await editor.inputValue(), structuredFormatted);
+    await editor.press('End');
+    await editor.type('x');
+    assert.equal((await editor.inputValue()).endsWith('}x'), true);
+    await editor.press('Control+z');
+    assert.equal(await editor.inputValue(), structuredFormatted, 'undo must remove typing before formatting');
+    await editor.press('Control+z');
+    assert.equal(await editor.inputValue(), structuredUnformatted, 'second undo must restore the pre-format source');
+    await editor.press('Control+Shift+z');
+    assert.equal(await editor.inputValue(), structuredFormatted, 'redo must restore formatting');
+    await editor.press('Control+Shift+z');
+    assert.equal((await editor.inputValue()).endsWith('}x'), true, 'second redo must restore typing');
+    const branchWhitespaceSource = 'if 1==1{\nsay narrator "yes"\n}\n\nelif 1==0{\nsay narrator "maybe"\n}\n\nelse{\nsay narrator "no"\n}';
+    const branchWhitespaceFormatted = 'if 1 == 1 {\n  say narrator "yes"\n} elif 1 == 0 {\n  say narrator "maybe"\n} else {\n  say narrator "no"\n}';
+    await editor.fill(branchWhitespaceSource);
+    const branchSelectionStart = branchWhitespaceSource.indexOf('say narrator "maybe"');
+    const branchSelectionEnd = branchSelectionStart + 'say narrator "maybe"'.length;
+    await editor.evaluate((element, range) => element.setSelectionRange(range.start, range.end), { start: branchSelectionStart, end: branchSelectionEnd });
+    await editor.press('Control+Shift+f');
+    assert.equal(await editor.inputValue(), branchWhitespaceFormatted);
+    assert.equal(await editor.evaluate((element) => element.selectionStart), branchWhitespaceFormatted.indexOf('say narrator "maybe"'));
+    assert.equal(await editor.evaluate((element) => element.selectionEnd), branchWhitespaceFormatted.indexOf('say narrator "maybe"') + 'say narrator "maybe"'.length);
+    const formatterCorpus = [
+      ['scene crlf {\r\nsay narrator "line"\r\n\r\n}', 'scene crlf {\n  say narrator "line"\n\n}'],
+      ['scene tabs {\t\r\n\tif ready {\t\r\n\tset value=-1\t\r\n\t}\t\r\n}', 'scene tabs {\n  if ready {\n    set value = -1\n  }\n}'],
+      ['set value=- -1', 'set value = - -1'],
+      ['for i from -1 to +1 step -1{say narrator "loop"}', 'for i from -1 to +1 step -1 {\n  say narrator "loop"\n}'],
+      ['fn choose(data:dict[str])->str{return data["key"]}', 'fn choose(data: dict[str]) -> str {\n  return data["key"]\n}'],
+      ['if score>=-1{say narrator "signed"}', 'if score >= -1 {\n  say narrator "signed"\n}'],
+      ['if not(score==1){return(-1)}', 'if not (score == 1) {\n  return (-1)\n}'],
+      ['choice(route){"ok"{say narrator "choice"}}', 'choice (route) {\n  "ok" {\n    say narrator "choice"\n  }\n}'],
+      ['show hero.normal far-left', 'show hero.normal far-left'],
+      ['show image splash far-right', 'show image splash far-right'],
+      ['set item[0]=fn("a,b") # keep {comment}', 'set item[0] = fn("a,b")  # keep {comment}'],
+      ['if ready { set data = { "key": 1 } }', 'if ready {\n  set data = { "key": 1 }\n}'],
+      ['dict[int] data = {\n1: 2\n}', 'dict[int] data = {\n  1: 2\n}'],
+      ['if ready {\nset data = {\n1: 2\n}\n}', 'if ready {\n  set data = {\n    1: 2\n  }\n}'],
+      ['if ready {\nset data = {\n"nested": {\n"x": 1\n} # nested\n}\n}', 'if ready {\n  set data = {\n    "nested": {\n      "x": 1\n    }  # nested\n  }\n}'],
+      ['if ready { set data = { "nested": { "x": 1 } } }', 'if ready {\n  set data = { "nested": { "x": 1 } }\n}'],
+      ['if a { say narrator "A" } elif b { say narrator "B" } else { say narrator "C" }', 'if a {\n  say narrator "A"\n} elif b {\n  say narrator "B"\n} else {\n  say narrator "C"\n}'],
+      ['scene trailing {\n  # comment   \n  say narrator "line"\t\n   \n}', 'scene trailing {\n  # comment\n  say narrator "line"\n\n}'],
+      ['if a { say narrator "A" }\n\nelif b { say narrator "B" }\n\nelse { say narrator "C" }', 'if a {\n  say narrator "A"\n} elif b {\n  say narrator "B"\n} else {\n  say narrator "C"\n}'],
+      ['dict[str] data={"x":{"y":1}}', 'dict[str] data = { "x": { "y": 1 } }'],
+      ['set data = fn({ "x": 1 })', 'set data = fn({ "x": 1 })'],
+      ['if ready { set data = fn({ "x": 1 }) }', 'if ready {\n  set data = fn({ "x": 1 })\n}'],
+      ['if ready { say narrator "x" } # trailing block comment', 'if ready {\n  say narrator "x"\n}  # trailing block comment'],
+      ['if ready { say narrator "x" } // trailing block comment', 'if ready {\n  say narrator "x"\n}  // trailing block comment'],
+      ['character hero { name="Hero"\npose normal="hero.png"\n}', 'character hero {\n  name = "Hero"\n  pose normal = "hero.png"\n}'],
+      ['character hero { name="Hero"\npose normal="hero.png" }', 'character hero {\n  name = "Hero"\n  pose normal = "hero.png"\n}'],
+      ['struct Player{name:str\ncoins:int}\nPlayer p={"name":"Y","coins":0}', 'struct Player {\n  name: str\n  coins: int\n}\nPlayer p = { "name": "Y", "coins": 0 }'],
+      ['set __NOVEL_EDITOR_CURSOR__value=1', 'set __NOVEL_EDITOR_CURSOR__value = 1'],
+      ['fn build() -> dict[str] { return { "x": "y" } }', 'fn build() -> dict[str] {\n  return { "x": "y" }\n}'],
+      ['fn greet() -> none { say narrator "hello" }', 'fn greet() -> none {\n  say narrator "hello"\n}'],
+      ['choice "route"{"one"{say narrator "A"}"two"{say narrator "B"}}', 'choice "route" {\n  "one" {\n    say narrator "A"\n  }\n  "two" {\n    say narrator "B"\n  }\n}'],
+      ['choice{"one"{say narrator "A"}"two"{say narrator "B"}}', 'choice {\n  "one" {\n    say narrator "A"\n  }\n  "two" {\n    say narrator "B"\n  }\n}'],
+      ['choice{route{say narrator "A"}next(){say narrator "B"}}', 'choice {\n  route {\n    say narrator "A"\n  }\n  next() {\n    say narrator "B"\n  }\n}'],
+      ['choice choose({"key":"go"}){"ok"{say narrator "A"}}', 'choice choose({ "key": "go" }) {\n  "ok" {\n    say narrator "A"\n  }\n}'],
+      ['choice{-(route){say narrator "A"}}', 'choice {\n  -(route) {\n    say narrator "A"\n  }\n}'],
+      ['choice "route"{"a {b}"{say narrator "A"}}', 'choice "route" {\n  "a {b}" {\n    say narrator "A"\n  }\n}'],
+      ['choice "route"{"a \\"b\\" {c}"{say narrator "A"}}', 'choice "route" {\n  "a \\"b\\" {c}" {\n    say narrator "A"\n  }\n}'],
+      ['say narrator "escaped \\"quote\\" and \\{brace\\}"', 'say narrator "escaped \\"quote\\" and \\{brace\\}"'],
+      ['scene commands{bg background\nbgm music\nshow hero.normal center fade 250\nplay se click\nplay voice line blocking\nplay video movie async\neffect fade black 500\nwait 100\nclear image splash\ngoto "next.tds"\n}', 'scene commands {\n  bg background\n  bgm music\n  show hero.normal center fade 250\n  play se click\n  play voice line blocking\n  play video movie async\n  effect fade black 500\n  wait 100\n  clear image splash\n  goto "next.tds"\n}'],
+      ['global dict[str] labels={"first":{"next":"go"}}\nscene main{choice labels["first"]["next"]{"ok"{say narrator "selected"}}}', 'global dict[str] labels = { "first": { "next": "go" } }\nscene main {\n  choice labels["first"]["next"] {\n    "ok" {\n      say narrator "selected"\n    }\n  }\n}'],
+      ['fn calculate(a:int,b:dict[str])->dict[int]{if a>=0 and not(b["ready"]=="no"){return {"ok":1}}else{return {"ok":0}}}', 'fn calculate(a: int, b: dict[str]) -> dict[int] {\n  if a >= 0 and not (b["ready"] == "no") {\n    return { "ok": 1 }\n  } else {\n    return { "ok": 0 }\n  }\n}'],
+      ['scene incomplete {\nset value = fn(\n{"key":1}\n)\n}', 'scene incomplete {\n  set value = fn(\n  { "key": 1 }\n  )\n}'],
+      ['\uFEFFscene bom{say narrator "normalized"}', 'scene bom {\n  say narrator "normalized"\n}'],
+      ['scene unicode {\u2028say narrator "line"\u2029}', 'scene unicode {\n  say narrator "line"\n}'],
+    ];
+    for (const [input, expected] of formatterCorpus) {
+      await editor.fill(input);
+      await editor.press('Control+Shift+f');
+      assert.equal(await editor.inputValue(), expected, `formatter corpus mismatch for ${input}`);
+      await editor.press('Control+Shift+f');
+      assert.equal(await editor.inputValue(), expected, `formatter corpus is not idempotent for ${input}`);
+    }
+    const formatterFuzzFailure = await editor.evaluate(() => {
+      const atoms = [
+        'scene main {', 'if ready {', 'say narrator "text {x}"', 'set value = -1',
+        'choice {', 'choice choose(', '"label" {', 'route {', 'next() {', 'return { "x": 1 }',
+        'set data = { "x": 1 }', 'set data = { "x": 1', '}', '} else {', 'wait 1', '# comment { }',
+        '// comment { }', ''
+      ];
+      for (let seed = 1; seed <= 1000; seed++) {
+        let value = seed;
+        const lines = [];
+        for (let index = 0; index < 8; index++) {
+          value = (value * 1664525 + 1013904223) >>> 0;
+          lines.push(atoms[value % atoms.length].replace(/ /g, () => (value++ % 4 === 0 ? '  ' : ' ')));
+        }
+        const source = lines.join('\n');
+        const once = window.novelEditorApi.format(source);
+        if (once !== window.novelEditorApi.format(once)) return { seed, source, once };
+      }
+      return null;
+    });
+    assert.equal(formatterFuzzFailure, null, 'formatter must be idempotent across generated whitespace/brace cases');
+    const semanticSource = 'scene main{\nif 1==1{\nsay narrator "same meaning"\n}else{\nsay narrator "unreachable"\n}\n}';
+    await editor.fill(semanticSource);
+    const semanticFormatted = await editor.evaluate((element) => window.novelEditorApi.format(element.value));
+    const originalCompile = await page.request.post(`${base}/api/compile`, { data: { name: 'main.tds', source: semanticSource } });
+    const formattedCompile = await page.request.post(`${base}/api/compile`, { data: { name: 'main.tds', source: semanticFormatted } });
+    assert.equal(originalCompile.ok(), true);
+    assert.equal(formattedCompile.ok(), true);
+    assert.deepEqual((await formattedCompile.json()).program, (await originalCompile.json()).program, 'formatting must preserve compiled semantics');
+    const semanticCorpus = [
+      'dict[int] data={"x":1}\nscene main{\nset data["x"]=2\nchoice "route"{"go"{set data["x"]=3}}\n}',
+      'character hero { name="Hero" }\nscene main{say narrator "character metadata remains compilable"}',
+      'dict[str] labels={"first":"go"}\nscene main{choice labels["first"]{"ok"{say narrator "selected"}}}',
+      'dict[str] labels={"first":"go"}\nstr suffix=" now"\nscene main{choice labels["first"] + suffix {"ok"{say narrator "selected"}}}',
+      'fn choose(data: dict[str]) -> str { return data["key"] }\nscene main{choice choose({"key":"go"}){"ok"{say narrator "selected"}}}',
+      'scene main{if 1==1{say narrator "yes"}\n\nelif 1==0{say narrator "maybe"}\n\nelse{say narrator "no"}}',
+      'fn check(score: int) -> int { if not(score==1){ return(-1) } return(0) }',
+      'str route="go"\nscene main{choice(route){"ok"{say narrator "selected"}}}',
+      'character hero {\nname="Hero"\npose normal="asset/char/aokami.png"\n}\nscene main{show hero.normal far-left}',
+      'asset image splash="asset/char/aokami.png"\nscene main{show image splash far-right}',
+    ];
+    const withoutLocations = (value) => {
+      if (Array.isArray(value)) return value.map(withoutLocations);
+      if (!value || typeof value !== 'object') return value;
+      const locationKeys = new Set(['line', 'column', 'startLine', 'startColumn', 'endLine', 'endColumn']);
+      return Object.fromEntries(Object.entries(value).filter(([key]) => !locationKeys.has(key)).map(([key, item]) => [key, withoutLocations(item)]));
+    };
+    for (const source of semanticCorpus) {
+      const formatted = await editor.evaluate((element, value) => window.novelEditorApi.format(value), source);
+      const original = await page.request.post(`${base}/api/compile`, { data: { name: 'semantic.tds', source } });
+      const reformatted = await page.request.post(`${base}/api/compile`, { data: { name: 'semantic.tds', source: formatted } });
+      if (!original.ok()) throw new Error(`semantic corpus source must compile: ${source}\n${await original.text()}`);
+      if (!reformatted.ok()) throw new Error(`formatted semantic corpus source must compile: ${formatted}\n${await reformatted.text()}`);
+      assert.equal(original.ok(), true, `semantic corpus source must compile: ${source}`);
+      assert.equal(reformatted.ok(), true, `formatted semantic corpus source must compile: ${formatted}`);
+      assert.deepEqual(withoutLocations((await reformatted.json()).program), withoutLocations((await original.json()).program), 'mixed dictionary/novel blocks must preserve compiled semantics');
+    }
+    const locationSource = 'scene main {\ngoto end\nsay narrator "dead"\n}\nscene end { wait 1 }';
+    const locationFormatted = await editor.evaluate((element, source) => window.novelEditorApi.format(source), locationSource);
+    const locationBefore = await page.request.post(`${base}/api/validate`, { data: { name: 'main.tds', source: locationSource } });
+    const locationAfter = await page.request.post(`${base}/api/validate`, { data: { name: 'main.tds', source: locationFormatted } });
+    assert.equal(locationBefore.ok(), true);
+    assert.equal(locationAfter.ok(), true);
+    const beforeDiagnostics = (await locationBefore.json()).diagnostics.filter((item) => item.code === 'unreachable-code');
+    const afterDiagnostics = (await locationAfter.json()).diagnostics.filter((item) => item.code === 'unreachable-code');
+    assert.equal(beforeDiagnostics.length, 1);
+    assert.equal(afterDiagnostics.length, 1);
+    assert.equal(afterDiagnostics[0].line, beforeDiagnostics[0].line);
+    assert.equal(afterDiagnostics[0].message, beforeDiagnostics[0].message);
+    assert.equal(afterDiagnostics[0].column, 3, 'diagnostic column must follow formatted indentation');
     await editor.fill('undo');
     await editor.press('End');
     await editor.type('x');
@@ -255,6 +556,76 @@ scene analysis {
     await editor.press('End');
     await editor.press('Enter');
     assert.equal(await editor.inputValue(), 'choice "please" {\n  "a" {\n  }\n}\nroot\n');
+    const indentSource = 'scene main {\n  say narrator "one"\n  wait 1\n}';
+    await editor.fill(indentSource);
+    const indentStart = indentSource.indexOf('  say');
+    const indentEnd = indentSource.indexOf('\n}', indentStart);
+    await editor.evaluate((element, range) => element.setSelectionRange(range.start, range.end), { start: indentStart, end: indentEnd });
+    await editor.press('Tab');
+    assert.equal(await editor.inputValue(), 'scene main {\n    say narrator "one"\n    wait 1\n}');
+    assert.equal(await editor.evaluate((element) => element.selectionStart), indentStart + 2);
+    assert.equal(await editor.evaluate((element) => element.selectionEnd), indentEnd + 4);
+    await editor.press('Control+z');
+    assert.equal(await editor.inputValue(), indentSource);
+    await editor.press('Control+Shift+z');
+    assert.equal(await editor.inputValue(), 'scene main {\n    say narrator "one"\n    wait 1\n}');
+    await editor.press('Shift+Tab');
+    assert.equal(await editor.inputValue(), indentSource);
+    assert.equal(await editor.evaluate((element) => element.selectionStart), indentStart);
+    assert.equal(await editor.evaluate((element) => element.selectionEnd), indentEnd);
+    await editor.fill('');
+    const pastedSource = 'scene pasted{\nsay narrator "paste  {x}"\n}';
+    await editor.evaluate((element, value) => {
+      const data = new DataTransfer();
+      data.setData('text/plain', value);
+      element.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
+    }, pastedSource);
+    assert.equal(await editor.inputValue(), 'scene pasted {\n  say narrator "paste  {x}"\n}');
+    await editor.fill('');
+    const droppedSource = 'scene dropped{\nsay narrator "drop"\n}';
+    await editor.evaluate((element, value) => {
+      const data = new DataTransfer();
+      data.setData('text/plain', value);
+      element.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data }));
+    }, droppedSource);
+    assert.equal(await editor.inputValue(), 'scene dropped {\n  say narrator "drop"\n}');
+    await editor.fill('scene generated');
+    await editor.press('Escape');
+    await editor.press('Enter');
+    assert.equal(await editor.inputValue(), 'scene generated {\n\n}\n');
+    await editor.fill('scene braced {');
+    await editor.press('Escape');
+    await editor.press('Enter');
+    assert.equal(await editor.inputValue(), 'scene braced {\n\n}');
+    await editor.fill('fn greet(name: str) -> none');
+    await editor.press('Escape');
+    await editor.press('Enter');
+    assert.equal(await editor.inputValue(), 'fn greet(name: str) -> none {\n\n}\n');
+    await editor.fill('fn build() -> dict[str]');
+    await editor.press('Escape');
+    await editor.press('Enter');
+    assert.equal(await editor.inputValue(), 'fn build() -> dict[str] {\n\n}\n');
+    await editor.fill('choice');
+    await editor.press('Escape');
+    await editor.press('Enter');
+    assert.equal(await editor.inputValue(), 'choice {\n  "" {\n  }\n}\n');
+    await editor.fill('choice {');
+    await editor.press('Escape');
+    await editor.press('Enter');
+    assert.equal(await editor.inputValue(), 'choice {\n  "" {\n  }\n}');
+    await editor.fill('elif ready');
+    await editor.press('Escape');
+    await editor.press('Enter');
+    assert.equal(await editor.inputValue(), 'elif ready {\n\n}\n');
+    await editor.fill('scene closing {\n  say narrator "done"\n  ');
+    await editor.press('}');
+    assert.equal(await editor.inputValue(), 'scene closing {\n  say narrator "done"\n}');
+    await editor.fill('scene virtual {\nsay narrator "line"');
+    await editor.evaluate((element) => element.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertLineBreak' })));
+    assert.equal(await editor.inputValue(), 'scene virtual {\n  say narrator "line"\n');
+    await editor.fill('scene virtual_close {\n  say narrator "line"\n  ');
+    await editor.evaluate((element) => element.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: '}' })));
+    assert.equal(await editor.inputValue(), 'scene virtual_close {\n  say narrator "line"\n}');
     await editor.fill(`asset bg school = "assets/bg/school.jpg"
 fn greet(name: str) -> none {
   # greeting
@@ -265,9 +636,20 @@ scene start { greet("range") }`);
     for (const selector of ['.hl-keyword', '.hl-type', '.hl-function', '.hl-declaration', '.hl-scene', '.hl-asset', '.hl-string', '.hl-interpolation', '.hl-comment', '.hl-punctuation']) {
       assert.ok(await page.locator(`#highlight ${selector}`).count() >= 1, `Missing syntax scope ${selector}`);
     }
+    await editor.fill(`asset bg school = "assets/bg/school.jpg"
+fn greet(name: str) -> none {
+  # greeting
+  say narrator "Hello {name}"
+}
+scene start {
+  greet("range")
+  show hero.normal far-left
+}`);
+    await page.waitForTimeout(100);
+    assert.ok(await page.locator('#highlight .hl-builtin').filter({ hasText: 'far-left' }).count() >= 1);
     assert.equal(await page.locator('#highlight .hl-string').first().evaluate((element) => getComputedStyle(element).color), 'rgb(156, 220, 254)');
     assert.deepEqual(pageErrors, []);
-    console.log('PASS editor: predictive command buttons, collapse behavior, Ctrl+Shift+F formatting, live diagnostics, scoped syntax highlighting');
+    console.log('PASS editor: grammar-aware autocomplete, Ctrl+Shift+F formatting, live diagnostics, scoped syntax highlighting');
   } finally {
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));

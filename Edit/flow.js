@@ -5,6 +5,12 @@ const flowCount = document.querySelector('#flow-count');
 let data = null;
 let selected = '';
 let rangePicker = null;
+let layoutStorageKey = '';
+let savedFolderOffsets = {};
+let panState = null;
+let dragState = null;
+let flowZoom = 1;
+const flowFilter = { query: '', showIncludes: true };
 function sendToEditor(message) {
   if (window.parent === window) return false;
   window.parent.postMessage(message, location.origin);
@@ -38,6 +44,35 @@ function detailGroup(title, items) {
   [...new Set(items)].forEach((item) => box.append(editorLink(item)));
   details.append(box);
 }
+function diagnosticGroup(node) {
+  const diagnostics = node?.diagnostics || [];
+  if (!diagnostics.length) return;
+  const box = document.createElement('div'); box.className = 'detail-group diagnostic-group';
+  const heading = document.createElement('div'); heading.className = 'group-label'; heading.textContent = `Diagnostics (${diagnostics.length})`;
+  box.append(heading);
+  diagnostics.forEach((diagnostic) => {
+    const row = document.createElement('div'); row.className = `flow-diagnostic ${diagnostic.severity || 'warning'}`;
+    row.textContent = `${diagnostic.severity || 'warning'} ${diagnostic.code || 'diagnostic'}: ${diagnostic.message || ''}`;
+    if (diagnostic.line) row.title = `${diagnostic.file || node.id}:${diagnostic.line}:${diagnostic.column || 1}`;
+    row.addEventListener('click', () => {
+      if (sendToEditor({ type: 'scene-flow:open-scene', scene: diagnostic.file || node.id, line: diagnostic.line, column: diagnostic.column })) return;
+      window.location.href = '/?scene=' + encodeURIComponent(diagnostic.file || node.id);
+    });
+    box.append(row);
+  });
+  details.append(box);
+}
+function filteredFlow(flow) {
+  const query = flowFilter.query.trim().toLocaleLowerCase();
+  const nodes = flow.nodes.filter((node) => {
+    if (!query) return true;
+    const haystack = [node.id, node.label, ...(node.diagnostics || []).flatMap((item) => [item.code, item.message])].join(' ').toLocaleLowerCase();
+    return haystack.includes(query);
+  });
+  const ids = new Set(nodes.map((node) => node.id));
+  const edges = flow.edges.filter((edge) => (flowFilter.showIncludes || edge.kind !== 'include') && ids.has(edge.from) && ids.has(edge.to));
+  return { ...flow, nodes, edges };
+}
 function variableTypeLabel(type) {
   if (typeof type === 'string') return type;
   if (!type || typeof type !== 'object') return 'unknown';
@@ -67,6 +102,12 @@ function selectNode(file) {
   if (node?.error) {
     const warning = document.createElement('div'); warning.className = 'flow-error'; warning.textContent = 'このファイルは解析できません'; details.append(warning);
   }
+  if (node?.scenes) {
+    const sceneSummary = document.createElement('div'); sceneSummary.className = 'detail-meta';
+    sceneSummary.textContent = `scenes: ${node.scenes.reachable}/${node.scenes.total} reachable`;
+    details.append(sceneSummary);
+  }
+  diagnosticGroup(node);
   if (node?.variables?.length) {
     const box = document.createElement('div'); box.className = 'detail-group';
     const title = document.createElement('div'); title.className = 'group-label'; title.textContent = '変数'; box.append(title);
@@ -119,6 +160,7 @@ function folderDepths(folders, edges) {
 
 function render(flow) {
   data = flow;
+  const view = filteredFlow(flow);
   const tree = { path: '', label: '', nodes: [], children: new Map() };
   const ensureFolder = (folder) => {
     const parts = folder === '(root)' ? ['(root)'] : folder.split('/');
@@ -130,7 +172,7 @@ function render(flow) {
     });
     return branch;
   };
-  flow.nodes.forEach((node) => {
+  view.nodes.forEach((node) => {
     const folder = folderOf(node.id);
     ensureFolder(folder).nodes.push(node);
   });
@@ -139,7 +181,7 @@ function render(flow) {
     const folder = folderOf(file);
     return folder === '(root)' ? folder : folder.split('/')[0];
   };
-  const topEdges = flow.edges.map((edge) => ({ from: topFolderOf(edge.from), to: topFolderOf(edge.to) }));
+  const topEdges = view.edges.map((edge) => ({ from: topFolderOf(edge.from), to: topFolderOf(edge.to) }));
   const depths = folderDepths(topFolders.map((folder) => folder.path), topEdges);
   const columns = new Map();
   topFolders.forEach((folder) => {
@@ -183,56 +225,179 @@ function render(flow) {
     });
     totalHeight = Math.max(totalHeight, y);
   }
+  const applyFolderOffsets = (folder, parentX = 0, parentY = 0) => {
+    const own = savedFolderOffsets[folder.path] || {};
+    const offsetX = parentX + (Number.isFinite(own.x) ? own.x : 0);
+    const offsetY = parentY + (Number.isFinite(own.y) ? own.y : 0);
+    const position = folderPositions.get(folder.path);
+    position.x += offsetX; position.y += offsetY;
+    folder.nodes.forEach((node) => { const nodePosition = nodePositions.get(node.id); nodePosition.x += offsetX; nodePosition.y += offsetY; });
+    [...folder.children.values()].forEach((child) => applyFolderOffsets(child, offsetX, offsetY));
+  };
+  topFolders.forEach((folder) => applyFolderOffsets(folder));
   const maxDepth = Math.max(0, ...columns.keys());
-  const width = Math.max(graph.clientWidth, padding * 2 + (maxDepth + 1) * folderWidth + maxDepth * folderGapX);
-  const height = Math.max(graph.clientHeight, totalHeight + padding - folderGapY);
+  const width = Math.max(graph.clientWidth, padding * 2 + (maxDepth + 1) * folderWidth + maxDepth * folderGapX, ...[...folderPositions.values()].map((position) => position.x + position.width + padding));
+  const height = Math.max(graph.clientHeight, totalHeight + padding - folderGapY, ...[...folderPositions.values()].map((position) => position.y + position.height + padding));
   const root = svg('svg', { class: 'flow-svg', width, height, viewBox: `0 0 ${width} ${height}` });
+  root.style.transformOrigin = '0 0';
+  if (flowZoom !== 1) root.style.transform = `scale(${flowZoom})`;
   const defs = svg('defs');
   const marker = svg('marker', { id: 'arrow', markerWidth: 8, markerHeight: 8, refX: 7, refY: 3, orient: 'auto' });
   marker.append(svg('path', { d: 'M0 0v6l7-3z', class: 'flow-arrow' })); defs.append(marker); root.append(defs);
 
+  const folderElements = new Map(), nodeElements = new Map();
   const drawFolder = (folder) => {
     const position = folderPositions.get(folder.path);
     const box = svg('g', { class: 'flow-folder', transform: `translate(${position.x} ${position.y})` });
+    box.dataset.folder = folder.path;
     box.append(svg('rect', { class: 'flow-folder-frame', y: 9, width: position.width, height: position.height - 9, rx: 3 }));
     const labelWidth = Math.min(position.width - 18, Math.max(48, folder.label.length * 7 + 18));
     box.append(svg('rect', { class: 'flow-folder-label-bg', x: 9, y: 1, width: labelWidth, height: 18 }));
     const title = svg('text', { class: 'flow-folder-title', x: 17, y: 14 }); title.textContent = folder.label;
-    box.append(title); root.append(box);
+    box.append(title); root.append(box); folderElements.set(folder.path, box);
+    box.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      event.stopPropagation();
+      const point = root.createSVGPoint(); point.x = event.clientX; point.y = event.clientY;
+      const start = point.matrixTransform(root.getScreenCTM().inverse());
+      const items = [];
+      const collect = (current) => {
+        const folderPosition = folderPositions.get(current.path);
+        items.push({ element: folderElements.get(current.path), position: folderPosition, x: folderPosition.x, y: folderPosition.y });
+        current.nodes.forEach((node) => { const nodePosition = nodePositions.get(node.id); items.push({ element: nodeElements.get(node.id), position: nodePosition, x: nodePosition.x, y: nodePosition.y }); });
+        [...current.children.values()].forEach(collect);
+      };
+      collect(folder);
+      dragState = { folder, items, startX: start.x, startY: start.y, moved: false, dx: 0, dy: 0 };
+      box.setPointerCapture(event.pointerId);
+    });
     [...folder.children.values()].sort((a, b) => a.path.localeCompare(b.path, 'ja')).forEach(drawFolder);
   };
   topFolders.forEach(drawFolder);
-  flow.edges.forEach((edge) => {
+  const edgeLayer = svg('g', { class: 'flow-edges' });
+  const drawEdges = () => {
+    edgeLayer.replaceChildren();
+    view.edges.forEach((edge) => {
     const from = nodePositions.get(edge.from), to = nodePositions.get(edge.to); if (!from || !to) return;
     if (folderOf(edge.from) === folderOf(edge.to)) {
       const x1 = from.x + from.width, y1 = from.y + nodeHeight / 2, x2 = to.x + to.width, y2 = to.y + nodeHeight / 2;
       const loop = 52 + Math.abs(y2 - y1) * 0.18;
-      const path = svg('path', { d: `M${x1} ${y1}C${x1 + loop} ${y1} ${x2 + loop} ${y2} ${x2} ${y2}`, class: 'flow-edge folder-edge', 'marker-end': 'url(#arrow)' }); path.dataset.from = edge.from; path.dataset.to = edge.to; root.append(path);
+      const path = svg('path', { d: `M${x1} ${y1}C${x1 + loop} ${y1} ${x2 + loop} ${y2} ${x2} ${y2}`, class: `flow-edge folder-edge ${edge.kind === 'include' ? 'include-edge' : ''}`, 'marker-end': 'url(#arrow)' }); path.dataset.from = edge.from; path.dataset.to = edge.to; edgeLayer.append(path);
       return;
     }
     const x1 = from.x + from.width, y1 = from.y + nodeHeight / 2, x2 = to.x, y2 = to.y + nodeHeight / 2, offset = Math.max(35, Math.abs(x2 - x1) / 2);
-    const path = svg('path', { d: `M${x1} ${y1}C${x1 + offset} ${y1} ${x2 - offset} ${y2} ${x2} ${y2}`, class: 'flow-edge', 'marker-end': 'url(#arrow)' }); path.dataset.from = edge.from; path.dataset.to = edge.to; root.append(path);
-  });
-  flow.nodes.forEach((node) => {
+    const path = svg('path', { d: `M${x1} ${y1}C${x1 + offset} ${y1} ${x2 - offset} ${y2} ${x2} ${y2}`, class: `flow-edge ${edge.kind === 'include' ? 'include-edge' : ''}`, 'marker-end': 'url(#arrow)' }); path.dataset.from = edge.from; path.dataset.to = edge.to; edgeLayer.append(path);
+    });
+  };
+  drawEdges();
+  root.append(edgeLayer);
+  view.nodes.forEach((node) => {
     const position = nodePositions.get(node.id);
-    const item = svg('g', { class: `flow-node${node.reachable === false ? ' unreachable' : ''}${node.error ? ' error' : ''}`, transform: `translate(${position.x} ${position.y})`, tabindex: 0, role: 'button' });
+    const warning = (node.diagnostics || []).some((diagnostic) => diagnostic.severity !== 'error');
+    const item = svg('g', { class: `flow-node${node.reachable === false ? ' unreachable' : ''}${node.error ? ' error' : ''}${warning ? ' warning' : ''}`, transform: `translate(${position.x} ${position.y})`, tabindex: 0, role: 'button' });
     item.dataset.file = node.id;
     item.append(svg('rect', { width: position.width, height: nodeHeight, rx: 3 }));
     const name = svg('text', { x: 11, y: 22 }); name.textContent = fileLabel(node.id); item.append(name);
+    if (node.diagnostics?.length) { const title = svg('title'); title.textContent = node.diagnostics.map((diagnostic) => diagnostic.message).join('\n'); item.append(title); }
     item.addEventListener('click', () => selectNode(node.id));
     item.addEventListener('dblclick', () => { if (!sendToEditor({ type: 'scene-flow:open-scene', scene: node.id })) location.href = '/?scene=' + encodeURIComponent(node.id); });
     item.addEventListener('keydown', (event) => { if (event.key === 'Enter') selectNode(node.id); });
     root.append(item);
+    nodeElements.set(node.id, item);
   });
+  root.addEventListener('pointermove', (event) => {
+    if (!dragState) return;
+    const point = root.createSVGPoint(); point.x = event.clientX; point.y = event.clientY;
+    const current = point.matrixTransform(root.getScreenCTM().inverse());
+    const dx = current.x - dragState.startX, dy = current.y - dragState.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 2) dragState.moved = true;
+    if (!dragState.moved) return;
+    dragState.dx = dx; dragState.dy = dy;
+    dragState.items.forEach(({ element, position, x, y }) => {
+      position.x = x + dx; position.y = y + dy;
+      element?.setAttribute('transform', `translate(${position.x} ${position.y})`);
+    });
+    drawEdges();
+  });
+  const finishNodeDrag = () => {
+    if (!dragState) return;
+    if (dragState.moved) {
+      const previous = savedFolderOffsets[dragState.folder.path] || { x: 0, y: 0 };
+      savedFolderOffsets[dragState.folder.path] = { x: previous.x + dragState.dx, y: previous.y + dragState.dy };
+      try { if (layoutStorageKey) localStorage.setItem(layoutStorageKey, JSON.stringify(savedFolderOffsets)); } catch { /* storage can be disabled */ }
+    }
+    dragState = null;
+  };
+  root.addEventListener('pointerup', finishNodeDrag);
+  root.addEventListener('pointercancel', finishNodeDrag);
   graph.replaceChildren(root);
   status.textContent = '準備完了';
-  flowCount.textContent = `${folderPositions.size} folders / ${flow.nodes.length} scenes / ${flow.edges.length} transitions`;
-  if (flow.nodes.length) selectNode(selected && nodePositions.has(selected) ? selected : flow.nodes[0].id);
+  const count = (value, singular) => `${value} ${singular}${value === 1 ? '' : 's'}`;
+  flowCount.textContent = [count(folderPositions.size, 'folder'), count(view.nodes.length, 'scene'), count(view.edges.length, 'relation')].join(' / ');
+  if (view.nodes.length) selectNode(selected && nodePositions.has(selected) ? selected : view.nodes[0].id);
+  else { selected = ''; details.textContent = 'No matching scenes'; }
 }
 
-fetch('/api/scene-graph').then((response) => { if (!response.ok) throw Error('Scene Flow API error: ' + response.status); return response.json(); }).then(render).catch((error) => { status.textContent = 'エラー'; status.title = error.message; details.textContent = error.message; flowCount.textContent = ''; });
+async function refreshFlowGraph() {
+  const response = await fetch('/api/scene-graph', { cache: 'no-store' });
+  if (!response.ok) throw Error('Scene Flow API error: ' + response.status);
+  render(await response.json());
+}
+function showFlowLoadError(error) {
+  status.textContent = 'Error'; status.title = error.message; details.textContent = error.message; flowCount.textContent = '';
+}
+window.addEventListener('message', (event) => {
+  if (event.origin !== location.origin || event.source !== window.parent) return;
+  if (event.data?.type === 'scene-flow:refresh') refreshFlowGraph().catch(showFlowLoadError);
+});
+fetch('/api/project', { cache: 'no-store' }).then((response) => response.ok ? response.json() : {}).catch(() => ({})).then((project) => {
+  layoutStorageKey = `novel-scene-flow-layout:${project.projectRoot || location.origin}`;
+  try { savedFolderOffsets = JSON.parse(localStorage.getItem(layoutStorageKey) || '{}') || {}; } catch { savedFolderOffsets = {}; }
+  return refreshFlowGraph();
+}).catch(showFlowLoadError);
+
+graph.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0 || event.target.closest('.flow-node')) return;
+  panState = { x: event.clientX, y: event.clientY, left: graph.scrollLeft, top: graph.scrollTop, pointerId: event.pointerId };
+  graph.classList.add('panning');
+  graph.setPointerCapture(event.pointerId);
+});
+graph.addEventListener('pointermove', (event) => {
+  if (!panState || panState.pointerId !== event.pointerId) return;
+  graph.scrollLeft = panState.left - (event.clientX - panState.x);
+  graph.scrollTop = panState.top - (event.clientY - panState.y);
+});
+const finishPan = (event) => { if (!panState || panState.pointerId !== event.pointerId) return; panState = null; graph.classList.remove('panning'); };
+graph.addEventListener('pointerup', finishPan);
+graph.addEventListener('pointercancel', finishPan);
+graph.addEventListener('wheel', (event) => {
+  const root = graph.querySelector('.flow-svg');
+  if (!root) return;
+  if (!event.ctrlKey) {
+    event.preventDefault();
+    graph.scrollTop += event.deltaY;
+    return;
+  }
+  event.preventDefault();
+  const rect = graph.getBoundingClientRect();
+  const x = event.clientX - rect.left, y = event.clientY - rect.top;
+  const nextZoom = Math.max(0.45, Math.min(2.5, flowZoom * Math.exp(-event.deltaY * 0.001)));
+  if (nextZoom === flowZoom) return;
+  const factor = nextZoom / flowZoom;
+  root.style.transformOrigin = '0 0'; root.style.transform = `scale(${nextZoom})`;
+  graph.scrollLeft = (graph.scrollLeft + x) * factor - x;
+  graph.scrollTop = (graph.scrollTop + y) * factor - y;
+  flowZoom = nextZoom;
+}, { passive: false });
 let resizeTimer;
 window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => data && render(data), 100); });
 
 document.querySelectorAll('[data-flow-view]').forEach((link) => link.addEventListener('click', (event) => { if (sendToEditor({ type: 'scene-flow:view', view: link.dataset.flowView })) event.preventDefault(); }));
 document.querySelectorAll('[data-flow-action]').forEach((button) => button.addEventListener('click', () => { const action = button.dataset.flowAction; if (action === 'editor') { if (!sendToEditor({ type: 'scene-flow:view', view: 'explorer' })) window.location.href = '/'; } if (action === 'validate') document.querySelector('#validate')?.click(); if (action === 'toggle-details') document.querySelector('.details')?.classList.toggle('is-hidden'); if (action === 'help' && !sendToEditor({ type: 'scene-flow:help' })) window.location.href = '/?help=language'; }));
+
+const filterPanel = document.createElement('div');
+filterPanel.className = 'flow-filters';
+filterPanel.innerHTML = '<label>Filter <input id="flow-search" type="search" placeholder="scene or diagnostic" autocomplete="off"></label><label class="flow-check"><input id="show-includes" type="checkbox" checked> show include relations</label>';
+document.querySelector('.controls .range')?.before(filterPanel);
+document.querySelector('#flow-search')?.addEventListener('input', (event) => { flowFilter.query = event.target.value; if (data) render(data); });
+document.querySelector('#show-includes')?.addEventListener('change', (event) => { flowFilter.showIncludes = event.target.checked; if (data) render(data); });

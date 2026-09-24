@@ -7,6 +7,7 @@ export interface NodeLocation {
   line?: number;
   column?: number;
   endLine?: number;
+  endColumn?: number;
   file?: string;
 }
 
@@ -55,4 +56,4 @@ export interface Scene extends NodeLocation { kind: 'scene'; name: string; body:
 export interface Script extends NodeLocation { kind: 'script'; assets: Asset[]; characters: Character[]; structs: StructDef[]; globals: Statement[]; functions: FunctionDef[]; scenes: Scene[]; includes: string[]; body: Statement[]; }
 
 export type TokenType = 'word' | 'string' | 'number' | 'symbol' | 'newline' | 'eof';
-export type Token = { type: TokenType; value: string; line: number; column: number; offset: number };
+export type Token = { type: TokenType; value: string; line: number; column: number; offset: number; unknownEscapes?: string[] };

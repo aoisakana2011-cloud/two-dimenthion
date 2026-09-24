@@ -12,8 +12,34 @@
           "name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
           "type": { "enum": ["int", "str"] },
           "value": { "type": ["integer", "string"] },
-          "constant": { "type": "boolean" }
+          "constant": { "type": "boolean" },
+          "min": { "type": ["integer", "string"] },
+          "max": { "type": ["integer", "string"] },
+          "possibleValues": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": ["integer", "string"] } }
         },
+        "allOf": [
+          {
+            "if": { "properties": { "type": { "const": "int" } } },
+            "then": {
+              "properties": {
+                "value": { "anyOf": [{ "type": "integer" }, { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)$" }] },
+                "min": { "anyOf": [{ "type": "integer" }, { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)$" }] },
+                "max": { "anyOf": [{ "type": "integer" }, { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)$" }] },
+                "possibleValues": { "items": { "anyOf": [{ "type": "integer" }, { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)$" }] } }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "type": { "const": "str" } } },
+            "then": {
+              "not": { "anyOf": [{ "required": ["min"] }, { "required": ["max"] }] },
+              "properties": {
+                "value": { "type": "string" },
+                "possibleValues": { "items": { "type": "string" } }
+              }
+            }
+          }
+        ],
         "additionalProperties": false
       }
     },

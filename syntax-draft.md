@@ -55,7 +55,6 @@ scene main {
 - 整数は符号付き64 bitで扱う。
 - 保存可能な基本型は `int` と `str`。複合型として `dict[int]`、`dict[str]`、名前付き `struct`、キャラクターオブジェクトがある。
 - 内部的な真偽値は条件式にだけ存在し、`bool` 型の変数は宣言できない。
-- `let` は廃止済みであり、使用すると構文エラーになる。
 - `true`、`false`、`null` のリテラルはない。真偽値は比較・論理演算の結果としてのみ存在する。
 
 ## 2. コメント、文字列、識別子
@@ -111,7 +110,26 @@ title = 作品名
 
 値は作品フォルダー内の相対パスに限る。絶対パス、空要素、`.`、`..` は使えない。開始ファイルの最初の `scene` が開始sceneになる。別のsceneから始めたい場合は、そのsceneを開始ファイルの先頭に置くか、開始ファイルの先頭sceneから `goto` する。
 
-生成される索引とbuild成果物は `.novel/` に保存される。
+生成される索引とbuild成果物は `.novel/` に保存される。`.novel/variables.json` と `.novel/assets.json` はIDEが更新するメタデータであり、シナリオや素材の正本ではない。`build/` 以下のパッケージは削除して再生成できる。
+
+推奨する作品フォルダーの配置は次のとおり。
+
+```text
+Project/
+  setting.txt
+  senario/                 # scenario_dir
+    main.tds               # start_file
+    common.tds             # include対象
+    chapter/first.tds
+  asset/                   # asset_dir
+    bg/ char/ image/ bgm/ se/ voice/ video/
+  .novel/                  # IDE生成物。正本ではない
+    variables.json assets.json
+    *.schema.json
+    build/
+```
+
+`include` と外部 `goto` は `scenario_dir` を基準にし、素材パスは作品の `asset_dir` を基準にする。作品フォルダーの外にあるファイル、シンボリックリンクやハードリンク経由のファイルは使用しない。エディター本体の `Edit/` やコンパイラの `src/`、生成済みの `dist/` を作品フォルダー内へ配置する必要はない。
 
 1ファイルには次の要素を記述できる。
 
@@ -147,7 +165,7 @@ include "chapter/common.tds"
 - includeの循環はエラーになる。
 - include先のアセット、キャラクター、グローバル、関数、シーンは、include元へ統合される。
 - include先のトップレベル命令は、include元の初期化より先に実行される。入れ子のincludeは依存先から実行する。開始シーンはinclude元の最初のシーンを優先する。
-- 現在のプロジェクト統合処理はinclude先の `struct` を取り込まない。共有する `struct` はエントリーファイル側で宣言する。
+- include先の `struct` はプロジェクト統合時に型宣言として取り込まれ、include元のグローバル宣言・関数シグネチャ・関数本体から参照できる。循環includeや同名structはエラーになる。
 
 別ファイルへの遷移は `goto` で行う。
 
@@ -315,8 +333,8 @@ say narrator "{user.name}: {user.age}"
 ```
 
 - structフィールド型は `int` または `str`。
-- `struct` は使用より前に、ファイルのトップレベルで宣言する。scene、関数、choice、条件ブロックの内部には書けない。
-- 未宣言の型名を変数宣言に書いてもstructとして推測しない。`User user = ...` を使う前に必ず `struct User { ... }` を置く。
+- `struct` はファイルのトップレベルで宣言する。scene、関数、choice、条件ブロックの内部には書けない。同一ファイル内では前方参照も解決される。
+- 未宣言の型名を変数宣言に書いてもstructとして推測しない。`User user = ...` を使うファイル自身、またはinclude依存先に必ず `struct User { ... }` を置く。
 - 初期値は辞書形式で指定する。
 - 宣言されたすべてのフィールドが必要。
 - 余分なフィールド、欠けたフィールド、型の違うフィールドは静的エラー。
@@ -424,13 +442,13 @@ say narrator "{copy.volume}"      # 20
 | `unset p.name` | エラー | `unset` は辞書要素専用 |
 | `struct Party { leader: Player }` | 構文エラー | フィールド型は `int` または `str` のみ |
 | `dict[Player] members = ...` | 型として使用不可 | 辞書の値型も `int` または `str` のみ |
-| `Player p = ...` を `struct Player` より前に書く | 未知の命令/型としてエラー | structを先にトップレベル宣言する |
+| `Player p = ...` を `struct Player` より前に書く | 同一ファイル内またはinclude依存先にstructがあれば有効 | structはトップレベルで宣言する |
 
 structの入れ子、structフィールドへの辞書、辞書の値としてのstruct、`bool` フィールドは現在のDSLでは対応していない。複雑な状態が必要なら、複数のstruct変数に分けるか、`dict[int]` / `dict[str]` を別変数として持つ。
 
 ### 8.8 複数ファイルで使うstruct
 
-includeは一つのプログラムとして統合されるが、structの型名はエントリーファイル側で先に宣言する。include先だけにstructを置いて他ファイルから共有する書き方は使わない。外部 `goto` 先で同じstructを使う場合も、各ファイルが解析できるよう開始ファイルの共有宣言・include構成を確認する。
+includeは一つのプログラムとして統合され、include先のstruct型も依存先から順に収集される。include先だけにstructを置いてinclude元から参照する書き方も使用できる。外部 `goto` 先は別プログラムなので、遷移先ファイル自身の宣言・include構成で型を解決できるようにする。
 
 ## 9. スコープ
 
@@ -546,7 +564,7 @@ say narrator message
 - 話者を省略できるのは先頭が文字列リテラルのときだけで、その場合は `narrator` として扱う。変数や関数呼び出しを本文にする場合は `say narrator message` のように話者を明示する。
 - キャラクターを指定すると、画面にはそのキャラクターの `name` フィールドが表示される。
 
-`say hero` のように本文を省略する形式、および `say hero { ... }` / `say { ... }` のブロック形式は廃止済みで、構文エラーになる。複数行を表示したい場合は `say` を行ごとに書く。
+`say` は `say "本文"` または `say <speaker> "本文"` の形で書く。複数行を表示する場合は、行ごとに `say` を書く。
 
 文字列補間は単純変数、ドット区切りのstruct／キャラクターフィールド参照、または引数なし関数呼び出しに対応する。
 
@@ -589,17 +607,7 @@ hide ayase fade 300
 - 既に表示中なら、同じ命令で位置とポーズを更新する。
 - `fade <int>` を付けるとフェードインする。
 - `hide` は必要ならフェードアウトしてから表示を解除する。
-- キャラクターを即時に消す場合も `hide ayase` を使う。`clear char` は存在しない。
-
-次の旧形式はすべて廃止済みで、使用するとコンパイルエラーになる。
-
-```text
-show ayase at center pose normal
-show char ayase center normal
-char ayase center smile
-hide char ayase
-clear char ayase
-```
+- キャラクターを即時に消す場合も `hide ayase` を使う。
 
 ### 13.3 一般画像
 
@@ -622,9 +630,9 @@ play video opening
 ```
 
 - `se`、`voice`、`bgm` は種別と一致するアセットIDを取る。
-- 動画のモードは `blocking` または `async`。
+- `voice` と動画のモードは `blocking` または `async`。Voiceは省略時 `async`。
 - `blocking` は終了まで待つ。
-- `async` またはモード省略は、動画と並行して次の命令へ進む。
+- `async` またはモード省略は、メディアと並行して次の命令へ進む。
 
 ### 13.5 待機と画面効果
 
@@ -836,10 +844,10 @@ scene chapter1 {
 | 更新 | `unset <dict>[<str-expr>]` | 辞書要素だけ |
 | 会話 | `say [<speaker>] <str-expr>` | speaker はキャラクター、`narrator`、`none` |
 | 背景 | `bg <bg-id>` / `bgm <bgm-id>` | 種別が一致するアセットID |
-| 表示 | `show <character>.<pose> <left\|center\|right> [fade <ms>]` | 新規コードで使う形式 |
+| 表示 | `show <character>.<pose> <far_left\|left\|center\|right\|far_right> [fade <ms>]` | 5スロットの立ち絵表示 |
 | 表示 | `hide <character> [fade <ms>]` | キャラクターを非表示 |
-| 表示 | `show image <image-id> <left\|center\|right>` / `clear image <image-id>` | 一般画像。fade不可 |
-| 再生 | `play <se\|voice\|bgm> <id>` | 種別が一致するアセットID |
+| 表示 | `show image <image-id> <far_left\|left\|center\|right\|far_right>` / `clear image <image-id>` | 一般画像。fade不可 |
+| 再生 | `play <se\|voice\|bgm> <id>` | 種別が一致するアセットID。voiceは `[blocking\|async]` を追加可能 |
 | 再生 | `play video <id> [blocking\|async]` | 省略時は `async` |
 | 演出 | `wait <int-expr>` / `effect fade <black\|white> [<int-expr>]` | 時間はミリ秒 |
 | 分岐 | `if <condition> { ... } [elif <condition> { ... }] [else { ... }]` | condition は `bool` 式 |
@@ -848,8 +856,6 @@ scene chapter1 {
 | 反復 | `while <condition> { ... }` | 上限100,000反復 |
 | 関数 | `fn <name>([<name>: <type>, ...]) -> <type> { ... }` | 再帰不可 |
 | 遷移 | `goto <scene-name>` / `goto "<relative-file-path>"` | 関数内では不可 |
-
-旧 `say` ブロック、`show <character> at <position> pose <pose>`、`show char <character> <position> <pose>`、`char <character> <position> <pose>`、`hide char <character>`、`clear char <character>` は受理されない。
 
 ## 22. 標準構文の完成例
 
@@ -931,27 +937,15 @@ async blocking voice video
 命令内で意味が固定される語には次がある。
 
 ```text
-narrator left center right fade black white se
+narrator left center right far_left far_right fade black white se
 ```
 
 標準の新規コードでは、キャラクター表示に `show <character>.<pose> <position>`、退場に `hide <character>` を使用する。
 
-## 24. 旧構文からの移行
+## 24. 書くときのチェックリスト
 
-| 旧形式 | 正式構文 | 補足 |
-|---|---|---|
-| `char hero center smile` | `show hero.smile center` | 未表示時も同じ `show` で表示する |
-| `show hero at center pose smile` | `show hero.smile center` | `at` と `pose` は使わない |
-| `show char hero center smile` | `show hero.smile center` | `char` は命令ではない |
-| `hide char hero` | `hide hero` | fade は `hide hero fade 300` |
-| `clear char hero` | `hide hero` | キャラクター用の `clear` はない |
-| `say hero { "A" "B" }` | `say hero "A"` と `say hero "B"` | 1行ごとに明示する |
-| `say hero` | `say hero "本文"` | 本文の省略は不可 |
-
-## 25. 書くときのチェックリスト
-
-1. `struct` は最初にトップレベルで宣言したか。
-2. キャラクター表示は `show name.pose left|center|right` だけになっているか。
+1. `struct` はトップレベルで宣言したか（同一ファイル内の前方参照とinclude依存先の型公開に対応）。
+2. キャラクター表示は `show name.pose far_left|left|center|right|far_right` の5スロットになっているか。
 3. 会話はすべて本文付きの `say` か。
 4. 外部ファイル遷移は `goto "path/file.tds"` と引用符付きか。
 5. `asset` と `pose` のパスは `asset_dir` 内にあり、拡張子が用途に合うか。

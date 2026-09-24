@@ -6,6 +6,7 @@ asset image webp = "pixel.webp"
 asset image gif = "pixel.gif"
 asset bgm music = "tone.wav"
 asset se sound = "tone.wav"
+asset voice narrator_voice = "tone.wav"
 asset se flac = "tone.flac"
 asset se vorbis = "tone.ogg"
 asset se mpthree = "tone.mp3"
@@ -22,6 +23,7 @@ int x = 9007199254740993
 bg room
 bgm music
 play se sound
+play voice narrator_voice blocking
 play se flac
 play se vorbis
 play se mpthree

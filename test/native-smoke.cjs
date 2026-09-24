@@ -20,6 +20,7 @@ asset image webp = "pixel.webp"
 asset image gif = "pixel.gif"
 asset bgm music = "tone.wav"
 asset se sound = "tone.wav"
+asset voice narrator_voice = "tone.wav"
 asset se flac = "tone.flac"
 asset se vorbis = "tone.ogg"
 asset se mpthree = "tone.mp3"
@@ -36,6 +37,7 @@ int x = 9007199254740993
 bg room
 bgm music
 play se sound
+play voice narrator_voice blocking
 play se flac
 play se vorbis
 play se mpthree
@@ -68,5 +70,5 @@ choice "test" { "continue" { say none str(x) } }
   const child = spawnSync(exe, [output, '--smoke'], { encoding: 'utf8', timeout: 15000, env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' } });
   assert.equal(child.status, 0, child.stderr || child.error?.message);
   assert.ok(Date.now() - start >= 800, 'blocking video must wait for playback');
-  console.log('PASS native SDL smoke: assets, characters, clear, fade, mixer audio, blocking/async FFmpeg video, choice, say');
+  console.log('PASS native SDL smoke: assets, characters, clear, fade, mixer audio, blocking voice, blocking/async FFmpeg video, choice, say');
 })().catch(e => { console.error(e); process.exitCode = 1; });

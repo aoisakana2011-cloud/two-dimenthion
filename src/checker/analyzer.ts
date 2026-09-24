@@ -11,14 +11,21 @@ export interface Diagnostic {
   line: number;
   column: number;
   endLine?: number;
+  endColumn?: number;
 }
 
 type Constant = bigint | string | boolean | undefined;
+type VariableConstraint = { type: 'int' | 'str'; min?: bigint; max?: bigint; values?: ReadonlySet<bigint | string> };
 const INT_MIN = -(1n << 63n);
 const INT_MAX = (1n << 63n) - 1n;
 
-function at(node?: NodeLocation): Pick<Diagnostic, 'line' | 'column' | 'endLine'> {
-  return { line: node?.line ?? 1, column: node?.column ?? 1, ...(node?.endLine ? { endLine: node.endLine } : {}) };
+function at(node?: NodeLocation): Pick<Diagnostic, 'line' | 'column' | 'endLine' | 'endColumn'> {
+  return {
+    line: node?.line ?? 1,
+    column: node?.column ?? 1,
+    ...(node?.endLine ? { endLine: node.endLine } : {}),
+    ...(node?.endColumn ? { endColumn: node.endColumn } : {}),
+  };
 }
 
 function diagnostic(file: string, code: string, severity: DiagnosticSeverity, message: string, node?: NodeLocation): Diagnostic {
@@ -46,6 +53,12 @@ function constant(expr: Expr, constants: ReadonlyMap<string, Exclude<Constant, u
     if ((expr.operator === '+' || expr.operator === '-') && typeof value === 'bigint') return expr.operator === '-' ? -value : value;
     return undefined;
   }
+  if (expr.kind === 'call') {
+    const argument = expr.args.length === 1 ? constant(expr.args[0], constants) : undefined;
+    if (expr.name === 'str' && typeof argument === 'bigint') return String(argument);
+    if (expr.name === 'int' && typeof argument === 'string' && /^[+-]?\d+$/.test(argument)) return BigInt(argument);
+    return undefined;
+  }
   if (expr.kind !== 'binary') return undefined;
   const left = constant(expr.left, constants);
   if (expr.operator === 'and' && typeof left === 'boolean') return left ? constant(expr.right, constants) : false;
@@ -67,6 +80,53 @@ function constant(expr: Expr, constants: ReadonlyMap<string, Exclude<Constant, u
   }
   if (expr.operator === '+' && typeof left === 'string' && typeof right === 'string') return left + right;
   return undefined;
+}
+
+type CheckedInteger = bigint | 'overflow' | undefined;
+
+function checkedInteger(expr: Expr, constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map()): CheckedInteger {
+  const inRange = (value: bigint): CheckedInteger => value < INT_MIN || value > INT_MAX ? 'overflow' : value;
+  if (expr.kind === 'literal') {
+    if (typeof expr.value === 'string') return undefined;
+    const value = integer(expr.value);
+    return value === undefined ? undefined : inRange(value);
+  }
+  if (expr.kind === 'variable') {
+    const value = constants.get(expr.name);
+    return typeof value === 'bigint' ? inRange(value) : undefined;
+  }
+  if (expr.kind === 'unary') {
+    if (expr.operator === '-' && expr.value.kind === 'literal') {
+      if (typeof expr.value.value !== 'string') {
+        const raw = integer(expr.value.value);
+        if (raw === INT_MAX + 1n) return INT_MIN;
+      }
+    }
+    const value = checkedInteger(expr.value, constants);
+    if (value === 'overflow' || value === undefined) return value;
+    if (expr.operator === '+') return value;
+    if (expr.operator === '-') return value === INT_MIN ? 'overflow' : -value;
+    return undefined;
+  }
+  if (expr.kind === 'call') {
+    if (expr.name !== 'int' || expr.args.length !== 1) return undefined;
+    const value = constant(expr.args[0], constants);
+    return typeof value === 'bigint' ? inRange(value) : undefined;
+  }
+  if (expr.kind !== 'binary') return undefined;
+  const left = checkedInteger(expr.left, constants);
+  if (left === 'overflow') return 'overflow';
+  const right = checkedInteger(expr.right, constants);
+  if (right === 'overflow') return 'overflow';
+  if (left === undefined || right === undefined) return undefined;
+  let value: bigint;
+  if (expr.operator === '+') value = left + right;
+  else if (expr.operator === '-') value = left - right;
+  else if (expr.operator === '*') value = left * right;
+  else if (expr.operator === '/' && right !== 0n) value = left / right;
+  else if (expr.operator === '%' && right !== 0n) value = left % right;
+  else return undefined;
+  return inRange(value);
 }
 
 function expressionKey(expr: Expr): string {
@@ -91,9 +151,70 @@ function inverseExpressionKey(expr: Expr): string | undefined {
   return operator ? expressionKey({ ...expr, operator }) : undefined;
 }
 
-function conditionValue(expr: Expr, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, facts: ReadonlyMap<string, boolean>): Constant {
+function constrainedCondition(expr: Expr, constraints?: ReadonlyMap<string, VariableConstraint>): boolean | undefined {
+  if (!constraints) return undefined;
+  if (expr.kind === 'unary' && expr.operator === 'not') {
+    const value = constrainedCondition(expr.value, constraints);
+    return value === undefined ? undefined : !value;
+  }
+  if (expr.kind === 'binary' && (expr.operator === 'and' || expr.operator === 'or')) {
+    const combined = combinedIntegerCondition(expr, constraints);
+    if (combined !== undefined) return combined;
+    const finite = combinedFiniteCondition(expr, constraints);
+    if (finite !== undefined) return finite;
+    const left = constrainedCondition(expr.left, constraints);
+    const right = constrainedCondition(expr.right, constraints);
+    if (expr.operator === 'and') return left === false || right === false ? false : left === true && right === true ? true : undefined;
+    return left === true || right === true ? true : left === false && right === false ? false : undefined;
+  }
+  if (expr.kind !== 'binary' || !['==', '!=', '>', '>=', '<', '<='].includes(expr.operator)) return undefined;
+  let name: string | undefined;
+  let expected: bigint | string | undefined;
+  let operator = expr.operator;
+  if (expr.left.kind === 'variable') {
+    name = expr.left.name;
+    expected = expr.right.kind === 'literal' ? (typeof expr.right.value === 'string' ? expr.right.value : integer(expr.right.value)) : undefined;
+  } else if (expr.right.kind === 'variable') {
+    name = expr.right.name;
+    expected = expr.left.kind === 'literal' ? (typeof expr.left.value === 'string' ? expr.left.value : integer(expr.left.value)) : undefined;
+    const flipped: Record<string, string> = { '==': '==', '!=': '!=', '>': '<', '>=': '<=', '<': '>', '<=': '>=' };
+    operator = flipped[operator];
+  }
+  if (!name || expected === undefined) return undefined;
+  const constraint = constraints.get(name);
+  if (!constraint || constraint.type === 'int' && typeof expected !== 'bigint' || constraint.type === 'str' && typeof expected !== 'string') return undefined;
+  const accepts = (value: bigint | string): boolean => {
+    if (operator === '==') return value === expected;
+    if (operator === '!=') return value !== expected;
+    if (typeof value !== 'bigint' || typeof expected !== 'bigint') return false;
+    if (operator === '>') return value > expected;
+    if (operator === '>=') return value >= expected;
+    if (operator === '<') return value < expected;
+    return value <= expected;
+  };
+  if (constraint.values) {
+    const values = [...constraint.values];
+    if (!values.length) return undefined;
+    const results = values.map(accepts);
+    return results.every(Boolean) ? true : results.every((value) => !value) ? false : undefined;
+  }
+  if (typeof expected !== 'bigint' || constraint.type !== 'int' || constraint.min === undefined || constraint.max === undefined) return undefined;
+  const minimum = accepts(constraint.min), maximum = accepts(constraint.max);
+  if (operator === '==' || operator === '!=') {
+    if (expected < constraint.min || expected > constraint.max) return operator === '!=';
+    if (constraint.min === constraint.max) return operator === '==' ? minimum : !minimum;
+    return undefined;
+  }
+  if (minimum && maximum) return true;
+  if (!minimum && !maximum && ((operator === '>' && constraint.max <= expected) || (operator === '>=' && constraint.max < expected) || (operator === '<' && constraint.min >= expected) || (operator === '<=' && constraint.min > expected))) return false;
+  return undefined;
+}
+
+function conditionValue(expr: Expr, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, facts: ReadonlyMap<string, boolean>, constraints?: ReadonlyMap<string, VariableConstraint>): Constant {
   const value = constant(expr, constants);
   if (value !== undefined || !isPureExpression(expr)) return value;
+  const constrained = constrainedCondition(expr, constraints);
+  if (constrained !== undefined) return constrained;
   return facts.get(expressionKey(expr));
 }
 
@@ -102,6 +223,161 @@ function recordCondition(facts: Map<string, boolean>, expr: Expr, value: boolean
   facts.set(expressionKey(expr), value);
   const inverse = inverseExpressionKey(expr);
   if (inverse) facts.set(inverse, !value);
+  if (expr.kind === 'unary' && expr.operator === 'not') {
+    recordCondition(facts, expr.value, !value);
+  } else if (expr.kind === 'binary' && expr.operator === 'and' && value) {
+    recordCondition(facts, expr.left, true);
+    recordCondition(facts, expr.right, true);
+  } else if (expr.kind === 'binary' && expr.operator === 'or' && !value) {
+    recordCondition(facts, expr.left, false);
+    recordCondition(facts, expr.right, false);
+  }
+}
+
+function refineConstraints(constraints: ReadonlyMap<string, VariableConstraint> | undefined, expr: Expr, truth: boolean): ReadonlyMap<string, VariableConstraint> | undefined {
+  if (!constraints) return undefined;
+  if (expr.kind === 'unary' && expr.operator === 'not') return refineConstraints(constraints, expr.value, !truth);
+  if (expr.kind !== 'binary') return constraints;
+  if (expr.operator === 'and' && truth) {
+    const left = refineConstraints(constraints, expr.left, true);
+    return refineConstraints(left || constraints, expr.right, true);
+  }
+  if (expr.operator === 'or' && !truth) {
+    const left = refineConstraints(constraints, expr.left, false);
+    return refineConstraints(left || constraints, expr.right, false);
+  }
+  if (!['==', '!=', '>', '>=', '<', '<='].includes(expr.operator)) return constraints;
+  let name: string | undefined;
+  let expected: bigint | string | undefined;
+  let operator = expr.operator;
+  if (expr.left.kind === 'variable') {
+    name = expr.left.name;
+    expected = expr.right.kind === 'literal' ? (typeof expr.right.value === 'string' ? expr.right.value : integer(expr.right.value)) : undefined;
+  } else if (expr.right.kind === 'variable') {
+    name = expr.right.name;
+    expected = expr.left.kind === 'literal' ? (typeof expr.left.value === 'string' ? expr.left.value : integer(expr.left.value)) : undefined;
+    const flipped: Record<string, string> = { '==': '==', '!=': '!=', '>': '<', '>=': '<=', '<': '>', '<=': '>=' };
+    operator = flipped[operator];
+  }
+  if (!name || expected === undefined) return constraints;
+  const current = constraints.get(name);
+  if (!current || current.type !== (typeof expected === 'bigint' ? 'int' : 'str')) return constraints;
+  const inverse: Record<string, string> = { '==': '!=', '!=': '==', '>': '<=', '>=': '<', '<': '>=', '<=': '>' };
+  const effective = truth ? operator : inverse[operator];
+  const next: VariableConstraint = { ...current };
+  if (current.type === 'str') {
+    if (effective === '==' && current.values) next.values = new Set([...current.values].filter((value) => value === expected));
+    else if (effective === '!=' && current.values) next.values = new Set([...current.values].filter((value) => value !== expected));
+  } else if (typeof expected === 'bigint') {
+    if (effective === '==') {
+      next.min = expected;
+      next.max = expected;
+      if (current.values) next.values = new Set([...current.values].filter((value) => value === expected));
+    } else if (effective === '>') next.min = current.min === undefined || current.min <= expected ? expected + 1n : current.min;
+    else if (effective === '>=') next.min = current.min === undefined || current.min < expected ? expected : current.min;
+    else if (effective === '<') next.max = current.max === undefined || current.max >= expected ? expected - 1n : current.max;
+    else if (effective === '<=') next.max = current.max === undefined || current.max > expected ? expected : current.max;
+    if (current.values) next.values = new Set([...current.values].filter((value) => {
+      if (typeof value !== 'bigint') return false;
+      if (effective === '==') return value === expected;
+      if (effective === '!=') return value !== expected;
+      if (effective === '>') return value > expected;
+      if (effective === '>=') return value >= expected;
+      if (effective === '<') return value < expected;
+      return value <= expected;
+    }));
+  }
+  const result = new Map(constraints);
+  result.set(name, next);
+  return result;
+}
+
+function mergeConstraints(paths: Array<ReadonlyMap<string, VariableConstraint> | undefined>): ReadonlyMap<string, VariableConstraint> | undefined {
+  const available = paths.filter((path): path is ReadonlyMap<string, VariableConstraint> => !!path);
+  if (!available.length) return undefined;
+  const result = new Map<string, VariableConstraint>();
+  for (const name of available[0].keys()) {
+    const entries = available.map((path) => path.get(name));
+    if (entries.some((entry) => !entry) || entries.some((entry) => entry!.type !== entries[0]!.type)) continue;
+    const merged: VariableConstraint = { type: entries[0]!.type };
+    const mins = entries.map((entry) => entry!.min).filter((value): value is bigint => value !== undefined);
+    const maxs = entries.map((entry) => entry!.max).filter((value): value is bigint => value !== undefined);
+    if (mins.length === entries.length) merged.min = mins.reduce((minimum, value) => value < minimum ? value : minimum);
+    if (maxs.length === entries.length) merged.max = maxs.reduce((maximum, value) => value > maximum ? value : maximum);
+    if (entries.every((entry) => !!entry!.values)) {
+      const values = new Set<bigint | string>();
+      entries.forEach((entry) => entry!.values!.forEach((value) => values.add(value)));
+      merged.values = values;
+    }
+    result.set(name, merged);
+  }
+  return result;
+}
+
+function finiteBranchCoverage(statement: Extract<Statement, { kind: 'if' }>, constraints?: ReadonlyMap<string, VariableConstraint>): { name: string; allowed: Set<bigint | string>; covered: Set<bigint | string> } | undefined {
+  const branches = [statement.condition.expression, ...statement.elseIf.map((branch) => branch.condition.expression)];
+  let name: string | undefined;
+  const covered = new Set<bigint | string>();
+  for (const expression of branches) {
+    if (expression.kind !== 'binary' || expression.operator !== '==') return undefined;
+    let variable: string | undefined;
+    let value: bigint | string | undefined;
+    if (expression.left.kind === 'variable' && expression.right.kind === 'literal') {
+      variable = expression.left.name;
+      value = typeof expression.right.value === 'string' ? expression.right.value : integer(expression.right.value);
+    } else if (expression.right.kind === 'variable' && expression.left.kind === 'literal') {
+      variable = expression.right.name;
+      value = typeof expression.left.value === 'string' ? expression.left.value : integer(expression.left.value);
+    }
+    if (!variable || value === undefined || name && name !== variable) return undefined;
+    name = variable; covered.add(value);
+  }
+  if (!name) return undefined;
+  const constraint = constraints?.get(name);
+  if (!constraint?.values) return undefined;
+  const allowed = new Set(constraint.values);
+  const typeMatches = [...allowed].every((value) => constraint.type === 'str' ? typeof value === 'string' : typeof value === 'bigint');
+  return typeMatches ? { name, allowed, covered } : undefined;
+}
+
+function integerRangeCoverage(statement: Extract<Statement, { kind: 'if' }>, constraints?: ReadonlyMap<string, VariableConstraint>): { name: string; exhaustive: boolean } | undefined {
+  const branches = [statement.condition.expression, ...statement.elseIf.map((branch) => branch.condition.expression)];
+  let name: string | undefined;
+  let range: { min: bigint; max: bigint } | undefined;
+  const intervals: Array<{ min: bigint; max: bigint }> = [];
+  for (const expression of branches) {
+    if (expression.kind !== 'binary' || !['==', '<', '<=', '>', '>='].includes(expression.operator)) return undefined;
+    let variable: string | undefined;
+    let value: bigint | undefined;
+    let operator = expression.operator;
+    if (expression.left.kind === 'variable') { variable = expression.left.name; value = expression.right.kind === 'literal' && typeof expression.right.value !== 'string' ? integer(expression.right.value) : undefined; }
+    else if (expression.right.kind === 'variable') {
+      variable = expression.right.name; value = expression.left.kind === 'literal' && typeof expression.left.value !== 'string' ? integer(expression.left.value) : undefined;
+      const flipped: Record<string, string> = { '==': '==', '<': '>', '<=': '>=', '>': '<', '>=': '<=' };
+      operator = flipped[operator];
+    }
+    if (!variable || value === undefined || name && name !== variable) return undefined;
+    name = variable;
+    const constraint = constraints?.get(name);
+    if (!constraint || constraint.type !== 'int' || constraint.min === undefined || constraint.max === undefined) return undefined;
+    range = { min: constraint.min, max: constraint.max };
+    const interval = operator === '==' ? { min: value, max: value }
+      : operator === '<' ? { min: range.min, max: value - 1n }
+        : operator === '<=' ? { min: range.min, max: value }
+          : operator === '>' ? { min: value + 1n, max: range.max } : { min: value, max: range.max };
+    const min = interval.min < range.min ? range.min : interval.min;
+    const max = interval.max > range.max ? range.max : interval.max;
+    if (min <= max) intervals.push({ min, max });
+  }
+  if (!name || !range) return undefined;
+  intervals.sort((left, right) => left.min < right.min ? -1 : left.min > right.min ? 1 : 0);
+  let cursor = range.min;
+  for (const interval of intervals) {
+    if (interval.min > cursor) return { name, exhaustive: false };
+    if (interval.max >= cursor) cursor = interval.max + 1n;
+    if (cursor > range.max) return { name, exhaustive: true };
+  }
+  return { name, exhaustive: cursor > range.max };
 }
 
 type IntegerConstraint = { name: string; operator: string; value: bigint };
@@ -117,6 +393,61 @@ function integerConstraint(expr: Expr, constants: ReadonlyMap<string, Exclude<Co
     if (typeof value === 'bigint') return { name: expr.right.name, operator: flipped[expr.operator], value };
   }
   return undefined;
+}
+
+function combinedIntegerCondition(expr: Extract<Expr, { kind: 'binary' }>, constraints: ReadonlyMap<string, VariableConstraint>): boolean | undefined {
+  if (expr.operator !== 'and' && expr.operator !== 'or') return undefined;
+  const left = integerConstraint(expr.left, new Map()), right = integerConstraint(expr.right, new Map());
+  if (!left || !right || left.name !== right.name) return undefined;
+  const constraint = constraints.get(left.name);
+  if (!constraint || constraint.type !== 'int') return undefined;
+  const accepts = (predicate: IntegerConstraint, value: bigint): boolean => {
+    if (predicate.operator === '==') return value === predicate.value;
+    if (predicate.operator === '!=') return value !== predicate.value;
+    if (predicate.operator === '>') return value > predicate.value;
+    if (predicate.operator === '>=') return value >= predicate.value;
+    if (predicate.operator === '<') return value < predicate.value;
+    return value <= predicate.value;
+  };
+  if (constraint.values) {
+    const results = [...constraint.values].map((value) => expr.operator === 'and' ? accepts(left, value as bigint) && accepts(right, value as bigint) : accepts(left, value as bigint) || accepts(right, value as bigint));
+    return results.length && results.every(Boolean) ? true : results.length && results.every((value) => !value) ? false : undefined;
+  }
+  if (constraint.min === undefined || constraint.max === undefined || left.operator === '!=' || right.operator === '!=') return undefined;
+  const minimum = constraint.min, maximum = constraint.max;
+  const interval = (predicate: IntegerConstraint): [bigint, bigint] => {
+    if (predicate.operator === '==') return [predicate.value, predicate.value];
+    if (predicate.operator === '>') return [predicate.value + 1n, maximum];
+    if (predicate.operator === '>=') return [predicate.value, maximum];
+    if (predicate.operator === '<') return [minimum, predicate.value - 1n];
+    return [minimum, predicate.value];
+  };
+  const a = interval(left), b = interval(right);
+  if (expr.operator === 'and') {
+    const minimum = a[0] > b[0] ? a[0] : b[0], maximum = a[1] < b[1] ? a[1] : b[1];
+    return minimum > maximum ? false : undefined;
+  }
+  const ordered = [a, b].sort((first, second) => first[0] < second[0] ? -1 : 1);
+  return ordered[0][0] <= minimum && ordered[0][1] + 1n >= ordered[1][0] && ordered[1][1] >= maximum ? true : undefined;
+}
+
+function combinedFiniteCondition(expr: Extract<Expr, { kind: 'binary' }>, constraints: ReadonlyMap<string, VariableConstraint>): boolean | undefined {
+  if (expr.operator !== 'and' && expr.operator !== 'or') return undefined;
+  const parse = (value: Expr): { name: string; operator: string; expected: bigint | string } | undefined => {
+    if (value.kind !== 'binary' || !['==', '!='].includes(value.operator)) return undefined;
+    if (value.left.kind === 'variable' && value.right.kind === 'literal') { const expected = typeof value.right.value === 'string' ? value.right.value : integer(value.right.value); return expected === undefined ? undefined : { name: value.left.name, operator: value.operator, expected }; }
+    if (value.right.kind === 'variable' && value.left.kind === 'literal') { const expected = typeof value.left.value === 'string' ? value.left.value : integer(value.left.value); return expected === undefined ? undefined : { name: value.right.name, operator: value.operator, expected }; }
+    return undefined;
+  };
+  const left = parse(expr.left), right = parse(expr.right);
+  if (!left || !right || left.name !== right.name) return undefined;
+  const constraint = constraints.get(left.name);
+  if (!constraint?.values) return undefined;
+  if (constraint.type === 'str' && (typeof left.expected !== 'string' || typeof right.expected !== 'string')) return undefined;
+  if (constraint.type === 'int' && (typeof left.expected !== 'bigint' || typeof right.expected !== 'bigint')) return undefined;
+  const accepts = (predicate: { operator: string; expected: bigint | string }, value: bigint | string): boolean => predicate.operator === '==' ? value === predicate.expected : value !== predicate.expected;
+  const results = [...constraint.values].map((value) => expr.operator === 'and' ? accepts(left, value) && accepts(right, value) : accepts(left, value) || accepts(right, value));
+  return results.length && results.every(Boolean) ? true : results.length && results.every((value) => !value) ? false : undefined;
 }
 
 function conditionImplies(current: Expr, previous: Expr, constants: ReadonlyMap<string, Exclude<Constant, undefined>>): boolean {
@@ -145,6 +476,7 @@ function conditionImplies(current: Expr, previous: Expr, constants: ReadonlyMap<
 }
 
 function isPureExpression(expr: Expr): boolean {
+  if (expr.kind === 'literal') return typeof expr.value !== 'string' || !/\{[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?:\(\))?\}/.test(expr.value);
   if (expr.kind === 'call') return expr.name === 'int' || expr.name === 'str' ? expr.args.every(isPureExpression) : false;
   if (expr.kind === 'binary') return isPureExpression(expr.left) && isPureExpression(expr.right);
   if (expr.kind === 'unary') return isPureExpression(expr.value);
@@ -195,7 +527,360 @@ function forExecution(statement: Extract<Statement, { kind: 'for' }>, constants:
   return 'runs';
 }
 
-function definitelyTerminates(statement: Statement, constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(), facts: ReadonlyMap<string, boolean> = new Map()): boolean {
+function forIterationCount(statement: Extract<Statement, { kind: 'for' }>, constants: ReadonlyMap<string, Exclude<Constant, undefined>>): bigint | undefined {
+  const start = constant(statement.start, constants);
+  const stop = constant(statement.stop, constants);
+  const step = constant(statement.step, constants);
+  if (typeof start !== 'bigint' || typeof stop !== 'bigint' || typeof step !== 'bigint' || step === 0n) return undefined;
+  if ((start < stop && step < 0n) || (start > stop && step > 0n)) return undefined;
+  return step > 0n ? (stop - start) / step + 1n : (start - stop) / (-step) + 1n;
+}
+
+type IntegerBounds = { min: bigint; max: bigint };
+function integerBounds(expression: Expr, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints?: ReadonlyMap<string, VariableConstraint>): IntegerBounds | undefined {
+  const value = constant(expression, constants);
+  if (typeof value === 'bigint') return { min: value, max: value };
+  if (expression.kind === 'variable') {
+    const constraint = constraints?.get(expression.name);
+    if (constraint?.type !== 'int') return undefined;
+    if (constraint.values?.size) {
+      const values = [...constraint.values].filter((item): item is bigint => typeof item === 'bigint');
+      if (values.length !== constraint.values.size) return undefined;
+      return { min: values.reduce((left, right) => left < right ? left : right), max: values.reduce((left, right) => left > right ? left : right) };
+    }
+    if (constraint.min !== undefined && constraint.max !== undefined) return { min: constraint.min, max: constraint.max };
+  }
+  if (expression.kind === 'binary' && (expression.operator === '+' || expression.operator === '-')) {
+    const left = integerBounds(expression.left, constants, constraints);
+    const right = integerBounds(expression.right, constants, constraints);
+    if (left && right) return expression.operator === '+' ? { min: left.min + right.min, max: left.max + right.max } : { min: left.min - right.max, max: left.max - right.min };
+  }
+  return undefined;
+}
+
+function forVariableBounds(statement: Extract<Statement, { kind: 'for' }>, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints?: ReadonlyMap<string, VariableConstraint>): IntegerBounds | undefined {
+  const start = integerBounds(statement.start, constants, constraints);
+  const stop = integerBounds(statement.stop, constants, constraints);
+  const stepValue = constant(statement.step, constants);
+  const step = typeof stepValue === 'bigint' ? { min: stepValue, max: stepValue } : integerBounds(statement.step, constants, constraints);
+  if (!start || !stop || !step || step.min === 0n || step.min <= 0n && step.max >= 0n) return undefined;
+  return {
+    min: start.min < stop.min ? start.min : stop.min,
+    max: start.max > stop.max ? start.max : stop.max,
+  };
+}
+
+function forBodyConstraints(statement: Extract<Statement, { kind: 'for' }>, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints?: ReadonlyMap<string, VariableConstraint>): ReadonlyMap<string, VariableConstraint> | undefined {
+  const bounds = forVariableBounds(statement, constants, constraints);
+  if (!bounds) return constraints;
+  const result = constraints ? new Map(constraints) : new Map<string, VariableConstraint>();
+  result.set(statement.name, { type: 'int', min: bounds.min, max: bounds.max });
+  return result;
+}
+
+function forIterationUpperBound(statement: Extract<Statement, { kind: 'for' }>, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints?: ReadonlyMap<string, VariableConstraint>): bigint | undefined {
+  const start = integerBounds(statement.start, constants, constraints);
+  const stop = integerBounds(statement.stop, constants, constraints);
+  const stepValue = constant(statement.step, constants);
+  const step = typeof stepValue === 'bigint'
+    ? { min: stepValue, max: stepValue }
+    : integerBounds(statement.step, constants, constraints);
+  if (!start || !stop || !step || step.min === 0n || step.min <= 0n && step.max >= 0n) return undefined;
+  if (step.min > 0n) {
+    if (stop.max < start.min) return 0n;
+    return (stop.max - start.min) / step.min + 1n;
+  }
+  if (start.max < stop.min) return 0n;
+  return (start.max - stop.min) / (-step.max) + 1n;
+}
+
+function referencesVariable(expression: Expr, name: string): boolean {
+  if (expression.kind === 'variable') return expression.name === name;
+  if (expression.kind === 'binary') return referencesVariable(expression.left, name) || referencesVariable(expression.right, name);
+  if (expression.kind === 'unary') return referencesVariable(expression.value, name);
+  if (expression.kind === 'index') return referencesVariable(expression.target, name) || referencesVariable(expression.key, name);
+  if (expression.kind === 'call') return expression.args.some((argument) => referencesVariable(argument, name));
+  if (expression.kind === 'dict') return expression.entries.some((entry) => referencesVariable(entry.value, name));
+  return false;
+}
+
+type WhileIterationEstimate = bigint | 'non-terminating';
+
+interface WhileProgress {
+  name: string;
+  operator: string;
+  start: bigint;
+  bound: bigint;
+  step?: bigint;
+  update: Expr;
+  initiallyTrue: boolean;
+}
+
+function loopUpdate(statement: Extract<Statement, { kind: 'while' | 'for' }>, name?: string): Extract<Statement, { kind: 'set' }> | undefined {
+  const updates = statement.body.filter((current): current is Extract<Statement, { kind: 'set' }> => current.kind === 'set' && current.target.kind === 'variable' && (name === undefined || current.target.name === name));
+  if (updates.length !== 1 || statement.body.some((current) => current !== updates[0] && (current.kind !== 'command' || hasCalls(current)))) return undefined;
+  return updates[0];
+}
+
+function whileProgress(statement: Extract<Statement, { kind: 'while' }>, constants: ReadonlyMap<string, Exclude<Constant, undefined>>): WhileProgress | undefined {
+  const condition = statement.condition.expression;
+  if (condition.kind !== 'binary' || !['<', '<=', '>', '>='].includes(condition.operator)) return undefined;
+  let name: string | undefined;
+  let operator = condition.operator;
+  let boundExpression: Expr | undefined;
+  if (condition.left.kind === 'variable') {
+    name = condition.left.name;
+    boundExpression = condition.right;
+  } else if (condition.right.kind === 'variable') {
+    name = condition.right.name;
+    boundExpression = condition.left;
+    const flipped: Record<string, string> = { '>': '<', '>=': '<=', '<': '>', '<=': '>=' };
+    operator = flipped[operator];
+  }
+  if (!name || !boundExpression || referencesVariable(boundExpression, name)) return undefined;
+  const bound = constant(boundExpression, constants);
+  if (typeof bound !== 'bigint') return undefined;
+  const update = loopUpdate(statement, name);
+  if (!update) return undefined;
+  if (update.kind !== 'set' || update.target.kind !== 'variable' || update.target.name !== name) return undefined;
+  const expression = update.value;
+  let step: bigint | undefined;
+  if (expression.kind === 'binary') {
+    if (expression.left.kind === 'variable' && expression.left.name === name && !referencesVariable(expression.right, name)) {
+      const amount = constant(expression.right, constants);
+      if (typeof amount === 'bigint') step = expression.operator === '+' ? amount : expression.operator === '-' ? -amount : undefined;
+    } else if (expression.operator === '+' && expression.right.kind === 'variable' && expression.right.name === name && !referencesVariable(expression.left, name)) {
+      const amount = constant(expression.left, constants);
+      if (typeof amount === 'bigint') step = amount;
+    }
+  }
+  const start = constants.get(name);
+  if (typeof start !== 'bigint') return undefined;
+  const initiallyTrue = operator === '>' ? start > bound
+    : operator === '>=' ? start >= bound
+      : operator === '<' ? start < bound : start <= bound;
+  return { name, operator, start, bound, step, update: expression, initiallyTrue };
+}
+
+function whileIterationUpperBound(statement: Extract<Statement, { kind: 'while' }>, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints?: ReadonlyMap<string, VariableConstraint>): WhileIterationEstimate | undefined {
+  const condition = statement.condition.expression;
+  if (condition.kind !== 'binary' || !['<', '<=', '>', '>='].includes(condition.operator)) return undefined;
+  let name: string | undefined;
+  let operator = condition.operator;
+  let boundExpression: Expr | undefined;
+  if (condition.left.kind === 'variable') { name = condition.left.name; boundExpression = condition.right; }
+  else if (condition.right.kind === 'variable') {
+    name = condition.right.name; boundExpression = condition.left;
+    const flipped: Record<string, string> = { '>': '<', '>=': '<=', '<': '>', '<=': '>=' };
+    operator = flipped[operator];
+  }
+  if (!name || !boundExpression || referencesVariable(boundExpression, name)) return undefined;
+  const bound = constant(boundExpression, constants);
+  const start = integerBounds({ kind: 'variable', name } as Expr, constants, constraints);
+  if (typeof bound !== 'bigint' || !start) return undefined;
+  const conditionPossible = operator === '<' ? start.min < bound : operator === '<=' ? start.min <= bound : operator === '>' ? start.max > bound : start.max >= bound;
+  if (!writtenVariables(statement).has(name) && !hasCalls(statement)) return conditionPossible ? 'non-terminating' : 0n;
+  const update = loopUpdate(statement, name);
+  if (!update || update.target.kind !== 'variable' || update.target.name !== name || update.value.kind !== 'binary') return undefined;
+  let step: bigint | undefined;
+  if (update.value.left.kind === 'variable' && update.value.left.name === name && !referencesVariable(update.value.right, name)) {
+    const amount = constant(update.value.right, constants);
+    if (typeof amount === 'bigint') step = update.value.operator === '+' ? amount : update.value.operator === '-' ? -amount : undefined;
+  } else if (update.value.operator === '+' && update.value.right.kind === 'variable' && update.value.right.name === name && !referencesVariable(update.value.left, name)) {
+    const amount = constant(update.value.left, constants);
+    if (typeof amount === 'bigint') step = amount;
+  }
+  if (step === undefined) return undefined;
+  if (step === 0n) return conditionPossible ? 'non-terminating' : 0n;
+  const increasing = operator === '<' || operator === '<=';
+  if ((increasing && step < 0n) || (!increasing && step > 0n)) return conditionPossible ? 'non-terminating' : 0n;
+  if (increasing) {
+    if (start.min > bound || (operator === '<' && start.min === bound)) return 0n;
+    const distance = bound - start.min;
+    return operator === '<' ? (distance + step - 1n) / step : distance / step + 1n;
+  }
+  if (start.max < bound || (operator === '>' && start.max === bound)) return 0n;
+  const distance = start.max - bound;
+  return operator === '>' ? (distance + (-step) - 1n) / (-step) : distance / (-step) + 1n;
+}
+
+function whileIterationCount(statement: Extract<Statement, { kind: 'while' }>, constants: ReadonlyMap<string, Exclude<Constant, undefined>>): WhileIterationEstimate | undefined {
+  const progress = whileProgress(statement, constants);
+  if (!progress) return undefined;
+  const { operator, start, bound, step, initiallyTrue } = progress;
+  if (step === undefined) return whileExpressionIterations(progress, constants);
+  if (!initiallyTrue) return 0n;
+  if (step === 0n) return 'non-terminating';
+  const increasing = operator === '<' || operator === '<=';
+  if ((increasing && step < 0n) || (!increasing && step > 0n)) {
+    const afterLimit = start + step * 100000n;
+    if (afterLimit >= INT_MIN && afterLimit <= INT_MAX) return 'non-terminating';
+    return undefined;
+  }
+  const distance = increasing ? bound - start : start - bound;
+  const amount = step < 0n ? -step : step;
+  if (operator === '<' || operator === '>') return (distance + amount - 1n) / amount;
+  return distance / amount + 1n;
+}
+
+function whileExpressionOverflows(progress: WhileProgress, constants: ReadonlyMap<string, Exclude<Constant, undefined>>): boolean {
+  let current = progress.start;
+  for (let count = 0; count < 100000; count += 1) {
+    const condition = progress.operator === '>' ? current > progress.bound
+      : progress.operator === '>=' ? current >= progress.bound
+        : progress.operator === '<' ? current < progress.bound : current <= progress.bound;
+    if (!condition) return false;
+    const iterationConstants = new Map(constants);
+    iterationConstants.set(progress.name, current);
+    const next = checkedInteger(progress.update, iterationConstants);
+    if (next === 'overflow') return true;
+    if (next === undefined) return false;
+    current = next;
+  }
+  return false;
+}
+
+function whileExpressionIterations(progress: WhileProgress, constants: ReadonlyMap<string, Exclude<Constant, undefined>>): WhileIterationEstimate | undefined {
+  let current = progress.start;
+  const seen = new Set<string>();
+  for (let count = 0; count <= 100000; count += 1) {
+    const condition = progress.operator === '>' ? current > progress.bound
+      : progress.operator === '>=' ? current >= progress.bound
+        : progress.operator === '<' ? current < progress.bound : current <= progress.bound;
+    if (!condition) return BigInt(count);
+    if (count === 100000 || seen.has(current.toString())) return 'non-terminating';
+    seen.add(current.toString());
+    const iterationConstants = new Map(constants);
+    iterationConstants.set(progress.name, current);
+    const next = checkedInteger(progress.update, iterationConstants);
+    if (next === 'overflow' || next === undefined) return undefined;
+    current = next;
+  }
+  return 'non-terminating';
+}
+
+function whileUpdateOverflows(statement: Extract<Statement, { kind: 'while' }>, constants: ReadonlyMap<string, Exclude<Constant, undefined>>): boolean {
+  const progress = whileProgress(statement, constants);
+  if (!progress || !progress.initiallyTrue) return false;
+  if (progress.step === undefined) return whileExpressionOverflows(progress, constants);
+  if (progress.step === 0n) return false;
+  // Count the body updates needed to leave the signed 64-bit domain in the
+  // update direction. Runtime checks its 100,000-iteration limit before the
+  // next body, so an overflow after that point is not the observed failure.
+  const updatesToOverflow = progress.step > 0n
+    ? (INT_MAX - progress.start) / progress.step + 1n
+    : (progress.start - INT_MIN) / (-progress.step) + 1n;
+  if (updatesToOverflow > 100000n) return false;
+  const iterations = whileIterationCount(statement, constants);
+  // Non-terminating or direction-unknown loops continue until either the
+  // runtime limit or this update overflow. Finite loops only reach the
+  // overflow if enough condition-true iterations are guaranteed.
+  return typeof iterations !== 'bigint' ? true : updatesToOverflow <= iterations;
+}
+
+function forFirstIterationOverflows(statement: Extract<Statement, { kind: 'for' }>, constants: ReadonlyMap<string, Exclude<Constant, undefined>>): boolean {
+  const start = constant(statement.start, constants);
+  const stop = constant(statement.stop, constants);
+  const step = constant(statement.step, constants);
+  if (typeof start !== 'bigint' || typeof stop !== 'bigint' || typeof step !== 'bigint' || step === 0n) return false;
+  if ((start < stop && step < 0n) || (start > stop && step > 0n)) return false;
+  const update = loopUpdate(statement);
+  if (!update || !referencesVariable(update.value, statement.name)) return false;
+  const firstIteration = new Map(constants);
+  firstIteration.set(statement.name, start);
+  return checkedInteger(update.value, firstIteration) === 'overflow';
+}
+
+function forRepeatedUpdateOverflows(statement: Extract<Statement, { kind: 'for' }>, constants: ReadonlyMap<string, Exclude<Constant, undefined>>): boolean {
+  const iterations = forIterationCount(statement, constants);
+  if (iterations === undefined || iterations <= 0n) return false;
+  const update = loopUpdate(statement);
+  if (!update || update.target.kind !== 'variable' || update.value.kind !== 'binary') return false;
+  const name = update.target.name;
+  const start = constants.get(name);
+  if (typeof start !== 'bigint') return false;
+  let delta: bigint | undefined;
+  if (update.value.left.kind === 'variable' && update.value.left.name === name && !referencesVariable(update.value.right, name)) {
+    const amount = constant(update.value.right, constants);
+    if (typeof amount === 'bigint') delta = update.value.operator === '+' ? amount : update.value.operator === '-' ? -amount : undefined;
+  } else if (update.value.operator === '+' && update.value.right.kind === 'variable' && update.value.right.name === name && !referencesVariable(update.value.left, name)) {
+    const amount = constant(update.value.left, constants);
+    if (typeof amount === 'bigint') delta = amount;
+  }
+  if (delta !== undefined && delta !== 0n) {
+    const updatesToOverflow = delta > 0n
+      ? (INT_MAX - start) / delta + 1n
+      : (start - INT_MIN) / (-delta) + 1n;
+    if (updatesToOverflow <= iterations && updatesToOverflow <= 100000n) return true;
+  }
+
+  // A loop variable is also a constant at each individual iteration. Track
+  // the accumulator for the observable prefix of the loop so expressions such
+  // as `value = value + i` cannot hide an overflow on a later iteration.
+  const loopStart = constant(statement.start, constants);
+  const loopStep = constant(statement.step, constants);
+  if (typeof loopStart !== 'bigint' || typeof loopStep !== 'bigint' || loopStep === 0n) return false;
+  const observedIterations = iterations < 100000n ? iterations : 100000n;
+  let current = start;
+  let loopValue = loopStart;
+  for (let index = 0n; index < observedIterations; index += 1n) {
+    const iterationConstants = new Map(constants);
+    iterationConstants.set(name, current);
+    iterationConstants.set(statement.name, loopValue);
+    const next = checkedInteger(update.value, iterationConstants);
+    if (next === 'overflow') return true;
+    if (next === undefined) return false;
+    current = next;
+    loopValue += loopStep;
+  }
+  return false;
+}
+
+function forConstraintUpdateOverflow(
+  statement: Extract<Statement, { kind: 'for' }>,
+  constants: ReadonlyMap<string, Exclude<Constant, undefined>>,
+  constraints?: ReadonlyMap<string, VariableConstraint>,
+): 'error' | 'warning' | undefined {
+  const update = loopUpdate(statement);
+  if (!update || update.target.kind !== 'variable' || update.target.name === statement.name || !constraints?.has(update.target.name) || constant(update.value, constants) !== undefined) return undefined;
+  const bodyConstraints = forBodyConstraints(statement, constants, constraints);
+  const bounds = integerBounds(update.value, constants, bodyConstraints);
+  const start = integerBounds(statement.start, constants, constraints);
+  const stop = integerBounds(statement.stop, constants, constraints);
+  const stepValue = constant(statement.step, constants);
+  const step = typeof stepValue === 'bigint' ? { min: stepValue, max: stepValue } : integerBounds(statement.step, constants, constraints);
+  const guaranteed = start && stop && step && step.min === step.max && step.min !== 0n
+    ? step.min > 0n ? start.max <= stop.min : start.min >= stop.max
+    : false;
+  let severity: 'error' | 'warning' | undefined;
+  if (bounds && (bounds.min < INT_MIN || bounds.max > INT_MAX)) severity = bounds.min > INT_MAX || bounds.max < INT_MIN ? (guaranteed ? 'error' : 'warning') : 'warning';
+
+  let delta: bigint | undefined;
+  if (update.value.kind === 'binary') {
+    if (update.value.left.kind === 'variable' && update.value.left.name === update.target.name && !referencesVariable(update.value.right, update.target.name)) {
+      const amount = constant(update.value.right, constants);
+      if (typeof amount === 'bigint') delta = update.value.operator === '+' ? amount : update.value.operator === '-' ? -amount : undefined;
+    } else if (update.value.operator === '+' && update.value.right.kind === 'variable' && update.value.right.name === update.target.name && !referencesVariable(update.value.left, update.target.name)) {
+      const amount = constant(update.value.left, constants);
+      if (typeof amount === 'bigint') delta = amount;
+    }
+  }
+  const targetBounds = integerBounds({ kind: 'variable', name: update.target.name }, constants, constraints);
+  const iterations = forIterationCount(statement, constants);
+  const iterationUpperBound = iterations === undefined ? forIterationUpperBound(statement, constants, constraints) : iterations;
+  if (delta !== undefined && delta !== 0n && targetBounds && iterationUpperBound !== undefined && iterationUpperBound > 0n) {
+    const finalMin = targetBounds.min + delta * iterationUpperBound;
+    const finalMax = targetBounds.max + delta * iterationUpperBound;
+    const repeatedOverflow = finalMin < INT_MIN || finalMax > INT_MAX;
+    if (repeatedOverflow) {
+      const exact = targetBounds.min === targetBounds.max && iterations !== undefined;
+      severity = exact ? 'error' : severity || 'warning';
+    }
+  }
+  return severity;
+}
+
+function definitelyTerminates(statement: Statement, constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(), facts: ReadonlyMap<string, boolean> = new Map(), constraints?: ReadonlyMap<string, VariableConstraint>): boolean {
   if (statement.kind === 'return' || statement.kind === 'goto') return true;
   if (statement.kind === 'if') {
     const branches = [{ condition: statement.condition.expression, body: statement.body }, ...statement.elseIf.map((branch) => ({ condition: branch.condition.expression, body: branch.body }))];
@@ -204,12 +889,12 @@ function definitelyTerminates(statement: Statement, constants: ReadonlyMap<strin
     const seen = new Set<string>(), previousConditions: Expr[] = [], remainingFacts = new Map(facts);
     for (const branch of branches) {
       if (!canFallThrough) break;
-      const value = conditionValue(branch.condition, constants, remainingFacts);
+      const value = conditionValue(branch.condition, constants, remainingFacts, constraints);
       if (value === false) { recordCondition(remainingFacts, branch.condition, false); continue; }
       const key = expressionKey(branch.condition);
       if (isPureExpression(branch.condition) && (seen.has(key) || previousConditions.some((previous) => conditionImplies(branch.condition, previous, constants)))) continue;
       const bodyFacts = new Map(remainingFacts); recordCondition(bodyFacts, branch.condition, true);
-      allTerminate = allTerminate && blockTerminates(branch.body, constants, bodyFacts);
+      allTerminate = allTerminate && blockTerminates(branch.body, constants, bodyFacts, constraints);
       if (isPureExpression(branch.condition)) seen.add(key);
       if (isPureExpression(branch.condition)) previousConditions.push(branch.condition);
       recordCondition(remainingFacts, branch.condition, false);
@@ -217,17 +902,17 @@ function definitelyTerminates(statement: Statement, constants: ReadonlyMap<strin
     }
     if (canFallThrough) {
       if (!statement.otherwise.length) return false;
-      allTerminate = allTerminate && blockTerminates(statement.otherwise, constants, remainingFacts);
+      allTerminate = allTerminate && blockTerminates(statement.otherwise, constants, remainingFacts, constraints);
     }
     return allTerminate;
   }
   if (statement.kind === 'while') {
-    if (conditionValue(statement.condition.expression, constants, facts) !== true) return false;
+    if (conditionValue(statement.condition.expression, constants, facts, constraints) !== true) return false;
     const stable = loopConstants(statement, constants);
-    return conditionValue(statement.condition.expression, stable, new Map()) === true || blockTerminates(statement.body, constants, facts);
+    return conditionValue(statement.condition.expression, stable, new Map(), constraints) === true || blockTerminates(statement.body, constants, facts, constraints);
   }
-  if (statement.kind === 'for') return forExecution(statement, constants) !== 'invalid' && blockTerminates(statement.body, constants, facts);
-  if (statement.kind === 'choice') return statement.options.length > 0 && statement.options.every((option) => blockTerminates(option.body, constants, facts));
+  if (statement.kind === 'for') return forExecution(statement, constants) !== 'invalid' && blockTerminates(statement.body, constants, facts, forBodyConstraints(statement, constants, constraints));
+  if (statement.kind === 'choice') return statement.options.length > 0 && statement.options.every((option) => blockTerminates(option.body, constants, facts, constraints));
   return false;
 }
 
@@ -238,8 +923,122 @@ function writtenVariables(statement: Statement, result = new Set<string>()): Set
   return result;
 }
 
+let activeFunctionEffects: ReadonlyMap<string, ReadonlySet<string>> = new Map();
+
+function callChangesState(name: string): boolean {
+  if (name === 'int' || name === 'str') return false;
+  const effects = activeFunctionEffects.get(name);
+  return !effects || effects.has('*') || effects.size > 0;
+}
+
+function invalidateConstraintCalls(expressions: Expr[], constraints: Map<string, VariableConstraint> | undefined, names: string[] = []): void {
+  if (!constraints) return;
+  const invalidate = (name: string) => {
+    if (!callChangesState(name)) return;
+    const effects = activeFunctionEffects.get(name);
+    if (!effects || effects.has('*')) constraints.clear();
+    else effects.forEach((effect) => constraints.delete(effect));
+  };
+  names.forEach(invalidate);
+  expressions.forEach((expression) => visitExpressions(expression, (current) => {
+    if (current.kind === 'call') invalidate(current.name);
+  }));
+}
+
+function invalidateConstraintCallsInExecution(
+  expression: Expr,
+  constants: ReadonlyMap<string, Exclude<Constant, undefined>>,
+  facts: ReadonlyMap<string, boolean>,
+  constraints: Map<string, VariableConstraint> | undefined,
+): void {
+  if (!constraints) return;
+  if (expression.kind === 'binary' && (expression.operator === 'and' || expression.operator === 'or')) {
+    invalidateConstraintCallsInExecution(expression.left, constants, facts, constraints);
+    const left = conditionValue(expression.left, constants, facts, constraints);
+    if (expression.operator === 'and' && left === false || expression.operator === 'or' && left === true) return;
+    invalidateConstraintCallsInExecution(expression.right, constants, facts, constraints);
+    return;
+  }
+  if (expression.kind === 'unary') {
+    invalidateConstraintCallsInExecution(expression.value, constants, facts, constraints);
+    return;
+  }
+  if (expression.kind === 'binary') {
+    invalidateConstraintCallsInExecution(expression.left, constants, facts, constraints);
+    invalidateConstraintCallsInExecution(expression.right, constants, facts, constraints);
+    return;
+  }
+  if (expression.kind === 'index') {
+    invalidateConstraintCallsInExecution(expression.target, constants, facts, constraints);
+    invalidateConstraintCallsInExecution(expression.key, constants, facts, constraints);
+    return;
+  }
+  if (expression.kind === 'call') {
+    invalidateConstraintCallsInExecutionForArguments(expression.args, constants, facts, constraints);
+    invalidateConstraintCalls([], constraints, [expression.name]);
+    return;
+  }
+  if (expression.kind === 'dict') invalidateConstraintCallsInExecutionForArguments(expression.entries.map((entry) => entry.value), constants, facts, constraints);
+}
+
+function invalidateConstraintCallsInExecutionForArguments(
+  expressions: Expr[],
+  constants: ReadonlyMap<string, Exclude<Constant, undefined>>,
+  facts: ReadonlyMap<string, boolean>,
+  constraints: Map<string, VariableConstraint>,
+): void {
+  expressions.forEach((expression) => invalidateConstraintCallsInExecution(expression, constants, facts, constraints));
+}
+
+function invalidateConstraintState(statement: Statement, constraints: Map<string, VariableConstraint> | undefined): void {
+  if (!constraints) return;
+  writtenVariables(statement).forEach((name) => constraints.delete(name));
+  invalidateConstraintCalls(statementExpressions(statement), constraints, statement.kind === 'call' ? [statement.name] : []);
+}
+
+function expressionChangesState(expr: Expr): boolean {
+  let changes = false;
+  visitExpressions(expr, (current) => { if (current.kind === 'call' && callChangesState(current.name)) changes = true; });
+  return changes;
+}
+
 function hasCalls(statement: Statement): boolean {
-  return statement.kind === 'call' || statementExpressions(statement).some((expr) => !isPureExpression(expr)) || nested(statement).some((body) => body.some(hasCalls));
+  return statement.kind === 'call' && callChangesState(statement.name) || statementExpressions(statement).some(expressionChangesState) || nested(statement).some((body) => body.some(hasCalls));
+}
+
+function functionEffects(functions: readonly FunctionDef[], globals: ReadonlySet<string>): ReadonlyMap<string, ReadonlySet<string>> {
+  const direct = new Map<string, Set<string>>(), calls = new Map<string, Set<string>>();
+  for (const fn of functions) {
+    const writes = new Set<string>(), invoked = new Set<string>();
+    const walk = (statements: Statement[], locals: Set<string>): void => {
+      for (const statement of statements) {
+        if (statement.kind === 'declare') {
+          if ((statement as Statement & { global?: boolean }).global) {
+            if (globals.has(statement.name)) writes.add(statement.name);
+          } else locals.add(statement.name);
+        }
+        if (statement.kind === 'set' || statement.kind === 'unset') {
+          const target = statement.target;
+          if (target.kind === 'variable' && !locals.has(target.name) && globals.has(target.name)) writes.add(target.name);
+        }
+        if (statement.kind === 'call' && statement.name !== 'int' && statement.name !== 'str') invoked.add(statement.name);
+        for (const expression of statementExpressions(statement)) visitExpressions(expression, (current) => { if (current.kind === 'call' && current.name !== 'int' && current.name !== 'str') invoked.add(current.name); });
+        for (const body of nested(statement)) walk(body, new Set(locals));
+      }
+    };
+    walk(fn.body, new Set(fn.params.map((param) => param.name)));
+    direct.set(fn.name, writes); calls.set(fn.name, invoked);
+  }
+  for (const [name, invoked] of calls) for (const callee of invoked) if (!direct.has(callee)) direct.get(name)!.add('*');
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [name, invoked] of calls) for (const callee of invoked) for (const effect of direct.get(callee) || ['*']) {
+      const writes = direct.get(name)!;
+      if (!writes.has(effect)) { writes.add(effect); changed = true; }
+    }
+  }
+  return direct;
 }
 
 function loopConstants(statement: Statement, constants: ReadonlyMap<string, Exclude<Constant, undefined>>): Map<string, Exclude<Constant, undefined>> {
@@ -268,27 +1067,31 @@ function updateKnownConstants(statement: Statement, constants: Map<string, Exclu
 }
 
 function invalidatesConditionFacts(statement: Statement): boolean {
-  if (statement.kind === 'declare' || statement.kind === 'set' || statement.kind === 'unset' || statement.kind === 'call') return true;
+  if (statement.kind === 'declare' || statement.kind === 'set' || statement.kind === 'unset') return true;
+  if (statement.kind === 'call') return callChangesState(statement.name);
   return statementExpressions(statement).some((expr) => {
     let calls = false;
-    visitExpressions(expr, (current) => { if (current.kind === 'call' && current.name !== 'int' && current.name !== 'str') calls = true; });
+    visitExpressions(expr, (current) => {
+      if (current.kind === 'call' && callChangesState(current.name)) calls = true;
+      if (current.kind === 'literal' && typeof current.value === 'string' && /\{[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?:\(\))?\}/.test(current.value)) calls = true;
+    });
     return calls;
   });
 }
 
-function blockTerminates(statements: Statement[], constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(), facts: ReadonlyMap<string, boolean> = new Map()): boolean {
+function blockTerminates(statements: Statement[], constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(), facts: ReadonlyMap<string, boolean> = new Map(), constraints?: ReadonlyMap<string, VariableConstraint>): boolean {
   const known = new Map(constants);
   const knownFacts = new Map(facts);
   for (const statement of statements) {
     if (hasCalls(statement)) { known.clear(); knownFacts.clear(); }
-    if (definitelyTerminates(statement, known, knownFacts)) return true;
+    if (definitelyTerminates(statement, known, knownFacts, constraints)) return true;
     updateKnownConstants(statement, known);
     if (invalidatesConditionFacts(statement)) knownFacts.clear();
   }
   return false;
 }
 
-function reachableGotoTargets(statements: Statement[], targets = new Set<string>(), constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(), facts: ReadonlyMap<string, boolean> = new Map()): Set<string> {
+function reachableGotoTargets(statements: Statement[], targets = new Set<string>(), constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(), facts: ReadonlyMap<string, boolean> = new Map(), constraints?: ReadonlyMap<string, VariableConstraint>): Set<string> {
   const known = new Map(constants);
   const knownFacts = new Map(facts);
   for (const statement of statements) {
@@ -303,27 +1106,27 @@ function reachableGotoTargets(statements: Statement[], targets = new Set<string>
       let canTryNext = true;
       for (const branch of branches) {
         if (!canTryNext) break;
-        const value = conditionValue(branch.expression, known, remainingFacts);
+        const value = conditionValue(branch.expression, known, remainingFacts, constraints);
         const key = expressionKey(branch.expression);
         const duplicate = isPureExpression(branch.expression) && (seen.has(key) || previousConditions.some((previous) => conditionImplies(branch.expression, previous, known)));
         const bodyFacts = new Map(remainingFacts); recordCondition(bodyFacts, branch.expression, true);
-        if (value !== false && !duplicate) reachableGotoTargets(branch.body, targets, known, bodyFacts);
+        if (value !== false && !duplicate) reachableGotoTargets(branch.body, targets, known, bodyFacts, constraints);
         if (isPureExpression(branch.expression)) seen.add(key);
         if (isPureExpression(branch.expression)) previousConditions.push(branch.expression);
         recordCondition(remainingFacts, branch.expression, false);
         if (value === true) canTryNext = false;
       }
-      if (canTryNext) reachableGotoTargets(statement.otherwise, targets, known, remainingFacts);
-    } else if (statement.kind === 'choice') statement.options.forEach((option) => reachableGotoTargets(option.body, targets, known, knownFacts));
+      if (canTryNext) reachableGotoTargets(statement.otherwise, targets, known, remainingFacts, constraints);
+    } else if (statement.kind === 'choice') statement.options.forEach((option) => reachableGotoTargets(option.body, targets, known, knownFacts, constraints));
     else if (statement.kind === 'while') {
-      if (conditionValue(statement.condition.expression, known, knownFacts) !== false) {
+      if (conditionValue(statement.condition.expression, known, knownFacts, constraints) !== false) {
         const bodyFacts = new Map(knownFacts); recordCondition(bodyFacts, statement.condition.expression, true);
-        reachableGotoTargets(statement.body, targets, known, bodyFacts);
+        reachableGotoTargets(statement.body, targets, known, bodyFacts, constraints);
       }
     } else if (statement.kind === 'for') {
-      if (forExecution(statement, known) !== 'invalid') reachableGotoTargets(statement.body, targets, known, knownFacts);
+      if (forExecution(statement, known) !== 'invalid') reachableGotoTargets(statement.body, targets, known, knownFacts, constraints);
     }
-    if (definitelyTerminates(statement, known, knownFacts)) break;
+    if (definitelyTerminates(statement, known, knownFacts, constraints)) break;
     updateKnownConstants(statement, known);
     if (invalidatesConditionFacts(statement)) knownFacts.clear();
   }
@@ -335,7 +1138,7 @@ export interface SceneReachability {
   externalGotos: Set<string>;
 }
 
-export function sceneReachability(script: Script): SceneReachability {
+export function sceneReachability(script: Script, constraints?: ReadonlyMap<string, VariableConstraint>): SceneReachability {
   const scenes = new Map(script.scenes.map((scene) => [scene.name, scene]));
   const reachableScenes = new Set<string>();
   const externalGotos = new Set<string>();
@@ -345,20 +1148,20 @@ export function sceneReachability(script: Script): SceneReachability {
     const value = constant(statement.initial, constants);
     if (value !== undefined) constants.set(statement.name, value);
   }
-  const pending = script.scenes.length && !blockTerminates(script.globals, constants) ? [script.scenes[0].name] : [];
+  const pending = script.scenes.length && !blockTerminates(script.globals, constants, new Map(), constraints) ? [script.scenes[0].name] : [];
   while (pending.length) {
     const name = pending.pop()!;
     if (reachableScenes.has(name)) continue;
     const scene = scenes.get(name);
     if (!scene) continue;
     reachableScenes.add(name);
-    for (const target of reachableGotoTargets(scene.body, new Set(), constants)) {
+    for (const target of reachableGotoTargets(scene.body, new Set(), constants, new Map(), constraints)) {
       if (scenes.has(target)) pending.push(target);
       else externalGotos.add(target);
     }
   }
   if (!script.scenes.length) {
-    for (const target of reachableGotoTargets(script.globals, new Set(), constants)) externalGotos.add(target);
+    for (const target of reachableGotoTargets(script.globals, new Set(), constants, new Map(), constraints)) externalGotos.add(target);
   }
   return { reachableScenes, externalGotos };
 }
@@ -389,28 +1192,418 @@ function analyzeExpression(expr: Expr, file: string, out: Diagnostic[], constant
   walk(expr);
 }
 
-function analyzeBlock(statements: Statement[], file: string, out: Diagnostic[], reachable = true, constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(), facts: ReadonlyMap<string, boolean> = new Map()): void {
+function constraintViolation(value: Exclude<Constant, undefined>, constraint: VariableConstraint): string | undefined {
+  if (constraint.type === 'int' && typeof value !== 'bigint') return '整数';
+  if (constraint.type === 'str' && typeof value !== 'string') return '文字列';
+  if (constraint.values && (typeof value === 'string' || typeof value === 'bigint') && !constraint.values.has(value)) return '許容値集合';
+  if (typeof value === 'bigint') {
+    if (constraint.min !== undefined && value < constraint.min) return `min=${constraint.min}`;
+    if (constraint.max !== undefined && value > constraint.max) return `max=${constraint.max}`;
+  }
+  return undefined;
+}
+
+function analyzeVariableConstraints(statements: Statement[], file: string, out: Diagnostic[], constraints: ReadonlyMap<string, VariableConstraint>): void {
+  for (const statement of statements) {
+    if (statement.kind === 'declare' || statement.kind === 'set') {
+      const name = statement.kind === 'declare' ? statement.name : statement.target.kind === 'variable' ? statement.target.name : undefined;
+      const expression = statement.kind === 'declare' ? statement.initial : statement.value;
+      const constraint = name ? constraints.get(name) : undefined;
+      const value = expression ? constant(expression) : undefined;
+      const reason = constraint && value !== undefined ? constraintViolation(value, constraint) : undefined;
+      if (reason) out.push(diagnostic(file, 'variable-constraint', 'error', `変数 '${name}' の値は変数テーブルの制約 (${reason}) を満たしません`, statement));
+    }
+    for (const body of nested(statement)) analyzeVariableConstraints(body, file, out, constraints);
+  }
+}
+
+type CharacterPlacementState = Map<string, string>;
+
+/**
+ * Track only statically known character/position pairs.  The runtime replaces
+ * an existing occupant when `show` targets the same position, so this is a
+ * warning rather than a type error.  Unknown positions and dynamic commands
+ * are deliberately ignored to avoid claiming more certainty than the script
+ * provides.
+ */
+function analyzeCharacterPlacements(statements: Statement[], file: string, out: Diagnostic[], initial = new Map<string, string>(), emitted = new Set<string>()): CharacterPlacementState[] {
+  const analyze = (items: Statement[], incoming: CharacterPlacementState): CharacterPlacementState[] => {
+    let states: CharacterPlacementState[] = [new Map(incoming)];
+    for (const statement of items) {
+      const next: CharacterPlacementState[] = [];
+      for (const state of states) {
+        const command = statement.kind === 'command' ? statement : undefined;
+        if (command?.name === 'show' && command.args[0]?.kind === 'literal' && typeof command.args[0].value === 'string'
+          && command.args[0].value !== 'image' && command.args[1]?.kind === 'literal' && typeof command.args[1].value === 'string') {
+          const match = /^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(command.args[0].value);
+          const position = command.args[1].value;
+          if (match) {
+            const previous = state.get(position);
+            const character = match[1];
+            const key = `${statement.line ?? 1}:${statement.column ?? 1}:${position}:${character}:${previous ?? ''}`;
+            if (previous && previous !== character && !emitted.has(key)) {
+              emitted.add(key);
+              out.push(diagnostic(file, 'character-slot-conflict', 'warning', `position '${position}' already contains character '${previous}'; showing '${character}' replaces it`, statement));
+            }
+            state.set(position, character);
+          }
+        } else if (command?.name === 'hide' && command.args[0]?.kind === 'literal' && typeof command.args[0].value === 'string') {
+          const character = command.args[0].value;
+          if (![...state.values()].includes(character)) {
+            const key = `${statement.line ?? 1}:${statement.column ?? 1}:${character}`;
+            if (!emitted.has(key)) {
+              emitted.add(key);
+              out.push(diagnostic(file, 'hide-unshown-character', 'warning', `character '${character}' is hidden before it is statically shown`, statement));
+            }
+          }
+          for (const [position, occupant] of state) if (occupant === character) state.delete(position);
+        }
+
+        if (statement.kind === 'if') {
+          const branchStates: CharacterPlacementState[] = [];
+          branchStates.push(...analyze(statement.body, new Map(state)));
+          for (const branch of statement.elseIf) branchStates.push(...analyze(branch.body, new Map(state)));
+          if (statement.otherwise.length) branchStates.push(...analyze(statement.otherwise, new Map(state)));
+          else branchStates.push(new Map(state));
+          next.push(...branchStates);
+        } else if (statement.kind === 'choice') {
+          if (!statement.options.length) next.push(state);
+          for (const option of statement.options) next.push(...analyze(option.body, new Map(state)));
+        } else if (statement.kind === 'while' || statement.kind === 'for') {
+          // A loop may execute zero times. Keep the incoming state and also
+          // inspect one body execution for conflicts inside the loop.
+          next.push(state, ...analyze(statement.body, new Map(state)));
+        } else if (statement.kind !== 'goto' && statement.kind !== 'return') {
+          next.push(state);
+        }
+      }
+      if (!next.length) {
+        states = [];
+        break;
+      }
+      states = next;
+      // Avoid path explosion while preserving all facts common to the paths.
+      const unique = new Map<string, CharacterPlacementState>();
+      for (const state of states) {
+        const key = [...state.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([position, character]) => `${position}=${character}`).join('|');
+        unique.set(key, state);
+      }
+      states = [...unique.values()].slice(0, 64);
+    }
+    return states;
+  };
+  return analyze(statements, initial);
+}
+
+/** Track statically known named image layers. `clear image` is a no-op when
+ * the layer has not been shown, and separate IDs in one slot remain visible
+ * together, so report both definite clears and accidental overlaps. */
+function analyzeImageLayers(statements: Statement[], file: string, out: Diagnostic[], initial = new Map<string, string>(), emitted = new Set<string>()): Map<string, string>[] {
+  const analyze = (items: Statement[], incoming: Map<string, string>): Map<string, string>[] => {
+    let states: Map<string, string>[] = [new Map(incoming)];
+    for (const statement of items) {
+      const next: Map<string, string>[] = [];
+      for (const state of states) {
+        const command = statement.kind === 'command' ? statement : undefined;
+        if (command?.name === 'show' && command.args[0]?.kind === 'literal' && command.args[0].value === 'image'
+          && command.args[1]?.kind === 'literal' && typeof command.args[1].value === 'string'
+          && command.args[2]?.kind === 'literal' && typeof command.args[2].value === 'string') {
+          const image = command.args[1].value;
+          const slot = command.args[2].value;
+          const previous = [...state.entries()].find(([, occupiedSlot]) => occupiedSlot === slot && !state.has(image));
+          const key = `${statement.line ?? 1}:${statement.column ?? 1}:${slot}:${image}:${previous?.[0] ?? ''}`;
+          if (previous && !emitted.has(key)) {
+            emitted.add(key);
+            out.push(diagnostic(file, 'image-slot-conflict', 'warning', `position '${slot}' already contains image '${previous[0]}'; showing '${image}' overlays it`, statement));
+          }
+          state.set(image, slot);
+        } else if (command?.name === 'clear' && command.args[0]?.kind === 'literal' && command.args[0].value === 'image'
+          && command.args[1]?.kind === 'literal' && typeof command.args[1].value === 'string') {
+          const image = command.args[1].value;
+          const key = `${statement.line ?? 1}:${statement.column ?? 1}:${image}`;
+          if (!state.has(image) && !emitted.has(key)) {
+            emitted.add(key);
+            out.push(diagnostic(file, 'clear-unshown-image', 'warning', `image '${image}' is cleared before it is statically shown`, statement));
+          }
+          state.delete(image);
+        }
+        if (statement.kind === 'if') {
+          const branchStates: Map<string, string>[] = [];
+          branchStates.push(...analyze(statement.body, new Map(state)));
+          for (const branch of statement.elseIf) branchStates.push(...analyze(branch.body, new Map(state)));
+          if (statement.otherwise.length) branchStates.push(...analyze(statement.otherwise, new Map(state)));
+          else branchStates.push(new Map(state));
+          next.push(...branchStates);
+        } else if (statement.kind === 'choice') {
+          if (!statement.options.length) next.push(state);
+          for (const option of statement.options) next.push(...analyze(option.body, new Map(state)));
+        } else if (statement.kind === 'while' || statement.kind === 'for') {
+          next.push(state, ...analyze(statement.body, new Map(state)));
+        } else if (statement.kind !== 'goto' && statement.kind !== 'return') {
+          next.push(state);
+        }
+      }
+      if (!next.length) {
+        states = [];
+        break;
+      }
+      const unique = new Map<string, Map<string, string>>();
+      for (const state of next) unique.set([...state.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([image, slot]) => `${image}=${slot}`).join('|'), state);
+      states = [...unique.values()].slice(0, 64);
+    }
+    return states;
+  };
+  return analyze(statements, initial);
+}
+
+/** Warn when a background or BGM is replaced without an explicit clear. */
+function analyzeAssetReplacements(
+  statements: Statement[], file: string, out: Diagnostic[], kind: 'bg' | 'bgm', code: string, label: string,
+  emitted = new Set<string>(),
+): Array<string | undefined> {
+  const analyze = (items: Statement[], incoming: string | undefined): Array<string | undefined> => {
+    let states: Array<string | undefined> = [incoming];
+    for (const statement of items) {
+      const next: Array<string | undefined> = [];
+      for (const active of states) {
+        let current = active;
+        const command = statement.kind === 'command' ? statement : undefined;
+        const asset = command?.name === kind
+          ? command.args[0]
+          : command?.name === 'play' && command.args[0]?.kind === 'literal' && command.args[0].value === kind
+            ? command.args[1]
+            : undefined;
+        const assetName = asset?.kind === 'literal' && typeof asset.value === 'string' ? asset.value : undefined;
+        if (assetName !== undefined) {
+          if (current !== undefined && current !== assetName) {
+            const key = `${statement.line ?? 1}:${statement.column ?? 1}:${kind}:${current}:${assetName}`;
+            if (!emitted.has(key)) {
+              emitted.add(key);
+              out.push(diagnostic(file, code, 'warning', `${label} '${current}' is replaced by '${assetName}' without an explicit clear`, statement));
+            }
+          }
+          current = assetName;
+        } else if (command?.name === 'clear' && command.args[0]?.kind === 'literal' && command.args[0].value === kind) {
+          current = undefined;
+        }
+        if (statement.kind === 'if') {
+          next.push(...analyze(statement.body, current));
+          for (const branch of statement.elseIf) next.push(...analyze(branch.body, current));
+          if (statement.otherwise.length) next.push(...analyze(statement.otherwise, current)); else next.push(current);
+        } else if (statement.kind === 'choice') {
+          for (const option of statement.options) next.push(...analyze(option.body, current));
+        } else if (statement.kind === 'while' || statement.kind === 'for') {
+          next.push(current, ...analyze(statement.body, current));
+        } else {
+          next.push(current);
+        }
+      }
+      states = next.length ? next.slice(0, 64) : [];
+      if (statement.kind === 'goto' || statement.kind === 'return') break;
+    }
+    return states;
+  };
+  return analyze(statements, undefined);
+}
+
+/** The Browser and Native players expose one video layer. Track that contract
+ * statically so an async video replacement is visible while editing. */
+function analyzeVideoLayerReplacements(statements: Statement[], file: string, out: Diagnostic[], emitted = new Set<string>()): boolean[] {
+  const analyze = (items: Statement[], incoming: boolean): boolean[] => {
+    let states = [incoming];
+    for (const statement of items) {
+      const next: boolean[] = [];
+      for (const active of states) {
+        let current = active;
+        const command = statement.kind === 'command' ? statement : undefined;
+        if (command?.name === 'play' && command.args[0]?.kind === 'literal' && command.args[0].value === 'video') {
+          const mode = command.args[2]?.kind === 'literal' && typeof command.args[2].value === 'string' ? command.args[2].value : 'async';
+          if (current) {
+            const key = `${statement.line ?? 1}:${statement.column ?? 1}`;
+            if (!emitted.has(key)) {
+              emitted.add(key);
+              out.push(diagnostic(file, 'video-layer-replaced', 'warning', 'an active async video is replaced because the runtime has one video layer', statement));
+            }
+          }
+          current = mode !== 'blocking';
+        }
+        if (statement.kind === 'if') {
+          const branchStates: boolean[] = [];
+          branchStates.push(...analyze(statement.body, current));
+          for (const branch of statement.elseIf) branchStates.push(...analyze(branch.body, current));
+          if (statement.otherwise.length) branchStates.push(...analyze(statement.otherwise, current));
+          else branchStates.push(current);
+          next.push(...branchStates);
+        } else if (statement.kind === 'choice') {
+          if (!statement.options.length) next.push(current);
+          for (const option of statement.options) next.push(...analyze(option.body, current));
+        } else if (statement.kind === 'while' || statement.kind === 'for') {
+          next.push(current, ...analyze(statement.body, current));
+        } else if (statement.kind !== 'goto' && statement.kind !== 'return') {
+          next.push(current);
+        }
+      }
+      if (!next.length) {
+        states = [];
+        break;
+      }
+      states = [...new Set(next)];
+    }
+    return states;
+  };
+  return analyze(statements, false);
+}
+
+/** Track whether a BGM layer exists on each static path. A clear at a merge
+ * point can be a no-op on only some paths, which is usually an unintended
+ * scene-state divergence; an initial clear (all paths false) remains valid. */
+function analyzeBgmClearDivergence(statements: Statement[], file: string, out: Diagnostic[], emitted = new Set<string>()): boolean[] {
+  const analyze = (items: Statement[], incoming: boolean): boolean[] => {
+    let states = [incoming];
+    for (const statement of items) {
+      const command = statement.kind === 'command' ? statement : undefined;
+      if (command?.name === 'clear' && command.args[0]?.kind === 'literal' && command.args[0].value === 'bgm'
+        && new Set(states).size > 1) {
+        const key = `${statement.line ?? 1}:${statement.column ?? 1}`;
+        if (!emitted.has(key)) {
+          emitted.add(key);
+          out.push(diagnostic(file, 'bgm-clear-path-dependent', 'warning', 'clear bgm is a no-op on some static paths because no BGM is active there', statement));
+        }
+      }
+      const next: boolean[] = [];
+      for (const active of states) {
+        let current = active;
+        if (command?.name === 'bgm' || (command?.name === 'play' && command.args[0]?.kind === 'literal' && command.args[0].value === 'bgm')) current = true;
+        else if (command?.name === 'clear' && command.args[0]?.kind === 'literal' && command.args[0].value === 'bgm') current = false;
+        if (statement.kind === 'if') {
+          const branchStates: boolean[] = [];
+          branchStates.push(...analyze(statement.body, current));
+          for (const branch of statement.elseIf) branchStates.push(...analyze(branch.body, current));
+          if (statement.otherwise.length) branchStates.push(...analyze(statement.otherwise, current));
+          else branchStates.push(current);
+          next.push(...branchStates);
+        } else if (statement.kind === 'choice') {
+          if (!statement.options.length) next.push(current);
+          for (const option of statement.options) next.push(...analyze(option.body, current));
+        } else if (statement.kind === 'while' || statement.kind === 'for') {
+          next.push(current, ...analyze(statement.body, current));
+        } else if (statement.kind !== 'goto' && statement.kind !== 'return') {
+          next.push(current);
+        }
+      }
+      if (!next.length) {
+        states = [];
+        break;
+      }
+      states = [...new Set(next)];
+    }
+    return states;
+  };
+  return analyze(statements, false);
+}
+
+/** Background is also a single presentation layer. Keep initial clears
+ * harmless, but report a clear whose effect depends on the selected path. */
+function analyzeBackgroundClearDivergence(statements: Statement[], file: string, out: Diagnostic[], emitted = new Set<string>()): boolean[] {
+  const analyze = (items: Statement[], incoming: boolean): boolean[] => {
+    let states = [incoming];
+    for (const statement of items) {
+      const command = statement.kind === 'command' ? statement : undefined;
+      if (command?.name === 'clear' && command.args[0]?.kind === 'literal' && command.args[0].value === 'bg'
+        && new Set(states).size > 1) {
+        const key = `${statement.line ?? 1}:${statement.column ?? 1}`;
+        if (!emitted.has(key)) {
+          emitted.add(key);
+          out.push(diagnostic(file, 'background-clear-path-dependent', 'warning', 'clear bg is a no-op on some static paths because no background is active there', statement));
+        }
+      }
+      const next: boolean[] = [];
+      for (const active of states) {
+        let current = active;
+        if (command?.name === 'bg') current = true;
+        else if (command?.name === 'clear' && command.args[0]?.kind === 'literal' && command.args[0].value === 'bg') current = false;
+        if (statement.kind === 'if') {
+          const branchStates: boolean[] = [];
+          branchStates.push(...analyze(statement.body, current));
+          for (const branch of statement.elseIf) branchStates.push(...analyze(branch.body, current));
+          if (statement.otherwise.length) branchStates.push(...analyze(statement.otherwise, current));
+          else branchStates.push(current);
+          next.push(...branchStates);
+        } else if (statement.kind === 'choice') {
+          if (!statement.options.length) next.push(current);
+          for (const option of statement.options) next.push(...analyze(option.body, current));
+        } else if (statement.kind === 'while' || statement.kind === 'for') {
+          next.push(current, ...analyze(statement.body, current));
+        } else if (statement.kind !== 'goto' && statement.kind !== 'return') {
+          next.push(current);
+        }
+      }
+      if (!next.length) {
+        states = [];
+        break;
+      }
+      states = [...new Set(next)];
+    }
+    return states;
+  };
+  return analyze(statements, false);
+}
+
+function analyzeBlock(statements: Statement[], file: string, out: Diagnostic[], reachable = true, constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(), facts: ReadonlyMap<string, boolean> = new Map(), constraints?: ReadonlyMap<string, VariableConstraint>): void {
   let canReach = reachable;
   const known = new Map(constants);
   const knownFacts = new Map(facts);
+  const activeConstraints = constraints ? new Map(constraints) : undefined;
   for (const statement of statements) {
     if (!canReach) {
       out.push(diagnostic(file, 'unreachable-code', 'warning', 'この文には到達できません', statement));
-      for (const body of nested(statement)) analyzeBlock(body, file, out, false, known, knownFacts);
+      for (const body of nested(statement)) analyzeBlock(body, file, out, false, known, knownFacts, activeConstraints);
       continue;
     }
     statementExpressions(statement).forEach((expr) => analyzeExpression(expr, file, out, known));
+    statementExpressions(statement).forEach((expression) => invalidateConstraintCallsInExecution(expression, known, knownFacts, activeConstraints));
+    if (statement.kind === 'call') invalidateConstraintCalls([], activeConstraints, [statement.name]);
 
+    if (statement.kind === 'set' && statement.target.kind === 'variable' && activeConstraints?.get(statement.target.name)?.type === 'int' && constant(statement.value, known) === undefined) {
+      const constraint = activeConstraints.get(statement.target.name)!;
+      const bounds = integerBounds(statement.value, known, activeConstraints);
+      if (bounds && (constraint.min !== undefined || constraint.max !== undefined)) {
+        const definitelyOutside = constraint.min !== undefined && bounds.max < constraint.min || constraint.max !== undefined && bounds.min > constraint.max;
+        const mayEscape = constraint.min !== undefined && bounds.min < constraint.min || constraint.max !== undefined && bounds.max > constraint.max;
+        if (definitelyOutside) out.push(diagnostic(file, 'variable-constraint', 'error', `変数 '${statement.target.name}' への代入値の範囲が変数テーブルの制約外です`, statement));
+        else if (mayEscape) out.push(diagnostic(file, 'variable-constraint', 'warning', `変数 '${statement.target.name}' への代入値が変数テーブルの範囲を外れる可能性があります`, statement));
+      }
+    }
+
+    if (statement.kind === 'choice') {
+      const labels = new Set<string>();
+      for (const option of statement.options) {
+        const value = constant(option.label, known);
+        const key = value !== undefined ? `${typeof value}:${String(value)}` : isPureExpression(option.label) ? expressionKey(option.label) : undefined;
+        if (key && labels.has(key)) out.push(diagnostic(file, 'duplicate-choice-label', 'warning', '選択肢のラベルが重複しているため、利用者が区別できません', option.label));
+        if (key) labels.add(key);
+      }
+    }
     if (statement.kind === 'set' && statement.target.kind === 'variable' && statement.value.kind === 'variable' && statement.target.name === statement.value.name) {
       out.push(diagnostic(file, 'self-assignment', 'warning', `変数 '${statement.target.name}' を同じ値で上書きしています`, statement));
     }
     if (statement.kind === 'if') {
+      const finiteCoverage = finiteBranchCoverage(statement, activeConstraints);
+      const rangeCoverage = integerRangeCoverage(statement, activeConstraints);
+      const incompleteFinite = finiteCoverage && !statement.otherwise.length && [...finiteCoverage.allowed].some((value) => !finiteCoverage.covered.has(value));
+      const incompleteRange = rangeCoverage && !statement.otherwise.length && !rangeCoverage.exhaustive;
+      if (incompleteFinite || incompleteRange) {
+        const name = finiteCoverage?.name || rangeCoverage?.name || '変数';
+        out.push(diagnostic(file, 'non-exhaustive-condition', 'warning', `変数 '${name}' の取り得る値をすべて処理していないため、未処理の値が残ります`, statement.condition));
+      }
       const branches = [{ expression: statement.condition.expression, body: statement.body }, ...statement.elseIf.map((branch) => ({ expression: branch.condition.expression, body: branch.body }))];
       const seen = new Set<string>(), previousConditions: Expr[] = [], remainingFacts = new Map(knownFacts);
+      let remainingConstraints: ReadonlyMap<string, VariableConstraint> | undefined = activeConstraints;
+      const branchConstraintPaths: Array<ReadonlyMap<string, VariableConstraint> | undefined> = [];
       let previousAlways = false;
       for (const branch of branches) {
         const key = expressionKey(branch.expression);
-        const value = conditionValue(branch.expression, known, remainingFacts);
+        const value = conditionValue(branch.expression, known, remainingFacts, remainingConstraints);
         const exactDuplicate = isPureExpression(branch.expression) && seen.has(key);
         const subsumed = isPureExpression(branch.expression) && previousConditions.some((previous) => conditionImplies(branch.expression, previous, known));
         const duplicate = exactDuplicate || subsumed;
@@ -420,31 +1613,84 @@ function analyzeBlock(statements: Statement[], file: string, out: Diagnostic[], 
         else if (value === false) out.push(diagnostic(file, 'constant-condition', 'warning', '条件は常に偽です。この分岐には到達できません', branch.expression));
         else if (value === true) out.push(diagnostic(file, 'constant-condition', 'info', '条件は常に真です。後続の分岐は実行されません', branch.expression));
         const bodyFacts = new Map(remainingFacts); recordCondition(bodyFacts, branch.expression, true);
-        analyzeBlock(branch.body, file, out, canReach && !previousAlways && value !== false && !duplicate, known, bodyFacts);
+        const branchConstraints = refineConstraints(remainingConstraints, branch.expression, true) || remainingConstraints;
+        // Branch bodies execute on separate paths.  Do not let a constant
+        // learned in one branch leak into a sibling elif/else condition.
+        analyzeBlock(branch.body, file, out, canReach && !previousAlways && value !== false && !duplicate, new Map(known), bodyFacts, branchConstraints);
+        if (!previousAlways && value !== false && !duplicate) branchConstraintPaths.push(branchConstraints);
         if (isPureExpression(branch.expression)) seen.add(key);
         if (isPureExpression(branch.expression)) previousConditions.push(branch.expression);
         recordCondition(remainingFacts, branch.expression, false);
+        remainingConstraints = refineConstraints(remainingConstraints, branch.expression, false);
         if (value === true) previousAlways = true;
       }
-      if (statement.otherwise.length) analyzeBlock(statement.otherwise, file, out, canReach && !previousAlways, known, remainingFacts);
+      if (statement.otherwise.length) analyzeBlock(statement.otherwise, file, out, canReach && !previousAlways, new Map(known), remainingFacts, remainingConstraints);
+      if (!previousAlways) branchConstraintPaths.push(remainingConstraints);
+      const mergedConstraints = mergeConstraints(branchConstraintPaths);
+      if (activeConstraints && mergedConstraints) {
+        const entries = [...mergedConstraints.entries()];
+        activeConstraints.clear();
+        entries.forEach(([name, constraint]) => activeConstraints.set(name, constraint));
+      }
       if (previousAlways && statement.otherwise.length) out.push(diagnostic(file, 'unreachable-branch', 'warning', '前の条件が常に真なので、else には到達できません', statement.otherwise[0]));
+    } else if (statement.kind === 'choice') {
+      // Each choice option is a separate runtime path.  Keep option-local
+      // constants, facts, and constraints isolated from sibling options.
+      for (const option of statement.options) {
+        analyzeBlock(
+          option.body,
+          file,
+          out,
+          canReach,
+          new Map(known),
+          new Map(knownFacts),
+          activeConstraints ? new Map(activeConstraints) : undefined,
+        );
+      }
     } else if (statement.kind === 'while') {
-      const value = conditionValue(statement.condition.expression, known, knownFacts);
+      const value = conditionValue(statement.condition.expression, known, knownFacts, activeConstraints);
       if (value === false) out.push(diagnostic(file, 'constant-condition', 'warning', 'while の条件は常に偽です。ループ本体には到達できません', statement.condition));
       const stable = loopConstants(statement, known);
       const bodyFacts = new Map<string, boolean>(); recordCondition(bodyFacts, statement.condition.expression, true);
-      if (conditionValue(statement.condition.expression, stable, new Map()) === true && !blockTerminates(statement.body, stable, bodyFacts)) out.push(diagnostic(file, 'infinite-loop', 'warning', 'while の条件は常に真で、ループ本体は後続へ進みません', statement.condition));
-      analyzeBlock(statement.body, file, out, canReach && value !== false, stable, bodyFacts);
+      const stableCondition = conditionValue(statement.condition.expression, stable, new Map(), activeConstraints);
+      if (stableCondition === true && !blockTerminates(statement.body, stable, bodyFacts, constraints)) out.push(diagnostic(file, 'infinite-loop', 'warning', 'while の条件は常に真で、ループ本体は後続へ進みません', statement.condition));
+      if (whileUpdateOverflows(statement, known)) {
+        out.push(diagnostic(file, 'integer-overflow', 'error', 'while ループの更新で64bit整数オーバーフローが発生します', statement.body[0]));
+      }
+      const iterations = whileIterationCount(statement, known);
+      const iterationUpperBound = iterations === undefined ? whileIterationUpperBound(statement, known, activeConstraints) : undefined;
+      if (iterations === 'non-terminating' || (typeof iterations === 'bigint' && iterations > 100000n) || iterationUpperBound === 'non-terminating' || (typeof iterationUpperBound === 'bigint' && iterationUpperBound > 100000n)) {
+        out.push(diagnostic(file, 'loop-limit', 'warning', 'この while ループは実行時の最大反復回数 100,000 回を超過します', statement));
+      }
+      // A while body may execute zero times, so body-local narrowing must not
+      // leak into the post-loop path.
+      analyzeBlock(statement.body, file, out, canReach && value !== false, stable, bodyFacts, activeConstraints ? new Map(activeConstraints) : undefined);
+      if (canReach && value === true && !blockTerminates(statement.body, stable, bodyFacts, activeConstraints)) canReach = false;
     } else if (statement.kind === 'for') {
       const execution = forExecution(statement, known);
       if (execution === 'invalid') {
         out.push(diagnostic(file, 'invalid-for-step', 'error', 'この for ループの step では開始値から終了値へ進めません', statement));
       }
-      analyzeBlock(statement.body, file, out, canReach && execution !== 'invalid', loopConstants(statement, known), new Map());
+      const iterations = forIterationCount(statement, known);
+      const iterationUpperBound = forIterationUpperBound(statement, known, activeConstraints);
+      if ((iterations !== undefined && iterations > 100000n) || (iterations === undefined && iterationUpperBound !== undefined && iterationUpperBound > 100000n)) {
+        out.push(diagnostic(file, 'loop-limit', 'warning', 'この for ループは実行時の最大反復回数 100,000 回を超過します', statement));
+      }
+      if (forFirstIterationOverflows(statement, known) || forRepeatedUpdateOverflows(statement, known)) {
+        out.push(diagnostic(file, 'integer-overflow', 'error', 'for ループの更新で64bit整数オーバーフローが発生します', statement.body[0]));
+      }
+      const constrainedOverflow = forConstraintUpdateOverflow(statement, known, activeConstraints);
+      if (constrainedOverflow) {
+        out.push(diagnostic(file, 'integer-overflow', constrainedOverflow, constrainedOverflow === 'error'
+          ? 'for ループの値域付き更新で64bit整数オーバーフローが発生します'
+          : 'for ループの値域付き更新で64bit整数オーバーフローの可能性があります', statement.body[0]));
+      }
+      analyzeBlock(statement.body, file, out, canReach && execution !== 'invalid', loopConstants(statement, known), new Map(), forBodyConstraints(statement, known, activeConstraints));
     } else {
-      for (const body of nested(statement)) analyzeBlock(body, file, out, canReach, known, knownFacts);
+      for (const body of nested(statement)) analyzeBlock(body, file, out, canReach, known, knownFacts, activeConstraints);
     }
-    if (canReach && definitelyTerminates(statement, known, knownFacts)) canReach = false;
+    if (canReach && definitelyTerminates(statement, known, knownFacts, activeConstraints)) canReach = false;
+    invalidateConstraintState(statement, activeConstraints);
     updateKnownConstants(statement, known);
     if (invalidatesConditionFacts(statement)) knownFacts.clear();
   }
@@ -460,7 +1706,7 @@ function analyzeUnused(fn: FunctionDef, file: string, out: Diagnostic[]): void {
       for (const expr of statementExpressions(statement)) visitExpressions(expr, (current) => {
         if (current.kind === 'variable' && !(statement.kind === 'set' && statement.target === current)) used.add(current.name);
         if (current.kind === 'literal' && typeof current.value === 'string') {
-          for (const match of current.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) used.add(match[1]);
+          for (const match of current.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\}/g)) used.add(match[1].split('.')[0]);
         }
       });
       nested(statement).forEach(walk);
@@ -485,21 +1731,54 @@ export function analyzeScript(script: Script, file = 'current', externalGlobals 
   } catch (error) {
     out.push(errorDiagnostic(error, file));
   }
-  analyzeBlock(script.globals, file, out, true, constants);
+  const constraints = (externalGlobals as Map<string, ValueType> & { constraints?: ReadonlyMap<string, VariableConstraint> }).constraints;
+  const globalNames = new Set<string>([...externalGlobals.keys(), ...externalCharacters.keys(), ...script.globals.filter((statement) => statement.kind === 'declare').map((statement) => statement.name)]);
+  activeFunctionEffects = functionEffects(script.functions, globalNames);
+  if (constraints) {
+    analyzeVariableConstraints(script.globals, file, out, constraints);
+    script.functions.forEach((fn) => analyzeVariableConstraints(fn.body, file, out, constraints));
+    script.scenes.forEach((scene) => analyzeVariableConstraints(scene.body, file, out, constraints));
+  }
+  analyzeCharacterPlacements(script.globals, file, out);
+  script.functions.forEach((fn) => analyzeCharacterPlacements(fn.body, file, out));
+  script.scenes.forEach((scene) => analyzeCharacterPlacements(scene.body, file, out));
+  analyzeImageLayers(script.globals, file, out);
+  script.functions.forEach((fn) => analyzeImageLayers(fn.body, file, out));
+  script.scenes.forEach((scene) => analyzeImageLayers(scene.body, file, out));
+  analyzeVideoLayerReplacements(script.globals, file, out);
+  script.functions.forEach((fn) => analyzeVideoLayerReplacements(fn.body, file, out));
+  script.scenes.forEach((scene) => analyzeVideoLayerReplacements(scene.body, file, out));
+    analyzeAssetReplacements(script.globals, file, out, 'bg', 'background-replacement', 'background');
+    analyzeAssetReplacements(script.globals, file, out, 'bgm', 'bgm-replacement', 'BGM');
+    script.functions.forEach((fn) => {
+      analyzeAssetReplacements(fn.body, file, out, 'bg', 'background-replacement', 'background');
+      analyzeAssetReplacements(fn.body, file, out, 'bgm', 'bgm-replacement', 'BGM');
+    });
+    script.scenes.forEach((scene) => {
+      analyzeAssetReplacements(scene.body, file, out, 'bg', 'background-replacement', 'background');
+      analyzeAssetReplacements(scene.body, file, out, 'bgm', 'bgm-replacement', 'BGM');
+    });
+  analyzeBgmClearDivergence(script.globals, file, out);
+  script.functions.forEach((fn) => analyzeBgmClearDivergence(fn.body, file, out));
+  script.scenes.forEach((scene) => analyzeBgmClearDivergence(scene.body, file, out));
+  analyzeBackgroundClearDivergence(script.globals, file, out);
+  script.functions.forEach((fn) => analyzeBackgroundClearDivergence(fn.body, file, out));
+  script.scenes.forEach((scene) => analyzeBackgroundClearDivergence(scene.body, file, out));
+  analyzeBlock(script.globals, file, out, true, constants, new Map(), constraints);
   for (const fn of script.functions) {
     const functionConstants = new Map(constants);
     fn.params.forEach((param) => functionConstants.delete(param.name));
-    analyzeBlock(fn.body, file, out, true, functionConstants);
+    analyzeBlock(fn.body, file, out, true, functionConstants, new Map(), constraints);
     analyzeUnused(fn, file, out);
-    if (fn.returnType !== 'none' && !blockTerminates(fn.body, functionConstants)) {
+    if (fn.returnType !== 'none' && !blockTerminates(fn.body, functionConstants, new Map(), constraints)) {
       out.push(diagnostic(file, 'missing-return', 'error', `関数 '${fn.name}' はすべての経路で値を返していません`, fn));
     }
   }
-  const { reachableScenes } = sceneReachability(script);
+  const { reachableScenes } = sceneReachability(script, constraints);
   script.scenes.forEach((scene) => {
     const reachable = reachableScenes.has(scene.name);
     if (!reachable) out.push(diagnostic(file, 'unreachable-scene', 'warning', `シーン '${scene.name}' には到達できません`, scene));
-    analyzeBlock(scene.body, file, out, reachable, constants);
+    analyzeBlock(scene.body, file, out, reachable, constants, new Map(), constraints);
   });
   return out.sort((a, b) => a.line - b.line || a.column - b.column || ({ error: 0, warning: 1, info: 2 }[a.severity] - { error: 0, warning: 1, info: 2 }[b.severity]));
 }

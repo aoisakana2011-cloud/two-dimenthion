@@ -44,3 +44,17 @@
   .workbench:has(.details.is-hidden) { grid-template-columns:42px 205px minmax(0,1fr)!important; }
   .activity a,.activity span { width:42px; }
 }
+#graph { cursor: grab; touch-action: none; user-select: none; scrollbar-width: none; }
+#graph::-webkit-scrollbar { display: none; }
+#graph.panning { cursor: grabbing; }
+.flow-folder { cursor: grab; touch-action: none; }
+.flow-folder:active { cursor: grabbing; }
+.flow-node { cursor: pointer; }
+.flow-filters { display:grid; gap:7px; margin:10px 0 4px; padding:9px; border:1px solid var(--line); border-radius:4px; color:#aaa; font-size:10px; }
+.flow-filters input[type="search"] { width:100%; margin-top:5px; padding:5px 6px; border:1px solid #3c3c3c; border-radius:2px; color:#ddd; background:#202020; font:11px Consolas,monospace; }
+.flow-check { display:flex; align-items:center; gap:5px; }
+.flow-node.warning rect { stroke:#b79a55; stroke-dasharray:3 2; }
+.flow-edge.include-edge { stroke:#b79a55; stroke-dasharray:3 3; }
+.flow-diagnostic { margin:3px 0; padding:5px 6px; border-left:2px solid #b79a55; color:#d7bd7b; background:#2b281f; font:10px/1.45 Consolas,monospace; overflow-wrap:anywhere; cursor:pointer; }
+.flow-diagnostic.error { border-left-color:#f48771; color:#ffc8c8; background:#382329; }
+.detail-meta { margin-top:8px; color:#8799aa; font:10px Consolas,monospace; }

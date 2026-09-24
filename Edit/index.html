@@ -15,10 +15,10 @@
           <div class="brand-mark">.tds</div>
           <nav class="menu-bar" aria-label="メインメニュー">
             <div class="menu-item"><button type="button" data-menu="file" aria-haspopup="menu" aria-expanded="false">ファイル</button><div class="menu-popup" data-menu-popup="file" role="menu" hidden><button role="menuitem" data-menu-action="new-project">新しい作品…</button><button role="menuitem" data-menu-action="open-project">作品を開く…</button><button role="menuitem" data-menu-action="project-settings">作品設定…</button><span class="menu-separator"></span><button role="menuitem" data-menu-action="save">すべて保存 <kbd>Ctrl+S</kbd></button></div></div>
-            <div class="menu-item"><button type="button" data-menu="edit" aria-haspopup="menu" aria-expanded="false">編集</button><div class="menu-popup" data-menu-popup="edit" role="menu" hidden><button role="menuitem" data-menu-action="undo">元に戻す <kbd>Ctrl+Z</kbd></button><button role="menuitem" data-menu-action="redo">やり直す <kbd>Ctrl+Y</kbd></button></div></div>
+            <div class="menu-item"><button type="button" data-menu="edit" aria-haspopup="menu" aria-expanded="false">編集</button><div class="menu-popup" data-menu-popup="edit" role="menu" hidden><button role="menuitem" data-menu-action="undo">元に戻す <kbd>Ctrl+Z</kbd></button><button role="menuitem" data-menu-action="redo">やり直す <kbd>Ctrl+Y</kbd></button><span class="menu-separator"></span><button role="menuitem" data-menu-action="format">整形 <kbd>Ctrl+Shift+F</kbd></button><button role="menuitem" data-menu-action="format-project">全シーンを整形</button></div></div>
             <div class="menu-item"><button type="button" data-menu="selection" aria-haspopup="menu" aria-expanded="false">選択</button><div class="menu-popup" data-menu-popup="selection" role="menu" hidden><button role="menuitem" data-menu-action="select-all">すべて選択 <kbd>Ctrl+A</kbd></button><button role="menuitem" data-menu-action="select-line">現在の行を選択</button></div></div>
             <div class="menu-item"><button type="button" data-menu="view" aria-haspopup="menu" aria-expanded="false">表示</button><div class="menu-popup" data-menu-popup="view" role="menu" hidden><button role="menuitem" data-menu-action="toggle-sidebar">エクスプローラーを切り替え</button><button role="menuitem" data-menu-action="toggle-minimap">ミニマップを切り替え</button><span class="menu-separator"></span><button role="menuitem" data-menu-action="scene-flow">シーンフロー</button></div></div>
-            <div class="menu-item"><button type="button" data-menu="run" aria-haspopup="menu" aria-expanded="false">実行</button><div class="menu-popup" data-menu-popup="run" role="menu" hidden><button role="menuitem" data-menu-action="compile">コンパイル</button><button role="menuitem" data-menu-action="play">再生</button></div></div>
+            <div class="menu-item"><button type="button" data-menu="run" aria-haspopup="menu" aria-expanded="false">実行</button><div class="menu-popup" data-menu-popup="run" role="menu" hidden><button role="menuitem" data-menu-action="compile">コンパイル</button><button role="menuitem" data-menu-action="native-build">ネイティブビルド</button><button role="menuitem" data-menu-action="native-test">ビルドして全テスト</button><button role="menuitem" data-menu-action="play">再生</button></div></div>
             <div class="menu-item"><button type="button" data-menu="help" aria-haspopup="menu" aria-expanded="false">ヘルプ</button><div class="menu-popup help-popup" data-menu-popup="help" role="menu" hidden><button role="menuitem" data-menu-action="syntax">構文ガイド</button></div></div>
           </nav>
         </div>
@@ -73,7 +73,7 @@
             <div id="editor-tabs" class="editor-tabs" role="tablist" aria-label="開いているファイル"></div>
           </div>
           <div class="document-bar">
-            <div class="document-title"><span class="file-icon">▤</span><label class="sr-only" for="scene-name">ファイル名</label><input id="scene-name" value="chapter1.novel" autocomplete="off" spellcheck="false"><span class="dirty-mark" title="未保存"></span></div>
+            <div class="document-title"><span class="file-icon">▤</span><label class="sr-only" for="scene-name">ファイル名</label><input id="scene-name" value="" autocomplete="off" spellcheck="false"><span class="dirty-mark" title="未保存"></span></div>
 
           </div>
           <div class="editor-meta"><span>SCENE SCRIPT</span><span class="meta-separator">/</span><span>UTF-8</span><span class="meta-spacer"></span><span>直接入力モード</span></div>
@@ -121,6 +121,6 @@
         </div>
       </div>
     </div>
-    <style>.scenes-section>.section-heading{display:none}.project-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.project-heading .flow-link{margin-left:0}</style><script src="/editor.js"></script>
+    <style>.scenes-section>.section-heading{display:none}.project-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.project-heading .flow-link{margin-left:0}</style><script src="/shared/formatter.js"></script><script src="/editor.js"></script>
   </body>
 </html>

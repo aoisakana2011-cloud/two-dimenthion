@@ -4,7 +4,7 @@ const path = require('node:path');
 const { compileProject, sceneFile, inside, assetPaths, gotos } = require('./project');
 const { parse } = require('../dist');
 const { inferValueType } = require('../dist/checker/type-checker');
-const { projectLayout, projectOption, layoutForInput, entryFile, positionalArguments } = require('./project-layout');
+const { projectLayout, projectOption, layoutForInput, entryFile, positionalArguments, assertProjectDirectory, ensureProjectDirectory } = require('./project-layout');
 const { readStaticVariables } = require('./static-variables');
 
 async function projectGlobalVariables(scenesRoot, dataRoot) {
@@ -14,6 +14,7 @@ async function projectGlobalVariables(scenesRoot, dataRoot) {
   for (const [name, type] of staticVariables.table) table.set(name, type);
   for (const name of staticVariables.table.readonlyNames) table.readonlyNames.add(name);
   table.staticDeclarations = staticVariables.declarations;
+  table.constraints = new Map(staticVariables.table.constraints || []);
   const owners = new Map();
   for (const name of staticVariables.table.keys()) owners.set(name, '.novel/variables.json');
   const characterOwners = new Map();
@@ -24,9 +25,10 @@ async function projectGlobalVariables(scenesRoot, dataRoot) {
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
       const file = path.join(directory, entry.name);
       if (entry.isDirectory()) await visit(file);
-      else if (/\.(tds|txt)$/i.test(entry.name) && entry.name.toLowerCase() !== 'config.txt') {
-        const script = parse(await fs.readFile(file, 'utf8'));
+      else if (entry.isFile() && /\.(tds|txt)$/i.test(entry.name) && entry.name.toLowerCase() !== 'config.txt') {
         const relative = path.relative(scenesRoot, file).replaceAll('\\', '/');
+        const safeFile = await inside(scenesRoot, relative);
+        const script = parse(await fs.readFile(safeFile, 'utf8'));
         scripts.push({ script, file: relative });
         declarationsByFile.set(relative, new Set(script.globals.filter(statement => statement.kind === 'declare').map(statement => statement.name)));
         for (const character of script.characters) {
@@ -77,6 +79,10 @@ async function pack(input, output, roots = {}) {
   const scenesRoot = roots.scenesRoot || layout.scenesRoot;
   const assetsRoot = roots.assetsRoot || layout.assetsRoot;
   const dataRoot = roots.dataRoot || layout?.dataRoot || path.join(path.dirname(scenesRoot), '.novel');
+  if (layout) {
+    assertProjectDirectory(layout.projectRoot, scenesRoot, 'scenario_dir');
+    assertProjectDirectory(layout.projectRoot, assetsRoot, 'asset_dir');
+  }
   const { table: globalVariables, declarationsByFile, scripts, characters, characterOwners } = await projectGlobalVariables(scenesRoot, dataRoot);
   const files = Object.create(null);
   const entry = path.relative(scenesRoot, path.resolve(input)).replaceAll('\\', '/');
@@ -90,6 +96,7 @@ async function pack(input, output, roots = {}) {
     const visibleGlobals = new Map(globalVariables);
     visibleGlobals.readonlyNames = globalVariables.readonlyNames;
     visibleGlobals.staticDeclarations = globalVariables.staticDeclarations;
+    visibleGlobals.constraints = globalVariables.constraints;
     for (const name of declarationsByFile.get(file) || []) visibleGlobals.delete(name);
     const visibleCharacters = new Map(characters);
     for (const [name, owner] of characterOwners) if (owner === file) visibleCharacters.delete(name);
@@ -104,16 +111,55 @@ async function pack(input, output, roots = {}) {
   const entryGlobals = new Map(globalVariables);
   entryGlobals.readonlyNames = globalVariables.readonlyNames;
   entryGlobals.staticDeclarations = globalVariables.staticDeclarations;
+  entryGlobals.constraints = globalVariables.constraints;
   for (const name of declarationsByFile.get(entry) || []) entryGlobals.delete(name);
   const entryCharacters = new Map(characters);
   for (const [name, owner] of characterOwners) if (owner === entry) entryCharacters.delete(name);
   const program = await compileProject(await fs.readFile(await inside(scenesRoot, entry), 'utf8'), assetsRoot, scenesRoot, entryGlobals, entryCharacters);
   const destination = path.resolve(output);
+  if (layout) {
+    const relativeParent = path.relative(layout.projectRoot, path.dirname(destination));
+    if (!path.isAbsolute(relativeParent) && relativeParent !== '..' && !relativeParent.startsWith('..' + path.sep)) {
+      ensureProjectDirectory(layout.projectRoot, path.dirname(destination), '.novel/build');
+    }
+  }
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  const outputRoot = await fs.realpath(path.dirname(destination));
+  const ensureOutputDirectory = async (directory) => {
+    const lexical = path.resolve(directory);
+    const relative = path.relative(path.dirname(destination), lexical);
+    if (path.isAbsolute(relative) || relative === '..' || relative.startsWith('..' + path.sep)) throw Error('Package output escaped its directory');
+    let probe = lexical;
+    while (true) {
+      try {
+        const resolved = await fs.realpath(probe);
+        const fromRoot = path.relative(outputRoot, resolved);
+        if (path.isAbsolute(fromRoot) || fromRoot === '..' || fromRoot.startsWith('..' + path.sep)) throw Error('Package output escaped its directory');
+        break;
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        const parent = path.dirname(probe);
+        if (parent === probe) throw error;
+        probe = parent;
+      }
+    }
+    await fs.mkdir(lexical, { recursive: true });
+    const resolved = await fs.realpath(lexical);
+    const fromRoot = path.relative(outputRoot, resolved);
+    if (path.isAbsolute(fromRoot) || fromRoot === '..' || fromRoot.startsWith('..' + path.sep)) throw Error('Package output escaped its directory');
+  };
+  const assertOutputFile = async (target) => {
+    try {
+      const info = await fs.lstat(target);
+      if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1) throw Error('Package output must be a regular, unlinked file');
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  };
   for (const asset of new Set(Object.values(files).flatMap(assetPaths))) {
     const relative = asset.replace(/^assets?[\\/]/, '').replaceAll('\\', '/');
     const source = await inside(assetsRoot, relative);
     const target = path.resolve(path.dirname(destination), 'asset', relative);
-    await fs.mkdir(path.dirname(target), { recursive: true });
+    await ensureOutputDirectory(path.dirname(target));
+    await assertOutputFile(target);
     if (path.resolve(source) !== target) await fs.copyFile(source, target);
   }
   const nativeUi = layout?.settings.native_ui_theme ? { native_ui_theme: layout.settings.native_ui_theme } : {};
@@ -121,22 +167,24 @@ async function pack(input, output, roots = {}) {
     const themePath = nativeUi.native_ui_theme;
     const themeSource = await inside(assetsRoot, themePath);
     const themeTarget = path.resolve(path.dirname(destination), 'asset', themePath);
-    await fs.mkdir(path.dirname(themeTarget), { recursive: true });
+    await ensureOutputDirectory(path.dirname(themeTarget));
+    await assertOutputFile(themeTarget);
     if (path.resolve(themeSource) !== themeTarget) await fs.copyFile(themeSource, themeTarget);
     const theme = JSON.parse(await fs.readFile(await inside(assetsRoot, themePath), 'utf8'));
     if (theme.version !== 1) throw Error('Unsupported native UI theme version');
     const themeDirectory = path.posix.dirname(themePath.replaceAll('\\', '/'));
-    const imageNames = [theme?.dialog?.image, theme?.dialog?.nameplate?.image, theme?.choices?.image, theme?.choices?.activeImage].filter((value) => typeof value === 'string');
+    const imageNames = [theme?.dialog?.image, theme?.dialog?.nameplate?.image, theme?.choices?.image, theme?.choices?.activeImage].filter((value) => typeof value === 'string' && value.length > 0);
     for (const imageName of imageNames) {
       const relative = path.posix.join(themeDirectory, imageName);
       const source = await inside(assetsRoot, relative);
       const target = path.resolve(path.dirname(destination), 'asset', relative);
-      await fs.mkdir(path.dirname(target), { recursive: true });
+      await ensureOutputDirectory(path.dirname(target));
+      await assertOutputFile(target);
       if (path.resolve(source) !== target) await fs.copyFile(source, target);
     }
   }
   const data = { format: 'novel-script-package', version: 1, source: entry, program, files, native_ui: nativeUi };
-  await fs.mkdir(path.dirname(destination), { recursive: true });
+  await assertOutputFile(destination);
   await fs.writeFile(destination, JSON.stringify(data, null, 2) + '\n', 'utf8');
   return data;
 }

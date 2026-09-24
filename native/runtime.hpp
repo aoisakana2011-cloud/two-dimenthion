@@ -76,7 +76,7 @@ public:
         for (size_t n = locals.size(); n > 0; --n) if (locals[n - 1].contains(name)) { if (readonlyLocals[n - 1].contains(name)) throw std::runtime_error("const variable cannot be changed: " + name); return; }
         if (readonlyGlobals.contains(name)) throw std::runtime_error("const variable cannot be changed: " + name);
     }
-    std::string interpolate(const json& v) const {
+    std::string interpolate(const json& v) {
         const auto s = text(v); std::regex pattern(R"(\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\})");
         std::string out; size_t offset = 0;
         for (auto it = std::sregex_iterator(s.begin(), s.end(), pattern); it != std::sregex_iterator(); ++it) {
@@ -89,7 +89,15 @@ public:
             }
             out += s.substr(offset, it->position() - offset) + text(replacement); offset = it->position() + it->length();
         }
-        return out + s.substr(offset);
+        const auto expanded = out + s.substr(offset);
+        const std::regex calls(R"(\{([A-Za-z_][A-Za-z0-9_]*)\(\)\})");
+        std::string result; offset = 0;
+        for (auto it = std::sregex_iterator(expanded.begin(), expanded.end(), calls); it != std::sregex_iterator(); ++it) {
+            result += expanded.substr(offset, it->position() - offset);
+            result += text(call((*it)[1].str(), json::array()));
+            offset = it->position() + it->length();
+        }
+        return result + expanded.substr(offset);
     }
     json value(const json& e) {
         if (e.is_null()) return nullptr;
@@ -176,13 +184,15 @@ public:
                 if (c.value("constant", false)) { if (frameIndex < locals.size()) readonlyLocals[frameIndex].insert(name); else readonlyGlobals.insert(name); }
             } else if (op == "set" || op == "unset") {
                 auto t = c.at("target");
-                assertMutable(t);
                 if (t.at("kind") == "load") {
                     if (op == "unset") throw std::runtime_error("unset requires a dictionary element");
-                    set(t.at("name"), value(c.at("value")));
+                    auto assigned = value(c.at("value"));
+                    assertMutable(t);
+                    set(t.at("name"), assigned);
                 } else {
                     auto name = t.at("target").at("name").get<std::string>();
                     auto assigned = op == "set" ? value(c.at("value")) : json();
+                    assertMutable(t);
                     auto key = value(t.at("key")).get<std::string>(); auto d = get(name);
                     if (op == "set") d[key] = assigned;
                     else { if (!d.contains(key)) throw std::runtime_error("Missing dictionary key: " + key); d.erase(key); }

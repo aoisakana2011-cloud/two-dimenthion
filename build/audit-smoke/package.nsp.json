@@ -79,10 +79,19 @@
       },
       {
         "kind": "asset",
+        "type": "voice",
+        "name": "narrator_voice",
+        "path": "tone.wav",
+        "line": 9,
+        "column": 1,
+        "file": "current"
+      },
+      {
+        "kind": "asset",
         "type": "se",
         "name": "flac",
         "path": "tone.flac",
-        "line": 9,
+        "line": 10,
         "column": 1,
         "file": "current"
       },
@@ -91,7 +100,7 @@
         "type": "se",
         "name": "vorbis",
         "path": "tone.ogg",
-        "line": 10,
+        "line": 11,
         "column": 1,
         "file": "current"
       },
@@ -100,7 +109,7 @@
         "type": "se",
         "name": "mpthree",
         "path": "tone.mp3",
-        "line": 11,
+        "line": 12,
         "column": 1,
         "file": "current"
       },
@@ -109,7 +118,7 @@
         "type": "video",
         "name": "clip",
         "path": "clip.mp4",
-        "line": 12,
+        "line": 13,
         "column": 1,
         "file": "current"
       }
@@ -122,14 +131,15 @@
           {
             "name": "normal",
             "path": "pixel.png",
-            "line": 15,
+            "line": 16,
             "column": 3,
             "file": "current"
           }
         ],
-        "line": 13,
+        "line": 14,
         "column": 1,
-        "endLine": 16,
+        "endLine": 17,
+        "endColumn": 1,
         "file": "current"
       },
       {
@@ -139,14 +149,15 @@
           {
             "name": "normal",
             "path": "pixel.png",
-            "line": 19,
+            "line": 20,
             "column": 3,
             "file": "current"
           }
         ],
-        "line": 17,
+        "line": 18,
         "column": 1,
-        "endLine": 20,
+        "endLine": 21,
+        "endColumn": 1,
         "file": "current"
       }
     ],
@@ -165,10 +176,7 @@
               "key": "name",
               "value": {
                 "kind": "literal",
-                "value": "Hero",
-                "line": 14,
-                "column": 10,
-                "file": "current"
+                "value": "Hero"
               }
             }
           ]
@@ -188,10 +196,7 @@
               "key": "name",
               "value": {
                 "kind": "literal",
-                "value": "Friend",
-                "line": 18,
-                "column": 10,
-                "file": "current"
+                "value": "Friend"
               }
             }
           ]
@@ -213,10 +218,7 @@
         "args": [
           {
             "kind": "literal",
-            "value": "room",
-            "line": 22,
-            "column": 4,
-            "file": "current"
+            "value": "room"
           }
         ]
       },
@@ -226,10 +228,7 @@
         "args": [
           {
             "kind": "literal",
-            "value": "music",
-            "line": 23,
-            "column": 5,
-            "file": "current"
+            "value": "music"
           }
         ]
       },
@@ -239,17 +238,11 @@
         "args": [
           {
             "kind": "literal",
-            "value": "se",
-            "line": 24,
-            "column": 6,
-            "file": "current"
+            "value": "se"
           },
           {
             "kind": "literal",
-            "value": "sound",
-            "line": 24,
-            "column": 9,
-            "file": "current"
+            "value": "sound"
           }
         ]
       },
@@ -259,17 +252,15 @@
         "args": [
           {
             "kind": "literal",
-            "value": "se",
-            "line": 25,
-            "column": 6,
-            "file": "current"
+            "value": "voice"
           },
           {
             "kind": "literal",
-            "value": "flac",
-            "line": 25,
-            "column": 9,
-            "file": "current"
+            "value": "narrator_voice"
+          },
+          {
+            "kind": "literal",
+            "value": "blocking"
           }
         ]
       },
@@ -279,17 +270,11 @@
         "args": [
           {
             "kind": "literal",
-            "value": "se",
-            "line": 26,
-            "column": 6,
-            "file": "current"
+            "value": "se"
           },
           {
             "kind": "literal",
-            "value": "vorbis",
-            "line": 26,
-            "column": 9,
-            "file": "current"
+            "value": "flac"
           }
         ]
       },
@@ -299,17 +284,25 @@
         "args": [
           {
             "kind": "literal",
-            "value": "se",
-            "line": 27,
-            "column": 6,
-            "file": "current"
+            "value": "se"
           },
           {
             "kind": "literal",
-            "value": "mpthree",
-            "line": 27,
-            "column": 9,
-            "file": "current"
+            "value": "vorbis"
+          }
+        ]
+      },
+      {
+        "op": "command",
+        "name": "play",
+        "args": [
+          {
+            "kind": "literal",
+            "value": "se"
+          },
+          {
+            "kind": "literal",
+            "value": "mpthree"
           }
         ]
       },
@@ -319,24 +312,15 @@
         "args": [
           {
             "kind": "literal",
-            "value": "image",
-            "line": 28,
-            "column": 6,
-            "file": "current"
+            "value": "image"
           },
           {
             "kind": "literal",
-            "value": "jpeg",
-            "line": 28,
-            "column": 12,
-            "file": "current"
+            "value": "jpeg"
           },
           {
             "kind": "literal",
-            "value": "center",
-            "line": 28,
-            "column": 17,
-            "file": "current"
+            "value": "center"
           }
         ]
       },
@@ -346,24 +330,15 @@
         "args": [
           {
             "kind": "literal",
-            "value": "image",
-            "line": 29,
-            "column": 6,
-            "file": "current"
+            "value": "image"
           },
           {
             "kind": "literal",
-            "value": "webp",
-            "line": 29,
-            "column": 12,
-            "file": "current"
+            "value": "webp"
           },
           {
             "kind": "literal",
-            "value": "center",
-            "line": 29,
-            "column": 17,
-            "file": "current"
+            "value": "center"
           }
         ]
       },
@@ -373,24 +348,15 @@
         "args": [
           {
             "kind": "literal",
-            "value": "image",
-            "line": 30,
-            "column": 6,
-            "file": "current"
+            "value": "image"
           },
           {
             "kind": "literal",
-            "value": "gif",
-            "line": 30,
-            "column": 12,
-            "file": "current"
+            "value": "gif"
           },
           {
             "kind": "literal",
-            "value": "center",
-            "line": 30,
-            "column": 16,
-            "file": "current"
+            "value": "center"
           }
         ]
       },
@@ -400,17 +366,11 @@
         "args": [
           {
             "kind": "literal",
-            "value": "image",
-            "line": 31,
-            "column": 7,
-            "file": "current"
+            "value": "image"
           },
           {
             "kind": "literal",
-            "value": "jpeg",
-            "line": 31,
-            "column": 13,
-            "file": "current"
+            "value": "jpeg"
           }
         ]
       },
@@ -420,17 +380,11 @@
         "args": [
           {
             "kind": "literal",
-            "value": "image",
-            "line": 32,
-            "column": 7,
-            "file": "current"
+            "value": "image"
           },
           {
             "kind": "literal",
-            "value": "webp",
-            "line": 32,
-            "column": 13,
-            "file": "current"
+            "value": "webp"
           }
         ]
       },
@@ -440,17 +394,11 @@
         "args": [
           {
             "kind": "literal",
-            "value": "image",
-            "line": 33,
-            "column": 7,
-            "file": "current"
+            "value": "image"
           },
           {
             "kind": "literal",
-            "value": "gif",
-            "line": 33,
-            "column": 13,
-            "file": "current"
+            "value": "gif"
           }
         ]
       },
@@ -460,24 +408,15 @@
         "args": [
           {
             "kind": "literal",
-            "value": "image",
-            "line": 34,
-            "column": 6,
-            "file": "current"
+            "value": "image"
           },
           {
             "kind": "literal",
-            "value": "first",
-            "line": 34,
-            "column": 12,
-            "file": "current"
+            "value": "first"
           },
           {
             "kind": "literal",
-            "value": "left",
-            "line": 34,
-            "column": 18,
-            "file": "current"
+            "value": "left"
           }
         ]
       },
@@ -487,24 +426,15 @@
         "args": [
           {
             "kind": "literal",
-            "value": "image",
-            "line": 35,
-            "column": 6,
-            "file": "current"
+            "value": "image"
           },
           {
             "kind": "literal",
-            "value": "second",
-            "line": 35,
-            "column": 12,
-            "file": "current"
+            "value": "second"
           },
           {
             "kind": "literal",
-            "value": "right",
-            "line": 35,
-            "column": 19,
-            "file": "current"
+            "value": "right"
           }
         ]
       },
@@ -514,31 +444,19 @@
         "args": [
           {
             "kind": "literal",
-            "value": "hero.normal",
-            "line": 36,
-            "column": 6,
-            "file": "current"
+            "value": "hero.normal"
           },
           {
             "kind": "literal",
-            "value": "left",
-            "line": 36,
-            "column": 18,
-            "file": "current"
+            "value": "left"
           },
           {
             "kind": "literal",
-            "value": "fade",
-            "line": 36,
-            "column": 23,
-            "file": "current"
+            "value": "fade"
           },
           {
-            "kind": "literal",
-            "value": 10,
-            "line": 36,
-            "column": 28,
-            "file": "current"
+            "kind": "integer",
+            "value": "10"
           }
         ]
       },
@@ -548,17 +466,11 @@
         "args": [
           {
             "kind": "literal",
-            "value": "friend.normal",
-            "line": 37,
-            "column": 6,
-            "file": "current"
+            "value": "friend.normal"
           },
           {
             "kind": "literal",
-            "value": "right",
-            "line": 37,
-            "column": 20,
-            "file": "current"
+            "value": "right"
           }
         ]
       },
@@ -568,17 +480,11 @@
         "args": [
           {
             "kind": "literal",
-            "value": "hero.normal",
-            "line": 38,
-            "column": 6,
-            "file": "current"
+            "value": "hero.normal"
           },
           {
             "kind": "literal",
-            "value": "center",
-            "line": 38,
-            "column": 18,
-            "file": "current"
+            "value": "center"
           }
         ]
       },
@@ -588,17 +494,11 @@
         "args": [
           {
             "kind": "literal",
-            "value": "image",
-            "line": 39,
-            "column": 7,
-            "file": "current"
+            "value": "image"
           },
           {
             "kind": "literal",
-            "value": "first",
-            "line": 39,
-            "column": 13,
-            "file": "current"
+            "value": "first"
           }
         ]
       },
@@ -608,10 +508,7 @@
         "args": [
           {
             "kind": "literal",
-            "value": "friend",
-            "line": 40,
-            "column": 6,
-            "file": "current"
+            "value": "friend"
           }
         ]
       },
@@ -621,24 +518,15 @@
         "args": [
           {
             "kind": "literal",
-            "value": "hero",
-            "line": 41,
-            "column": 6,
-            "file": "current"
+            "value": "hero"
           },
           {
             "kind": "literal",
-            "value": "fade",
-            "line": 41,
-            "column": 11,
-            "file": "current"
+            "value": "fade"
           },
           {
-            "kind": "literal",
-            "value": 10,
-            "line": 41,
-            "column": 16,
-            "file": "current"
+            "kind": "integer",
+            "value": "10"
           }
         ]
       },
@@ -648,24 +536,15 @@
         "args": [
           {
             "kind": "literal",
-            "value": "fade",
-            "line": 42,
-            "column": 8,
-            "file": "current"
+            "value": "fade"
           },
           {
             "kind": "literal",
-            "value": "white",
-            "line": 42,
-            "column": 13,
-            "file": "current"
+            "value": "white"
           },
           {
-            "kind": "literal",
-            "value": 10,
-            "line": 42,
-            "column": 19,
-            "file": "current"
+            "kind": "integer",
+            "value": "10"
           }
         ]
       },
@@ -675,24 +554,15 @@
         "args": [
           {
             "kind": "literal",
-            "value": "video",
-            "line": 43,
-            "column": 6,
-            "file": "current"
+            "value": "video"
           },
           {
             "kind": "literal",
-            "value": "clip",
-            "line": 43,
-            "column": 12,
-            "file": "current"
+            "value": "clip"
           },
           {
             "kind": "literal",
-            "value": "blocking",
-            "line": 43,
-            "column": 17,
-            "file": "current"
+            "value": "blocking"
           }
         ]
       },
@@ -702,24 +572,15 @@
         "args": [
           {
             "kind": "literal",
-            "value": "video",
-            "line": 44,
-            "column": 6,
-            "file": "current"
+            "value": "video"
           },
           {
             "kind": "literal",
-            "value": "clip",
-            "line": 44,
-            "column": 12,
-            "file": "current"
+            "value": "clip"
           },
           {
             "kind": "literal",
-            "value": "async",
-            "line": 44,
-            "column": 17,
-            "file": "current"
+            "value": "async"
           }
         ]
       },
@@ -728,11 +589,8 @@
         "name": "wait",
         "args": [
           {
-            "kind": "literal",
-            "value": 500,
-            "line": 45,
-            "column": 6,
-            "file": "current"
+            "kind": "integer",
+            "value": "500"
           }
         ]
       },
@@ -742,10 +600,7 @@
         "args": [
           {
             "kind": "literal",
-            "value": "bgm",
-            "line": 46,
-            "column": 7,
-            "file": "current"
+            "value": "bgm"
           }
         ]
       },
@@ -755,10 +610,7 @@
         "args": [
           {
             "kind": "literal",
-            "value": "bg",
-            "line": 47,
-            "column": 7,
-            "file": "current"
+            "value": "bg"
           }
         ]
       },
@@ -766,19 +618,13 @@
         "op": "choice",
         "prompt": {
           "kind": "literal",
-          "value": "test",
-          "line": 48,
-          "column": 8,
-          "file": "current"
+          "value": "test"
         },
         "options": [
           {
             "label": {
               "kind": "literal",
-              "value": "continue",
-              "line": 48,
-              "column": 17,
-              "file": "current"
+              "value": "continue"
             },
             "body": [
               {
@@ -787,10 +633,7 @@
                 "args": [
                   {
                     "kind": "literal",
-                    "value": "none",
-                    "line": 48,
-                    "column": 30,
-                    "file": "current"
+                    "value": "none"
                   },
                   {
                     "kind": "call",
@@ -824,7 +667,7 @@
           {
             "scope": "global",
             "container": "global",
-            "line": 13,
+            "line": 14,
             "column": 1,
             "kind": "definition"
           }
@@ -844,7 +687,7 @@
           {
             "scope": "global",
             "container": "global",
-            "line": 17,
+            "line": 18,
             "column": 1,
             "kind": "definition"
           }
@@ -861,7 +704,7 @@
           {
             "scope": "global",
             "container": "global",
-            "line": 21,
+            "line": 22,
             "column": 1,
             "kind": "definition"
           }
@@ -870,7 +713,7 @@
           {
             "scope": "local",
             "container": "global:choice1",
-            "line": 48,
+            "line": 50,
             "column": 43,
             "kind": "expression"
           }
@@ -957,10 +800,19 @@
         },
         {
           "kind": "asset",
+          "type": "voice",
+          "name": "narrator_voice",
+          "path": "tone.wav",
+          "line": 9,
+          "column": 1,
+          "file": "current"
+        },
+        {
+          "kind": "asset",
           "type": "se",
           "name": "flac",
           "path": "tone.flac",
-          "line": 9,
+          "line": 10,
           "column": 1,
           "file": "current"
         },
@@ -969,7 +821,7 @@
           "type": "se",
           "name": "vorbis",
           "path": "tone.ogg",
-          "line": 10,
+          "line": 11,
           "column": 1,
           "file": "current"
         },
@@ -978,7 +830,7 @@
           "type": "se",
           "name": "mpthree",
           "path": "tone.mp3",
-          "line": 11,
+          "line": 12,
           "column": 1,
           "file": "current"
         },
@@ -987,7 +839,7 @@
           "type": "video",
           "name": "clip",
           "path": "clip.mp4",
-          "line": 12,
+          "line": 13,
           "column": 1,
           "file": "current"
         }
@@ -1000,14 +852,15 @@
             {
               "name": "normal",
               "path": "pixel.png",
-              "line": 15,
+              "line": 16,
               "column": 3,
               "file": "current"
             }
           ],
-          "line": 13,
+          "line": 14,
           "column": 1,
-          "endLine": 16,
+          "endLine": 17,
+          "endColumn": 1,
           "file": "current"
         },
         {
@@ -1017,14 +870,15 @@
             {
               "name": "normal",
               "path": "pixel.png",
-              "line": 19,
+              "line": 20,
               "column": 3,
               "file": "current"
             }
           ],
-          "line": 17,
+          "line": 18,
           "column": 1,
-          "endLine": 20,
+          "endLine": 21,
+          "endColumn": 1,
           "file": "current"
         }
       ],
@@ -1043,10 +897,7 @@
                 "key": "name",
                 "value": {
                   "kind": "literal",
-                  "value": "Hero",
-                  "line": 14,
-                  "column": 10,
-                  "file": "current"
+                  "value": "Hero"
                 }
               }
             ]
@@ -1066,10 +917,7 @@
                 "key": "name",
                 "value": {
                   "kind": "literal",
-                  "value": "Friend",
-                  "line": 18,
-                  "column": 10,
-                  "file": "current"
+                  "value": "Friend"
                 }
               }
             ]
@@ -1091,10 +939,7 @@
           "args": [
             {
               "kind": "literal",
-              "value": "room",
-              "line": 22,
-              "column": 4,
-              "file": "current"
+              "value": "room"
             }
           ]
         },
@@ -1104,10 +949,7 @@
           "args": [
             {
               "kind": "literal",
-              "value": "music",
-              "line": 23,
-              "column": 5,
-              "file": "current"
+              "value": "music"
             }
           ]
         },
@@ -1117,17 +959,11 @@
           "args": [
             {
               "kind": "literal",
-              "value": "se",
-              "line": 24,
-              "column": 6,
-              "file": "current"
+              "value": "se"
             },
             {
               "kind": "literal",
-              "value": "sound",
-              "line": 24,
-              "column": 9,
-              "file": "current"
+              "value": "sound"
             }
           ]
         },
@@ -1137,17 +973,15 @@
           "args": [
             {
               "kind": "literal",
-              "value": "se",
-              "line": 25,
-              "column": 6,
-              "file": "current"
+              "value": "voice"
             },
             {
               "kind": "literal",
-              "value": "flac",
-              "line": 25,
-              "column": 9,
-              "file": "current"
+              "value": "narrator_voice"
+            },
+            {
+              "kind": "literal",
+              "value": "blocking"
             }
           ]
         },
@@ -1157,17 +991,11 @@
           "args": [
             {
               "kind": "literal",
-              "value": "se",
-              "line": 26,
-              "column": 6,
-              "file": "current"
+              "value": "se"
             },
             {
               "kind": "literal",
-              "value": "vorbis",
-              "line": 26,
-              "column": 9,
-              "file": "current"
+              "value": "flac"
             }
           ]
         },
@@ -1177,17 +1005,25 @@
           "args": [
             {
               "kind": "literal",
-              "value": "se",
-              "line": 27,
-              "column": 6,
-              "file": "current"
+              "value": "se"
             },
             {
               "kind": "literal",
-              "value": "mpthree",
-              "line": 27,
-              "column": 9,
-              "file": "current"
+              "value": "vorbis"
+            }
+          ]
+        },
+        {
+          "op": "command",
+          "name": "play",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "se"
+            },
+            {
+              "kind": "literal",
+              "value": "mpthree"
             }
           ]
         },
@@ -1197,24 +1033,15 @@
           "args": [
             {
               "kind": "literal",
-              "value": "image",
-              "line": 28,
-              "column": 6,
-              "file": "current"
+              "value": "image"
             },
             {
               "kind": "literal",
-              "value": "jpeg",
-              "line": 28,
-              "column": 12,
-              "file": "current"
+              "value": "jpeg"
             },
             {
               "kind": "literal",
-              "value": "center",
-              "line": 28,
-              "column": 17,
-              "file": "current"
+              "value": "center"
             }
           ]
         },
@@ -1224,24 +1051,15 @@
           "args": [
             {
               "kind": "literal",
-              "value": "image",
-              "line": 29,
-              "column": 6,
-              "file": "current"
+              "value": "image"
             },
             {
               "kind": "literal",
-              "value": "webp",
-              "line": 29,
-              "column": 12,
-              "file": "current"
+              "value": "webp"
             },
             {
               "kind": "literal",
-              "value": "center",
-              "line": 29,
-              "column": 17,
-              "file": "current"
+              "value": "center"
             }
           ]
         },
@@ -1251,24 +1069,15 @@
           "args": [
             {
               "kind": "literal",
-              "value": "image",
-              "line": 30,
-              "column": 6,
-              "file": "current"
+              "value": "image"
             },
             {
               "kind": "literal",
-              "value": "gif",
-              "line": 30,
-              "column": 12,
-              "file": "current"
+              "value": "gif"
             },
             {
               "kind": "literal",
-              "value": "center",
-              "line": 30,
-              "column": 16,
-              "file": "current"
+              "value": "center"
             }
           ]
         },
@@ -1278,17 +1087,11 @@
           "args": [
             {
               "kind": "literal",
-              "value": "image",
-              "line": 31,
-              "column": 7,
-              "file": "current"
+              "value": "image"
             },
             {
               "kind": "literal",
-              "value": "jpeg",
-              "line": 31,
-              "column": 13,
-              "file": "current"
+              "value": "jpeg"
             }
           ]
         },
@@ -1298,17 +1101,11 @@
           "args": [
             {
               "kind": "literal",
-              "value": "image",
-              "line": 32,
-              "column": 7,
-              "file": "current"
+              "value": "image"
             },
             {
               "kind": "literal",
-              "value": "webp",
-              "line": 32,
-              "column": 13,
-              "file": "current"
+              "value": "webp"
             }
           ]
         },
@@ -1318,17 +1115,11 @@
           "args": [
             {
               "kind": "literal",
-              "value": "image",
-              "line": 33,
-              "column": 7,
-              "file": "current"
+              "value": "image"
             },
             {
               "kind": "literal",
-              "value": "gif",
-              "line": 33,
-              "column": 13,
-              "file": "current"
+              "value": "gif"
             }
           ]
         },
@@ -1338,24 +1129,15 @@
           "args": [
             {
               "kind": "literal",
-              "value": "image",
-              "line": 34,
-              "column": 6,
-              "file": "current"
+              "value": "image"
             },
             {
               "kind": "literal",
-              "value": "first",
-              "line": 34,
-              "column": 12,
-              "file": "current"
+              "value": "first"
             },
             {
               "kind": "literal",
-              "value": "left",
-              "line": 34,
-              "column": 18,
-              "file": "current"
+              "value": "left"
             }
           ]
         },
@@ -1365,24 +1147,15 @@
           "args": [
             {
               "kind": "literal",
-              "value": "image",
-              "line": 35,
-              "column": 6,
-              "file": "current"
+              "value": "image"
             },
             {
               "kind": "literal",
-              "value": "second",
-              "line": 35,
-              "column": 12,
-              "file": "current"
+              "value": "second"
             },
             {
               "kind": "literal",
-              "value": "right",
-              "line": 35,
-              "column": 19,
-              "file": "current"
+              "value": "right"
             }
           ]
         },
@@ -1392,31 +1165,19 @@
           "args": [
             {
               "kind": "literal",
-              "value": "hero.normal",
-              "line": 36,
-              "column": 6,
-              "file": "current"
+              "value": "hero.normal"
             },
             {
               "kind": "literal",
-              "value": "left",
-              "line": 36,
-              "column": 18,
-              "file": "current"
+              "value": "left"
             },
             {
               "kind": "literal",
-              "value": "fade",
-              "line": 36,
-              "column": 23,
-              "file": "current"
+              "value": "fade"
             },
             {
-              "kind": "literal",
-              "value": 10,
-              "line": 36,
-              "column": 28,
-              "file": "current"
+              "kind": "integer",
+              "value": "10"
             }
           ]
         },
@@ -1426,17 +1187,11 @@
           "args": [
             {
               "kind": "literal",
-              "value": "friend.normal",
-              "line": 37,
-              "column": 6,
-              "file": "current"
+              "value": "friend.normal"
             },
             {
               "kind": "literal",
-              "value": "right",
-              "line": 37,
-              "column": 20,
-              "file": "current"
+              "value": "right"
             }
           ]
         },
@@ -1446,17 +1201,11 @@
           "args": [
             {
               "kind": "literal",
-              "value": "hero.normal",
-              "line": 38,
-              "column": 6,
-              "file": "current"
+              "value": "hero.normal"
             },
             {
               "kind": "literal",
-              "value": "center",
-              "line": 38,
-              "column": 18,
-              "file": "current"
+              "value": "center"
             }
           ]
         },
@@ -1466,17 +1215,11 @@
           "args": [
             {
               "kind": "literal",
-              "value": "image",
-              "line": 39,
-              "column": 7,
-              "file": "current"
+              "value": "image"
             },
             {
               "kind": "literal",
-              "value": "first",
-              "line": 39,
-              "column": 13,
-              "file": "current"
+              "value": "first"
             }
           ]
         },
@@ -1486,10 +1229,7 @@
           "args": [
             {
               "kind": "literal",
-              "value": "friend",
-              "line": 40,
-              "column": 6,
-              "file": "current"
+              "value": "friend"
             }
           ]
         },
@@ -1499,24 +1239,15 @@
           "args": [
             {
               "kind": "literal",
-              "value": "hero",
-              "line": 41,
-              "column": 6,
-              "file": "current"
+              "value": "hero"
             },
             {
               "kind": "literal",
-              "value": "fade",
-              "line": 41,
-              "column": 11,
-              "file": "current"
+              "value": "fade"
             },
             {
-              "kind": "literal",
-              "value": 10,
-              "line": 41,
-              "column": 16,
-              "file": "current"
+              "kind": "integer",
+              "value": "10"
             }
           ]
         },
@@ -1526,24 +1257,15 @@
           "args": [
             {
               "kind": "literal",
-              "value": "fade",
-              "line": 42,
-              "column": 8,
-              "file": "current"
+              "value": "fade"
             },
             {
               "kind": "literal",
-              "value": "white",
-              "line": 42,
-              "column": 13,
-              "file": "current"
+              "value": "white"
             },
             {
-              "kind": "literal",
-              "value": 10,
-              "line": 42,
-              "column": 19,
-              "file": "current"
+              "kind": "integer",
+              "value": "10"
             }
           ]
         },
@@ -1553,24 +1275,15 @@
           "args": [
             {
               "kind": "literal",
-              "value": "video",
-              "line": 43,
-              "column": 6,
-              "file": "current"
+              "value": "video"
             },
             {
               "kind": "literal",
-              "value": "clip",
-              "line": 43,
-              "column": 12,
-              "file": "current"
+              "value": "clip"
             },
             {
               "kind": "literal",
-              "value": "blocking",
-              "line": 43,
-              "column": 17,
-              "file": "current"
+              "value": "blocking"
             }
           ]
         },
@@ -1580,24 +1293,15 @@
           "args": [
             {
               "kind": "literal",
-              "value": "video",
-              "line": 44,
-              "column": 6,
-              "file": "current"
+              "value": "video"
             },
             {
               "kind": "literal",
-              "value": "clip",
-              "line": 44,
-              "column": 12,
-              "file": "current"
+              "value": "clip"
             },
             {
               "kind": "literal",
-              "value": "async",
-              "line": 44,
-              "column": 17,
-              "file": "current"
+              "value": "async"
             }
           ]
         },
@@ -1606,11 +1310,8 @@
           "name": "wait",
           "args": [
             {
-              "kind": "literal",
-              "value": 500,
-              "line": 45,
-              "column": 6,
-              "file": "current"
+              "kind": "integer",
+              "value": "500"
             }
           ]
         },
@@ -1620,10 +1321,7 @@
           "args": [
             {
               "kind": "literal",
-              "value": "bgm",
-              "line": 46,
-              "column": 7,
-              "file": "current"
+              "value": "bgm"
             }
           ]
         },
@@ -1633,10 +1331,7 @@
           "args": [
             {
               "kind": "literal",
-              "value": "bg",
-              "line": 47,
-              "column": 7,
-              "file": "current"
+              "value": "bg"
             }
           ]
         },
@@ -1644,19 +1339,13 @@
           "op": "choice",
           "prompt": {
             "kind": "literal",
-            "value": "test",
-            "line": 48,
-            "column": 8,
-            "file": "current"
+            "value": "test"
           },
           "options": [
             {
               "label": {
                 "kind": "literal",
-                "value": "continue",
-                "line": 48,
-                "column": 17,
-                "file": "current"
+                "value": "continue"
               },
               "body": [
                 {
@@ -1665,10 +1354,7 @@
                   "args": [
                     {
                       "kind": "literal",
-                      "value": "none",
-                      "line": 48,
-                      "column": 30,
-                      "file": "current"
+                      "value": "none"
                     },
                     {
                       "kind": "call",
@@ -1702,7 +1388,7 @@
             {
               "scope": "global",
               "container": "global",
-              "line": 13,
+              "line": 14,
               "column": 1,
               "kind": "definition"
             }
@@ -1722,7 +1408,7 @@
             {
               "scope": "global",
               "container": "global",
-              "line": 17,
+              "line": 18,
               "column": 1,
               "kind": "definition"
             }
@@ -1739,7 +1425,7 @@
             {
               "scope": "global",
               "container": "global",
-              "line": 21,
+              "line": 22,
               "column": 1,
               "kind": "definition"
             }
@@ -1748,7 +1434,7 @@
             {
               "scope": "local",
               "container": "global:choice1",
-              "line": 48,
+              "line": 50,
               "column": 43,
               "kind": "expression"
             }
