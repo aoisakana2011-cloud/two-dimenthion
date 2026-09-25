@@ -231,7 +231,7 @@ test('accepts a leading UTF-8 BOM without shifting token locations', () => {
 });
 
 test('rejects non-canonical Windows separators in asset paths', () => {
-  assert.throws(() => compile(parse('asset bg school = "asset\\bg\\mori.jpg"')), /アセットパス|asset.*path/i);
+  assert.throws(() => compile(parse('asset bg school = "asset\\\\bg\\\\mori.jpg"')), /アセットパス|asset.*path/i);
 });
 
 test('reports malformed dictionary and blocks at exact locations', () => {
@@ -242,7 +242,21 @@ test('reports malformed dictionary and blocks at exact locations', () => {
 
 test('rejects unknown escapes and non-canonical asset paths', () => {
   assert.throws(() => parse(String.raw`say "hello\q"`), /Unknown escape sequence/);
-  assert.throws(() => compile(parse(String.raw`asset bg school = "asset\q\mori.jpg"`)), /アセットパス|asset.*path/i);
+  assert.throws(() => parse(String.raw`asset bg school = "asset\q\mori.jpg"`), /Unknown escape sequence/);
+  assert.throws(() => parse(String.raw`character hero { pose normal = "asset\q\hero.png" }`), /Unknown escape sequence/);
+  assert.throws(() => parse(String.raw`include "chapter\q.tds"`), /Unknown escape sequence/);
+  assert.throws(() => parse(String.raw`goto "chapter\q.tds"`), /Unknown escape sequence/);
+  assert.throws(() => compile(parse(String.raw`asset bg school = "asset\\bg\\mori.jpg"`)), /アセットパス|asset.*path/i);
+});
+
+test('speakerless say accepts any string expression that starts with a string literal', () => {
+  const script = parse('str name = "ユイ"\nscene main { say "こんにちは、" + name }');
+  assert.doesNotThrow(() => checkTypes(script));
+  const say = script.scenes[0].body[0];
+  assert.equal(say.kind, 'command');
+  assert.equal(say.args[0].value, 'narrator');
+  assert.equal(say.args[1].kind, 'binary');
+  assert.throws(() => parse('scene main { say name }'), /say requires quoted text/);
 });
 
 test('preserves engine commands and scene transitions for the browser player', () => {
@@ -285,8 +299,16 @@ test('rejects an initializer whose type does not match its declaration', () => {
 test('collects expression and interpolation references', () => {
   const variables = compile(parse('str arg = "0"\nsay narrator "{arg}"\n')).variables;
   assert.deepEqual(variables[0].references, [
-    { scope: 'global', container: 'global', line: 2, column: 14, kind: 'interpolation' },
+    { scope: 'global', container: 'global', line: 2, column: 16, kind: 'interpolation' },
   ]);
+});
+
+test('records exact interpolation columns after escaped characters and parameter definition ranges', () => {
+  const source = 'fn render(value: str) -> none { say narrator "escaped \\\"quote\\\" {value}" }';
+  const variables = compile(parse(source)).variables;
+  const parameter = variables.find((variable) => variable.name === 'value');
+  assert.deepEqual(parameter.definitions, [{ scope: 'function', container: 'render', line: 1, column: 11, kind: 'definition' }]);
+  assert.deepEqual(parameter.references, [{ scope: 'function', container: 'render', line: 1, column: source.indexOf('{value}') + 2, kind: 'interpolation' }]);
 });
 
 test('accepts globals supplied by the project variable table', () => {
@@ -296,6 +318,14 @@ test('accepts globals supplied by the project variable table', () => {
 });
 
 // Phase 8: 項目64 新規テストケース
+test('variable definitions point to declaration and loop identifier columns', () => {
+  const variables = compile(parse('fn f() -> none {\n  int local = 1\n  for item from 0 to 1 {\n    say narrator str(item)\n  }\n}')).variables;
+  const local = variables.find((variable) => variable.name === 'local');
+  const item = variables.find((variable) => variable.name === 'item');
+  assert.deepEqual(local.definitions, [{ scope: 'function', container: 'f', line: 2, column: 7, kind: 'definition' }]);
+  assert.deepEqual(item.definitions, [{ scope: 'local', container: 'f:for1', line: 3, column: 7, kind: 'definition' }]);
+});
+
 test('parses arithmetic operators without whitespace dependency', () => {
   const script = parse(`
     int a = 1+2*3-4/2
@@ -756,16 +786,17 @@ test('computes transitive scene reachability and excludes dead goto targets', ()
 });
 
 test('normalizes Windows separators in goto scene paths', () => {
-  const program = compile(parse('scene start { goto first\\next.tds }'));
+  const program = compile(parse(String.raw`scene start { goto "first\\next.tds" }`));
   assert.equal(program.scenes[0].instructions[0].scene, 'first/next.tds');
 });
 
-test('consumes complete unquoted goto paths with punctuation', () => {
-  const script = parse('scene start { goto chapter-1/route.next.tds }');
-  assert.equal(script.scenes[0].body[0].scene, 'chapter-1/route.next.tds');
+test('requires external goto paths to be quoted while preserving local scene names', () => {
+  const local = parse('scene start { goto next_scene }');
+  assert.equal(local.scenes[0].body[0].scene, 'next_scene');
   const quoted = parse('scene start { goto "chapter-2/route.next.tds" }');
   assert.equal(quoted.scenes[0].body[0].scene, 'chapter-2/route.next.tds');
-  assert.throws(() => parse('scene start { goto chapter / route.tds }'), /Scene path cannot contain spaces/);
+  assert.throws(() => parse('scene start { goto chapter-1/route.next.tds }'), /External scene paths must be quoted/);
+  assert.throws(() => parse(String.raw`scene start { goto chapter\\next.tds }`), /External scene paths must be quoted/);
   assert.throws(() => parse('scene start { goto "chapter//route.tds" }'), /Invalid scene path/);
   assert.throws(() => parse('scene start { goto "con.tds" }'), /Invalid scene path/);
   assert.throws(() => parse('scene start { goto "chapter/next." }'), /Invalid scene path/);

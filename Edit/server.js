@@ -334,8 +334,7 @@ async function prepareProject() {
     try { await fs.copyFile(path.join(EDIT_ROOT, 'schemas', schema), await safeDataPath(schema, { createParents: true }), require('node:fs').constants.COPYFILE_EXCL); }
     catch (error) { if (error.code !== 'EEXIST') throw error; }
   }
-  await rebuildVariables();
-  await rebuildAssets();
+  await rebuildProjectIndexes();
 }
 
 async function openProjectFolder(requested, create = false) {
@@ -354,6 +353,7 @@ async function openProjectFolder(requested, create = false) {
     const error = new Error('作品フォルダーではありません。新規作成しますか？');
     error.needsCreate = true;
     error.projectRoot = resolved;
+    error.isEmpty = (await fs.readdir(resolved)).length === 0;
     throw error;
   }
   if (create) seedEmptyProject(resolved);
@@ -434,11 +434,22 @@ async function readSceneSource(name) {
   return fs.readFile(await safeScenePath(name), 'utf8');
 }
 
-async function globalVariableTable(excludeName = '') {
+async function createProjectAnalysisContext() {
   const { parse } = require('../dist');
+  const names = await listScenes();
+  const scripts = await Promise.all(names.map(async (name) => {
+    const source = await readSceneSource(name);
+    try { return { name, source, ast: parse(source), error: null }; }
+    catch (error) { return { name, source, ast: null, error }; }
+  }));
+  return { names, scripts, configured: await readStaticVariables(DATA_ROOT) };
+}
+
+async function globalVariableTable(excludeName = '', analysis = null) {
   const { inferValueType } = require('../dist/checker/type-checker');
   await safeDataPath('variables.json', { createParents: true });
-  const configured = await readStaticVariables(DATA_ROOT);
+  const context = analysis || await createProjectAnalysisContext();
+  const configured = context.configured;
   const table = new Map(configured.table);
   table.readonlyNames = new Set();
   for (const name of configured.table.readonlyNames) table.readonlyNames.add(name);
@@ -447,9 +458,10 @@ async function globalVariableTable(excludeName = '') {
   const owners = new Map();
   for (const name of configured.table.keys()) owners.set(name, '.novel/variables.json');
   const scripts = [];
-  for (const name of await listScenes()) {
+  for (const { name, ast, error } of context.scripts) {
     if (name === excludeName) continue;
-    const script = parse(await readSceneSource(name));
+    if (error) throw error;
+    const script = ast;
     scripts.push(script);
     const implicitGlobals = name.toLowerCase() === 'main.tds';
     for (const statement of script.globals) {
@@ -463,7 +475,7 @@ async function globalVariableTable(excludeName = '') {
       owners.set(statement.name, name);
     }
   }
-  const pending = scripts.flatMap((script) => script.globals.filter((statement) => statement.kind === 'declare' && statement.type === 'infer' && statement.global).map((statement) => ({ statement, functions: script.functions })));
+  const pending = scripts.flatMap((script) => script.globals.filter((statement) => statement.kind === 'declare' && statement.type === 'infer' && statement.global).map((statement) => ({ statement: { ...statement }, functions: script.functions })));
   let lastError;
   while (pending.length) {
     let progress = false;
@@ -481,12 +493,13 @@ async function globalVariableTable(excludeName = '') {
   return table;
 }
 
-async function globalCharacterTable(excludeName = '') {
-  const { parse } = require('../dist');
+async function globalCharacterTable(excludeName = '', analysis = null) {
+  const context = analysis || await createProjectAnalysisContext();
   const characters = new Map();
-  for (const name of await listScenes()) {
+  for (const { name, ast, error } of context.scripts) {
     if (name === excludeName) continue;
-    const script = parse(await readSceneSource(name));
+    if (error) throw error;
+    const script = ast;
     for (const character of script.characters) {
       if (characters.has(character.name)) throw new Error(`キャラクター '${character.name}' が複数ファイルで宣言されています`);
       const fields = Object.fromEntries(character.properties.map((property) => [property.name, property.value.kind === 'literal' && typeof property.value.value === 'string' ? 'str' : 'int']));
@@ -514,10 +527,14 @@ async function listProjectFiles() {
 
 async function sceneGraph() {
   const { sceneReachability } = require('../dist/checker/analyzer');
+  const analysis = await createProjectAnalysisContext();
   const nodes = [];
   const edges = [];
+  const edgeKeys = new Set();
   const addEdge = (from, to, kind) => {
-    if (!to || edges.some((edge) => edge.from === from && edge.to === to && edge.kind === kind)) return;
+    const key = JSON.stringify([from, to, kind]);
+    if (!to || edgeKeys.has(key)) return;
+    edgeKeys.add(key);
     edges.push({ from, to, kind });
   };
   const diagnosticForError = (error, file) => ({
@@ -525,8 +542,7 @@ async function sceneGraph() {
     message: error instanceof Error ? error.message : String(error),
     file, line: Number(error?.line || 1), column: Number(error?.column || 1),
   });
-  for (const name of await listScenes()) {
-    const source = await readSceneSource(name);
+  for (const { name, source } of analysis.scripts) {
     let ast;
     try {
       ast = await resolveProjectScript(source, SCENES_ROOT, new Set(), name);
@@ -535,10 +551,23 @@ async function sceneGraph() {
       continue;
     }
     const reachability = sceneReachability(ast);
+    const scenesByName = new Map(ast.scenes.map((scene) => [scene.name, scene]));
+    const localGotos = [];
+    const seenLocalGotos = new Set();
+    for (const match of source.matchAll(/^\s*goto\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:#.*)?$/gmi)) {
+      const target = scenesByName.get(match[1]);
+      if (!target) continue;
+      const file = target.file || name;
+      const key = JSON.stringify([target.name, file]);
+      if (seenLocalGotos.has(key)) continue;
+      seenLocalGotos.add(key);
+      localGotos.push({ scene: target.name, file, gotoLine: source.slice(0, match.index).split(/\r?\n/).length });
+    }
     for (const target of ast.includes.map((value) => sceneName(value)).filter(Boolean)) addEdge(name, target, 'include');
     let diagnostics = [];
+    let report = null;
     try {
-      const report = await validate(source, name);
+      report = await validate(source, name, analysis, true);
       diagnostics = Array.isArray(report.diagnostics) ? report.diagnostics : [];
     } catch (error) {
       diagnostics = [diagnosticForError(error, name)];
@@ -546,9 +575,13 @@ async function sceneGraph() {
     let error = diagnostics.some((item) => item.severity === 'error');
     let variables = [];
     try {
-      const globalVariables = await globalVariableTable(name);
-      const characters = await globalCharacterTable(name);
-      const program = await compileProject(source, ASSETS_ROOT, SCENES_ROOT, globalVariables, characters, name);
+      let program = report?.program;
+      if (!program) {
+        const [globalVariables, characters] = await Promise.all([
+          globalVariableTable(name, analysis), globalCharacterTable(name, analysis),
+        ]);
+        program = await compileProject(source, ASSETS_ROOT, SCENES_ROOT, globalVariables, characters, name);
+      }
       variables = program.variables.map((variable) => ({ ...variable, file: name }));
     } catch (compileError) {
       error = true;
@@ -558,6 +591,7 @@ async function sceneGraph() {
       id: name,
       label: name,
       variables,
+      localGotos,
       diagnostics,
       error,
       scenes: {
@@ -569,12 +603,19 @@ async function sceneGraph() {
   }
   const config = await readSceneConfig();
   const start = sceneName(config.start_file || '');
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const adjacency = new Map();
+  for (const edge of edges) {
+    if (!nodeIds.has(edge.to)) continue;
+    if (!adjacency.has(edge.from)) adjacency.set(edge.from, []);
+    adjacency.get(edge.from).push(edge.to);
+  }
   const reachableFiles = new Set(), pending = start ? [start] : [];
   while (pending.length) {
     const id = pending.pop();
     if (reachableFiles.has(id)) continue;
     reachableFiles.add(id);
-    edges.filter((edge) => edge.from === id && nodes.some((node) => node.id === edge.to)).forEach((edge) => pending.push(edge.to));
+    pending.push(...(adjacency.get(id) || []));
   }
   nodes.forEach((node) => { node.reachable = !start || reachableFiles.has(node.id); });
   return {
@@ -686,57 +727,64 @@ async function readSceneConfig() {
   return config;
 }
 
-async function rebuildVariables() {
-  const variablesFile = await safeDataPath('variables.json', { createParents: true });
-  const configured = await readStaticVariables(DATA_ROOT);
+async function rebuildProjectIndexes({ variables = true, assets = true } = {}) {
+  const analysis = await createProjectAnalysisContext();
   const entries = new Map();
-  for (const declaration of configured.declarations) {
-    entries.set(JSON.stringify(['global', 'global', declaration.name]), {
-      name: declaration.name, type: declaration.type, scope: 'global', definedIn: 'global',
-      definitions: [{ scope: 'global', container: 'global', kind: 'definition', file: '.novel/variables.json' }],
-      references: [], mutable: !declaration.constant, static: true,
-    });
+  const assetEntries = new Map();
+  if (variables) {
+    for (const declaration of analysis.configured.declarations) {
+      entries.set(JSON.stringify(['global', 'global', declaration.name]), {
+        name: declaration.name, type: declaration.type, scope: 'global', definedIn: 'global',
+        definitions: [{ scope: 'global', container: 'global', kind: 'definition', file: '.novel/variables.json' }],
+        references: [], mutable: !declaration.constant, static: true,
+      });
+    }
   }
-  for (const name of await listScenes()) {
+  const { parse, compile } = require('../dist');
+  for (const { name, source } of analysis.scripts) {
     try {
-      const globalVariables = await globalVariableTable(name);
-      const characters = await globalCharacterTable(name);
-      const { parse, compile } = require('../dist');
-      const source = await readSceneSource(name);
-      for (const variable of compile(parse(source), globalVariables, characters).variables) {
-        const definitions = (variable.definitions || []).map((location) => ({ ...location, file: name }));
-        const references = (variable.references || []).map((reference) => ({ ...reference, file: name }));
-        // A variable is project-wide metadata.  Do not create a new entry for
-        // every file that merely sees the same external global.
-        const key = JSON.stringify([variable.scope, variable.definedIn, variable.name]);
-        const existing = entries.get(key);
-        if (existing) { existing.definitions.push(...definitions); existing.references.push(...references); }
-        else entries.set(key, { ...variable, definitions, references });
+      const [globalVariables, characters] = await Promise.all([
+        globalVariableTable(name, analysis), globalCharacterTable(name, analysis),
+      ]);
+      const program = compile(parse(source), globalVariables, characters);
+      if (variables) {
+        for (const variable of program.variables) {
+          const definitions = (variable.definitions || []).map((location) => ({ ...location, file: name }));
+          const references = (variable.references || []).map((reference) => ({ ...reference, file: name }));
+          // A variable is project-wide metadata. Do not repeat entries merely
+          // because a file can see a global declared in another file.
+          const key = JSON.stringify([variable.scope, variable.definedIn, variable.name]);
+          const existing = entries.get(key);
+          if (existing) { existing.definitions.push(...definitions); existing.references.push(...references); }
+          else entries.set(key, { ...variable, definitions, references });
+        }
+      }
+      if (assets) {
+        program.assets.forEach((asset) => assetEntries.set(`${asset.type}:${asset.name}`, { type: asset.type, name: asset.name, path: asset.path, definedIn: name }));
+        program.characters.forEach((character) => character.poses.forEach((pose) => assetEntries.set(`char:${character.name}.${pose.name}`, { type: 'char', name: character.name, pose: pose.name, path: pose.path, definedIn: name })));
       }
     } catch { /* Invalid files remain available for editor validation. */ }
   }
-  const variables = [...entries.values()];
-  await fs.writeFile(variablesFile, JSON.stringify({ $schema: './variables.schema.json', staticVariables: configured.source.staticVariables || [], variables }, null, 2) + '\n', 'utf8');
-  return variables;
+  const result = {};
+  if (variables) {
+    const file = await safeDataPath('variables.json', { createParents: true });
+    result.variables = [...entries.values()];
+    await fs.writeFile(file, JSON.stringify({ $schema: './variables.schema.json', staticVariables: analysis.configured.source.staticVariables || [], variables: result.variables }, null, 2) + '\n', 'utf8');
+  }
+  if (assets) {
+    const file = await safeDataPath('assets.json', { createParents: true });
+    result.assets = [...assetEntries.values()];
+    await fs.writeFile(file, JSON.stringify({ $schema: './assets.schema.json', assets: result.assets }, null, 2) + '\n', 'utf8');
+  }
+  return result;
+}
+
+async function rebuildVariables() {
+  return (await rebuildProjectIndexes({ assets: false })).variables;
 }
 
 async function rebuildAssets() {
-  const assetsFile = await safeDataPath('assets.json', { createParents: true });
-  const assets = new Map();
-  for (const name of await listScenes()) {
-    try {
-      const globalVariables = await globalVariableTable(name);
-      const characters = await globalCharacterTable(name);
-      const { parse, compile } = require('../dist');
-      const source = await readSceneSource(name);
-      const program = compile(parse(source), globalVariables, characters);
-      program.assets.forEach((asset) => assets.set(`${asset.type}:${asset.name}`, { type: asset.type, name: asset.name, path: asset.path, definedIn: name }));
-      program.characters.forEach((character) => character.poses.forEach((pose) => assets.set(`char:${character.name}.${pose.name}`, { type: 'char', name: character.name, pose: pose.name, path: pose.path, definedIn: name })));
-    } catch { /* Invalid files remain available for editor validation. */ }
-  }
-  const result = [...assets.values()];
-  await fs.writeFile(assetsFile, JSON.stringify({ $schema: './assets.schema.json', assets: result }, null, 2) + '\n', 'utf8');
-  return result;
+  return (await rebuildProjectIndexes({ variables: false })).assets;
 }
 
 function scenePath(value) {
@@ -956,7 +1004,7 @@ async function validateSourceAssets(script, file) {
   return diagnostics;
 }
 
-async function validate(source, name = '') {
+async function validate(source, name = '', analysis = null, includeProgram = false) {
   const sourceFile = name || 'current';
   const syntaxDiagnostics = collectSyntaxDiagnostics(source, sourceFile);
   if (syntaxDiagnostics.length) return { ok: false, diagnostics: syntaxDiagnostics, error: syntaxDiagnostics[0].message };
@@ -965,8 +1013,9 @@ async function validate(source, name = '') {
     const { analyzeScript } = require('../dist/checker/analyzer');
     const ast = await resolveProjectScript(source, SCENES_ROOT, new Set(), sourceFile);
     const sourceAssetDiagnostics = await validateSourceAssets(ast, sourceFile);
-    const globalVariables = await globalVariableTable(name);
-    const characters = await globalCharacterTable(name);
+    const projectAnalysis = analysis || await createProjectAnalysisContext();
+    const globalVariables = await globalVariableTable(name, projectAnalysis);
+    const characters = await globalCharacterTable(name, projectAnalysis);
     const context = projectContext(ast, globalVariables, characters, sourceFile);
     const staticDeclarations = globalVariables.staticDeclarations || [];
     const analysisScript = staticDeclarations.length
@@ -981,8 +1030,11 @@ async function validate(source, name = '') {
       // Keep live IDE validation on the exact same compiler entry point as
       // /api/compile and the player loader.  This prevents the editor from
       // accepting a script that only the project compiler can reject.
-      const program = await compileSource(source, sourceFile);
-      return { ok: true, diagnostics, statements: ast.body.length, instructions: program.globals.length };
+      const program = await compileSource(source, sourceFile, projectAnalysis);
+      return {
+        ok: true, diagnostics, statements: ast.body.length, instructions: program.globals.length,
+        ...(includeProgram ? { program } : {}),
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const projectDiagnostics = message.split(/\r?\n/).filter(Boolean).map((entry) => {
@@ -1019,8 +1071,12 @@ async function validate(source, name = '') {
   }
 }
 
-async function compileSource(source, name = '') {
-  return compileProject(source, ASSETS_ROOT, SCENES_ROOT, await globalVariableTable(name), await globalCharacterTable(name), name || 'current');
+async function compileSource(source, name = '', analysis = null) {
+  const projectAnalysis = analysis || await createProjectAnalysisContext();
+  const [globalVariables, characters] = await Promise.all([
+    globalVariableTable(name, projectAnalysis), globalCharacterTable(name, projectAnalysis),
+  ]);
+  return compileProject(source, ASSETS_ROOT, SCENES_ROOT, globalVariables, characters, name || 'current');
 }
 
 async function buildWholeProject(name) {
@@ -1162,7 +1218,7 @@ async function handleApi(request, response, url) {
     try { return json(response, 200, { ok: true, ...(await openProjectFolder(body.path, Boolean(body.create))) }); }
     catch (error) {
       const payload = { error: error instanceof Error ? error.message : String(error) };
-      if (error?.needsCreate) { payload.needsCreate = true; payload.projectRoot = error.projectRoot; return json(response, 409, payload); }
+      if (error?.needsCreate) { payload.needsCreate = true; payload.projectRoot = error.projectRoot; payload.isEmpty = error.isEmpty; return json(response, 409, payload); }
       return json(response, 400, payload);
     }
   }
@@ -1184,8 +1240,7 @@ async function handleApi(request, response, url) {
     } catch (error) {
       return json(response, error?.code === 'ENOENT' ? 404 : 400, { error: error instanceof Error ? error.message : String(error) });
     }
-    await rebuildVariables();
-    await rebuildAssets();
+    await rebuildProjectIndexes();
     return json(response, 200, { ok: true });
   }
   if (request.method === 'GET' && url.pathname === '/api/scene-graph') return json(response, 200, await sceneGraph());
@@ -1254,14 +1309,13 @@ async function handleApi(request, response, url) {
     await fs.writeFile(target, body.source, 'utf8');
     await fs.mkdir(DATA_ROOT, { recursive: true });
     // 保存した1ファイルだけでなく全ファイルの集計を実行して更新
-    await rebuildVariables();
-    await rebuildAssets();
+    await rebuildProjectIndexes();
     return json(response, 200, { ok: true, name, revision: sceneRevision(body.source) });
   }
   if (request.method === 'POST' && url.pathname === '/api/validate') {
     const body = await readJson(request);
     if (typeof body.source !== 'string') return json(response, 400, { error: '検証する本文がありません。' });
-    return json(response, 200, await validate(body.source, sceneName(body.name || '') || ''));
+    return json(response, 200, await validate(body.source, sceneName(body.name || '') || '', null, true));
   }
   if (request.method === 'POST' && url.pathname === '/api/compile') {
     const body = await readJson(request);
@@ -1318,7 +1372,7 @@ async function handleApi(request, response, url) {
 async function main() {
   console.log(`Project: ${PROJECT_ROOT}`);
   await prepareProject();
-  await rememberProject(PROJECT_ROOT);
+  if (process.env.NOVEL_TEMP_STARTUP_WORKSPACE !== '1') await rememberProject(PROJECT_ROOT);
   try {
     await fs.access(CATALOG_FILE);
   } catch {

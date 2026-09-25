@@ -109,4 +109,4 @@ Windows配布版は次で作成します。
 npm.cmd run desktop:package:win
 ```
 
-`release/Novel Script Editor-win32-x64/` に、Editor本体とBrowser/Native再生に必要なNative実行ファイル・DLL・`engine_data` が生成されます。配布版の初回起動時の既定作品は、書き込み可能な `ドキュメント/Novel Script Projects/Title` に作成されます。既存作品はプロジェクト選択から開くか、`NOVEL_PROJECT_ROOT` を指定してください。
+`release/Novel Script Editor-win32-x64/` に、Editor本体とBrowser/Native再生に必要なNative実行ファイル・DLL・`engine_data` が生成されます。配布版は初回起動時に「フォルダを選ぶか作成してください。」と表示します。既存作品を選ぶか、作品を作成してから編集を始めます。`NOVEL_PROJECT_ROOT` を指定した場合はその作品を直接開きます。

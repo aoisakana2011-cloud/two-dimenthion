@@ -977,7 +977,10 @@ class Compiler {
     };
     const ref = (e: Expr, bindings: Bindings, loc: VariableLocation): void => {
       if (e.kind === 'variable') bindings.get(e.name)?.references.push({ ...loc, line: e.line, column: e.column, kind: loc.kind || 'expression' });
-      if (e.kind === 'literal' && typeof e.value === 'string') for (const m of e.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(\(\))?\}/g)) if (!m[2]) bindings.get(m[1].split('.')[0])?.references.push({ ...loc, line: e.line, column: e.column, kind: 'interpolation' });
+      if (e.kind === 'literal' && typeof e.value === 'string') for (const m of e.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(\(\))?\}/g)) if (!m[2]) {
+        const sourceColumn = e.sourceColumns?.[m.index + 1];
+        bindings.get(m[1].split('.')[0])?.references.push({ ...loc, line: e.line, column: sourceColumn ?? (e.column === undefined ? undefined : e.column + m.index + 1), kind: 'interpolation' });
+      }
       if (e.kind === 'binary') { ref(e.left, bindings, loc); ref(e.right, bindings, loc); }
       if (e.kind === 'unary') ref(e.value, bindings, loc);
       if (e.kind === 'index') { ref(e.target, bindings, loc); ref(e.key, bindings, loc); }
@@ -1010,7 +1013,7 @@ class Compiler {
     let scopeId = 0;
     const walk = (list: Statement[], bindings: Bindings, loc: VariableLocation, declarations = bindings, declarationLoc = loc) => {
       for (const s of list) {
-        if (s.kind === 'declare') { if (s.initial) ref(s.initial, bindings, loc); if (s.type === 'infer') throw new CompileError(`変数 '${s.name}' の型推論が完了していません`); declare(s.name, s.type, declarations, { ...declarationLoc, line: s.line, column: s.column, kind: 'definition' }); const entry = declarations.get(s.name)!; entry.mutable = !s.constant; bindings.set(s.name, entry); }
+        if (s.kind === 'declare') { if (s.initial) ref(s.initial, bindings, loc); if (s.type === 'infer') throw new CompileError(`変数 '${s.name}' の型推論が完了していません`); declare(s.name, s.type, declarations, { ...declarationLoc, line: s.nameLine ?? s.line, column: s.nameColumn ?? s.column, kind: 'definition' }); const entry = declarations.get(s.name)!; entry.mutable = !s.constant; bindings.set(s.name, entry); }
         if (s.kind === 'set') {
           if (s.target.kind === 'variable') ref(s.target, bindings, { ...loc, kind: 'assignment' });
           else { ref(s.target.target, bindings, loc); ref(s.target.key, bindings, loc); }
@@ -1052,7 +1055,7 @@ class Compiler {
         }
         if (s.kind === 'for') {
           [s.start, s.stop, s.step].forEach(e => ref(e, bindings, loc));
-          const child = new Map(bindings), at: VariableLocation = { scope: 'local', container: `${loc.container}:for${++scopeId}` };
+          const child = new Map(bindings), at: VariableLocation = { scope: 'local', container: `${loc.container}:for${++scopeId}`, line: s.nameLine, column: s.nameColumn, kind: 'definition' };
           declare(s.name, 'int', child, at); walk(s.body, child, at, child, declarationLoc);
           if (metadataForRuns(s) && !sourceBlockExits(s.body)) {
             for (const [name, entry] of child) if (name !== s.name) bindings.set(name, entry);
@@ -1073,7 +1076,7 @@ class Compiler {
     walk(script.globals, globals, { scope: 'global', container: 'global' });
     for (const fn of script.functions) {
       const bindings = new Map(globals), loc: VariableLocation = { scope: 'function', container: fn.name };
-      fn.params.forEach(p => declare(p.name, p.type, bindings, loc)); walk(fn.body, bindings, loc);
+      fn.params.forEach(p => declare(p.name, p.type, bindings, { ...loc, line: p.line, column: p.column, kind: 'definition' })); walk(fn.body, bindings, loc);
     }
     script.scenes.forEach(s => walk(s.body, new Map(globals), { scope: 'scene', container: s.name }));
     return result;

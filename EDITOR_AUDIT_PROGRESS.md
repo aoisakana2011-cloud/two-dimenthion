@@ -1,8 +1,18 @@
 # Novel Script Editor Repository Audit
 
-Last updated: 2026-09-24
+Last updated: 2026-09-25
 
-Status: Cross-layer audit pass completed for the repository flows listed below. This is not a claim that every possible input, operating system, hardware configuration, or user workflow has been exhausted. Known feature gaps and untested device boundaries are listed at the end.
+Status: Repeated cross-layer syntax/editor consistency pass completed for the repository flows listed below. This is not a claim that every possible input, operating system, hardware configuration, or user workflow has been exhausted. Known feature gaps and untested device boundaries are listed at the end.
+
+## Follow-up Pass (2026-09-25)
+
+- Language/editor consistency: external `goto` file paths now require quotes everywhere; escaped Windows separators normalize from `\\` to `/`; unknown escapes are rejected consistently in include, asset, character-pose, expression, and goto strings. Speakerless `say` is documented accurately as accepting a string expression only when its first token is a string literal.
+- IDE consistency: local-scene completion is separated from quoted external-file completion, and quoted paths (including `/` and `.tds`) are replaced as one completion range. Corrected function/struct/global tooltip grammar, removed the duplicate stale syntax-help implementation and dead `sayBlock` flow fallback, and aligned help/reference escape notation.
+- Regression coverage: parser rejects unquoted external goto paths and path-context unknown escapes; it accepts string-started speakerless expressions. All TDS code fences in both language references are parsed in a test; IDE help examples and both goto completion contexts are checked in the browser E2E.
+- Verification: `npm.cmd test` passed 237/237 with a freshly rebuilt native player and no skips; `node test/editor-analysis-check.cjs`, `node test/full-workflow-e2e.cjs`, and `node test/title-playthrough.cjs` passed. Title Browser playthrough traversed all four chapter files and a route (354 dialogue advances, 2 choices); Native transcript reached the same route (353 dialogue lines).
+- Test hygiene: `editor-analysis-check.cjs` now seeds and serves an isolated temporary project so page-exit autosave cannot modify Title. During discovery, an earlier run had overwritten the clean Title appendix fixture and tracked screenshots; their original contents were restored, and a post-isolation run left Title unchanged.
+
+Remaining recovery limitation: parser recovery still masks one entire source line per parse error; same-line multiple-error recovery is not yet a separate diagnostic contract.
 
 ## Follow-up Pass (2026-09-24)
 
@@ -623,6 +633,11 @@ Remaining compiler risk: the differential corpus covers generated branches, loop
 
 # Shared Lexer/CST formatter (2026-09-24): moved the active formatter into `shared/formatter.js`, with a tolerant lexer and brace CST stack that preserve incomplete editor input while distinguishing block braces from dictionary literals. The browser loads this module directly, while `tools/format.js` and its `npm run format` entry point require the same implementation. Formatter contract tests now check idempotence, line-ending/BOM normalization, parsed compiler structure, string/comment boundaries, CLI reuse, and 221 total unit tests pass.
 # Formatter scale benchmark (2026-09-24): added `npm run benchmark:formatter`; a 14,000-line / 360,741-byte corpus completed with p50 21.16 ms and p95 25.59 ms in the current Windows environment, with an idempotence assertion before timing samples. This is a baseline, not a cross-machine performance guarantee.
+
+# Variable reference and definition assistance (2026-09-25)
+- Right-click resolution now uses the exact active-source compiler binding and source range instead of the first project-wide same-name variable. Static `.novel/variables.json` integer bounds and finite allowed values are shown only for their actual global binding.
+- Compiler metadata now points at identifier tokens for declarations, loop variables, function parameters, and interpolations, including escaped characters; navigation selects the symbol. Wrapped Japanese lines are covered by a browser interaction regression.
+- Verification: `npm.cmd test` passed 237 tests with 0 failures and 2 expected native skips; `node test/editor-analysis-check.cjs` passed twice, including on the final tree; `node test/full-workflow-e2e.cjs` passed project creation/open/switch, edit, save, compile, player, and server-restart flows. `node --check` passed for the editor and browser test, and `git diff --check` reported no whitespace errors.
 
 # IDE構文ヘルプ刷新 (2026-09-24): ヘルプメニューをUTF-8の日本語クイックリファレンスへ更新し、シーン、素材、変数、分岐、choice、演出、ショートカット、診断対応を実例中心で表示するようにした。詳細な [tds-language-and-editor-guide.md](docs/tds-language-and-editor-guide.md) へのリンクもIDEから開ける。Editor E2Eで見出し、8セクション以上、初期展開、文書URLを検証し、全5系統が通過。
 

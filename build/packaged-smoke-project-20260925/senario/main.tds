@@ -1,0 +1,3 @@
+scene main {
+  say narrator "新しい作品を始めます。"
+}

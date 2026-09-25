@@ -18,6 +18,7 @@ const editorTabs = document.querySelector('#editor-tabs');
 const documentActions = document.querySelector('.document-actions');
 if (documentActions) document.querySelector('.topbar-right')?.prepend(documentActions);
 if (new URLSearchParams(location.search).get('embedded') === '1') document.documentElement.classList.add('embedded-editor');
+let pickerWelcome = new URLSearchParams(location.search).get('welcome') === '1';
 
 const closeMenus = () => {
   document.querySelectorAll('[data-menu-popup]').forEach((popup) => { popup.hidden = true; });
@@ -46,11 +47,15 @@ let suggestionIndex = 0;
 let completionRange = null;
 let sceneNames = [];
 let knownVariables = [];
+let staticVariableDeclarations = new Map();
+let knownVariableDataLoaded = false;
+let currentVariableAnalysis = null;
+let variableTooltipRequestId = 0;
 let suggestionRefreshId = 0;
 let validationTimer = null;
 let diagnosticText = '';
 let diagnostics = [];
-let fileInfoBase = '';
+let fileInfoBase = null;
 let validationSequence = 0;
 let isDirty = false;
 let sceneRevision = '';
@@ -132,14 +137,19 @@ function restoreEditorHistory(from, to) {
   hideSuggestions();
   return true;
 }
-function normalizeVariables(values) {
+function normalizeVariables(values, staticVariables = []) {
+  const staticByName = new Map((Array.isArray(staticVariables) ? staticVariables : []).filter((entry) => entry && typeof entry.name === 'string').map((entry) => [entry.name, entry]));
   const merged = new Map();
   for (const variable of values) {
     if (!variable || typeof variable.name !== 'string' || !variable.name) continue;
+    const configured = variable.scope === 'global' ? staticByName.get(variable.name) : null;
+    const constraint = configured && (configured.min !== undefined || configured.max !== undefined || Array.isArray(configured.possibleValues))
+      ? Object.fromEntries(['min', 'max', 'possibleValues'].filter((key) => configured[key] !== undefined).map((key) => [key, configured[key]]))
+      : variable.constraint;
     const key = JSON.stringify([variable.name, variable.scope || 'global', variable.definedIn || 'global']);
     const current = merged.get(key);
     if (!current) {
-      merged.set(key, { ...variable, definitions: [...(variable.definitions || [])], references: [...(variable.references || [])] });
+      merged.set(key, { ...variable, ...(configured ? { static: true } : {}), ...(constraint ? { constraint } : {}), definitions: [...(variable.definitions || [])], references: [...(variable.references || [])] });
       continue;
     }
     for (const field of ['definitions', 'references']) {
@@ -148,6 +158,12 @@ function normalizeVariables(values) {
     }
   }
   return [...merged.values()];
+}
+function setKnownVariableData(data) {
+  const declarations = Array.isArray(data?.staticVariables) ? data.staticVariables : [];
+  staticVariableDeclarations = new Map(declarations.filter((entry) => entry && typeof entry.name === 'string').map((entry) => [entry.name, entry]));
+  knownVariables = normalizeVariables(data?.variables || [], declarations);
+  knownVariableDataLoaded = true;
 }
 function highlightSource(source) {
   const escape = (s) => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
@@ -363,7 +379,7 @@ async function refreshScenes(selected = '') {
     });
   };
   draw(root, sceneList);
-  refreshFiles().catch(showError);
+  await refreshFiles();
 }
 
 async function refreshFiles() {
@@ -507,32 +523,176 @@ function showFileContextMenu(event, filePath) {
   fileContextMenu.hidden = false;
 }
 
+function renderFileInfo() {
+  if (!fileInfo) return;
+  const info = fileInfoBase;
+  if (!info || typeof info !== 'object') {
+    fileInfo.textContent = typeof info === 'string' && info ? info : 'シーンファイルを右クリックすると情報を表示';
+    return;
+  }
+
+  fileInfo.replaceChildren();
+  const header = document.createElement('div');
+  header.className = 'file-info-header';
+  const title = document.createElement('div');
+  title.className = 'file-info-title';
+  const eyebrow = document.createElement('small');
+  eyebrow.textContent = 'ファイル情報';
+  const filename = document.createElement('strong');
+  filename.textContent = fileLabel(info.path);
+  filename.title = info.path || '';
+  title.append(eyebrow, filename);
+  const stats = document.createElement('div');
+  stats.className = 'file-info-summary';
+  const addStat = (kind, label, count) => {
+    const badge = document.createElement('span');
+    badge.className = `file-info-stat file-info-stat-${kind}`;
+    badge.textContent = `${label} ${count}`;
+    stats.append(badge);
+  };
+  if (info.error) {
+    const error = document.createElement('span');
+    error.className = 'file-info-stat file-info-stat-error';
+    error.textContent = info.error;
+    stats.append(error);
+  } else {
+    addStat('local', '同一ファイル', (info.localGotos || []).length);
+    addStat('external', '別ファイル', info.targets.length);
+    addStat('variables', '変数', info.variables.length);
+    if (info.reachable === false) addStat('warning', '未到達', '');
+  }
+  header.append(title, stats);
+  fileInfo.append(header);
+
+  const addSection = (kind, label, count, rows) => {
+    if (!count) return;
+    const section = document.createElement('details');
+    section.className = 'file-info-section';
+    section.dataset.kind = kind;
+    if (count <= (kind === 'targets' || kind === 'local-targets' ? 5 : 8)) section.open = true;
+    const heading = document.createElement('summary');
+    const headingLabel = document.createElement('span');
+    headingLabel.className = 'file-info-section-label';
+    headingLabel.textContent = label;
+    const headingCount = document.createElement('span');
+    headingCount.className = 'file-info-section-count';
+    headingCount.textContent = String(count);
+    heading.append(headingLabel, headingCount);
+    section.append(heading);
+    const list = document.createElement('ul');
+    list.className = 'file-info-list';
+    for (const row of rows) list.append(row);
+    section.append(list);
+    fileInfo.append(section);
+  };
+
+  if (!info.error) {
+    const localRows = (info.localGotos || []).map((target) => {
+      const item = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'file-info-link file-info-link-scene';
+      button.textContent = target.scene;
+      button.title = `${target.scene} のシーン定義へ移動`;
+      button.addEventListener('click', () => jumpToScene(target.file, target.scene).catch(showError));
+      const meta = document.createElement('small');
+      meta.className = 'file-info-target-meta';
+      meta.textContent = `${target.file === info.path ? 'このファイル内' : fileLabel(target.file)}${target.gotoLine ? ` · goto ${target.gotoLine}行` : ''}`;
+      item.append(button, meta);
+      return item;
+    });
+    addSection('local-targets', '同一ファイルのシーン移動', localRows.length, localRows);
+
+    const targetRows = info.targets.map((target) => {
+      const item = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'file-info-link file-info-link-file';
+      button.textContent = target;
+      button.title = `遷移先 ${target} を開く`;
+      button.addEventListener('click', () => openScene(target).catch(showError));
+      item.append(button);
+      return item;
+    });
+    addSection('targets', '別ファイルへの移動', targetRows.length, targetRows);
+
+    const scopeLabels = { global: '共通', function: '関数', scene: 'シーン', local: 'ローカル' };
+    const variableRows = [...info.variables]
+      .sort((left, right) => String(left.scope).localeCompare(String(right.scope)) || left.name.localeCompare(right.name) || String(left.definedIn).localeCompare(String(right.definedIn)))
+      .map((variable) => {
+        const item = document.createElement('li');
+        item.className = 'file-info-variable';
+        const definitions = variable.definitions || [];
+        const references = variable.references || [];
+        const origin = definitions[0] || {};
+        const container = origin.container || variable.definedIn || '';
+        const label = document.createElement('span');
+        label.className = 'file-info-variable-name';
+        label.textContent = variable.name;
+        const type = document.createElement('span');
+        type.className = 'file-info-type';
+        type.textContent = valueTypeLabel(variable.type);
+        const definition = definitions.find((location) => location.file && location.line) || definitions.find((location) => location.line);
+        if (definition) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'file-info-variable-jump';
+          button.title = '定義位置へ移動';
+          button.append(label, type);
+          button.addEventListener('click', () => jumpToLocation(definition, variable.name).catch(showError));
+          item.append(button);
+        } else {
+          const variableHeading = document.createElement('div');
+          variableHeading.className = 'file-info-variable-heading';
+          variableHeading.append(label, type);
+          item.append(variableHeading);
+        }
+        const meta = document.createElement('small');
+        meta.className = 'file-info-variable-meta';
+        const binding = variable.scope === 'global' || !container ? scopeLabels[variable.scope] || variable.scope : `${scopeLabels[variable.scope] || variable.scope}: ${container}`;
+        meta.textContent = `${binding} · このファイルの定義 ${definitions.length} · 参照 ${references.length}`;
+        item.append(meta);
+        return item;
+      });
+    addSection('variables', '変数', variableRows.length, variableRows);
+  }
+
+  if (info.unreachableRanges.length) {
+    const rows = info.unreachableRanges.map((range) => {
+      const item = document.createElement('li');
+      item.textContent = range;
+      return item;
+    });
+    addSection('unreachable', '到達不能行', rows.length, rows);
+  }
+}
+
 async function showFileInfo(path) {
   path = normalizedScenePath(path);
   const graph = await request('/api/scene-graph');
   const node = graph.nodes.find((item) => item.id === path);
   if (node?.error) {
-    if (normalizedScenePath(sceneName.value) === path) { fileInfoBase = '構文エラー'; fileInfo.textContent = fileInfoBase; }
+    if (normalizedScenePath(sceneName.value) === path) {
+      fileInfoBase = { path, error: '構文エラー', targets: [], localGotos: [], variables: [], reachable: node.reachable !== false, unreachableRanges: [] };
+      renderFileInfo();
+    }
     return;
   }
-  let targets = graph.edges.filter((edge) => edge.from === path).map((edge) => edge.to);
-  let variables = (node?.variables || []).map((variable) => {
-    const definitions = (variable.definitions || []).length;
-    const references = (variable.references || []).length;
-    const counts = definitions || references ? `（定義${definitions} / 参照${references}）` : '';
-    return `${variable.name}: ${valueTypeLabel(variable.type)}${counts}`;
-  });
+  let targets = graph.edges.filter((edge) => edge.from === path && edge.kind === 'goto').map((edge) => edge.to);
+  let variables = node?.variables || [];
   if ((!node || node.error) && fileInfo) {
     try {
       const scene = await request(`/api/scene?name=${encodeURIComponent(path)}`);
       const source = String(scene.source || '');
       targets = [...source.matchAll(/^\s*goto\s+(?:"([^"]+)"|([^\s]+))/gmi)].map((m) => m[1] || m[2]);
-      variables = [...source.matchAll(/^\s*(?:global\s+)?(?:const\s+)?(int|str|dict)\s+([A-Za-z_][A-Za-z0-9_]*)/gmi)].map((m) => `${m[2]}: ${m[1]}`);
+      variables = [...source.matchAll(/^\s*(?:global\s+)?(?:const\s+)?(int|str|dict)\s+([A-Za-z_][A-Za-z0-9_]*)/gmi)].map((m) => ({ name: m[2], type: m[1], scope: 'global', definedIn: path, definitions: [], references: [] }));
     } catch { /* keep empty information */ }
   }
-  const reachability = node?.reachable === false ? ' / 開始ファイルから到達不能' : '';
-  const text = `goto: ${targets.length ? targets.join(', ') : 'なし'} / 変数: ${variables.length ? variables.join(', ') : 'なし'}${reachability}`;
-  if (normalizedScenePath(sceneName.value) === path) { fileInfoBase = text; fileInfo.textContent = text; }
+  if (normalizedScenePath(sceneName.value) === path) {
+    const unreachableRanges = fileInfoBase?.path === path ? fileInfoBase.unreachableRanges : [];
+    fileInfoBase = { path, targets: [...new Set(targets)], localGotos: node?.localGotos || [], variables, reachable: node?.reachable !== false, unreachableRanges };
+    renderFileInfo();
+  }
 }
 async function addSceneInUi(folder) {
   folder = scenarioRelativePath(folder);
@@ -585,16 +745,25 @@ function completionContext() {
   const source = editor.value;
   const lineStart = source.lastIndexOf('\n', end - 1) + 1;
   const line = source.slice(lineStart, end);
-  if ((line.split('"').length - 1) % 2) return null;
+  const quotedGotoPath = /^\s*goto\s+"/.test(line);
+  if ((line.split('"').length - 1) % 2 && !quotedGotoPath) return null;
 
   let start = end;
-  while (start > lineStart && !/[\s{}"=:><!+\-.]/.test(source[start - 1])) start--;
+  if (quotedGotoPath) start = lineStart + line.indexOf('"') + 1;
+  else while (start > lineStart && !/[\s{}"=:><!+\-.]/.test(source[start - 1])) start--;
   const hyphenatedPositionPrefix = /(?:^|\s)(far-(?:left|right)?)$/.exec(line);
   if (hyphenatedPositionPrefix) start = lineStart + hyphenatedPositionPrefix.index + hyphenatedPositionPrefix[0].search(/far-/);
   // カーソルが単語の途中にあっても、右側の残りを含めて置換する。
   // 例: i|nt で int を確定したときに "int nt" を作らない。
   let replaceEnd = end;
-  while (replaceEnd < source.length && !/[\s{}"=:><!+\-.]/.test(source[replaceEnd])) replaceEnd++;
+  if (quotedGotoPath) {
+    const newline = source.indexOf('\n', end);
+    const lineEnd = newline < 0 ? source.length : newline;
+    const closingQuote = source.indexOf('"', end);
+    replaceEnd = closingQuote >= 0 && closingQuote < lineEnd ? closingQuote : lineEnd;
+  } else {
+    while (replaceEnd < source.length && !/[\s{}"=:><!+\-.]/.test(source[replaceEnd])) replaceEnd++;
+  }
   const prefix = source.slice(start, end);
   const words = source.slice(lineStart, start).trim().split(/\s+/).filter(Boolean);
   return { start, end, replaceEnd, prefix, words, line };
@@ -657,7 +826,9 @@ function candidatesFor(context) {
   if (command === 'clear') return ['bg', 'bgm', 'image'];
   if (command === 'goto') {
     const localScenes = [...editor.value.matchAll(/^\s*scene\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/gm)].map(match => match[1]);
-    return [...new Set([...localScenes, ...sceneNames])];
+    return context.line.trimStart().startsWith('goto "')
+      ? [...new Set(sceneNames)]
+      : [...new Set(localScenes)];
   }
   if (command === 'choice' && args.length === 0) return ['""'];
   if (command === 'for') {
@@ -686,7 +857,7 @@ async function updateSuggestions() {
     const [sceneData, variableData] = await Promise.all([request('/api/scenes'), request('/api/variables')]);
     if (refreshId !== suggestionRefreshId) return;
     sceneNames = sceneData.scenes || [];
-    knownVariables = normalizeVariables(variableData.variables || []);
+    setKnownVariableData(variableData);
   } catch (error) {
     showError(error);
     return;
@@ -784,7 +955,7 @@ function renderVariableTooltipDetails(event) {
   variableTooltip.hidden = false;
 }
 
-function showVariableTooltip(event) {
+function showVariableTooltipLegacy(event) {
   const rect = editor.getBoundingClientRect();
   const style = getComputedStyle(editor);
   const lineHeight = Number.parseFloat(style.lineHeight) || editorLineHeight();
@@ -842,25 +1013,215 @@ function showVariableTooltip(event) {
   return true;
 }
 
-function showSyntaxTooltip(event) {
+function sourceOffsetAtEvent(event) {
+  if (!highlight || !highlight.textContent.startsWith(editor.value)) return null;
+  const walker = document.createTreeWalker(highlight, NodeFilter.SHOW_TEXT);
+  let offset = 0;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const value = node.nodeValue || '';
+    const whole = document.createRange();
+    whole.selectNodeContents(node);
+    const lineBoxes = [...whole.getClientRects()].filter((rect) => event.clientY >= rect.top && event.clientY <= rect.bottom);
+    if (lineBoxes.length) {
+      const character = document.createRange();
+      for (let index = 0; index < value.length; index++) {
+        if (value[index] === '\n' || value[index] === '\r') continue;
+        character.setStart(node, index);
+        character.setEnd(node, index + 1);
+        const rect = character.getBoundingClientRect();
+        if (event.clientY >= rect.top && event.clientY <= rect.bottom && event.clientX >= rect.left - 0.5 && event.clientX <= rect.right + 0.5) return offset + index;
+      }
+    }
+    offset += value.length;
+  }
+  return null;
+}
+
+function tokenAtSourceOffset(offset) {
+  const before = editor.value.slice(0, offset);
+  const lineStart = before.lastIndexOf('\n') + 1;
+  const line = before.split('\n').length;
+  const column = offset - lineStart;
+  const sourceLine = editor.value.slice(lineStart).split(/\r?\n/, 1)[0] || '';
+  const match = [...sourceLine.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)].find((item) => column >= item.index && column < item.index + item[0].length);
+  return match ? { name: match[0], line, column: match.index, sourceLine } : null;
+}
+
+function sourceTokenAtEvent(event) {
+  const exactOffset = sourceOffsetAtEvent(event);
+  if (exactOffset !== null) return tokenAtSourceOffset(exactOffset);
   const rect = editor.getBoundingClientRect();
   const style = getComputedStyle(editor);
   const lineHeight = Number.parseFloat(style.lineHeight) || editorLineHeight();
   const paddingLeft = Number.parseFloat(style.paddingLeft) || 25;
   const paddingTop = Number.parseFloat(style.paddingTop) || 21;
-  const canvas = document.createElement('canvas');
-  const context = canvas.getContext('2d'); context.font = style.font;
-  const charWidth = context.measureText('M').width || 8.4;
   const lineIndex = Math.floor((event.clientY - rect.top + editor.scrollTop - paddingTop) / lineHeight);
-  const column = Math.floor((event.clientX - rect.left + editor.scrollLeft - paddingLeft) / charWidth);
-  const sourceLine = editor.value.split(/\r?\n/)[lineIndex] || '';
+  const sourceLine = editor.value.split(/\r?\n/)[lineIndex];
+  if (sourceLine === undefined) return null;
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  context.font = style.font;
+  const baseWidth = context.measureText('M').width || 8.4;
+  const tabWidth = baseWidth * (Number(editor.tabSize) || 2);
+  const targetX = event.clientX - rect.left + editor.scrollLeft - paddingLeft;
+  if (targetX < 0) return null;
+  let pixel = 0;
+  let column = -1;
+  for (let index = 0; index < sourceLine.length; index++) {
+    const character = sourceLine[index];
+    const width = character === '\t' ? tabWidth - (pixel % tabWidth) : context.measureText(character).width;
+    if (targetX < pixel + Math.max(width, 1) / 2) { column = index; break; }
+    pixel += width;
+  }
+  if (column < 0) return null;
   const match = [...sourceLine.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)].find((item) => column >= item.index && column < item.index + item[0].length);
-  const hint = match && syntaxHints[match[0]];
+  return match ? { name: match[0], line: lineIndex + 1, column: match.index, sourceLine } : null;
+}
+
+function mergeVariableLocations(...groups) {
+  const unique = new Map();
+  for (const location of groups.flat()) unique.set(JSON.stringify(location), location);
+  return [...unique.values()];
+}
+
+function enrichCurrentVariableEntries(file, variables) {
+  const currentFile = normalizedScenePath(file);
+  return variables.map((variable) => {
+    const project = knownVariables.find((item) => item.name === variable.name && item.scope === variable.scope && item.definedIn === variable.definedIn);
+    const staticDeclaration = variable.scope === 'global' && variable.definedIn === 'global' ? staticVariableDeclarations.get(variable.name) : null;
+    const staticConstraint = staticDeclaration && (staticDeclaration.min !== undefined || staticDeclaration.max !== undefined || Array.isArray(staticDeclaration.possibleValues))
+      ? Object.fromEntries(['min', 'max', 'possibleValues'].filter((key) => staticDeclaration[key] !== undefined).map((key) => [key, staticDeclaration[key]]))
+      : null;
+    const here = (locations) => locations.map((location) => ({ ...location, file }));
+    const elsewhere = (locations) => locations.filter((location) => normalizedScenePath(location.file || file) !== currentFile);
+    const sourceDefinitions = (variable.definitions || []).filter((location) => !(staticDeclaration && location.kind === 'definition' && location.line === undefined && location.column === undefined));
+    const definitions = mergeVariableLocations(here(sourceDefinitions), elsewhere(project?.definitions || []));
+    if (staticDeclaration) definitions.push({ scope: 'global', container: 'global', kind: 'definition', file: '.novel/variables.json' });
+    return {
+      ...variable,
+      ...(staticDeclaration ? { static: true } : {}),
+      ...(staticConstraint ? { constraint: staticConstraint } : project?.constraint ? { constraint: project.constraint } : {}),
+      definitions: mergeVariableLocations(definitions),
+      references: mergeVariableLocations(here(variable.references || []), elsewhere(project?.references || [])),
+    };
+  });
+}
+
+async function compiledVariablesForCurrentSource(file, source) {
+  if (!knownVariableDataLoaded) setKnownVariableData(await request('/api/variables'));
+  if (currentVariableAnalysis?.file === file && currentVariableAnalysis.source === source && Array.isArray(currentVariableAnalysis.variables)) return enrichCurrentVariableEntries(file, currentVariableAnalysis.variables);
+  if (currentVariableAnalysis?.file === file && currentVariableAnalysis.source === source && currentVariableAnalysis.promise) return currentVariableAnalysis.promise;
+  const analysis = { file, source, variables: null, promise: null };
+  currentVariableAnalysis = analysis;
+  analysis.promise = request('/api/compile', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: file, source }),
+  }).then((response) => {
+    if (!response.ok || !response.program?.variables) throw new Error(response.error || '変数の参照先を解析できませんでした');
+    if (sceneName.value !== file || editor.value !== source) throw new Error('解析中に編集中のシナリオが変更されました');
+    analysis.variables = response.program.variables;
+    analysis.promise = null;
+    return enrichCurrentVariableEntries(file, analysis.variables);
+  }).catch((error) => {
+    if (currentVariableAnalysis === analysis) currentVariableAnalysis = null;
+    throw error;
+  });
+  return analysis.promise;
+}
+
+async function showVariableTooltip(event, requestId) {
+  const token = sourceTokenAtEvent(event);
+  if (!token) return false;
+  const file = sceneName.value;
+  const source = editor.value;
+  const variables = await compiledVariablesForCurrentSource(file, source);
+  if (requestId !== variableTooltipRequestId || sceneName.value !== file || editor.value !== source) return false;
+  const matches = variables.filter((variable) => variable.name === token.name && [...(variable.definitions || []), ...(variable.references || [])].some((location) => Number(location.line) === token.line && Number(location.column) === token.column + 1));
+  if (matches.length !== 1) return false;
+  const variable = matches[0];
+  variableTooltip.replaceChildren();
+  const title = document.createElement('strong');
+  title.className = 'variable-tooltip-title';
+  title.textContent = `${variable.name} : ${valueTypeLabel(variable.type)}`;
+  variableTooltip.append(title);
+  const scope = document.createElement('div');
+  scope.className = 'variable-tooltip-row';
+  scope.textContent = `スコープ: ${variable.scope}${variable.definedIn && variable.definedIn !== 'global' ? ` (${variable.definedIn})` : ''}`;
+  variableTooltip.append(scope);
+  const constraint = variable.constraint || {};
+  if (constraint.min !== undefined || constraint.max !== undefined) {
+    const range = document.createElement('div');
+    range.className = 'variable-tooltip-row variable-tooltip-constraint';
+    range.textContent = `許容範囲: ${constraint.min ?? '下限なし'} ～ ${constraint.max ?? '上限なし'}`;
+    variableTooltip.append(range);
+  }
+  if (Array.isArray(constraint.possibleValues) && constraint.possibleValues.length) {
+    const values = document.createElement('div');
+    values.className = 'variable-tooltip-row variable-tooltip-constraint';
+    values.textContent = `許容値: ${constraint.possibleValues.join(', ')}`;
+    variableTooltip.append(values);
+  }
+  const addLocations = (label, locations) => {
+    const heading = document.createElement('div');
+    heading.className = 'variable-tooltip-heading';
+    heading.textContent = `${label} (${locations.length})`;
+    variableTooltip.append(heading);
+    if (!locations.length) {
+      const empty = document.createElement('div');
+      empty.className = 'variable-tooltip-empty';
+      empty.textContent = 'なし';
+      variableTooltip.append(empty);
+      return;
+    }
+    const appendLocation = (location) => {
+      const fileName = location.file || sceneName.value;
+      const position = location.line ? `:${location.line}${location.column ? `:${location.column}` : ''}` : '';
+      if (!sceneNames.includes(fileName)) {
+        const text = document.createElement('div');
+        text.className = 'variable-tooltip-empty';
+        text.textContent = `${fileName}${position}`;
+        variableTooltip.append(text);
+        return;
+      }
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'variable-tooltip-location';
+      button.textContent = `${fileName}:${location.line || '?'}${location.column ? `:${location.column}` : ''}`;
+      button.title = `${location.kind || '参照'} ${location.container || ''}`.trim();
+      button.addEventListener('click', () => jumpToLocation(location, variable.name).catch(showError));
+      variableTooltip.append(button);
+    };
+    const first = locations.slice(0, 10);
+    first.forEach(appendLocation);
+    if (locations.length > first.length) {
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'variable-tooltip-more';
+      more.textContent = `残り ${locations.length - first.length} 件を表示`;
+      more.addEventListener('click', () => { more.remove(); locations.slice(10).forEach(appendLocation); });
+      variableTooltip.append(more);
+    }
+  };
+  const references = variable.references || [];
+  addLocations('定義', variable.definitions || []);
+  addLocations('代入', references.filter((location) => location.kind === 'assignment'));
+  addLocations('参照・埋め込み', references.filter((location) => location.kind !== 'assignment'));
+  variableTooltip.hidden = false;
+  const bounds = variableTooltip.getBoundingClientRect();
+  variableTooltip.style.left = `${Math.max(8, Math.min(event.clientX + 14, window.innerWidth - bounds.width - 8))}px`;
+  variableTooltip.style.top = `${Math.max(8, Math.min(event.clientY + 14, window.innerHeight - bounds.height - 8))}px`;
+  return true;
+}
+
+function showSyntaxTooltip(event) {
+  const match = sourceTokenAtEvent(event);
+  const hint = match && syntaxHints[match.name];
   if (!hint) return false;
   variableTooltip.replaceChildren();
-  const title = document.createElement('strong'); title.className = 'variable-tooltip-title'; title.textContent = match[0];
+  const title = document.createElement('strong'); title.className = 'variable-tooltip-title'; title.textContent = match.name;
   const body = document.createElement('div'); body.className = 'syntax-tooltip-signature'; body.textContent = hint;
-  const recipe = syntaxRecipes[match[0]];
+  const recipe = syntaxRecipes[match.name];
   variableTooltip.append(title, body);
   if (recipe?.description) {
     const description = document.createElement('div'); description.className = 'syntax-tooltip-description'; description.textContent = recipe.description;
@@ -925,6 +1286,8 @@ function acceptSuggestion() {
 
 async function openScene(name) {
   if (sceneName?.value && sceneName.value !== name && isDirty) await saveScene();
+  variableTooltipRequestId++;
+  currentVariableAnalysis = null;
   const scene = await request(`/api/scene?name=${encodeURIComponent(name)}`);
   localStorage.setItem(lastSceneKey(), scene.name);
   if (!openTabs.includes(scene.name)) openTabs.push(scene.name);
@@ -942,18 +1305,35 @@ result.textContent = '';
   scheduleValidation();
 }
 
-async function jumpToLocation(location) {
+async function jumpToLocation(location, symbol = '') {
   const requestedFile = String(location.file || sceneName.value);
   const file = requestedFile === 'current' ? sceneName.value : scenarioRelativePath(requestedFile) ?? requestedFile;
-  if (file && normalizedScenePath(file) !== normalizedScenePath(sceneName.value)) await openScene(file);
+  if (file && normalizedScenePath(file) !== normalizedScenePath(sceneName.value)) {
+    if (!sceneNames.includes(file)) { setStatus(`シナリオ '${file}' は現在の作品内にありません`, 'warning'); return; }
+    await openScene(file);
+  }
   const line = Math.max(1, Number(location.line) || 1);
   const column = Math.max(0, Number(location.column) - 1 || 0);
   const lineStart = editor.value.split(/\r?\n/).slice(0, line - 1).reduce((total, value) => total + value.length + 1, 0);
   const caret = Math.min(editor.value.length, lineStart + column);
   editor.focus();
-  editor.setSelectionRange(caret, caret);
+  const lineText = editor.value.split(/\r?\n/)[line - 1] || '';
+  const selected = symbol && lineText.slice(column, column + symbol.length) === symbol ? symbol.length : 0;
+  editor.setSelectionRange(caret, caret + selected);
   editor.scrollTop = Math.max(0, (line - 1) * editorLineHeight() - 70);
   hideVariableTooltip();
+}
+
+async function jumpToScene(file, scene) {
+  const requestedFile = String(file || sceneName.value);
+  const targetFile = scenarioRelativePath(requestedFile) ?? requestedFile;
+  if (targetFile && normalizedScenePath(targetFile) !== normalizedScenePath(sceneName.value)) await openScene(targetFile);
+  const escaped = scene.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`^\\s*scene\\s+${escaped}\\b`, 'm').exec(editor.value);
+  if (!match) throw Error(`シーン '${scene}' の定義が見つかりません`);
+  const start = match.index + match[0].lastIndexOf(scene);
+  const line = editor.value.slice(0, start).split(/\r?\n/).length;
+  revealEditorRange(start, start + scene.length, line);
 }
 
 function renderDiagnosticResult(summary, entries) {
@@ -1253,7 +1633,7 @@ async function saveScene() {
   await refreshScenes(saved.name);
   await refreshSceneGraph();
   const variableData = await request('/api/variables');
-  knownVariables = normalizeVariables(variableData.variables || []);
+  setKnownVariableData(variableData);
   setStatus(`${saved.name} を保存しました`, 'ok');
 }
 
@@ -1353,16 +1733,24 @@ window.novelEditorApi = {
 
 async function validate(providedReport = null) {
   const sequence = ++validationSequence;
+  const sourceSnapshot = editor.value;
+  const fileSnapshot = sceneName.value;
   let report = providedReport;
   if (!report) {
     setStatus('構文を検証中…');
     report = await request('/api/validate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: sceneName.value, source: editor.value }),
+      body: JSON.stringify({ name: fileSnapshot, source: sourceSnapshot }),
     });
-    if (sequence !== validationSequence) return;
+    if (sequence !== validationSequence || fileSnapshot !== sceneName.value || sourceSnapshot !== editor.value) return;
   }
+  currentVariableAnalysis = {
+    file: fileSnapshot,
+    source: sourceSnapshot,
+    variables: Array.isArray(report?.program?.variables) ? report.program.variables : null,
+    promise: null,
+  };
   diagnostics = Array.isArray(report.diagnostics) ? report.diagnostics : [];
   if (!diagnostics.length && !report.ok) {
     const message = String(report.error || '構文エラー');
@@ -1415,12 +1803,11 @@ async function validate(providedReport = null) {
   }
   diagnosticText = displayedDiagnostics.sort((left, right) => left.line - right.line || left.index - right.index).map((item) => item.text).join('\n');
   updateHighlight();
-if (fileInfo) fileInfo.textContent = fileInfoBase;
   const unreachableLines = [...unreachableGroups.values()].filter((group) => diagnosticForCurrentFile(group.item)).flatMap((group) => group.lines);
-  if (fileInfo && unreachableLines.length) {
-    const ranges = contiguousLineRanges(unreachableLines, sourceLines).map(lineRangeLabel);
-    fileInfo.textContent += `\n到達不能\n${ranges.join('\n')}`;
-  }
+if (fileInfoBase && typeof fileInfoBase === 'object') {
+  fileInfoBase.unreachableRanges = contiguousLineRanges(unreachableLines, sourceLines).map(lineRangeLabel);
+  renderFileInfo();
+}
   if (report.ok) {
     const warningCount = displayedDiagnostics.filter((item) => item.severity === 'warning').length;
     const infoCount = displayedDiagnostics.filter((item) => item.severity === 'info').length;
@@ -1677,6 +2064,9 @@ function createNewSceneDraft() {
 }
 document.querySelector('#new-scene')?.addEventListener('click', createNewSceneDraft);
 editor.addEventListener('input', () => {
+  variableTooltipRequestId++;
+  hideVariableTooltip();
+  currentVariableAnalysis = null;
   updateLineNumbers();
   updateHighlight();
 updateSuggestions();
@@ -1727,9 +2117,19 @@ editor.addEventListener('beforeinput', (event) => {
 });
 editor.addEventListener('contextmenu', (event) => {
   event.preventDefault();
+  const requestId = ++variableTooltipRequestId;
+  hideVariableTooltip();
+  if (showGotoMenu(event)) return;
+  const hoveredToken = sourceTokenAtEvent(event);
+  if (hoveredToken && syntaxHints[hoveredToken.name]) { showSyntaxTooltip(event); return; }
   // 変数の定義・参照メニューを最優先する。構文説明は変数として
   // 解決できなかった語だけに表示し、変数の右クリックを奪わない。
-  if (!showGotoMenu(event) && !showVariableTooltip(event)) showSyntaxTooltip(event);
+  if (showGotoMenu(event)) return;
+  showVariableTooltip(event, requestId).then((shown) => {
+    if (requestId === variableTooltipRequestId && !shown) showSyntaxTooltip(event);
+  }).catch(() => {
+    if (requestId === variableTooltipRequestId) showSyntaxTooltip(event);
+  });
 });
 document.addEventListener('click', (event) => {
   if (!variableTooltip.contains(event.target)) hideVariableTooltip();
@@ -2062,14 +2462,36 @@ async function confirmProjectSwitch() {
 
 async function applyOpenedProject(info) {
   currentProjectRoot = info.projectRoot || '';
+  pickerWelcome = false;
+  document.documentElement.classList.remove('project-selection-required');
   hideProjectPicker();
+  // A project switch is a hard workspace boundary: discard tabs, split-editor
+  // state, diagnostics and the previous document before fetching the new tree.
+  openTabs.length = 0;
+  splitTabs.length = 0;
+  closeSplit(true);
+  clearLeftEditor();
+  renderEditorTabs('');
+  renderSplitTabs();
+  result.replaceChildren();
+  diagnostics = [];
+  diagnosticText = '';
   await loadWorkspace(false);
+  const activeProject = await request('/api/project');
+  if (activeProject.projectRoot !== currentProjectRoot) throw new Error('選択した作品フォルダーへの切り替えを確認できませんでした。もう一度お試しください。');
+  window.dispatchEvent(new CustomEvent('novel-editor:workspace-ready', { detail: { projectRoot: currentProjectRoot, scenes: [...sceneNames] } }));
   setStatus(`${info.title || '作品'} を開きました`, 'ok');
 }
 
 async function openProjectAt(folder, create = false) {
   if (!(await confirmProjectSwitch())) return;
   const result = await postProjectOpen(folder, create);
+  if (result.status === 409 && result.data.needsCreate && result.data.isEmpty) {
+    const initialized = await postProjectOpen(result.data.projectRoot, true);
+    if (!initialized.ok) throw new Error(initialized.data.error || '選択した空フォルダーを作品として準備できませんでした。');
+    await applyOpenedProject(initialized.data);
+    return;
+  }
   if (result.status === 409 && result.data.needsCreate) {
     if (!await uiAsk(`${result.data.projectRoot}\nはまだ作品フォルダーではありません。ここに新規作品を作成しますか？`, '作成する')) return;
     const created = await postProjectOpen(result.data.projectRoot, true);
@@ -2082,6 +2504,7 @@ async function openProjectAt(folder, create = false) {
 }
 
 function hideProjectPicker() {
+  if (pickerWelcome) return;
   document.querySelector('#project-picker')?.setAttribute('hidden', '');
 }
 
@@ -2090,12 +2513,16 @@ async function renderProjectPicker(target = pickerPath) {
   const pathInput = document.querySelector('#project-picker-path');
   const recentBox = document.querySelector('#project-picker-recent');
   const title = document.querySelector('#project-picker-title');
+  const openButton = document.querySelector('#project-picker-open');
+  const createButton = document.querySelector('#project-picker-create');
   if (!list || !pathInput) return;
   title.textContent = pickerMode === 'create' ? '新しい作品フォルダー' : '作品フォルダーを開く';
   const browse = await request(`/api/browse?path=${encodeURIComponent(target || '')}`);
   const project = await request('/api/project');
   pickerPath = browse.path || '';
   pathInput.value = pickerPath;
+  if (openButton) openButton.disabled = !pickerPath;
+  if (createButton) createButton.disabled = !pickerPath;
   list.replaceChildren();
   if (browse.parent !== null) {
     const up = document.createElement('button');
@@ -2126,21 +2553,51 @@ async function renderProjectPicker(target = pickerPath) {
   }
 }
 
-async function showProjectPicker(mode = 'open') {
+async function showProjectPicker(mode = 'open', welcome = false) {
   pickerMode = mode;
+  pickerWelcome = welcome;
   const overlay = document.querySelector('#project-picker');
   if (!overlay) return;
+  if (window.novelDesktop?.selectFolder) {
+    return;
+  }
+  overlay.classList.toggle('project-picker-welcome', welcome);
+  const closeButton = document.querySelector('#project-picker-close');
+  if (closeButton) closeButton.hidden = welcome;
+  const copy = document.querySelector('.project-picker-copy');
+  if (copy) copy.textContent = welcome ? 'フォルダを選ぶか作成してください。' : 'ディスク上の任意の場所から作品フォルダーを開きます。空のフォルダーは新規作品として作成できます。';
   overlay.hidden = false;
   if (!currentProjectRoot) {
     const project = await request('/api/project');
     currentProjectRoot = project.projectRoot || '';
   }
-  await renderProjectPicker(currentProjectRoot || pickerPath);
+  let target = currentProjectRoot || pickerPath;
+  if (welcome) {
+    const roots = await request('/api/browse');
+    target = roots.entries?.find((entry) => entry.name === 'ホーム')?.path || '';
+  }
+  await renderProjectPicker(target);
   document.querySelector('#project-picker-path')?.focus();
 }
 
-document.querySelector('#open-project')?.addEventListener('click', () => showProjectPicker('open').catch(showError));
-document.querySelector('#new-project')?.addEventListener('click', () => showProjectPicker('create').catch(showError));
+async function chooseProjectFolder(mode = 'open') {
+  if (!window.novelDesktop?.selectFolder) return showProjectPicker(mode);
+  const folder = await window.novelDesktop.selectFolder();
+  if (!folder) return;
+  if (mode === 'create') {
+    const name = (await uiPrompt('新しい作品フォルダー名', 'gamesenario')).trim();
+    if (!name) return;
+    const target = `${folder.replace(/[\\/]+$/, '')}/${name}`;
+    const result = await postProjectOpen(target, true);
+    if (!result.ok) throw new Error(result.data.error || '作品を作成できませんでした。');
+    await applyOpenedProject(result.data);
+    return;
+  }
+  await openProjectAt(folder, false);
+}
+
+document.querySelector('#open-project')?.addEventListener('click', () => chooseProjectFolder('open').catch(showError));
+document.querySelector('#new-project')?.addEventListener('click', () => chooseProjectFolder('create').catch(showError));
 document.querySelector('#project-picker-close')?.addEventListener('click', hideProjectPicker);
 document.querySelector('#project-picker-up')?.addEventListener('click', async () => {
   const browse = await request(`/api/browse?path=${encodeURIComponent(pickerPath || '')}`);
@@ -2152,10 +2609,16 @@ document.querySelector('#project-picker-go')?.addEventListener('click', () => {
 document.querySelector('#project-picker-path')?.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') renderProjectPicker(event.currentTarget.value || '').catch(showError);
 });
+document.querySelector('#project-picker-path')?.addEventListener('input', (event) => {
+  const hasPath = Boolean(event.currentTarget.value.trim());
+  document.querySelector('#project-picker-open').disabled = !hasPath;
+  document.querySelector('#project-picker-create').disabled = !hasPath;
+});
 document.querySelector('#project-picker-open')?.addEventListener('click', () => {
   const folder = document.querySelector('#project-picker-path')?.value || pickerPath;
   openProjectAt(folder, false).catch(showError);
 });
+
 document.querySelector('#project-picker-create')?.addEventListener('click', async () => {
   const parent = document.querySelector('#project-picker-path')?.value || pickerPath;
   const name = (await uiPrompt('新しい作品フォルダー名', 'gamesenario')).trim();
@@ -2169,11 +2632,12 @@ document.querySelector('#project-picker')?.addEventListener('click', (event) => 
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !document.querySelector('#project-picker')?.hidden) {
     event.preventDefault();
+    if (pickerWelcome) return;
     hideProjectPicker();
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o' && !event.shiftKey && !document.documentElement.classList.contains('embedded-editor')) {
     event.preventDefault();
-    showProjectPicker('open').catch(showError);
+    chooseProjectFolder('open').catch(showError);
   }
 });
 
@@ -2183,7 +2647,7 @@ Promise.all([request('/api/project'), loadWorkspace(true)])
     setStatus('編集を開始できます', 'ok');
     const startupProjectRoot = currentProjectRoot;
     const restoreStartupScene = () => {
-      if (currentProjectRoot !== startupProjectRoot || sceneName.value || isDirty) return;
+      if (pickerWelcome || currentProjectRoot !== startupProjectRoot || sceneName.value || isDirty) return;
       const remembered = localStorage.getItem(lastSceneKey());
       const candidate = selectedScene || remembered;
       if (candidate && sceneNames.includes(candidate)) openScene(candidate).then(() => { if (!selectedSymbol) return; const match = new RegExp(`^\\s*(?:global\\s+)?(?:int|string|str|bool|struct|const)\\s+${selectedSymbol}\\b`, 'm').exec(editor.value); if (match) revealEditorRange(match.index, match.index + selectedSymbol.length); }).catch(showError);
@@ -2193,6 +2657,9 @@ Promise.all([request('/api/project'), loadWorkspace(true)])
     setTimeout(restoreStartupScene, 800);
   })
   .catch(showError);
+if (pickerWelcome) {
+  showProjectPicker('open', true).catch(showError);
+}
 updateLineNumbers();
 updateHighlight();
 const selectedScene = new URLSearchParams(location.search).get('scene');
@@ -2259,20 +2726,20 @@ highlight?.addEventListener('mouseover', (event) => { const line = event.target.
 const syntaxHints = {
   asset: 'asset <種類> <名前> = "パス"',
   character: 'character <名前> {\n  name = "表示名"\n  affection = 0\n  pose normal = "画像パス"\n}',
-  struct: 'struct <名前> { field: int | str }',
+  struct: 'struct <名前> {\n  name: str\n  score: int\n}',
   int: 'int <名前> = <整数>',
   str: 'str <名前> = "文字列"',
   dict: 'dict[int|str] <名前> = { "key": <値> }',
-  const: 'const int|str|dict <名前> = <値>',
-  global: 'global int|str|dict|const <名前> = <値>',
+  const: 'const <型> <名前> = <値>',
+  global: 'global [const] <型> <名前> = <値>',
   set: 'set <既存の変数> = <値>',
-  say: 'say "文字列リテラル" または say <話者> <str式>（本文は必須）',
+  say: 'say <文字列リテラルで始まるstr式> または say <話者> <str式>',
   bg: 'bg <背景アセット>', bgm: 'bgm <BGMアセット>', se: 'play se <SEアセット>',
   show: 'show <名前>.<ポーズ> <位置> [fade <ミリ秒>]', hide: 'hide <名前> [fade <ミリ秒>]',
   if: 'if <条件> { ... } else { ... }', elif: 'elif <条件> { ... }', else: 'else { ... }',
   for: 'for <変数> from <開始> to <終了> [step <幅>] { ... }',
   while: 'while <条件> { ... }', choice: 'choice "質問" { "選択肢" { ... } }',
-  fn: 'fn <名前>(<引数>: <型>) -> <戻り値> { ... }', return: 'return [値]', goto: 'goto <シーン>',
+  fn: 'fn <名前>(<引数>: <型>) -> <戻り値> { ... }', return: 'return [値]', goto: 'goto <シーン> または goto "<外部ファイルパス>"',
   wait: 'wait <ミリ秒>', effect: 'effect fade <色> [ミリ秒]', play: 'play <種類> <アセット>'
 };
 const syntaxRecipes = {
@@ -2281,7 +2748,7 @@ const syntaxRecipes = {
   int: { description: '整数のローカル変数です。ファイル間で共有するなら global を付けます。', snippet: 'int count = ¦0\n' },
   str: { description: '文字列のローカル変数です。', snippet: 'str name = "¦"\n' },
   global: { description: '複数ファイルから参照できる共有変数です。トップレベルで宣言します。', snippet: 'global int score = ¦0\n' },
-  say: { description: '話者を省略できるのは本文が文字列リテラルの場合だけです。変数や関数呼び出しを本文にする場合は話者を書きます。', snippet: 'say narrator "¦本文"\n' },
+  say: { description: '本文が文字列リテラルから始まる式なら話者を省略でき、narrator として扱います。変数や関数呼び出しから始める場合は話者を指定します。', snippet: 'say "¦本文"\n' },
   bg: { description: 'asset bg で宣言済みの背景名を指定します。ここではパスを直接書きません。', snippet: 'bg ¦background\n' },
   bgm: { description: 'asset bgm で宣言済みの BGM 名を指定します。', snippet: 'bgm ¦music\n' },
   show: { description: 'character の pose を表示します。位置は far_left / left / center / right / far_right を使えます。', snippet: 'show hero.normal center¦\n' },
@@ -2290,8 +2757,8 @@ const syntaxRecipes = {
   for: { description: '開始から終了まで繰り返します。step は省略できます。', snippet: 'for i from 0 to ¦10 {\n  \n}\n' },
   while: { description: '条件が真の間、ブロックを繰り返します。', snippet: 'while ¦condition {\n  \n}\n' },
   choice: { description: '選択肢ごとに実行する処理を書きます。', snippet: 'choice "質問" {\n  "¦選択肢" {\n    \n  }\n}\n' },
-  goto: { description: '同一ファイルのシーン、または引用符付きの外部ファイルへ遷移します。', snippet: 'goto ¦next_scene\n' },
-  fn: { description: '再利用できる関数を定義します。', snippet: 'fn name() {\n  ¦\n}\n' },
+  goto: { description: '同一ファイルのシーン名はそのまま、外部ファイルの相対パスは必ず引用符で囲んで指定します。', snippet: 'goto ¦next_scene\n' },
+  fn: { description: '戻り値の型を -> で必ず指定して関数を定義します。値を返さない関数は none を使います。', snippet: 'fn name() -> none {\n  ¦\n}\n' },
 };
 editor.addEventListener('mousemove', (event) => {
   const line = Math.floor((event.offsetY - 21) / editorLineHeight()) + 1;
@@ -2334,26 +2801,6 @@ function showWorkbenchMessage(title, message) {
   dialog.append(heading, copy, close);
   document.body.append(dialog);
   close.focus();
-}
-function showLanguageGuide() {
-  document.querySelector('.workbench-message')?.remove();
-  const dialog = document.createElement('section'); dialog.className = 'editor-dialog workbench-message language-guide';
-  const heading = document.createElement('strong'); heading.textContent = '.tds 構文リファレンス';
-  const close = document.createElement('button'); close.type = 'button'; close.className = 'guide-close'; close.setAttribute('aria-label', '閉じる'); close.textContent = '×'; close.onclick = () => dialog.remove();
-  dialog.append(heading, close);
-  const sections = [
-    ['素材を宣言する', 'asset bg classroom = "asset/bg/classroom.png"\nasset bgm morning = "asset/bgm/morning.ogg"', '素材のパスは宣言時に一度だけ指定します。以後は classroom のような名前を使います。', 'asset'],
-    ['背景・音・立ち絵', 'bg classroom\nbgm morning\nshow hero.normal center\nhide hero', 'bg / bgm には、対応する asset 宣言の名前を指定します。', 'bg'],
-    ['台詞', 'say narrator "こんにちは"\nsay "話者を省略した台詞"', '話者を省略できるのは本文が文字列リテラルの場合だけです。', 'say'],
-    ['変数と共有変数', 'int score = 0\nstr name = "主人公"\nglobal int route = 0', 'global はファイルをまたいで共有します。ローカル変数と同じ名前にはできません。', 'global'],
-    ['構造体（struct）', 'struct Player {\n  name: str\n  coins: int\n}\n\nPlayer player = { "name": "ユイ", "coins": 0 }\nset player.coins = player.coins + 10', '複数の固定フィールドを一つの値にまとめる型です。使う前にトップレベルで宣言し、フィールドは int / str で定義します。変数の宣言時は、すべてのフィールドを辞書形式で指定します。', 'struct'],
-    ['構造体のコピーと更新', 'Player copy = { "name": "", "coins": 0 }\nset copy = player\nset copy.coins = copy.coins + 10', '構造体の代入はコピーです。別の構造体値や関数の戻り値を受け取るときも、まず { ... } で初期化してから set を使います。フィールドの追加・unset・構造体の入れ子はできません。', 'struct'],
-    ['条件と繰り返し', 'if score >= 10 {\n  say narrator "合格"\n} else {\n  say narrator "もう一度"\n}', 'ブロックは { と } で囲みます。', 'if'],
-    ['選択肢', 'choice "どうする？" {\n  "進む" {\n    goto next_scene\n  }\n}', '各選択肢の中に実行したい処理を書きます。', 'choice'],
-    ['シーン遷移と関数', 'goto next_scene\n\nfn greet() {\n  say narrator "こんにちは"\n}', 'goto はシーン名へ遷移し、fn は処理を再利用するための定義です。', 'goto'],
-  ];
-  sections.forEach(([title, body, descriptionText]) => { const block = document.createElement('details'); block.className = 'guide-section'; const summary = document.createElement('summary'); summary.textContent = title; const description = document.createElement('p'); description.textContent = descriptionText; const pre = document.createElement('pre'); pre.textContent = body; block.append(summary, description, pre); dialog.append(block); });
-  document.body.append(dialog); close.focus();
 }
 async function showProjectSettings() {
   document.querySelector('.project-settings')?.remove();
@@ -2529,8 +2976,6 @@ async function showProjectSettings() {
   document.body.append(dialog);
   close.focus();
 }
-function guideDescription(title) { const descriptions = { 'シーン': 'scene から始まり、インデントされた命令を上から順に実行します。ファイル名ではなくシーン名を遷移先に使います。', '台詞とコメント': 'say は話者名と文字列を受け取り、画面に台詞を表示します。# 以降はコメントとして無視されます。', '変数について': '変数は型を持ち、宣言後に代入できます。const は再代入できません。', '構造体について': 'struct は複数のフィールドをひとつの値にまとめる型です。フィールド名で値へアクセスします。', 'global 変数': 'global はファイルをまたいで共有する宣言です。関数や分岐ブロックの内部では宣言できません。', '条件分岐': '条件式が true のとき if ブロックを実行し、それ以外は else を実行します。', '繰り返し': 'while は条件が true の間、ブロックを繰り返します。ループ内で値を更新してください。', '選択肢': 'choice の各選択肢は表示文字列と goto 先を対応付けます。', 'シーン遷移': 'goto は指定したシーンへ移動し、return は呼び出し元へ戻ります。', '式と演算子': '数値・文字列・真偽値を組み合わせて式を作れます。型が合わない演算は診断されます。', '素材': '素材パスは asset フォルダーを基準に指定します。存在しない素材はコンパイル時に検出されます。', '構文解析': '入力中は字句解析、構文解析、型チェックが順番に実行され、該当箇所へ診断が表示されます。' }; return descriptions[title] || ''; }
-
 function showLanguageGuide() {
   document.querySelector('.workbench-message')?.remove();
   const dialog = document.createElement('section');
@@ -2542,7 +2987,7 @@ function showLanguageGuide() {
   const sections = [
     ['最小のシーン', 'scene main {\n  say narrator "こんにちは"\n  goto next\n}\n\nscene next {\n  say narrator "次の場面"\n}', 'sceneで始まり、{ }の中を上から実行します。インデントは半角スペース2個が標準です。'],
     ['素材と立ち絵', 'asset bg classroom = "asset/bg/classroom.png"\n\ncharacter hero {\n  name = "主人公"\n  pose normal = "asset/char/hero/normal.png"\n}\n\nscene main {\n  bg classroom\n  show hero.normal center\n}', 'assetで素材を登録し、シーンでは登録名を使います。showは character.pose と位置を指定します。'],
-    ['台詞と変数', 'int score = 0\nstr route = "common"\n\nset score = score + 1\nsay narrator "点数: {score}"\nsay "話者を省略すると narrator"', '変数には型と初期値が必要です。constは変更できません。文字列補間は {式} で書きます。'],
+    ['台詞と変数', 'int score = 0\nstr route = "common"\n\nset score = score + 1\nsay narrator "点数: {score}"\nsay "点数: " + str(score)', '本文が文字列リテラルから始まる式なら話者を省略でき、narrator として扱います。変数や関数呼び出しから始まる本文では話者を指定します。文字列補間は {式} で書きます。'],
     ['分岐・ループ', 'if score >= 10 {\n  say narrator "成功"\n} else {\n  say narrator "もう一度"\n}\n\nfor i from 0 to 3 step 1 {\n  say narrator "{i}"\n}', 'if/elif/else、for、whileを使えます。ループは値が変化し、実行回数が過大にならないようにします。'],
     ['選択肢', 'choice "どうする？" {\n  "進む" {\n    goto next\n  }\n  "待つ" {\n    wait 500\n  }\n}', 'choiceの各ラベルの中に処理を書きます。プロンプトは省略できます。'],
     ['演出', 'bg classroom\nbgm morning\nshow hero.smile left fade 250\nplay se door\nplay voice greeting blocking\neffect fade black 300\nclear bgm', '時間はミリ秒の非負整数です。voice/videoはblockingなら完了を待ち、asyncなら進行を止めません。'],
@@ -2619,6 +3064,7 @@ function activateSearchView() {
   hideSceneFlowView();
   document.querySelector('.app-shell')?.classList.remove('sidebar-hidden');
   document.querySelector('.sidebar')?.classList.add('search-mode');
+  document.querySelector('.sidebar')?.classList.remove('presentation-mode');
   document.querySelectorAll('.activity-button').forEach((button) => button.classList.toggle('active', button.dataset.activity === 'search'));
   searchView.hidden = false; searchInput.focus(); searchInput.select();
 }
@@ -2626,7 +3072,16 @@ function activateExplorerView() {
   hideSceneFlowView();
   document.querySelector('.app-shell')?.classList.remove('sidebar-hidden');
   document.querySelector('.sidebar')?.classList.remove('search-mode');
+  document.querySelector('.sidebar')?.classList.remove('presentation-mode');
   document.querySelectorAll('.activity-button').forEach((button) => button.classList.toggle('active', button.dataset.activity === 'explorer'));
+}
+function activatePresentationView() {
+  hideSceneFlowView();
+  document.querySelector('.app-shell')?.classList.remove('sidebar-hidden');
+  const sidebar = document.querySelector('.sidebar');
+  sidebar?.classList.remove('search-mode');
+  sidebar?.classList.add('presentation-mode');
+  document.querySelectorAll('.activity-button').forEach((button) => button.classList.toggle('active', button.dataset.activity === 'presentation'));
 }
 function searchMatcher(query) {
   const source = searchOptions.has('regex') ? query : query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -2682,7 +3137,7 @@ function scheduleProjectSearch() { clearTimeout(searchTimer); searchTimer = setT
 
 const menuActions = {
   'new-project': () => showProjectPicker('create').catch(showError),
-  'open-project': () => showProjectPicker('open').catch(showError),
+  'open-project': () => chooseProjectFolder('open').catch(showError),
   'project-settings': () => showProjectSettings().catch(showError),
   save: () => saveAllFromMenu().catch(showError),
   undo: () => restoreEditorHistory(undoStack, redoStack),
@@ -2711,6 +3166,9 @@ document.querySelectorAll('[data-menu-action]').forEach((button) => button.addEv
 document.querySelector('[data-activity="explorer"]')?.addEventListener('click', activateExplorerView);
 document.querySelector('[data-activity="search"]')?.addEventListener('click', activateSearchView);
 document.querySelector('[data-activity="flow"]')?.addEventListener('click', showSceneFlowView);
+document.querySelector('[data-activity="presentation"]')?.addEventListener('click', activatePresentationView);
+document.querySelector('[data-presentation-action="player-ui"]')?.addEventListener('click', () => showProjectSettings().catch(showError));
+document.querySelector('[data-presentation-action="project-settings"]')?.addEventListener('click', () => showProjectSettings().catch(showError));
 document.querySelector('.flow-link')?.addEventListener('click', (event) => { event.preventDefault(); showSceneFlowView(); });
 document.querySelector('#search-close')?.addEventListener('click', activateExplorerView);
 searchInput?.addEventListener('input', scheduleProjectSearch);

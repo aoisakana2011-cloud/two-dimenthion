@@ -144,7 +144,7 @@ test('arbitrary title: editor CRUD, assets, project build and CLI use the same p
   await fs.mkdir(path.join(layout.scenesRoot,'chapter'),{recursive:true});await fs.mkdir(layout.assetsRoot,{recursive:true});
   await fs.copyFile(path.resolve(__dirname,'../native/engine_data/ui/dialogue_box.png'),path.join(layout.assetsRoot,'pixel.png'));
   await fs.copyFile(path.join(layout.assetsRoot,'pixel.png'),path.join(layout.assetsRoot,'video-placeholder.mp4'));
-  const source='asset image logo = "asset/pixel.png"\nshow image logo center\ngoto chapter/next.tds';
+  const source='asset image logo = "asset/pixel.png"\nshow image logo center\ngoto "chapter/next.tds"';
   await fs.writeFile(path.join(layout.scenesRoot,'main.tds'),source);
   await fs.writeFile(path.join(layout.scenesRoot,'chapter/next.tds'),'int result = 7');
   assert.equal(layoutForInput(path.join(layout.scenesRoot,'chapter/next.tds')).projectRoot,dir);

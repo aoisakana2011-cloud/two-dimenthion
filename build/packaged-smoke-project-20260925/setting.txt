@@ -1,0 +1,6 @@
+# Novel Script project settings
+# すべて作品フォルダーからの相対パス。/ を使用する。
+scenario_dir = senario
+asset_dir = asset
+start_file = main.tds
+title = packaged-smoke-project-20260925

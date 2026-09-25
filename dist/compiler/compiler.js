@@ -1207,8 +1207,10 @@ class Compiler {
                 bindings.get(e.name)?.references.push({ ...loc, line: e.line, column: e.column, kind: loc.kind || 'expression' });
             if (e.kind === 'literal' && typeof e.value === 'string')
                 for (const m of e.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(\(\))?\}/g))
-                    if (!m[2])
-                        bindings.get(m[1].split('.')[0])?.references.push({ ...loc, line: e.line, column: e.column, kind: 'interpolation' });
+                    if (!m[2]) {
+                        const sourceColumn = e.sourceColumns?.[m.index + 1];
+                        bindings.get(m[1].split('.')[0])?.references.push({ ...loc, line: e.line, column: sourceColumn ?? (e.column === undefined ? undefined : e.column + m.index + 1), kind: 'interpolation' });
+                    }
             if (e.kind === 'binary') {
                 ref(e.left, bindings, loc);
                 ref(e.right, bindings, loc);
@@ -1259,7 +1261,7 @@ class Compiler {
                         ref(s.initial, bindings, loc);
                     if (s.type === 'infer')
                         throw new CompileError(`変数 '${s.name}' の型推論が完了していません`);
-                    declare(s.name, s.type, declarations, { ...declarationLoc, line: s.line, column: s.column, kind: 'definition' });
+                    declare(s.name, s.type, declarations, { ...declarationLoc, line: s.nameLine ?? s.line, column: s.nameColumn ?? s.column, kind: 'definition' });
                     const entry = declarations.get(s.name);
                     entry.mutable = !s.constant;
                     bindings.set(s.name, entry);
@@ -1322,7 +1324,7 @@ class Compiler {
                 }
                 if (s.kind === 'for') {
                     [s.start, s.stop, s.step].forEach(e => ref(e, bindings, loc));
-                    const child = new Map(bindings), at = { scope: 'local', container: `${loc.container}:for${++scopeId}` };
+                    const child = new Map(bindings), at = { scope: 'local', container: `${loc.container}:for${++scopeId}`, line: s.nameLine, column: s.nameColumn, kind: 'definition' };
                     declare(s.name, 'int', child, at);
                     walk(s.body, child, at, child, declarationLoc);
                     if (metadataForRuns(s) && !sourceBlockExits(s.body)) {
@@ -1347,7 +1349,7 @@ class Compiler {
         walk(script.globals, globals, { scope: 'global', container: 'global' });
         for (const fn of script.functions) {
             const bindings = new Map(globals), loc = { scope: 'function', container: fn.name };
-            fn.params.forEach(p => declare(p.name, p.type, bindings, loc));
+            fn.params.forEach(p => declare(p.name, p.type, bindings, { ...loc, line: p.line, column: p.column, kind: 'definition' }));
             walk(fn.body, bindings, loc);
         }
         script.scenes.forEach(s => walk(s.body, new Map(globals), { scope: 'scene', container: s.name }));

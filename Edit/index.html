@@ -14,7 +14,7 @@
           <img class="brand-icon" src="/assets/desktop-icon.png" alt="" aria-hidden="true">
           <div class="brand-mark">.tds</div>
           <nav class="menu-bar" aria-label="メインメニュー">
-            <div class="menu-item"><button type="button" data-menu="file" aria-haspopup="menu" aria-expanded="false">ファイル</button><div class="menu-popup" data-menu-popup="file" role="menu" hidden><button role="menuitem" data-menu-action="new-project">新しい作品…</button><button role="menuitem" data-menu-action="open-project">作品を開く…</button><button role="menuitem" data-menu-action="project-settings">作品設定…</button><span class="menu-separator"></span><button role="menuitem" data-menu-action="save">すべて保存 <kbd>Ctrl+S</kbd></button></div></div>
+            <div class="menu-item"><button type="button" data-menu="file" aria-haspopup="menu" aria-expanded="false">ファイル</button><div class="menu-popup" data-menu-popup="file" role="menu" hidden><button role="menuitem" data-menu-action="new-project">新しい作品…</button><button role="menuitem" data-menu-action="open-project">フォルダーを開く…</button><button role="menuitem" data-menu-action="project-settings">作品設定…</button><span class="menu-separator"></span><button role="menuitem" data-menu-action="save">すべて保存 <kbd>Ctrl+S</kbd></button></div></div>
             <div class="menu-item"><button type="button" data-menu="edit" aria-haspopup="menu" aria-expanded="false">編集</button><div class="menu-popup" data-menu-popup="edit" role="menu" hidden><button role="menuitem" data-menu-action="undo">元に戻す <kbd>Ctrl+Z</kbd></button><button role="menuitem" data-menu-action="redo">やり直す <kbd>Ctrl+Y</kbd></button><span class="menu-separator"></span><button role="menuitem" data-menu-action="format">整形 <kbd>Ctrl+Shift+F</kbd></button><button role="menuitem" data-menu-action="format-project">全シーンを整形</button></div></div>
             <div class="menu-item"><button type="button" data-menu="selection" aria-haspopup="menu" aria-expanded="false">選択</button><div class="menu-popup" data-menu-popup="selection" role="menu" hidden><button role="menuitem" data-menu-action="select-all">すべて選択 <kbd>Ctrl+A</kbd></button><button role="menuitem" data-menu-action="select-line">現在の行を選択</button></div></div>
             <div class="menu-item"><button type="button" data-menu="view" aria-haspopup="menu" aria-expanded="false">表示</button><div class="menu-popup" data-menu-popup="view" role="menu" hidden><button role="menuitem" data-menu-action="toggle-sidebar">エクスプローラーを切り替え</button><button role="menuitem" data-menu-action="toggle-minimap">ミニマップを切り替え</button><span class="menu-separator"></span><button role="menuitem" data-menu-action="scene-flow">シーンフロー</button></div></div>
@@ -34,8 +34,18 @@
           <button class="activity-button active" type="button" title="エクスプローラー" aria-label="エクスプローラー" data-activity="explorer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v13h2V4h8zM10 6h8l3 3v11a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm7 1.7V10h2.3z"/></svg></button>
           <button class="activity-button" type="button" title="検索" aria-label="検索" data-activity="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg></button>
           <button class="activity-button" type="button" title="シーンフロー" aria-label="シーンフロー" data-activity="flow"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M9 6h4a4 4 0 0 1 4 4v5M15 13l2 2 2-2"/></svg></button>
-          <span class="activity-spacer"></span></nav>
+          <span class="activity-spacer"></span>
+          <button class="activity-button" type="button" title="表示・演出設定" aria-label="表示・演出設定" data-activity="presentation"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4M7 9h4m-4 4h10m-3-4h3"/></svg></button></nav>
         <aside class="sidebar">
+          <section class="presentation-view" aria-label="表示・演出設定" hidden>
+            <header class="search-header"><span>表示・演出設定</span></header>
+            <div class="presentation-content">
+              <p>ゲーム画面の見た目をまとめて調整します。設定は作品の再生UIテーマに保存され、Browser / Native 再生で共有されます。</p>
+              <section class="presentation-card"><h2>画面・会話UI</h2><p>画面サイズ、背景の靄、会話欄、本文、話者名、選択肢の位置や画像を調整します。</p><button type="button" class="presentation-open-settings" data-presentation-action="player-ui">再生画面を編集…</button></section>
+              <section class="presentation-card"><h2>シナリオ演出</h2><p>背景・立ち絵・BGM・SE・Voice・画面効果はシナリオの演出命令で制御されます。ここでは再生画面の見た目を編集できます。</p><button type="button" class="presentation-open-settings" data-presentation-action="project-settings">作品設定を開く…</button></section>
+              <p class="presentation-note">変更後は編集画面の保存ボタンで保存してください。再生中の画面への反映は、次回の再生から有効です。</p>
+            </div>
+          </section>
           <section class="search-view" aria-label="検索" hidden>
             <header class="search-header"><span>検索</span><button type="button" id="search-close" title="検索を閉じる" aria-label="検索を閉じる">×</button></header>
             <div class="search-box">
@@ -100,13 +110,11 @@
       <div class="project-picker-panel" role="dialog" aria-modal="true" aria-labelledby="project-picker-title">
         <div class="project-picker-header">
           <div>
-            <div class="eyebrow">WORKSPACE</div>
             <h2 id="project-picker-title">作品フォルダー</h2>
           </div>
           <button id="project-picker-close" type="button" aria-label="閉じる">×</button>
         </div>
-        <p class="project-picker-copy">ディスク上の任意の場所から作品フォルダーを開きます。空のフォルダーは新規作品として作成できます。</p>
-        <label class="project-picker-path-label" for="project-picker-path">パス</label>
+        <p class="project-picker-copy">フォルダを選ぶか作成してください。</p>
         <div class="project-picker-path-row">
           <button id="project-picker-up" type="button" title="上のフォルダー">↑</button>
           <input id="project-picker-path" spellcheck="false" autocomplete="off">

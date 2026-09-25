@@ -1,6 +1,7 @@
-const { app, BrowserWindow, dialog, Menu } = require('electron');
+const { app, BrowserWindow, dialog, Menu, ipcMain } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
+const { prepareStartupWorkspace, removeStartupWorkspace } = require('./packaged-project');
 
 Menu.setApplicationMenu(null);
 
@@ -10,16 +11,22 @@ let editorServer = null;
 let mainWindow = null;
 let quitting = false;
 let closeSavePending = false;
+let startupWorkspace = '';
+let showProjectPickerOnStartup = false;
 
 function startEditorServer() {
   return new Promise((resolve, reject) => {
-    const packagedProject = path.join(app.getPath('documents'), 'Novel Script Projects', 'Title');
+    showProjectPickerOnStartup = !process.env.NOVEL_PROJECT_ROOT;
+    const projectRoot = showProjectPickerOnStartup
+      ? (startupWorkspace = prepareStartupWorkspace(app.getPath('temp')))
+      : process.env.NOVEL_PROJECT_ROOT;
     editorServer = spawn(process.execPath, [serverPath], {
       cwd: projectRoot,
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
-        ...(app.isPackaged && !process.env.NOVEL_PROJECT_ROOT ? { NOVEL_PROJECT_ROOT: packagedProject } : {}),
+        NOVEL_PROJECT_ROOT: projectRoot,
+        ...(showProjectPickerOnStartup ? { NOVEL_TEMP_STARTUP_WORKSPACE: '1' } : {}),
       },
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -55,6 +62,7 @@ function createWindow(url) {
     backgroundColor: '#1f1f1f',
     title: '.tds Edit',
     webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -84,8 +92,18 @@ function createWindow(url) {
   });
   const editorUrl = new URL(url);
   editorUrl.searchParams.set('desktop', '1');
+  if (showProjectPickerOnStartup) editorUrl.searchParams.set('welcome', '1');
   mainWindow.loadURL(editorUrl.toString());
 }
+
+ipcMain.handle('novel-editor:select-folder', async (event) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) return null;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '作品フォルダーを選択',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  return result.canceled ? null : result.filePaths[0] || null;
+});
 
 app.whenReady().then(async () => {
   try {
@@ -108,5 +126,19 @@ app.on('before-quit', (event) => {
     return;
   }
   quitting = true;
+  if (startupWorkspace) {
+    event.preventDefault();
+    const workspace = startupWorkspace;
+    startupWorkspace = '';
+    const cleanup = () => {
+      removeStartupWorkspace(app.getPath('temp'), workspace);
+      app.quit();
+    };
+    if (editorServer?.pid && editorServer.exitCode === null) {
+      editorServer.once('exit', cleanup);
+      editorServer.kill();
+    } else cleanup();
+    return;
+  }
   editorServer?.kill();
 });

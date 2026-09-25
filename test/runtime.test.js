@@ -1036,6 +1036,105 @@ test('scene graph reachability excludes outgoing gotos from dead code and dead s
   assert.equal(deadScene.externalGotos.has('dead.tds'), false);
   const falseLoop = sceneReachability(parse('scene start { while 1 == 2 { goto "dead.tds" } }'));
   assert.equal(falseLoop.externalGotos.has('dead.tds'), false);
+
+  const choiceEdges = sceneReachability(parse('scene start { choice { "A" { goto left } "B" { goto right } } }\nscene left { goto shared }\nscene right { goto shared }\nscene shared { goto tail }\nscene tail { wait 1 }'));
+  assert.deepEqual([...choiceEdges.reachableScenes].sort(), ['left', 'right', 'shared', 'start', 'tail']);
+
+  const emptyChoiceEdges = sceneReachability(parse('scene start { choice {}\ngoto next }\nscene next { wait 1 }'));
+  assert.equal(emptyChoiceEdges.reachableScenes.has('next'), true, 'an empty choice must preserve the analyzer’s fallthrough semantics');
+
+  const choiceLabelSideEffect = sceneReachability(parse('global int route = 0\nglobal int score = 7\nfn select_route() -> int { set route = 1\nreturn 1 }\nfn choice_label() -> str { say narrator "{select_route()}"\nreturn "label" }\nscene start { choice { "{choice_label()}" { wait 1 } "plain" { wait 1 } }\nif score == 7 { if route == 1 { goto selected } else { goto stale } } else { goto wrong_score } }\nscene selected { wait 1 }\nscene stale { wait 1 }\nscene wrong_score { wait 1 }'));
+  assert.equal(choiceLabelSideEffect.reachableScenes.has('selected'), true, 'choice labels execute before branch selection and may update globals');
+  assert.equal(choiceLabelSideEffect.reachableScenes.has('stale'), true, 'unknown label side effects must widen the changed value');
+  assert.equal(choiceLabelSideEffect.reachableScenes.has('wrong_score'), false, 'known function effects should preserve unrelated constants');
+
+  const choiceInvalidatesFacts = sceneReachability(parse('global int route = 0\nfn change_route() -> int { set route = 1\nreturn 1 }\nscene start { if route == 0 { choice { "{change_route()}" { wait 1 } }\nif route == 0 { goto stale } else { goto changed } } else { goto never_started } }\nscene stale { wait 1 }\nscene changed { wait 1 }\nscene never_started { wait 1 }'));
+  assert.equal(choiceInvalidatesFacts.reachableScenes.has('changed'), true, 'choice label side effects invalidate prior condition facts');
+  assert.equal(choiceInvalidatesFacts.reachableScenes.has('stale'), true, 'unknown side effects conservatively keep both follow-up branches');
+  assert.equal(choiceInvalidatesFacts.reachableScenes.has('never_started'), false);
+
+  const choicePromptSideEffect = sceneReachability(parse('global int route = 0\nfn prompt_route() -> int { set route = 1\nreturn 1 }\nscene start { choice "{prompt_route()}" { "continue" { wait 1 } }\nif route == 1 { goto prompted } else { goto stale_prompt } }\nscene prompted { wait 1 }\nscene stale_prompt { wait 1 }'));
+  assert.equal(choicePromptSideEffect.reachableScenes.has('prompted'), true, 'the choice prompt executes after labels and before the selected option body');
+  assert.equal(choicePromptSideEffect.reachableScenes.has('stale_prompt'), true, 'prompt effects must invalidate stale variable facts');
+
+  const shortCircuitReachability = sceneReachability(parse('global int route = 0\nfn mutate_route() -> int { set route = 1\nreturn 1 }\nscene start { if 0 == 1 and mutate_route() == 1 { goto impossible_call } else { if route == 0 { goto preserved } else { goto impossible_route } } }\nscene impossible_call { wait 1 }\nscene preserved { wait 1 }\nscene impossible_route { wait 1 }'));
+  assert.equal(shortCircuitReachability.reachableScenes.has('impossible_call'), false);
+  assert.equal(shortCircuitReachability.reachableScenes.has('preserved'), true);
+  assert.equal(shortCircuitReachability.reachableScenes.has('impossible_route'), false, 'short-circuited calls must not invalidate state');
+
+  const falseLoopState = sceneReachability(parse('global str route = "common"\nscene start { set route = "after"\nwhile 1 == 2 { set route = "common" }\nif route == "after" { goto after } else { goto common } }\nscene after { wait 1 }\nscene common { wait 1 }'));
+  assert.equal(falseLoopState.reachableScenes.has('after'), true);
+  assert.equal(falseLoopState.reachableScenes.has('common'), false, 'a statically skipped while body must not invalidate values');
+
+  const loopEdge = sceneReachability(parse('scene start { for i from 1 to 3 { goto repeated } }\nscene repeated { wait 1 }'));
+  assert.deepEqual([...loopEdge.reachableScenes].sort(), ['repeated', 'start']);
+
+  const terminatingLoop = sceneReachability(parse('scene start { while 1 == 1 { wait 1 }\ngoto dead }\nscene dead { wait 1 }'));
+  assert.equal(terminatingLoop.reachableScenes.has('dead'), false, 'a goto after a definitely infinite loop is unreachable');
+
+  const loopWidening = sceneReachability(parse('global int route = 0\nscene start { for i from 1 to 2 { set route = i\ngoto middle } }\nscene middle { if route == 1 { goto first } else { goto later } }\nscene first { wait 1 }\nscene later { wait 1 }'));
+  assert.equal(loopWidening.reachableScenes.has('first'), true);
+  assert.equal(loopWidening.reachableScenes.has('later'), false, 'an unconditional transfer exits on the first iteration with its exact loop value');
+  const exactForReachability = sceneReachability(parse('scene start { for i from 1 to 1 { if i == 1 { goto selected } else { goto impossible } } }\nscene selected { wait 1 }\nscene impossible { wait 1 }'));
+  assert.equal(exactForReachability.reachableScenes.has('selected'), true);
+  assert.equal(exactForReachability.reachableScenes.has('impossible'), false, 'small constant for-loops should specialize each iteration');
+  const exactForExitState = sceneReachability(parse('global int route = 0\nscene start { for i from 1 to 1 { set route = 1 }\nif route == 1 { goto selected } else { goto impossible } }\nscene selected { wait 1 }\nscene impossible { wait 1 }'));
+  assert.equal(exactForExitState.reachableScenes.has('selected'), true);
+  assert.equal(exactForExitState.reachableScenes.has('impossible'), false, 'small constant for-loop exit state should flow to following branches');
+  const exactWhileExitState = sceneReachability(parse('global int route = 0\nscene start { while route < 2 { set route = route + 1 }\nif route == 2 { goto selected } else { goto impossible } }\nscene selected { wait 1 }\nscene impossible { wait 1 }'));
+  assert.equal(exactWhileExitState.reachableScenes.has('selected'), true);
+  assert.equal(exactWhileExitState.reachableScenes.has('impossible'), false, 'small statically counted while-loop exit state should flow to following branches');
+
+  const globalSceneTransfer = sceneReachability(parse('goto destination\nscene default { wait 1 }\nscene destination { wait 1 }'));
+  assert.deepEqual([...globalSceneTransfer.reachableScenes], ['destination']);
+  assert.equal(globalSceneTransfer.reachableScenes.has('default'), false);
+
+  const globalFileTransfer = sceneReachability(parse('goto "chapter.tds"\nscene default { wait 1 }\nscene chapter_entry { wait 1 }'));
+  assert.equal(globalFileTransfer.reachableScenes.has('chapter_entry'), false, 'unlocated ASTs cannot resolve a file goto to a scene');
+  assert.equal(globalFileTransfer.externalGotos.has('chapter.tds'), true);
+
+  const globalOrderedTransfer = sceneReachability(parse('global str route = "common"\nif route == "common" { goto common } else { goto alternate }\nscene default { wait 1 }\nscene common { wait 1 }\nscene alternate { wait 1 }'));
+  assert.equal(globalOrderedTransfer.reachableScenes.has('common'), true);
+  assert.equal(globalOrderedTransfer.reachableScenes.has('alternate'), false, 'global initialization values must be evaluated in execution order');
+
+  const routeState = sceneReachability(parse('global str route = "common"\nscene start { set route = "after"\ngoto middle }\nscene middle { if route == "after" { goto after } else { goto common } }\nscene after { wait 1 }\nscene common { wait 1 }'));
+  assert.equal(routeState.reachableScenes.has('after'), true, 'mutable route state must flow across scene transitions');
+  assert.equal(routeState.reachableScenes.has('common'), false, 'infeasible route alternatives should remain unreachable when proven by state');
+  const mergedRouteState = sceneReachability(parse('global str route = "common"\nscene start { choice { "A" { set route = "after"\ngoto middle } "B" { set route = "common"\ngoto middle } } }\nscene middle { if route == "after" { goto after } else { goto common } }\nscene after { wait 1 }\nscene common { wait 1 }'));
+  assert.equal(mergedRouteState.reachableScenes.has('after'), true);
+  assert.equal(mergedRouteState.reachableScenes.has('common'), true, 'joining distinct incoming values must widen rather than keep one path value');
+  const callWidening = sceneReachability(parse('global str route = "common"\nfn reset_route() -> none { set route = "common"\nreturn }\nscene start { set route = "after"\nreset_route()\ngoto middle }\nscene middle { if route == "after" { goto after } else { goto common } }\nscene after { wait 1 }\nscene common { wait 1 }'));
+  assert.equal(callWidening.reachableScenes.has('after'), true);
+  assert.equal(callWidening.reachableScenes.has('common'), true, 'unknown function effects must invalidate path constants');
+});
+
+test('scene reachability follows file-path gotos to the first included scene', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-file-goto-reachability-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.mkdir(path.join(dir, 'chapters'));
+  await fs.writeFile(path.join(dir, 'chapters', 'chapter01.tds'), 'scene chapter01_s01 { goto chapter01_s02 }\nscene chapter01_s02 { goto "chapters\\\\chapter02.tds" }');
+  await fs.writeFile(path.join(dir, 'chapters', 'chapter02.tds'), 'scene chapter02_s01 { wait 1 }');
+  const script = await resolveProjectScript('include chapters/chapter01.tds\ninclude chapters/chapter02.tds\nscene main { goto "chapters/chapter01.tds" }', dir, new Set(), 'main.tds');
+  const reachability = sceneReachability(script);
+  assert.deepEqual([...reachability.reachableScenes].sort(), ['chapter01_s01', 'chapter01_s02', 'chapter02_s01', 'main']);
+  assert.equal(reachability.externalGotos.size, 0);
+  assert.equal(analyzeScript(script).some((item) => item.code === 'unreachable-scene'), false);
+
+  const extensionless = await resolveProjectScript('include chapters/chapter01.tds\ninclude chapters/chapter02.tds\nscene main { goto "chapters/chapter01" }', dir, new Set(), 'main.tds');
+  const extensionlessReachability = sceneReachability(extensionless);
+  assert.deepEqual([...extensionlessReachability.reachableScenes].sort(), ['chapter01_s01', 'chapter01_s02', 'chapter02_s01', 'main']);
+  assert.equal(extensionlessReachability.externalGotos.size, 0, 'file gotos without an extension resolve to .tds files');
+
+  const multiSceneFile = await resolveProjectScript('include chapters/chapter01.tds\nscene main { goto "chapters/chapter01.tds" }', dir, new Set(), 'main.tds');
+  const diagnostics = analyzeScript(multiSceneFile);
+  assert.equal(diagnostics.filter((item) => item.code === 'unreachable-scene').length, 0);
+
+  await fs.writeFile(path.join(dir, 'chapters', 'chapter01.tds'), 'scene chapter01_s01 { set route = "chapter"\ngoto "chapters/chapter02.tds" }');
+  await fs.writeFile(path.join(dir, 'chapters', 'chapter02.tds'), 'scene chapter02_s01 { if route == "chapter" { goto selected } else { goto stale } }\nscene selected { wait 1 }\nscene stale { wait 1 }');
+  const statefulFiles = await resolveProjectScript('global str route = "common"\ninclude chapters/chapter01.tds\ninclude chapters/chapter02.tds\nscene main { goto "chapters/chapter01.tds" }', dir, new Set(), 'main.tds');
+  const statefulReachability = sceneReachability(statefulFiles);
+  assert.equal(statefulReachability.reachableScenes.has('selected'), true, 'mutable state must survive a file-path goto');
+  assert.equal(statefulReachability.reachableScenes.has('stale'), false);
 });
 
 test('include diagnostics retain the included source file', async t => {
@@ -1046,6 +1145,8 @@ test('include diagnostics retain the included source file', async t => {
   const diagnostic = analyzeScript(script).find((item) => item.code === 'unreachable-scene' && /hidden/.test(item.message));
   assert.equal(diagnostic.file, 'child.tds');
   assert.equal(diagnostic.line, 1);
+  const codes = analyzeScript(script).filter((item) => item.file === 'child.tds').map((item) => item.code);
+  assert.deepEqual(codes, ['unreachable-scene']);
 });
 test('package includes external scenes, validates assets and remains JSON serializable', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-regression-'));
@@ -1075,7 +1176,7 @@ test('project packaging resolves Windows separators in include and goto paths', 
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const scenesRoot = path.join(dir, 'scenes'), assetsRoot = path.join(dir, 'assets');
   await fs.mkdir(path.join(scenesRoot, 'first'), { recursive: true }); await fs.mkdir(assetsRoot);
-  await fs.writeFile(path.join(scenesRoot, 'main.tds'), 'include "first\\common.tds"\ngoto first\\next.tds');
+  await fs.writeFile(path.join(scenesRoot, 'main.tds'), 'include "first\\\\common.tds"\ngoto "first\\\\next.tds"');
   await fs.writeFile(path.join(scenesRoot, 'first', 'common.tds'), 'wait 1');
   await fs.writeFile(path.join(scenesRoot, 'first', 'next.tds'), 'wait 1');
   const data = await pack(path.join(scenesRoot, 'main.tds'), path.join(dir, 'out/game.json'), { scenesRoot, assetsRoot });
@@ -1149,6 +1250,11 @@ test('JSON static variables are typed globals with exact integer values', async 
   assert.equal(executedShortCircuitFacts.some((item) => item.code === 'constant-condition' && item.line === 4), false);
   const constrainedReachability = sceneReachability(parse('scene start { if difficulty > 5 { goto hidden } else { wait 1 } }\nscene hidden { wait 1 }'), constrainedGlobals.constraints);
   assert.equal(constrainedReachability.reachableScenes.has('hidden'), false);
+  const constrainedPathReachability = sceneReachability(parse('scene start { if difficulty >= 2 { goto selected } else { wait 1 } }\nscene selected { wait 1 }'), constrainedGlobals.constraints);
+  assert.equal(constrainedPathReachability.reachableScenes.has('selected'), true, 'a feasible constrained branch must make its target reachable');
+  const constrainedElseReachability = sceneReachability(parse('scene start { if difficulty > 5 { goto impossible } else { goto fallback } }\nscene impossible { wait 1 }\nscene fallback { wait 1 }'), constrainedGlobals.constraints);
+  assert.equal(constrainedElseReachability.reachableScenes.has('impossible'), false);
+  assert.equal(constrainedElseReachability.reachableScenes.has('fallback'), true, 'the feasible else branch must be explored');
   constrainedGlobals.set('loop_limit', 'int');
   constrainedGlobals.constraints.set('loop_limit', { type: 'int', min: 0n, max: 200000n });
   const loopDiagnostics = analyzeScript(parse('for i from 0 to loop_limit { wait 1 }'), 'constraint-loop.tds', constrainedGlobals);

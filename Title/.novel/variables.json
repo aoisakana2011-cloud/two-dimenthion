@@ -12,7 +12,7 @@
           "scope": "global",
           "container": "global",
           "line": 78,
-          "column": 1,
+          "column": 12,
           "kind": "definition",
           "file": "main.tds"
         }
@@ -5551,7 +5551,7 @@
           "scope": "global",
           "container": "global",
           "line": 79,
-          "column": 1,
+          "column": 12,
           "kind": "definition",
           "file": "main.tds"
         }
@@ -5578,7 +5578,7 @@
           "scope": "global",
           "container": "global",
           "line": 80,
-          "column": 1,
+          "column": 12,
           "kind": "definition",
           "file": "main.tds"
         }
@@ -5605,7 +5605,7 @@
           "scope": "global",
           "container": "global",
           "line": 81,
-          "column": 1,
+          "column": 12,
           "kind": "definition",
           "file": "main.tds"
         }
@@ -13888,7 +13888,7 @@
           "scope": "global",
           "container": "global",
           "line": 82,
-          "column": 1,
+          "column": 12,
           "kind": "definition",
           "file": "main.tds"
         }
@@ -13915,7 +13915,7 @@
           "scope": "global",
           "container": "global",
           "line": 83,
-          "column": 1,
+          "column": 12,
           "kind": "definition",
           "file": "main.tds"
         }
@@ -13999,6 +13999,9 @@
         {
           "scope": "function",
           "container": "add_affection",
+          "line": 15,
+          "column": 18,
+          "kind": "definition",
           "file": "main.tds"
         }
       ],
@@ -14023,6 +14026,9 @@
         {
           "scope": "function",
           "container": "add_sora",
+          "line": 19,
+          "column": 13,
+          "kind": "definition",
           "file": "main.tds"
         }
       ],
@@ -14047,6 +14053,9 @@
         {
           "scope": "function",
           "container": "add_nene",
+          "line": 23,
+          "column": 13,
+          "kind": "definition",
           "file": "main.tds"
         }
       ],
@@ -14071,6 +14080,9 @@
         {
           "scope": "function",
           "container": "announce_day",
+          "line": 31,
+          "column": 17,
+          "kind": "definition",
           "file": "main.tds"
         }
       ],
@@ -14079,7 +14091,7 @@
           "scope": "function",
           "container": "announce_day",
           "line": 32,
-          "column": 16,
+          "column": 21,
           "kind": "interpolation",
           "file": "main.tds"
         }
@@ -14095,6 +14107,9 @@
         {
           "scope": "function",
           "container": "remember",
+          "line": 36,
+          "column": 13,
+          "kind": "definition",
           "file": "main.tds"
         }
       ],
@@ -14103,7 +14118,7 @@
           "scope": "function",
           "container": "remember",
           "line": 37,
-          "column": 16,
+          "column": 22,
           "kind": "interpolation",
           "file": "main.tds"
         }

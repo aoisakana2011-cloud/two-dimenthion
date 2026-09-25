@@ -20,7 +20,7 @@ const corpus = [
 function withoutLocations(value) {
   if (Array.isArray(value)) return value.map(withoutLocations);
   if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value).filter(([key]) => !['line', 'column', 'endLine', 'endColumn', 'file'].includes(key)).map(([key, item]) => [key, withoutLocations(item)]));
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !['line', 'column', 'endLine', 'endColumn', 'file', 'nameLine', 'nameColumn', 'sourceColumns'].includes(key)).map(([key, item]) => [key, withoutLocations(item)]));
 }
 
 test('shared formatter contract is deterministic and idempotent', () => {

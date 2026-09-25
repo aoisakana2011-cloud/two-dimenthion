@@ -42,7 +42,7 @@ export class Lexer {
     return this.token('newline', '\n', start);
   }
   private readString(start: Pos): Token {
-    this.advance(); let value = ''; const unknownEscapes: string[] = [];
+    this.advance(); let value = ''; const unknownEscapes: string[] = []; const sourceColumns: number[] = [];
     while (true) {
       const c = this.peek();
       if (c === undefined || this.isLineBreak(c)) throw this.error('Unterminated string', start);
@@ -50,14 +50,16 @@ export class Lexer {
         this.advance();
         const token = this.token('string', value, start);
         if (unknownEscapes.length) token.unknownEscapes = unknownEscapes;
+        token.sourceColumns = sourceColumns;
         return token;
       }
-      if (c !== '\\') { value += this.advance(); continue; }
+      if (c !== '\\') { sourceColumns.push(this.column); value += this.advance(); continue; }
+      const escapeColumn = this.column;
       this.advance(); const escaped = this.peek();
       if (escaped === undefined || this.isLineBreak(escaped)) throw this.error('Unterminated string', start);
-      if (escaped === 'n') value += '\n';
-      else if (escaped === '\\' || escaped === '"') value += escaped;
-      else { value += `\\${escaped}`; unknownEscapes.push(escaped); }
+      if (escaped === 'n') { sourceColumns.push(escapeColumn); value += '\n'; }
+      else if (escaped === '\\' || escaped === '"') { sourceColumns.push(escapeColumn); value += escaped; }
+      else { sourceColumns.push(escapeColumn, escapeColumn + 1); value += `\\${escaped}`; unknownEscapes.push(escaped); }
       this.advance();
     }
   }

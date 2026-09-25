@@ -88,7 +88,14 @@ scene main {
   say narrator "雨上がりの帰り道"
   say narrator "この町には、誰も知らない音楽室がある。"
   set chapter = 1
-  goto "chapters/chapter01.tds"
+  choice "どの物語を読みますか？" {
+    "本編を最初から始める" {
+      goto "chapters/chapter01.tds"
+    }
+    "追加シナリオを選ぶ" {
+      goto extra_story_menu
+    }
+  }
 }
 
 scene final_common {
@@ -117,4 +124,86 @@ scene final_quiet {
   say narrator "雨の季節は、またいつか戻ってくる。"
   say narrator "END - 静かな約束"
   wait 300
+}
+
+scene extra_story_menu {
+  choice "読みたい追加シナリオの種類を選んでください" {
+    "追加章・幕間" {
+      goto extra_chapter_menu
+    }
+    "別ルート・後日談" {
+      goto extra_route_menu
+    }
+    "外伝" {
+      goto gaiden_menu
+    }
+    "資料・補遺" {
+      goto appendix_menu
+    }
+    "エンディング一覧" {
+      goto ending_menu
+    }
+    "本編を始める" {
+      goto "chapters/chapter01.tds"
+    }
+  }
+}
+
+scene extra_chapter_menu {
+  choice "読みたい章を選んでください" {
+    "第5章" { goto "chapters/chapter05.tds" }
+    "第6章" { goto "chapters/chapter06.tds" }
+    "第7章" { goto "chapters/chapter07.tds" }
+    "第8章" { goto "chapters/chapter08.tds" }
+    "幕間・第一話" { goto "chapters/interlude01.tds" }
+    "幕間・第二話" { goto "chapters/interlude02.tds" }
+    "追加シナリオ一覧へ戻る" { goto extra_story_menu }
+  }
+}
+
+scene extra_route_menu {
+  choice "読みたいルートを選んでください" {
+    "放課後の後日談" { goto "routes/after.tds" }
+    "夏の発表会ルート" { goto "routes/summer.tds" }
+    "真相ルート" { goto "routes/true.tds" }
+    "三人の合唱ルート" { goto "routes/ensemble.tds" }
+    "追加シナリオ一覧へ戻る" { goto extra_story_menu }
+  }
+}
+
+scene gaiden_menu {
+  choice "読みたい外伝を選んでください" {
+    "手紙の外伝" { goto "gaiden/letter.tds" }
+    "記憶の外伝" { goto "gaiden/memory.tds" }
+    "未来の外伝" { goto "gaiden/future.tds" }
+    "起源の外伝" { goto "gaiden/origin.tds" }
+    "エピローグ" { goto "gaiden/epilogue.tds" }
+    "先生の外伝" { goto "gaiden/teacher.tds" }
+    "子ども時代の外伝" { goto "gaiden/childhood.tds" }
+    "十年後の外伝" { goto "gaiden/after-ten-years.tds" }
+    "追加シナリオ一覧へ戻る" { goto extra_story_menu }
+  }
+}
+
+scene appendix_menu {
+  choice "資料を選んでください" {
+    "部室の資料" { goto "appendix/club.tds" }
+    "記録のアーカイブ" { goto "appendix/archive.tds" }
+    "夢の断片" { goto "appendix/dream.tds" }
+    "声の資料" { goto "appendix/voices.tds" }
+    "場所一覧" { goto "appendix/locations.tds" }
+    "物語の年表" { goto "appendix/chronology.tds" }
+    "未使用曲の記録" { goto "appendix/unused-melodies.tds" }
+    "追加シナリオ一覧へ戻る" { goto extra_story_menu }
+  }
+}
+
+scene ending_menu {
+  choice "読みたいエンディングを選んでください" {
+    "雨上がりの合唱" { goto final_common }
+    "青い旋律" { goto final_sora }
+    "星の譜面" { goto final_nene }
+    "静かな約束" { goto final_quiet }
+    "追加シナリオ一覧へ戻る" { goto extra_story_menu }
+  }
 }

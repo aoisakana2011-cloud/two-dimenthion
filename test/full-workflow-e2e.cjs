@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { chromium } = require('../build/audit-tools/node_modules/playwright');
+const { seedEmptyProject } = require('../tools/project-layout');
 
 const root = path.resolve(__dirname, '..');
 const serverScript = path.join(root, 'Edit', 'server.js');
@@ -19,7 +20,10 @@ async function startServer(projectRoot, env) {
   child.stdout.on('data', (chunk) => { output += String(chunk); });
   child.stderr.on('data', (chunk) => { output += String(chunk); });
   const base = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(Error(`server startup timeout: ${output}`)), 15_000);
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(Error(`server startup timeout: ${output}`));
+    }, 45_000);
     const inspect = () => {
       const match = output.match(/http:\/\/127\.0\.0\.1:\d+/);
       if (match) { clearTimeout(timer); resolve(match[0]); }
@@ -42,12 +46,26 @@ async function stopServer(child) {
   const bootstrap = path.join(tempRoot, 'bootstrap');
   const projectName = 'E2E title';
   const projectRoot = path.join(tempRoot, projectName);
+  const emptyProjectRoot = path.join(tempRoot, 'Selected Empty Folder');
+  const switchProjectRoot = path.join(tempRoot, 'Selected Existing Project');
   await fs.mkdir(home);
+  await fs.mkdir(emptyProjectRoot);
+  const switchProject = seedEmptyProject(switchProjectRoot);
+  await fs.writeFile(path.join(switchProject.scenesRoot, 'main.tds'), [
+    'scene main {',
+    '  say narrator "PICKED_PROJECT_MARKER"',
+    '  goto selected_scene',
+    '}',
+    'scene selected_scene { wait 1 }',
+    'scene switch_only_unreachable { wait 1 }',
+    '',
+  ].join('\n'));
   const env = { ...process.env, USERPROFILE: home, HOME: home };
   let server;
   let browser;
   try {
-    const startupProject = path.join(root, 'Title');
+    const startupProject = bootstrap;
+    seedEmptyProject(startupProject);
     server = await startServer(startupProject, env);
     browser = await chromium.launch({ channel: 'msedge', headless: true });
     const context = await browser.newContext();
@@ -70,6 +88,10 @@ async function stopServer(child) {
     const projectNameDialog = editorPage.locator('.editor-dialog').filter({ has: editorPage.locator('input') });
     await projectNameDialog.locator('input').fill(projectName);
     await projectNameDialog.getByRole('button', { name: '決定' }).click();
+    await editorPage.waitForFunction(async (expected) => {
+      const current = await (await fetch('/api/project')).json();
+      return current.projectRoot === expected;
+    }, projectRoot);
     await editorPage.waitForFunction((name) => document.querySelector('#scene-name')?.value === name, 'main.tds');
     const project = await editorPage.evaluate(async () => (await (await fetch('/api/project')).json()).projectRoot);
     assert.equal(path.resolve(project), path.resolve(projectRoot));
@@ -81,6 +103,90 @@ async function stopServer(child) {
     assert.equal(initialTheme.payload.path, '');
     assert.equal(initialTheme.payload.theme.version, 1);
 
+    const welcomePage = await context.newPage();
+    await welcomePage.goto(`${server.base}/?welcome=1`);
+    await welcomePage.locator('#project-picker:not([hidden])').waitFor();
+    assert.equal(await welcomePage.locator('.project-picker-copy').textContent(), 'フォルダを選ぶか作成してください。');
+    assert.equal(await welcomePage.locator('#project-picker-close').isVisible(), false);
+    assert.equal(await welcomePage.locator('.app-shell').evaluate((element) => getComputedStyle(element).visibility), 'visible');
+    assert.equal(await welcomePage.locator('#editor').inputValue(), '');
+    await welcomePage.keyboard.press('Escape');
+    assert.equal(await welcomePage.locator('#project-picker').isVisible(), true, 'initial project selection cannot be dismissed without choosing a folder');
+    await welcomePage.close();
+
+    const desktopWelcomePage = await context.newPage();
+    await desktopWelcomePage.addInitScript((selectedFolder) => {
+      window.__folderPickerCalls = 0;
+      window.__selectedFolder = selectedFolder;
+      window.__projectOpenResponses = [];
+      window.__workspaceReadyEvents = [];
+      window.addEventListener('novel-editor:workspace-ready', (event) => window.__workspaceReadyEvents.push({
+        ...event.detail,
+        filePaths: [...document.querySelectorAll('#file-tree [data-path]')].map((element) => element.dataset.path),
+      }));
+      const fetchOriginal = window.fetch.bind(window);
+      window.fetch = async (...args) => {
+        const response = await fetchOriginal(...args);
+        if (String(args[0]).startsWith('/api/project/open')) window.__projectOpenResponses.push(await response.clone().json());
+        return response;
+      };
+      window.novelDesktop = { selectFolder: async () => { window.__folderPickerCalls += 1; return window.__selectedFolder; } };
+    }, startupProject);
+    let mainFrameNavigations = 0;
+    desktopWelcomePage.on('framenavigated', (frame) => {
+      if (frame === desktopWelcomePage.mainFrame()) mainFrameNavigations += 1;
+    });
+    await desktopWelcomePage.goto(`${server.base}/?welcome=1&desktop=1`);
+    await desktopWelcomePage.waitForLoadState('domcontentloaded');
+    assert.equal(await desktopWelcomePage.locator('.app-shell').evaluate((element) => getComputedStyle(element).visibility), 'visible');
+    assert.equal(await desktopWelcomePage.locator('#project-welcome-banner').count(), 0, 'no startup banner is present');
+    assert.equal(await desktopWelcomePage.evaluate(() => window.__folderPickerCalls), 0, 'startup must not open the native folder dialog automatically');
+    await desktopWelcomePage.locator('[data-menu="file"]').click();
+    await desktopWelcomePage.locator('[data-menu-action="open-project"]').click();
+    assert.equal(await desktopWelcomePage.evaluate(() => window.__folderPickerCalls), 1, 'File > Open Folder opens the native folder dialog');
+    await desktopWelcomePage.waitForFunction(async (expected) => {
+      const current = await (await fetch('/api/project')).json();
+      return current.projectRoot === expected;
+    }, startupProject);
+    await desktopWelcomePage.waitForFunction((expected) => window.__workspaceReadyEvents.some((event) => event.projectRoot === expected && event.scenes.includes('main.tds')), startupProject);
+    await desktopWelcomePage.evaluate((folder) => { window.__selectedFolder = folder; }, emptyProjectRoot);
+    await desktopWelcomePage.locator('[data-menu="file"]').click();
+    await desktopWelcomePage.locator('[data-menu-action="open-project"]').click();
+    assert.equal(await desktopWelcomePage.evaluate(() => window.__folderPickerCalls), 2, 'second folder selection reaches the same native bridge');
+    await desktopWelcomePage.waitForFunction(() => window.__projectOpenResponses.length >= 3 || document.querySelector('.editor-dialog'));
+    await desktopWelcomePage.waitForFunction((expected) => window.__workspaceReadyEvents.some((event) => event.projectRoot === expected && event.scenes.includes('main.tds')), emptyProjectRoot);
+    const emptyOpenState = await desktopWelcomePage.evaluate(async () => ({
+      project: await (await fetch('/api/project')).json(),
+      responses: window.__projectOpenResponses,
+      dialog: document.querySelector('.editor-dialog')?.textContent || '',
+    }));
+    const emptyFolderEntries = await fs.readdir(emptyProjectRoot);
+    assert.ok(emptyFolderEntries.includes('setting.txt'), `selected empty folder should be initialized; state=${JSON.stringify(emptyOpenState)} contents=${JSON.stringify(emptyFolderEntries)}`);
+    assert.equal(await desktopWelcomePage.locator('.editor-dialog').count(), 0, 'an empty selected folder opens without a confirmation detour');
+    await desktopWelcomePage.evaluate((folder) => { window.__selectedFolder = folder; }, switchProjectRoot);
+    await desktopWelcomePage.locator('[data-menu="file"]').click();
+    await desktopWelcomePage.locator('[data-menu-action="open-project"]').click();
+    await desktopWelcomePage.waitForFunction(async (expected) => (await (await fetch('/api/project')).json()).projectRoot === expected, switchProjectRoot);
+    await desktopWelcomePage.waitForFunction((expected) => window.__workspaceReadyEvents.some((event) => event.projectRoot === expected && event.scenes.includes('main.tds')), switchProjectRoot);
+    await desktopWelcomePage.waitForFunction(() => document.querySelector('#editor')?.value.includes('PICKED_PROJECT_MARKER'));
+    await desktopWelcomePage.waitForFunction(() => document.querySelector('#result')?.textContent.includes('switch_only_unreachable'));
+    const switchedWorkspaceEvent = await desktopWelcomePage.evaluate((expected) => window.__workspaceReadyEvents.find((event) => event.projectRoot === expected), switchProjectRoot);
+    assert.ok(switchedWorkspaceEvent.filePaths.includes('senario/main.tds'), 'workspace-ready must only fire after the selected folder file tree is refreshed');
+    assert.equal(mainFrameNavigations, 1, 'switching folders must update the open page without requiring a reload');
+    assert.equal(await desktopWelcomePage.locator('#scene-name').inputValue(), 'main.tds');
+    const restoreProject = await desktopWelcomePage.evaluate(async (path) => fetch('/api/project/open', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, create: false }),
+    }).then((response) => response.json()), projectRoot);
+    assert.equal(restoreProject.projectRoot, projectRoot, 'test restores its active project after exercising native selection');
+    await desktopWelcomePage.close();
+
+    await editorPage.locator('[data-activity="presentation"]').click();
+    await editorPage.locator('.sidebar.presentation-mode .presentation-view').waitFor();
+    await editorPage.getByRole('button', { name: '再生画面を編集…' }).click();
+    await editorPage.locator('.project-settings').waitFor();
+    assert.equal(await editorPage.locator('.project-settings .player-ui-preview').count(), 1);
+    await editorPage.locator('.project-settings .project-settings-close').click();
+
     await editorPage.locator('[data-menu="file"]').click();
     await editorPage.locator('[data-menu-action="project-settings"]').click();
     await editorPage.locator('.project-settings').waitFor();
@@ -90,6 +196,7 @@ async function stopServer(child) {
     assert.equal(savedTheme, 'ui/player-ui.json');
     assert.equal(JSON.parse(await fs.readFile(path.join(projectRoot, 'asset', 'ui', 'player-ui.json'), 'utf8')).version, 1);
 
+    await editorPage.locator('[data-activity="explorer"]').click();
     await editorPage.locator('.scene-folder[data-path="senario"] .tree-action').click();
     const newSceneDialog = editorPage.locator('.editor-dialog').filter({ has: editorPage.locator('input') });
     await newSceneDialog.locator('input').fill('chapter.tds');

@@ -561,10 +561,10 @@ say narrator message
 
 - 第1引数は、指定する場合のみ、宣言済みキャラクター、`narrator`、`none` のいずれか。
 - 本文は必須の `str` 式。文字列、`str` 型変数、文字列連結、`str()`、`str` を返す関数を使用できる。
-- 話者を省略できるのは先頭が文字列リテラルのときだけで、その場合は `narrator` として扱う。変数や関数呼び出しを本文にする場合は `say narrator message` のように話者を明示する。
+- 話者を省略できるのは本文の式が文字列リテラルから始まるときだけで、その場合は `narrator` として扱う。たとえば `say "合計: " + str(score)` は有効。変数や関数呼び出しから始まる本文では `say narrator message` のように話者を明示する。
 - キャラクターを指定すると、画面にはそのキャラクターの `name` フィールドが表示される。
 
-`say` は `say "本文"` または `say <speaker> "本文"` の形で書く。複数行を表示する場合は、行ごとに `say` を書く。
+`say` は `say <文字列リテラルで始まるstr式>` または `say <speaker> <str式>` の形で書く。複数行を表示する場合は、行ごとに `say` を書く。
 
 文字列補間は単純変数、ドット区切りのstruct／キャラクターフィールド参照、または引数なし関数呼び出しに対応する。
 
@@ -855,7 +855,7 @@ scene chapter1 {
 | 反復 | `for <name> from <int-expr> to <int-expr> [step <int-expr>] { ... }` | 両端を含む |
 | 反復 | `while <condition> { ... }` | 上限100,000反復 |
 | 関数 | `fn <name>([<name>: <type>, ...]) -> <type> { ... }` | 再帰不可 |
-| 遷移 | `goto <scene-name>` / `goto "<relative-file-path>"` | 関数内では不可 |
+| 遷移 | `goto <scene-name>` / `goto "<relative-file-path>"`（外部パスは必ず引用符で囲む） | 関数内では不可 |
 
 ## 22. 標準構文の完成例
 

@@ -99,7 +99,11 @@ export class Parser {
 
   private parseInclude(): string {
     this.take();
-    if (this.current.type === 'string') return this.take().value;
+    if (this.current.type === 'string') {
+      const path = this.take();
+      this.rejectUnknownEscapes(path);
+      return path.value;
+    }
     const parts: string[] = [];
     let previous: Token | undefined;
     while (!this.at('newline') && !this.at('eof')) {
@@ -119,7 +123,9 @@ export class Parser {
     if (!ASSET_TYPES.has(type)) throw this.error(`Unknown asset type '${type}'`);
     const name = this.expectIdentifier('Expected asset name');
     this.expect('=');
-    const path = this.expect('string', 'Asset path must be a string').value;
+    const pathToken = this.expect('string', 'Asset path must be a string');
+    this.rejectUnknownEscapes(pathToken);
+    const path = pathToken.value;
     return { kind: 'asset', type, name, path, line: start.line, column: start.column };
   }
 
@@ -137,7 +143,9 @@ export class Parser {
         this.take();
         const pose = this.expectIdentifier('Expected pose name');
         this.expect('=');
-        const path = this.expect('string', 'Character pose path must be a string').value;
+        const pathToken = this.expect('string', 'Character pose path must be a string');
+        this.rejectUnknownEscapes(pathToken);
+        const path = pathToken.value;
         poses.push({ name: pose, path, line: propertyToken.line, column: propertyToken.column });
       } else {
         const property = this.expectIdentifier('Expected character property or pose declaration');
@@ -170,13 +178,14 @@ export class Parser {
     const start = this.take();
     const name = this.expectIdentifier('Expected function name');
     this.expect('(');
-    const params: Array<{ type: ValueType; name: string }> = [];
+    const params: Array<{ type: ValueType; name: string; line?: number; column?: number }> = [];
     if (!this.atValue(')')) {
       while (true) {
+        const paramToken = this.current;
         const paramName = this.expectIdentifier('Expected parameter name');
         this.expect(':');
         const type = this.parseType(false);
-        params.push({ name: paramName, type });
+        params.push({ name: paramName, type, line: paramToken.line, column: paramToken.column });
         if (!this.optional(',')) break;
       }
     }
@@ -235,9 +244,10 @@ export class Parser {
         } else {
           type = command as PrimitiveType;
         }
+        const nameToken = this.current;
         const name = this.expectIdentifier('Expected variable name');
         this.expect('=');
-        return { kind: 'declare', name, type, constant: command === 'const', initial: this.parseExpression(), line: token.line, column: token.column };
+        return { kind: 'declare', name, nameLine: nameToken.line, nameColumn: nameToken.column, type, constant: command === 'const', initial: this.parseExpression(), line: token.line, column: token.column };
       }
       case 'set': {
         this.take();
@@ -276,6 +286,7 @@ export class Parser {
       }
       case 'for': {
         this.take();
+        const nameToken = this.current;
         const name = this.expectIdentifier('Expected loop variable');
         this.expectWordValue('from');
         const start = this.parseExpression();
@@ -283,7 +294,7 @@ export class Parser {
         const stop = this.parseExpression();
         const step = this.atWord('step') ? (this.take(), this.parseExpression()) : literal(1);
         const body = this.parseBraced();
-        return { kind: 'for', name, start, stop, step, body, line: token.line, column: token.column, endLine: this.lastBlockEndLine, endColumn: this.lastBlockEndColumn };
+        return { kind: 'for', name, nameLine: nameToken.line, nameColumn: nameToken.column, start, stop, step, body, line: token.line, column: token.column, endLine: this.lastBlockEndLine, endColumn: this.lastBlockEndColumn };
       }
       case 'while': {
         this.take();
@@ -314,14 +325,15 @@ export class Parser {
         return { kind: 'return', value: this.atLineEnd() ? undefined : this.parseExpression(), line: token.line, column: token.column };
       }
       case 'goto': {
-        this.take();
-        let scene = '';
-        let previous: Token | undefined;
-        while (!this.atLineEnd() && !this.atValue('}')) {
-          const token = this.current;
-          if (previous && token.offset > previous.offset + previous.value.length) throw this.error('Scene path cannot contain spaces');
-          previous = this.take();
-          scene += previous.value;
+        const start = this.take();
+        let scene: string;
+        if (this.current.type === 'string') {
+          const path = this.take();
+          this.rejectUnknownEscapes(path);
+          scene = path.value;
+        } else {
+          scene = this.expectIdentifier('Expected a scene name or quoted external scene path');
+          if (!this.atLineEnd()) throw this.error('External scene paths must be quoted');
         }
         // Source may use Windows separators, but compiled programs and package
         // keys always use '/'.  Normalize at the language boundary so local
@@ -333,7 +345,7 @@ export class Parser {
         const safeFile = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$/.test(file) && !/[. ]$/.test(file) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(file);
         if (scene.startsWith('/') || parts.some((part) => !safeDirectory(part)) || !safeFile) throw this.error('Invalid scene path');
         scene = [...parts, file].join('/');
-        return { kind: 'goto', scene, line: token.line, column: token.column, endLine: this.current.line, endColumn: this.current.column };
+        return { kind: 'goto', scene, line: start.line, column: start.column, endLine: this.current.line, endColumn: this.current.column };
       }
       case 'say': {
         this.take();
@@ -460,7 +472,7 @@ export class Parser {
       expr = { kind: 'literal', value: val, line: token.line, column: token.column };
     } else if (token.type === 'string') {
       this.rejectUnknownEscapes(this.take());
-      expr = { kind: 'literal', value: token.value, line: token.line, column: token.column };
+      expr = { kind: 'literal', value: token.value, line: token.line, column: token.column, sourceColumns: token.sourceColumns };
     } else if (token.type === 'word') {
       this.take();
       if (this.atValue('(')) {

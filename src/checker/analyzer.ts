@@ -996,10 +996,50 @@ function invalidateConstraintState(statement: Statement, constraints: Map<string
   invalidateConstraintCalls(statementExpressions(statement), constraints, statement.kind === 'call' ? [statement.name] : []);
 }
 
+function expressionCalls(expr: Expr): Set<string> {
+  const calls = new Set<string>();
+  visitExpressions(expr, (current) => {
+    if (current.kind === 'call') calls.add(current.name);
+    if (current.kind === 'literal' && typeof current.value === 'string') {
+      for (const match of current.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\(\)\}/g)) calls.add(match[1]);
+    }
+  });
+  return calls;
+}
+
 function expressionChangesState(expr: Expr): boolean {
-  let changes = false;
-  visitExpressions(expr, (current) => { if (current.kind === 'call' && callChangesState(current.name)) changes = true; });
-  return changes;
+  return [...expressionCalls(expr)].some(callChangesState);
+}
+
+function invalidateConstantCall(name: string, constants: Map<string, Exclude<Constant, undefined>>): boolean {
+  if (!callChangesState(name)) return false;
+  const effects = activeFunctionEffects.get(name);
+  if (!effects || effects.has('*')) constants.clear();
+  else effects.forEach((effect) => constants.delete(effect));
+  return true;
+}
+
+function invalidateConstantCalls(expr: Expr, constants: Map<string, Exclude<Constant, undefined>>, facts: ReadonlyMap<string, boolean>): boolean {
+  if (expr.kind === 'binary' && (expr.operator === 'and' || expr.operator === 'or')) {
+    let invalidated = invalidateConstantCalls(expr.left, constants, facts);
+    const left = conditionValue(expr.left, constants, facts);
+    if (expr.operator === 'and' && left === false || expr.operator === 'or' && left === true) return invalidated;
+    return invalidateConstantCalls(expr.right, constants, facts) || invalidated;
+  }
+  if (expr.kind === 'binary') return invalidateConstantCalls(expr.right, constants, facts) || invalidateConstantCalls(expr.left, constants, facts);
+  if (expr.kind === 'unary') return invalidateConstantCalls(expr.value, constants, facts);
+  if (expr.kind === 'index') return invalidateConstantCalls(expr.key, constants, facts) || invalidateConstantCalls(expr.target, constants, facts);
+  if (expr.kind === 'dict') return expr.entries.reduce((changed, entry) => invalidateConstantCalls(entry.value, constants, facts) || changed, false);
+  if (expr.kind === 'call') {
+    const argumentsChanged = expr.args.reduce((changed, argument) => invalidateConstantCalls(argument, constants, facts) || changed, false);
+    return invalidateConstantCall(expr.name, constants) || argumentsChanged;
+  }
+  if (expr.kind === 'literal' && typeof expr.value === 'string') {
+    let invalidated = false;
+    for (const match of expr.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\(\)\}/g)) invalidated = invalidateConstantCall(match[1], constants) || invalidated;
+    return invalidated;
+  }
+  return false;
 }
 
 function hasCalls(statement: Statement): boolean {
@@ -1022,7 +1062,7 @@ function functionEffects(functions: readonly FunctionDef[], globals: ReadonlySet
           if (target.kind === 'variable' && !locals.has(target.name) && globals.has(target.name)) writes.add(target.name);
         }
         if (statement.kind === 'call' && statement.name !== 'int' && statement.name !== 'str') invoked.add(statement.name);
-        for (const expression of statementExpressions(statement)) visitExpressions(expression, (current) => { if (current.kind === 'call' && current.name !== 'int' && current.name !== 'str') invoked.add(current.name); });
+        for (const expression of statementExpressions(statement)) expressionCalls(expression).forEach((name) => { if (name !== 'int' && name !== 'str') invoked.add(name); });
         for (const body of nested(statement)) walk(body, new Set(locals));
       }
     };
@@ -1133,35 +1173,216 @@ function reachableGotoTargets(statements: Statement[], targets = new Set<string>
   return targets;
 }
 
+interface ReachableTransfer {
+  target: string;
+  constants: Map<string, Exclude<Constant, undefined>>;
+}
+
+interface TransferFlow {
+  transfers: ReachableTransfer[];
+  fallthrough?: Map<string, Exclude<Constant, undefined>>;
+}
+
+function mergeConstantEnvironments(paths: readonly ReadonlyMap<string, Exclude<Constant, undefined>>[]): Map<string, Exclude<Constant, undefined>> {
+  if (!paths.length) return new Map();
+  const merged = new Map(paths[0]);
+  for (const [name, value] of merged) {
+    if (paths.some((path) => !path.has(name) || path.get(name) !== value)) merged.delete(name);
+  }
+  return merged;
+}
+
+/** Propagate known values through scene-local branches to each reachable transfer. */
+function reachableTransfers(
+  statements: Statement[],
+  constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(),
+  facts: ReadonlyMap<string, boolean> = new Map(),
+  constraints?: ReadonlyMap<string, VariableConstraint>,
+): TransferFlow {
+  const known = new Map(constants);
+  const knownFacts = new Map(facts);
+  const transfers: ReachableTransfer[] = [];
+  for (const statement of statements) {
+    if (statement.kind === 'goto') return { transfers: [...transfers, { target: statement.scene, constants: new Map(known) }] };
+    if (statement.kind === 'if') {
+      const branches = [{ expression: statement.condition.expression, body: statement.body }, ...statement.elseIf.map((branch) => ({ expression: branch.condition.expression, body: branch.body }))];
+      const seen = new Set<string>(), previousConditions: Expr[] = [], remainingFacts = new Map(knownFacts), remainingKnown = new Map(known);
+      const fallthroughs: Map<string, Exclude<Constant, undefined>>[] = [];
+      let canTryNext = true;
+      for (const branch of branches) {
+        if (!canTryNext) break;
+        if (invalidateConstantCalls(branch.expression, remainingKnown, remainingFacts)) remainingFacts.clear();
+        const value = conditionValue(branch.expression, remainingKnown, remainingFacts, constraints);
+        const key = expressionKey(branch.expression);
+        const duplicate = isPureExpression(branch.expression) && (seen.has(key) || previousConditions.some((previous) => conditionImplies(branch.expression, previous, remainingKnown)));
+        const bodyFacts = new Map(remainingFacts); recordCondition(bodyFacts, branch.expression, true);
+        const bodyConstraints = refineConstraints(constraints, branch.expression, true);
+        if (value !== false && !duplicate) {
+          const flow = reachableTransfers(branch.body, remainingKnown, bodyFacts, bodyConstraints);
+          transfers.push(...flow.transfers);
+          if (flow.fallthrough) fallthroughs.push(flow.fallthrough);
+          else if (!blockTerminates(branch.body, remainingKnown, bodyFacts, bodyConstraints)) fallthroughs.push(new Map(remainingKnown));
+        }
+        if (isPureExpression(branch.expression)) seen.add(key);
+        if (isPureExpression(branch.expression)) previousConditions.push(branch.expression);
+        recordCondition(remainingFacts, branch.expression, false);
+        if (value === true) canTryNext = false;
+      }
+      if (canTryNext) {
+        const otherwiseConstraints = branches.reduce((state, branch) => refineConstraints(state, branch.expression, false), constraints);
+        const flow = reachableTransfers(statement.otherwise, remainingKnown, remainingFacts, otherwiseConstraints);
+        transfers.push(...flow.transfers);
+        if (flow.fallthrough) fallthroughs.push(flow.fallthrough);
+        else if (!blockTerminates(statement.otherwise, remainingKnown, remainingFacts, otherwiseConstraints)) fallthroughs.push(new Map(remainingKnown));
+      }
+      if (!fallthroughs.length) return { transfers };
+      const joined = mergeConstantEnvironments(fallthroughs);
+      known.clear(); joined.forEach((value, name) => known.set(name, value));
+      if (invalidatesConditionFacts(statement)) knownFacts.clear();
+      continue;
+    }
+    if (statement.kind === 'choice') {
+      if (!statement.options.length) continue;
+      const choiceState = new Map(known);
+      const choiceFacts = new Map(knownFacts);
+      // Runtime evaluates every label in order, then the prompt, before any
+      // option body executes. Account for state-changing calls at that point.
+      for (const option of statement.options) if (invalidateConstantCalls(option.label, choiceState, choiceFacts)) choiceFacts.clear();
+      if (statement.prompt && invalidateConstantCalls(statement.prompt, choiceState, choiceFacts)) choiceFacts.clear();
+      const fallthroughs: Map<string, Exclude<Constant, undefined>>[] = [];
+      for (const option of statement.options) {
+        const flow = reachableTransfers(option.body, choiceState, choiceFacts, constraints);
+        transfers.push(...flow.transfers);
+        if (flow.fallthrough) fallthroughs.push(flow.fallthrough);
+        else if (!blockTerminates(option.body, choiceState, choiceFacts, constraints)) fallthroughs.push(new Map(choiceState));
+      }
+      if (!fallthroughs.length) return { transfers };
+      const joined = mergeConstantEnvironments(fallthroughs);
+      known.clear(); joined.forEach((value, name) => known.set(name, value));
+      for (const name of writtenVariables(statement)) known.delete(name);
+      knownFacts.clear();
+      continue;
+    }
+    if (statement.kind === 'for') {
+      const start = constant(statement.start, known);
+      const step = constant(statement.step, known);
+      const iterations = forIterationCount(statement, known);
+      if (forExecution(statement, known) === 'runs' && typeof start === 'bigint' && typeof step === 'bigint'
+        && iterations !== undefined && iterations <= 32n) {
+        const last = start + step * (iterations - 1n);
+        // Do not claim a normal loop exit when incrementing the final value
+        // could overflow at runtime; use the conservative loop path below.
+        const next = last + step;
+        if (next >= INT_MIN && next <= INT_MAX) {
+          let value = start;
+          let state = new Map(known);
+          let fallsThrough = true;
+          for (let index = 0n; index < iterations; index += 1n) {
+            const iterationState = new Map(state);
+            iterationState.set(statement.name, value);
+            const flow = reachableTransfers(statement.body, iterationState, knownFacts, constraints);
+            for (const transfer of flow.transfers) {
+              const transferState = new Map(transfer.constants);
+              transferState.delete(statement.name);
+              transfers.push({ target: transfer.target, constants: transferState });
+            }
+            if (!flow.fallthrough) { fallsThrough = false; break; }
+            state = flow.fallthrough;
+            state.delete(statement.name);
+            value += step;
+          }
+          if (!fallsThrough) return { transfers };
+          known.clear(); state.forEach((valueAtExit, name) => known.set(name, valueAtExit));
+          knownFacts.clear();
+          continue;
+        }
+      }
+    }
+    if (statement.kind === 'while') {
+      const iterations = whileIterationCount(statement, known);
+      if (typeof iterations === 'bigint' && iterations <= 32n && whileProgress(statement, known)) {
+        let state = new Map(known);
+        let fallsThrough = true;
+        for (let index = 0n; index < iterations; index += 1n) {
+          if (conditionValue(statement.condition.expression, state, knownFacts, constraints) === false) break;
+          const flow = reachableTransfers(statement.body, state, knownFacts, constraints);
+          transfers.push(...flow.transfers);
+          if (!flow.fallthrough) { fallsThrough = false; break; }
+          state = flow.fallthrough;
+        }
+        if (!fallsThrough) return { transfers };
+        known.clear(); state.forEach((valueAtExit, name) => known.set(name, valueAtExit));
+        knownFacts.clear();
+        continue;
+      }
+    }
+    // Preserve transfer discovery for loops and other nested flow constructs.
+    // Their post-loop values are widened by updateKnownConstants below.
+    if (statement.kind === 'while' || statement.kind === 'for') {
+      if (statement.kind === 'while' && conditionValue(statement.condition.expression, known, knownFacts, constraints) === false) continue;
+      const loopState = loopConstants(statement, known);
+      for (const target of reachableGotoTargets([statement], new Set(), known, knownFacts, constraints)) {
+        transfers.push({ target, constants: new Map(loopState) });
+      }
+      if (definitelyTerminates(statement, known, knownFacts, constraints)) return { transfers };
+    }
+    if (definitelyTerminates(statement, known, knownFacts, constraints)) return { transfers };
+    updateKnownConstants(statement, known);
+    if (invalidatesConditionFacts(statement)) knownFacts.clear();
+  }
+  return { transfers, fallthrough: known };
+}
+
 export interface SceneReachability {
   reachableScenes: Set<string>;
   externalGotos: Set<string>;
 }
 
-export function sceneReachability(script: Script, constraints?: ReadonlyMap<string, VariableConstraint>): SceneReachability {
+export function sceneReachability(script: Script, constraints?: ReadonlyMap<string, VariableConstraint>, externalGlobals: ReadonlySet<string> = new Set()): SceneReachability {
+  const globalNames = new Set([...externalGlobals, ...script.globals.filter((statement) => statement.kind === 'declare').map((statement) => statement.name)]);
+  activeFunctionEffects = functionEffects(script.functions, globalNames);
   const scenes = new Map(script.scenes.map((scene) => [scene.name, scene]));
+  const firstSceneByFile = new Map<string, string>();
+  const normalizeFile = (file: string) => file.replaceAll('\\', '/').replace(/^\.\//, '').toLocaleLowerCase('en-US');
+  const firstSceneForFileTarget = (target: string) => {
+    const normalized = normalizeFile(target);
+    if (/\.txt$/i.test(normalized)) return undefined;
+    const fileName = /\.tds$/i.test(normalized) ? normalized : `${normalized}.tds`;
+    return firstSceneByFile.get(fileName);
+  };
+  for (const scene of script.scenes) {
+    if (scene.file && !firstSceneByFile.has(normalizeFile(scene.file))) firstSceneByFile.set(normalizeFile(scene.file), scene.name);
+  }
   const reachableScenes = new Set<string>();
   const externalGotos = new Set<string>();
   const constants = new Map<string, Exclude<Constant, undefined>>();
-  for (const statement of script.globals) {
-    if (statement.kind !== 'declare' || !statement.constant || !statement.initial) continue;
-    const value = constant(statement.initial, constants);
-    if (value !== undefined) constants.set(statement.name, value);
-  }
-  const pending = script.scenes.length && !blockTerminates(script.globals, constants, new Map(), constraints) ? [script.scenes[0].name] : [];
-  while (pending.length) {
-    const name = pending.pop()!;
-    if (reachableScenes.has(name)) continue;
-    const scene = scenes.get(name);
-    if (!scene) continue;
-    reachableScenes.add(name);
-    for (const target of reachableGotoTargets(scene.body, new Set(), constants, new Map(), constraints)) {
-      if (scenes.has(target)) pending.push(target);
+  const globalFlow = reachableTransfers(script.globals, constants, new Map(), constraints);
+  const pending: Array<{ name: string; constants: Map<string, Exclude<Constant, undefined>> }> = [];
+  const enqueueTarget = (target: string, state: Map<string, Exclude<Constant, undefined>>) => {
+    if (scenes.has(target)) pending.push({ name: target, constants: state });
+    else {
+      const fileEntry = firstSceneForFileTarget(target);
+      if (fileEntry) pending.push({ name: fileEntry, constants: state });
       else externalGotos.add(target);
     }
+  };
+  if (script.scenes.length && globalFlow.fallthrough) pending.push({ name: script.scenes[0].name, constants: globalFlow.fallthrough });
+  globalFlow.transfers.forEach((transfer) => enqueueTarget(transfer.target, transfer.constants));
+  const entryStates = new Map<string, Map<string, Exclude<Constant, undefined>>>();
+  while (pending.length) {
+    const { name, constants: incoming } = pending.pop()!;
+    const scene = scenes.get(name);
+    if (!scene) continue;
+    const previous = entryStates.get(name);
+    const entry = previous ? mergeConstantEnvironments([previous, incoming]) : new Map(incoming);
+    if (previous && previous.size === entry.size && [...previous].every(([key, value]) => entry.get(key) === value)) continue;
+    entryStates.set(name, entry);
+    reachableScenes.add(name);
+    const flow = reachableTransfers(scene.body, entry, new Map(), constraints);
+    flow.transfers.forEach((transfer) => enqueueTarget(transfer.target, transfer.constants));
   }
   if (!script.scenes.length) {
-    for (const target of reachableGotoTargets(script.globals, new Set(), constants, new Map(), constraints)) externalGotos.add(target);
+    globalFlow.transfers.forEach((transfer) => externalGotos.add(transfer.target));
   }
   return { reachableScenes, externalGotos };
 }
@@ -1774,11 +1995,14 @@ export function analyzeScript(script: Script, file = 'current', externalGlobals 
       out.push(diagnostic(file, 'missing-return', 'error', `関数 '${fn.name}' はすべての経路で値を返していません`, fn));
     }
   }
-  const { reachableScenes } = sceneReachability(script, constraints);
+  const { reachableScenes } = sceneReachability(script, constraints, new Set([...externalGlobals.keys(), ...externalCharacters.keys()]));
   script.scenes.forEach((scene) => {
     const reachable = reachableScenes.has(scene.name);
     if (!reachable) out.push(diagnostic(file, 'unreachable-scene', 'warning', `シーン '${scene.name}' には到達できません`, scene));
-    analyzeBlock(scene.body, file, out, reachable, constants, new Map(), constraints);
+    // The scene-level warning already explains that this whole body cannot run.
+    // Continue local analysis as reachable so we still report internal control-flow
+    // mistakes without emitting a cascade of unreachable-code warnings per line.
+    analyzeBlock(scene.body, file, out, true, constants, new Map(), constraints);
   });
   return out.sort((a, b) => a.line - b.line || a.column - b.column || ({ error: 0, warning: 1, info: 2 }[a.severity] - { error: 0, warning: 1, info: 2 }[b.severity]));
 }

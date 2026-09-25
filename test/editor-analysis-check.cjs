@@ -1,9 +1,24 @@
 const { chromium } = require('../build/audit-tools/node_modules/playwright');
-const { handleApi, serveStatic } = require('../Edit/server');
+const { parse } = require('../dist');
 const http = require('node:http');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const { seedEmptyProject } = require('../tools/project-layout');
 const assert = require('node:assert/strict');
 
 (async () => {
+  const auditProjectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-editor-analysis-'));
+  const previousProjectRoot = process.env.NOVEL_PROJECT_ROOT;
+  const auditLayout = seedEmptyProject(auditProjectRoot);
+  await fs.writeFile(path.join(auditLayout.scenesRoot, 'analysis-side.tds'), 'scene analysis_side {\n  goto analysis_side_target\n}\nscene analysis_side_target { wait 1 }\n');
+  await fs.writeFile(path.join(auditLayout.assetsRoot, 'char', 'aokami.png'), Buffer.alloc(0));
+  await fs.writeFile(path.join(auditLayout.dataRoot, 'variables.json'), JSON.stringify({ staticVariables: [
+    { name: 'route', type: 'str', value: 'summer', possibleValues: ['summer', 'winter'] },
+    { name: 'score', type: 'int', value: '0', min: '0', max: '9' },
+  ] }, null, 2));
+  process.env.NOVEL_PROJECT_ROOT = auditProjectRoot;
+  const { handleApi, serveStatic } = require('../Edit/server');
   const server = http.createServer(async (request, response) => {
     try {
       const url = new URL(request.url, 'http://127.0.0.1');
@@ -19,7 +34,7 @@ const assert = require('node:assert/strict');
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
     browser = await chromium.launch({ channel: 'msedge', headless: true });
-    const page = await browser.newPage();
+    const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
     page.setDefaultTimeout(10_000);
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -27,18 +42,87 @@ const assert = require('node:assert/strict');
       await page.locator('[data-menu="file"]').click();
       await page.locator('[data-menu-action="save"]').click();
     };
+    const rightClickToken = (line, name) => editor.evaluate((element, target) => {
+      const source = element.value;
+      const sourceLine = source.split(/\r?\n/)[target.line - 1];
+      const index = sourceLine.indexOf(target.name);
+      if (index < 0) throw new Error(`token '${target.name}' is not on line ${target.line}`);
+      const absolute = source.split(/\r?\n/).slice(0, target.line - 1).reduce((offset, value) => offset + value.length + 1, 0) + index;
+      const walker = document.createTreeWalker(document.querySelector('#highlight'), NodeFilter.SHOW_TEXT);
+      let offset = 0, rect = null;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (absolute >= offset && absolute < offset + node.length) {
+          const range = document.createRange();
+          range.setStart(node, absolute - offset);
+          range.setEnd(node, absolute - offset + 1);
+          rect = range.getBoundingClientRect();
+          break;
+        }
+        offset += node.length;
+      }
+      if (!rect) throw new Error(`could not locate rendered token '${target.name}'`);
+      element.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true, cancelable: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+      }));
+    }, { line, name });
     await page.goto(`${base}/index.html`);
     const editor = page.locator('#editor');
     await editor.waitFor();
+    const initialSceneGraph = await page.evaluate(async () => (await (await fetch('/api/scene-graph')).json()));
+    assert.deepEqual(initialSceneGraph.nodes.find((node) => node.id === 'analysis-side.tds')?.localGotos?.map((item) => item.scene), ['analysis_side_target']);
     await page.locator('[data-menu="help"]').click();
     await page.locator('[data-menu-action="syntax"]').click();
     assert.equal(await page.locator('.language-guide strong').textContent(), '.tds 構文ヘルプ');
     assert.ok(await page.locator('.language-guide .guide-section').count() >= 8);
     assert.equal(await page.locator('.language-guide .guide-section').first().getAttribute('open'), '');
+    const dialogueHelp = page.locator('.language-guide .guide-section').filter({ hasText: '台詞と変数' });
+    assert.match(await dialogueHelp.textContent(), /文字列リテラルから始まる式/);
+    assert.match(await dialogueHelp.locator('pre').textContent(), /say "点数: " \+ str\(score\)/);
+    const dslHelpExamples = await page.locator('.language-guide .guide-section pre').evaluateAll((nodes) => nodes.slice(0, 6).map((node) => node.textContent));
+    for (const example of dslHelpExamples) assert.doesNotThrow(() => parse(example), `IDE help example is invalid TDS:\n${example}`);
     assert.equal((await page.request.get(`${base}/docs/tds-language-and-editor-guide.md`)).ok(), true);
     await page.locator('.language-guide .guide-close').click();
+    const validFunctionTooltipExample = 'fn greet() -> none {\n}';
+    assert.doesNotThrow(() => parse(validFunctionTooltipExample));
+    await editor.fill(validFunctionTooltipExample);
+    await rightClickToken(1, 'fn');
+    await page.locator('.syntax-tooltip-signature').waitFor();
+    assert.match(await page.locator('.syntax-tooltip-signature').textContent(), /-> <戻り値>/);
+    assert.match(await page.locator('.syntax-tooltip-description').textContent(), /戻り値の型を -> で必ず指定/);
+    await editor.fill('');
     // Startup restores the last/first scene after an 800 ms timer.
     await page.waitForTimeout(1200);
+    const referenceSource = 'fn render_route(route: str) -> none {\n  say narrator "日本語の見出し: {route}"\n}\nscene main {\n  say narrator "選択中: {route}"\n  say narrator "点数: {score}"\n}\n';
+    const wrappedReferenceSource = referenceSource.replace('{route}', `${'日本語の見出し: '.repeat(24)}{route}`);
+    await editor.fill(wrappedReferenceSource);
+    await page.waitForTimeout(1200);
+    await rightClickToken(2, 'route');
+    const variableTooltip = page.locator('.variable-tooltip');
+    await variableTooltip.waitFor({ state: 'visible' });
+    assert.match(await variableTooltip.textContent(), /スコープ: function \(render_route\)/);
+    assert.match(await variableTooltip.textContent(), /定義 \(1\)/);
+    assert.match(await variableTooltip.textContent(), /参照・埋め込み \(1\)/);
+    assert.doesNotMatch(await variableTooltip.textContent(), /許容値:/, 'same-name local parameter must not inherit a global threshold');
+    await variableTooltip.locator('.variable-tooltip-location').first().click();
+    assert.equal(await editor.evaluate((element) => element.value.slice(element.selectionStart, element.selectionEnd)), 'route', 'definition navigation selects the exact symbol');
+    await editor.fill(wrappedReferenceSource);
+    await page.waitForTimeout(1100);
+    await rightClickToken(2, 'route');
+    await variableTooltip.waitFor({ state: 'visible' });
+    await variableTooltip.locator('.variable-tooltip-location').nth(1).click();
+    assert.equal(await editor.evaluate((element) => element.selectionStart), wrappedReferenceSource.indexOf('{route}') + 1, 'reference navigation selects the variable even on a wrapped Japanese line');
+    await editor.fill(referenceSource);
+    await page.waitForTimeout(1100);
+    await rightClickToken(5, 'route');
+    await variableTooltip.waitFor({ state: 'visible' });
+    assert.match(await variableTooltip.textContent(), /スコープ: global/);
+    assert.match(await variableTooltip.textContent(), /許容値: summer, winter/);
+    await rightClickToken(6, 'score');
+    await variableTooltip.waitFor({ state: 'visible' });
+    assert.match(await variableTooltip.textContent(), /許容範囲: 0 ～ 9/);
+    await saveAllFromMenu();
     assert.equal(await page.locator('#split-editor').count(), 0);
     assert.equal(await page.locator('#new-scene').count(), 0);
     const topLevelFolder = page.locator('#file-tree > .scene-folder[data-path="senario"]');
@@ -58,6 +142,52 @@ const assert = require('node:assert/strict');
       if (await folder.locator('xpath=following-sibling::div[1]').getAttribute('hidden') !== null) await folder.click();
     }
     const currentFile = page.locator(`#file-tree .scene-file[data-path="senario/${currentScene}"]`);
+    let injectExplorerGraph = null;
+    await page.route('**/api/scene-graph', async (route) => {
+      if (!injectExplorerGraph) return route.continue();
+      const emptyTargets = injectExplorerGraph === 'empty';
+      injectExplorerGraph = false;
+      const variables = [
+        { name: 'amount', type: 'int', scope: 'function', definedIn: 'route_summer', definitions: [{ file: currentScene, line: 1, column: 4, scope: 'function', container: 'route_summer' }], references: Array.from({ length: 690 }, () => ({ file: currentScene, line: 2, scope: 'function', container: 'route_summer' })) },
+        { name: 'amount', type: 'int', scope: 'function', definedIn: 'route_after', definitions: [{ file: currentScene, line: 3, column: 4, scope: 'function', container: 'route_after' }], references: [{ file: currentScene, line: 4, scope: 'function', container: 'route_after' }] },
+        { name: 'route', type: 'str', scope: 'global', definedIn: currentScene, definitions: [{ file: currentScene, line: 5, column: 7, scope: 'global', container: currentScene }], references: [{ file: currentScene, line: 6, scope: 'global', container: currentScene }] },
+      ];
+      await route.fulfill({ json: {
+        version: 2,
+        nodes: [{ id: currentScene, variables, localGotos: emptyTargets ? [] : [{ scene: 'analysis_side_target', file: currentScene, gotoLine: 1 }], reachable: emptyTargets }],
+        edges: emptyTargets ? [] : [
+          ...['chapters/chapter01.tds', 'routes/sora.tds', 'routes/nene.tds'].map((to) => ({ from: currentScene, to, kind: 'goto' })),
+          { from: currentScene, to: 'shared/common.tds', kind: 'include' },
+        ],
+      } });
+    });
+    injectExplorerGraph = true;
+    await currentFile.click({ button: 'right' });
+    await page.locator('.file-context-menu [role="menuitem"]').nth(2).click();
+    const fileInfo = page.locator('#file-info');
+    await page.waitForFunction(() => document.querySelector('#file-info .file-info-summary')?.textContent.includes('3')).catch(async (error) => {
+      const rendered = await fileInfo.textContent();
+      throw Error(`explorer metadata did not render; injected=${injectExplorerGraph}; scene=${await page.locator('#scene-name').inputValue()}; info=${rendered}; ${error.message}`);
+    });
+    assert.equal(await fileInfo.locator('.file-info-section').count(), 3);
+    assert.equal(await fileInfo.locator('[data-kind="local-targets"] .file-info-list li').count(), 1);
+    assert.match(await fileInfo.locator('[data-kind="local-targets"]').textContent(), /analysis_side_target/);
+    await fileInfo.locator('.file-info-link-scene').click();
+    assert.equal(await editor.evaluate((element) => element.value.slice(element.selectionStart, element.selectionEnd)), 'analysis_side_target', 'a local goto entry navigates to its scene declaration');
+    assert.equal(await fileInfo.locator('[data-kind="targets"] .file-info-list li').count(), 3);
+    assert.match(await fileInfo.locator('[data-kind="targets"]').textContent(), /chapters\/chapter01\.tds/);
+    assert.equal(await fileInfo.locator('[data-kind="variables"] .file-info-list li').count(), 3, 'a large reference count is summarized per binding, not expanded into hundreds of rows');
+    assert.match(await fileInfo.locator('[data-kind="variables"]').textContent(), /route_summer/);
+    assert.match(await fileInfo.locator('[data-kind="variables"]').textContent(), /このファイルの定義 1 · 参照 690/);
+    assert.equal(await fileInfo.locator('[data-kind="variables"] .file-info-variable-jump').count(), 3);
+    assert.match(await fileInfo.locator('.file-info-summary').textContent(), /到達不能/);
+    injectExplorerGraph = 'empty';
+    await currentFile.click({ button: 'right' });
+    await page.locator('.file-context-menu [role="menuitem"]').nth(2).click();
+    await page.waitForFunction(() => document.querySelector('#file-info .file-info-summary')?.textContent.includes('同一ファイル 0'));
+    assert.equal(await fileInfo.locator('[data-kind="local-targets"]').count(), 0);
+    assert.equal(await fileInfo.locator('[data-kind="targets"]').count(), 0, 'an empty transition section is omitted instead of showing a dead disclosure bar');
+    await page.unroute('**/api/scene-graph');
     const deleteButton = currentFile.locator('.tree-action.delete');
     assert.equal(await deleteButton.locator('xpath=..').evaluate((element) => element.tagName), 'DIV');
     await deleteButton.click();
@@ -73,11 +203,14 @@ const assert = require('node:assert/strict');
       return [split.top + split.height / 2, close.top + close.height / 2];
     });
     assert.ok(Math.abs(tabControlCenters[0] - tabControlCenters[1]) < 0.5);
-    await currentFile.locator('.scene-file-open').click({ modifiers: ['Shift'] });
+    const splitScene = 'analysis-side.tds';
+    const splitFile = page.locator('#file-tree .scene-file[data-path="senario/analysis-side.tds"]');
+    await splitFile.locator('.scene-file-open').click({ modifiers: ['Shift'] });
+    await page.waitForFunction(() => document.querySelector('#split-group')?.hidden === false);
     assert.equal(await page.locator('#split-group').isVisible(), true);
     const splitFrame = page.frameLocator('#split-frame');
     await splitFrame.locator('#editor').waitFor();
-    await page.waitForFunction((name) => document.querySelector('#split-frame')?.contentWindow?.document.querySelector('#scene-name')?.value === name, currentScene);
+    await page.waitForFunction((name) => document.querySelector('#split-frame')?.contentWindow?.document.querySelector('#scene-name')?.value === name, splitScene);
     assert.equal(await splitFrame.locator('html.embedded-editor').count(), 1);
     assert.equal(await page.locator('#editor-tabs .editor-tab').count(), 0);
     assert.equal(await page.locator('#split-tabs .editor-tab').count(), 1);
@@ -90,7 +223,7 @@ const assert = require('node:assert/strict');
     assert.equal(await page.locator('#split-group').isVisible(), false);
     await page.locator('#editor-tabs .editor-tab-split').click();
     await splitFrame.locator('#editor').waitFor();
-    await page.waitForFunction((name) => document.querySelector('#split-frame')?.contentWindow?.document.querySelector('#scene-name')?.value === name, currentScene);
+    await page.waitForFunction((name) => document.querySelector('#split-frame')?.contentWindow?.document.querySelector('#scene-name')?.value === name, splitScene);
     assert.equal(await page.locator('#editor-tabs .editor-tab').count(), 0);
     assert.equal(await page.locator('#split-tabs .editor-tab').count(), 1);
     await splitFrame.locator('#editor').fill('unsaved right pane before project switch');
@@ -169,6 +302,17 @@ const assert = require('node:assert/strict');
     await editor.press('Enter');
     assert.equal(await editor.inputValue(), 'say narrator ""');
     assert.ok((await page.locator('#scene-name').inputValue()).length > 0);
+    await editor.fill('scene local_start { wait 1 }\nscene local_target { wait 1 }\ngoto local_t');
+    await page.waitForFunction(() => [...document.querySelectorAll('#suggestions .suggestion')].some((button) => button.textContent.includes('local_target')));
+    const localGotoSuggestions = (await page.locator('#suggestions .suggestion').allTextContents()).map((value) => value.trim().replace(/^›\s*/, ''));
+    assert.deepEqual(localGotoSuggestions, ['local_target']);
+    const projectScenes = (await (await page.request.get(`${base}/api/scenes`)).json()).scenes;
+    const externalGoto = projectScenes.map((name) => ({ name, prefix: name.slice(0, -1) })).find(({ name, prefix }) => prefix && projectScenes.filter((candidate) => candidate.startsWith(prefix)).length === 1 && prefix.length < name.length);
+    assert.ok(externalGoto, 'project should contain a file name with a unique completion prefix');
+    await editor.fill(`goto "${externalGoto.prefix}`);
+    await page.waitForFunction((name) => [...document.querySelectorAll('#suggestions .suggestion')].some((button) => button.textContent.includes(name)), externalGoto.name);
+    const externalGotoSuggestions = (await page.locator('#suggestions .suggestion').allTextContents()).map((value) => value.trim().replace(/^›\s*/, ''));
+    assert.deepEqual(externalGotoSuggestions, [externalGoto.name]);
     await editor.fill('character aokami {\n  name = "蒼神"\n  pose normal = "asset/char/aokami.png"\n}\nshow ao');
     await page.waitForFunction(() => document.querySelector('#suggestions')?.textContent.includes('aokami'));
     await editor.press('Enter');
@@ -514,7 +658,7 @@ scene analysis {
       'fn choose(data: dict[str]) -> str { return data["key"] }\nscene main{choice choose({"key":"go"}){"ok"{say narrator "selected"}}}',
       'scene main{if 1==1{say narrator "yes"}\n\nelif 1==0{say narrator "maybe"}\n\nelse{say narrator "no"}}',
       'fn check(score: int) -> int { if not(score==1){ return(-1) } return(0) }',
-      'str route="go"\nscene main{choice(route){"ok"{say narrator "selected"}}}',
+      'str audit_semantic_route="go"\nscene main{choice(audit_semantic_route){"ok"{say narrator "selected"}}}',
       'character hero {\nname="Hero"\npose normal="asset/char/aokami.png"\n}\nscene main{show hero.normal far_left}',
       'asset image splash="asset/char/aokami.png"\nscene main{show image splash far_right}',
     ];
@@ -653,5 +797,8 @@ scene start {
   } finally {
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));
+    await fs.rm(auditProjectRoot, { recursive: true, force: true });
+    if (previousProjectRoot === undefined) delete process.env.NOVEL_PROJECT_ROOT;
+    else process.env.NOVEL_PROJECT_ROOT = previousProjectRoot;
   }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

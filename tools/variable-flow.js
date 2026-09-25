@@ -550,7 +550,6 @@ function validateVariableFlow(files, entry) {
           }
           else if (c.op === 'call') expression({ ...c, kind: 'call' }, state);
           else if (c.op === 'command') c.args.forEach((arg, index) => c.name === 'say' && index === 1 ? textExpression(arg, state) : expression(arg, state));
-          else if (c.op === 'sayBlock') { expression(c.speaker, state); c.lines.forEach(line => textExpression(line, state)); }
           next.push(state);
         }
         states = [...new Map(next.map(state => [JSON.stringify(stateKey(state)), state])).values()];
