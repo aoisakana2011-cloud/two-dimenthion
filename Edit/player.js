@@ -38,9 +38,11 @@ function applyPlayerUi(themePath, theme) {
   }
   const fitStage = () => {
     const portrait = innerHeight > innerWidth;
+    // Fill the viewport to avoid letterboxing. The stage remains clipped at its
+    // edges, which is preferable to unused black bands above and below the game.
     const scale = portrait
-      ? Math.min(innerWidth / screen.height, innerHeight / screen.width)
-      : Math.min(innerWidth / screen.width, innerHeight / screen.height);
+      ? Math.max(innerWidth / screen.height, innerHeight / screen.width)
+      : Math.max(innerWidth / screen.width, innerHeight / screen.height);
     stage.style.position = 'fixed';
     stage.style.left = '50%';
     stage.style.top = '50%';
@@ -220,7 +222,11 @@ async function command(c) {
     $('images').append(e);
   }
 }
-
+// The whole dialogue panel is the advance target. Choices keep their own click behavior.
+$('dialogue').addEventListener('click', (event) => {
+  if (event.target.closest('#choices, .choice, #next')) return;
+  $('next').click();
+});
 
 async function loadScene(name) {
   const response = await fetch(`/api/scene?name=${encodeURIComponent(name)}`);
@@ -229,14 +235,38 @@ async function loadScene(name) {
   const compiled = await fetch('/api/compile', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: scene.name || name, source: scene.source }),
+    body: JSON.stringify({ name: scene.name || name, source: scene.source, debug: Boolean(debugSession) }),
   });
   const result = await compiled.json();
   if (!result.ok) throw Error(result.error);
+  result.program.sourceFile = scene.name || name;
   return result.program;
+}
+const debugParams = new URLSearchParams(location.search);
+const debugSession = debugParams.get('debug');
+let debugStep = 0;
+const debugAcks = new Map();
+window.addEventListener('message', (event) => {
+  if (event.origin !== location.origin || event.source !== window.parent || event.data?.type !== 'novel-debug:ack' || event.data.session !== debugSession) return;
+  debugAcks.get(event.data.step)?.();
+});
+function reportDebug(type, detail = {}) {
+  if (debugSession && window.parent !== window) window.parent.postMessage({ type, session: debugSession, ...detail }, location.origin);
+}
+function reportDebugLocation(instruction, rt) {
+  if (!debugSession || window.parent === window || !instruction.line) return undefined;
+  const step = ++debugStep;
+  reportDebug('novel-debug:location', { file: instruction.file || rt.program?.sourceFile, line: instruction.line, op: instruction.op, step });
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { debugAcks.delete(step); resolve(); }, 5000);
+    debugAcks.set(step, () => { clearTimeout(timer); debugAcks.delete(step); resolve(); });
+  });
 }
 const runtime = new NovelRuntime.Runtime({
   load: loadScene,
+  beforeInstruction(instruction, rt) {
+    return reportDebugLocation(instruction, rt);
+  },
   async command(name, args, rt, operation) {
     if (name === 'say') {
       let speaker = args[0] === 'none' || args[0] === 'narrator' ? '' : args[0];
@@ -269,6 +299,36 @@ const runtime = new NovelRuntime.Runtime({
   const ui = await (await fetch('/api/player-ui')).json();
   applyPlayerUi(ui.path, ui.theme);
   const settings = await (await fetch('/api/scene-config')).json();
-  const name = new URLSearchParams(location.search).get('source') || settings.start_file;
-  await runtime.run(await loadScene(name));
-})().catch(error => { $('speaker-text').textContent = 'PLAYER ERROR'; $('text').textContent = error.message; $('choices').replaceChildren(); });
+  const name = debugParams.get('source') || settings.start_file;
+  const variables = Object.create(null);
+  if (debugSession) {
+    const supplied = JSON.parse(debugParams.get('variables') || '{}');
+    for (const [key, entry] of Object.entries(supplied)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw Error(`Invalid debug variable: ${key}`);
+      if (entry?.type === 'int') variables[key] = NovelRuntime.integer(entry.value);
+      else if (entry?.type === 'str') variables[key] = String(entry.value);
+      else if (entry?.type === 'dict<int>' || entry?.type === 'dict<str>') {
+        const source = JSON.parse(entry.value);
+        if (!source || typeof source !== 'object' || Array.isArray(source)) throw Error(`Invalid debug dictionary: ${key}`);
+        const dictionary = Object.create(null);
+        for (const [field, value] of Object.entries(source)) dictionary[field] = entry.type === 'dict<int>' ? NovelRuntime.integer(value) : String(value);
+        variables[key] = dictionary;
+      } else if (entry?.type === 'struct') {
+        const source = JSON.parse(entry.value);
+        const fields = entry.fields;
+        if (!source || typeof source !== 'object' || Array.isArray(source) || !fields || typeof fields !== 'object' || Object.keys(source).length !== Object.keys(fields).length) throw Error(`Invalid debug structure: ${key}`);
+        const structure = Object.create(null);
+        for (const [field, type] of Object.entries(fields)) {
+          if (!Object.hasOwn(source, field)) throw Error(`Missing debug structure field: ${field}`);
+          if (type === 'int') structure[field] = NovelRuntime.integer(source[field]);
+          else if (type === 'str' && typeof source[field] === 'string') structure[field] = source[field];
+          else throw Error(`Invalid debug structure field: ${field}`);
+        }
+        variables[key] = structure;
+      } else throw Error(`Unsupported debug variable type: ${key}`);
+    }
+  }
+  const line = Number(debugParams.get('line'));
+  await runtime.run(await loadScene(name), debugSession ? { scene: debugParams.get('scene') || undefined, line: Number.isSafeInteger(line) && line > 0 ? line : undefined, variables } : null);
+  reportDebug('novel-debug:done');
+})().catch(error => { $('speaker-text').textContent = 'PLAYER ERROR'; $('text').textContent = error.message; $('choices').replaceChildren(); reportDebug('novel-debug:error', { error: error.message }); });

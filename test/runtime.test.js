@@ -1156,11 +1156,16 @@ test('package includes external scenes, validates assets and remains JSON serial
   await fs.mkdir(scenesRoot); await fs.mkdir(assetsRoot);
   await fs.writeFile(path.join(assetsRoot, 'hero.png'), 'placeholder');
   await fs.writeFile(path.join(scenesRoot, 'main.tds'), 'character hero {\nname = "Hero"\npose normal = "asset/hero.png"\n}\nint route = 7\ngoto "next.tds"');
-  await fs.writeFile(path.join(scenesRoot, 'next.tds'), 'show hero.normal center\nsay narrator str(route)\nint a = 9007199254740993');
+  await fs.writeFile(path.join(scenesRoot, 'next.tds'), 'show hero.normal center\nsay narrator str(route)\nsay hero "Hello"\nint a = 9007199254740993');
   await fs.writeFile(path.join(scenesRoot, 'unused.tds'), 'say narrator "compiled even when unreachable"');
   const data = await pack(path.join(scenesRoot, 'main.tds'), path.join(dir, 'out/game.json'), { scenesRoot, assetsRoot });
   assert.ok(data.files['unused.tds']);
   assert.equal(data.files['next.tds'].characters.find((character) => character.name === 'hero').poses[0].path, 'asset/hero.png');
+  assert.equal(data.files['next.tds'].globals.find((entry) => entry.name === 'hero')?.initial.entries[0].value.value, 'Hero');
+  const directRuntime = new Runtime({ command: async () => {} });
+  directRuntime.globals.route = 7n;
+  await directRuntime.run(data.files['next.tds']);
+  assert.equal(directRuntime.get('hero').name, 'Hero', 'direct file playback initializes an external character definition');
   assert.equal(data.files['next.tds'].globals.find((entry) => entry.name === 'a').initial.value, '9007199254740993');
   assert.equal(data.files['next.tds'].globals.find((entry) => entry.name === 'say').args[1].name, 'str');
   await assert.rejects(compileProject('asset bg x = "missing.png"', assetsRoot, scenesRoot), /アセット/);

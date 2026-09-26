@@ -1,0 +1,39 @@
+asset bg heian_hall = "asset/bg/heian-banquet.png"
+
+scene banquet {
+  bg heian_hall
+  show goi.normal left
+  say narrator "正月二日。摂政の邸で大きな宴が開かれた。"
+  say narrator "客が去ると、侍たちは残された膳を囲む。"
+  say narrator "銀の器の底に、五位の待ち続けた芋粥があった。"
+  say goi "今年は、ことに甘いのう。"
+  say narrator "一口、もう一口。椀はたちまち空になった。"
+  say goi "いつになれば、これに飽くことができるのかのう。"
+  show toshihito.normal right fade 300
+  say toshihito "五位殿は、芋粥に飽かれたことがないのか。"
+  say narrator "笑い声が、列席した侍たちの間に広がった。"
+  say narrator "声の主は藤原利仁。大柄で、豪胆な武人だった。"
+  say toshihito "それなら、わしがお飽かせしよう。"
+  say goi "……まことでござるか。"
+  say toshihito "疑うなら、試してみるがよい。"
+  choice "五位はどう答える？" {
+    "願いを口にする" { goto banquet_accept }
+    "行き先を確かめる" { goto banquet_question }
+  }
+}
+
+scene banquet_accept {
+  say goi "ありがたく、お言葉に甘えまする。"
+  say narrator "五位は笑われるのを承知で、初めて自分の願いを声にした。"
+  say toshihito "よし。数日のうちに迎えに参ろう。"
+  say narrator "五位の胸には、不安と同じだけの期待が残った。"
+  goto "chapters/road.tds"
+}
+
+scene banquet_question {
+  say goi "ありがたいお話でござる。ですが、どちらへ参るので。"
+  say toshihito "それは道すがら話そう。よい湯のある所でもある。"
+  say narrator "利仁は笑った。五位には、その笑みの意味が読めなかった。"
+  say goi "……それならば、お供いたします。"
+  goto "chapters/road.tds"
+}

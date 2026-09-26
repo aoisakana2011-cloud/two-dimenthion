@@ -50,6 +50,7 @@ async function stopServer(child) {
   const switchProjectRoot = path.join(tempRoot, 'Selected Existing Project');
   await fs.mkdir(home);
   await fs.mkdir(emptyProjectRoot);
+  seedEmptyProject(projectRoot);
   const switchProject = seedEmptyProject(switchProjectRoot);
   await fs.writeFile(path.join(switchProject.scenesRoot, 'main.tds'), [
     'scene main {',
@@ -60,7 +61,7 @@ async function stopServer(child) {
     'scene switch_only_unreachable { wait 1 }',
     '',
   ].join('\n'));
-  const env = { ...process.env, USERPROFILE: home, HOME: home };
+  const env = { ...process.env, USERPROFILE: home, HOME: home, NOVEL_EDITOR_RECENT_FILE: path.join(tempRoot, 'recent.json') };
   let server;
   let browser;
   try {
@@ -76,25 +77,25 @@ async function stopServer(child) {
     await editorPage.goto(`${server.base}/index.html`);
     await editorPage.locator('#editor').waitFor();
 
-    // Create a project from the actual project picker, with its recent-project
-    // state isolated under the temporary home directory.
+    // Open an existing project through the browser fallback; creation is no
+    // longer an editor menu action.
     await editorPage.locator('[data-menu="file"]').click();
-    await editorPage.locator('[data-menu-action="new-project"]').click();
-    await editorPage.waitForFunction((expected) => document.querySelector('#project-picker-path')?.value === expected, startupProject);
-    await editorPage.locator('#project-picker-path').fill(tempRoot);
-    await editorPage.locator('#project-picker-go').click();
-    await editorPage.waitForFunction((expected) => document.querySelector('#project-picker-path')?.value === expected, tempRoot);
-    await editorPage.locator('#project-picker-create').click();
-    const projectNameDialog = editorPage.locator('.editor-dialog').filter({ has: editorPage.locator('input') });
-    await projectNameDialog.locator('input').fill(projectName);
-    await projectNameDialog.getByRole('button', { name: '決定' }).click();
+    assert.equal(await editorPage.locator('[data-menu-action="new-project"]').count(), 0);
+    await editorPage.locator('[data-menu-action="open-project"]').click();
+    const folderDialog = editorPage.locator('.editor-dialog').filter({ has: editorPage.locator('input') });
+    await folderDialog.locator('input').fill(projectRoot);
+    const projectOpenResponse = editorPage.waitForResponse((response) => response.url().includes('/api/project/open') && response.request().method() === 'POST');
+    await folderDialog.getByRole('button', { name: '決定' }).click();
+    assert.equal((await projectOpenResponse).status(), 200, 'folder selection opens the existing project');
     await editorPage.waitForFunction(async (expected) => {
       const current = await (await fetch('/api/project')).json();
-      return current.projectRoot === expected;
+      return current.projectRoot === expected && current.recent.includes(expected);
     }, projectRoot);
     await editorPage.waitForFunction((name) => document.querySelector('#scene-name')?.value === name, 'main.tds');
-    const project = await editorPage.evaluate(async () => (await (await fetch('/api/project')).json()).projectRoot);
+    const openedProject = await editorPage.evaluate(async () => await (await fetch('/api/project')).json());
+    const project = openedProject.projectRoot;
     assert.equal(path.resolve(project), path.resolve(projectRoot));
+    assert.ok(openedProject.recent.includes(projectRoot), `an opened project is persisted for the next launch: ${JSON.stringify(openedProject)}`);
     const initialTheme = await editorPage.evaluate(async () => {
       const response = await fetch('/api/player-ui');
       return { status: response.status, payload: await response.json() };
@@ -105,13 +106,9 @@ async function stopServer(child) {
 
     const welcomePage = await context.newPage();
     await welcomePage.goto(`${server.base}/?welcome=1`);
-    await welcomePage.locator('#project-picker:not([hidden])').waitFor();
-    assert.equal(await welcomePage.locator('.project-picker-copy').textContent(), 'フォルダを選ぶか作成してください。');
-    assert.equal(await welcomePage.locator('#project-picker-close').isVisible(), false);
+    await welcomePage.locator('#editor').waitFor();
+    assert.equal(await welcomePage.locator('#project-picker').count(), 0, 'startup uses the ordinary editor, not a custom folder screen');
     assert.equal(await welcomePage.locator('.app-shell').evaluate((element) => getComputedStyle(element).visibility), 'visible');
-    assert.equal(await welcomePage.locator('#editor').inputValue(), '');
-    await welcomePage.keyboard.press('Escape');
-    assert.equal(await welcomePage.locator('#project-picker').isVisible(), true, 'initial project selection cannot be dismissed without choosing a folder');
     await welcomePage.close();
 
     const desktopWelcomePage = await context.newPage();
@@ -136,7 +133,7 @@ async function stopServer(child) {
     desktopWelcomePage.on('framenavigated', (frame) => {
       if (frame === desktopWelcomePage.mainFrame()) mainFrameNavigations += 1;
     });
-    await desktopWelcomePage.goto(`${server.base}/?welcome=1&desktop=1`);
+    await desktopWelcomePage.goto(`${server.base}/?desktop=1`);
     await desktopWelcomePage.waitForLoadState('domcontentloaded');
     assert.equal(await desktopWelcomePage.locator('.app-shell').evaluate((element) => getComputedStyle(element).visibility), 'visible');
     assert.equal(await desktopWelcomePage.locator('#project-welcome-banner').count(), 0, 'no startup banner is present');
@@ -153,16 +150,16 @@ async function stopServer(child) {
     await desktopWelcomePage.locator('[data-menu="file"]').click();
     await desktopWelcomePage.locator('[data-menu-action="open-project"]').click();
     assert.equal(await desktopWelcomePage.evaluate(() => window.__folderPickerCalls), 2, 'second folder selection reaches the same native bridge');
-    await desktopWelcomePage.waitForFunction(() => window.__projectOpenResponses.length >= 3 || document.querySelector('.editor-dialog'));
-    await desktopWelcomePage.waitForFunction((expected) => window.__workspaceReadyEvents.some((event) => event.projectRoot === expected && event.scenes.includes('main.tds')), emptyProjectRoot);
+    await desktopWelcomePage.waitForFunction(() => document.querySelector('#runtime-error')?.textContent.includes('setting.txt'));
     const emptyOpenState = await desktopWelcomePage.evaluate(async () => ({
       project: await (await fetch('/api/project')).json(),
       responses: window.__projectOpenResponses,
-      dialog: document.querySelector('.editor-dialog')?.textContent || '',
+      error: document.querySelector('#runtime-error')?.textContent || '',
     }));
     const emptyFolderEntries = await fs.readdir(emptyProjectRoot);
-    assert.ok(emptyFolderEntries.includes('setting.txt'), `selected empty folder should be initialized; state=${JSON.stringify(emptyOpenState)} contents=${JSON.stringify(emptyFolderEntries)}`);
-    assert.equal(await desktopWelcomePage.locator('.editor-dialog').count(), 0, 'an empty selected folder opens without a confirmation detour');
+    assert.deepEqual(emptyFolderEntries, [], `opening an empty folder must not create a project: ${JSON.stringify(emptyOpenState)}`);
+    assert.equal(emptyOpenState.project.projectRoot, startupProject, 'a rejected folder does not replace the current project');
+    assert.equal(await desktopWelcomePage.locator('.editor-dialog').count(), 0, 'opening a folder never asks to create a new project');
     await desktopWelcomePage.evaluate((folder) => { window.__selectedFolder = folder; }, switchProjectRoot);
     await desktopWelcomePage.locator('[data-menu="file"]').click();
     await desktopWelcomePage.locator('[data-menu-action="open-project"]').click();
@@ -262,6 +259,8 @@ async function stopServer(child) {
     await flowPage.goto(`${server.base}/flow.html`);
     await flowPage.locator('#flow-search').waitFor();
     await flowPage.locator('.flow-node').first().waitFor();
+    assert.equal(await flowPage.locator('.include-edge').count(), 0, 'dependency links are hidden by default to keep story flow readable');
+    await flowPage.locator('#show-includes').check();
     assert.ok(await flowPage.locator('.include-edge').count() >= 1);
     await flowPage.locator('#show-includes').uncheck();
     assert.equal(await flowPage.locator('.include-edge').count(), 0);
@@ -374,7 +373,7 @@ async function stopServer(child) {
     await reloadedPlayer.locator('.choice').click();
     await reloadedPlayer.waitForFunction(() => document.querySelector('#text')?.textContent === 'Score 1');
     assert.deepEqual(pageErrors, []);
-    console.log('PASS full workflow: create project, edit, save, compile, image/dialogue/choice/state, diagnostics/fix, reload and restart');
+    console.log('PASS full workflow: open project, edit, save, compile, image/dialogue/choice/state, diagnostics/fix, reload and restart');
   } finally {
     await browser?.close();
     await stopServer(server?.child);

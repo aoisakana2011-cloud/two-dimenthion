@@ -705,7 +705,7 @@
             "scope": "global",
             "container": "global",
             "line": 22,
-            "column": 1,
+            "column": 5,
             "kind": "definition"
           }
         ],
@@ -1426,7 +1426,7 @@
               "scope": "global",
               "container": "global",
               "line": 22,
-              "column": 1,
+              "column": 5,
               "kind": "definition"
             }
           ],

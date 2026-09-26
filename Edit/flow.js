@@ -2,22 +2,40 @@ const graph = document.querySelector('#graph');
 const details = document.querySelector('#details');
 const status = document.querySelector('#status');
 const flowCount = document.querySelector('#flow-count');
+const canvasHeader = document.querySelector('.canvas > header');
+const flowCountLabel = document.createElement('span');
+flowCountLabel.className = 'flow-count-label';
+flowCountLabel.append(flowCount);
+const flowActions = document.createElement('div');
+flowActions.className = 'flow-canvas-actions';
+[['fit', '全体表示'], ['auto-layout', '自動配置']].forEach(([action, label]) => {
+  const button = document.createElement('button');
+  button.type = 'button'; button.dataset.flowAction = action; button.className = 'flow-layout-action'; button.textContent = label;
+  flowActions.append(button);
+});
+const flowInstructions = canvasHeader?.querySelector('small');
+if (canvasHeader && flowInstructions) {
+  canvasHeader.insertBefore(flowCountLabel, flowInstructions);
+  canvasHeader.insertBefore(flowActions, flowInstructions);
+  flowInstructions.className = 'flow-instructions';
+}
 let data = null;
 let selected = '';
-let rangePicker = null;
 let layoutStorageKey = '';
+let flowProjectRoot = '';
 let savedFolderOffsets = {};
 let panState = null;
 let dragState = null;
 let flowZoom = 1;
-const flowFilter = { query: '', showIncludes: true };
+let flowWorldWidth = 0;
+let flowWorldHeight = 0;
+let initialFlowFit = true;
+const flowFilter = { query: '', showIncludes: false };
 function sendToEditor(message) {
   if (window.parent === window) return false;
   window.parent.postMessage(message, location.origin);
   return true;
 }
-window.setFlowRangePicker = (target) => { rangePicker = target; };
-
 const folderOf = (file) => {
   const parts = String(file).replaceAll('\\', '/').split('/');
   return parts.length > 1 ? parts.slice(0, -1).join('/') : '(root)';
@@ -42,6 +60,23 @@ function detailGroup(title, items) {
   const heading = document.createElement('div'); heading.className = 'group-label'; heading.textContent = title;
   box.append(heading);
   [...new Set(items)].forEach((item) => box.append(editorLink(item)));
+  details.append(box);
+}
+function transitionGroup(title, transitions, fallbackFile) {
+  if (!transitions.length) return;
+  const box = document.createElement('div'); box.className = 'detail-group transition-group';
+  const heading = document.createElement('div'); heading.className = 'group-label'; heading.textContent = `${title} (${transitions.length})`;
+  box.append(heading);
+  transitions.forEach((transition) => {
+    const row = document.createElement('div'); row.className = 'transition-row';
+    const context = document.createElement('span'); context.className = 'transition-context';
+    context.textContent = `${transition.fromScene || 'scene'} → ${transition.toScene || fileLabel(fallbackFile)}${transition.choice ? ` · ${transition.choice}` : ''}`;
+    row.append(context);
+    const targetFile = transition.toFile || fallbackFile;
+    const target = editorLink(targetFile); target.classList.add('transition-target');
+    target.textContent = `${targetFile}${transition.line ? `:${transition.line}` : ''}`;
+    row.append(target); box.append(row);
+  });
   details.append(box);
 }
 function diagnosticGroup(node) {
@@ -84,18 +119,31 @@ function variableTypeLabel(type) {
 }
 function selectNode(file) {
   selected = file;
-  const picker = rangePicker ? document.querySelector(`#${rangePicker}`) : null;
-  if (picker) {
-    picker.value = file;
-    window.updateFlowPicker?.(rangePicker);
-  }
+  updateFlowTestPanel();
   document.querySelectorAll('.flow-node').forEach((node) => node.classList.toggle('selected', node.dataset.file === file));
+  const flowSvg = graph.querySelector('.flow-svg');
+  if (flowSvg) flowSvg.dataset.hasSelection = 'true';
+  document.querySelectorAll('.flow-edge').forEach((edge) => {
+    edge.classList.toggle('is-related', edge.dataset.from === file || edge.dataset.to === file);
+  });
   details.replaceChildren();
+  details.scrollTop = 0;
   const heading = document.createElement('div'); heading.className = 'detail-title'; heading.textContent = file;
   details.append(heading);
   detailGroup('転移元', data.edges.filter((edge) => edge.to === file).map((edge) => edge.from));
   detailGroup('転移先', data.edges.filter((edge) => edge.from === file).map((edge) => edge.to));
   const node = data.nodes.find((item) => item.id === file);
+  if (node?.sceneNames?.length) {
+    const scenes = document.createElement('div'); scenes.className = 'detail-meta';
+    scenes.textContent = `${node.sceneNames.length} scenes: ${node.sceneNames.join(', ')}`;
+    details.append(scenes);
+  }
+  const outgoing = data.edges.filter((edge) => edge.from === file && edge.kind === 'goto')
+    .flatMap((edge) => (edge.transitions || []).map((item) => ({ ...item, toFile: edge.to })));
+  const local = (node?.localGotos || []).map((item) => ({
+    fromScene: item.fromScene, toScene: item.scene, choice: item.choice, line: item.gotoLine, toFile: item.file,
+  }));
+  transitionGroup('Goto destinations', [...local, ...outgoing], file);
   if (node?.reachable === false) {
     const warning = document.createElement('div'); warning.className = 'flow-error'; warning.textContent = '開始ファイルから到達できません'; details.append(warning);
   }
@@ -126,36 +174,29 @@ window.selectFlowNode = (file) => {
   document.querySelector(`.flow-node[data-file="${CSS.escape(file)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
 };
 
-window.showFlowValidation = (report) => {
-  const route = report.path || [];
-  const path = new Set(route);
-  const checked = new Set(report.checked || []);
-  const errorFiles = new Set((report.errors || []).map((error) => error.file));
-  document.querySelectorAll('.flow-node').forEach((node) => {
-    const file = node.dataset.file;
-    node.classList.toggle('validation-path', path.has(file));
-    node.classList.toggle('validation-checked', checked.has(file) && !path.has(file));
-    node.classList.toggle('validation-error', errorFiles.has(file));
-  });
-  document.querySelectorAll('.flow-edge').forEach((edge) => {
-    const from = edge.dataset.from, to = edge.dataset.to;
-    edge.classList.toggle('validation-path', route.some((file, index) => file === from && route[index + 1] === to));
-  });
-  if (route.length) window.selectFlowNode(route[0]);
-};
+function setFlowZoom(nextZoom, anchor = null) {
+  const root = graph.querySelector('.flow-svg');
+  if (!root) return;
+  const next = Math.max(0.05, Math.min(2.5, nextZoom));
+  const rect = graph.getBoundingClientRect();
+  const anchorX = anchor ? anchor.x - rect.left : 0;
+  const anchorY = anchor ? anchor.y - rect.top : 0;
+  const worldX = (graph.scrollLeft + anchorX) / flowZoom;
+  const worldY = (graph.scrollTop + anchorY) / flowZoom;
+  flowZoom = next;
+  root.setAttribute('width', String(Math.ceil(flowWorldWidth * flowZoom)));
+  root.setAttribute('height', String(Math.ceil(flowWorldHeight * flowZoom)));
+  graph.scrollLeft = anchor ? Math.max(0, worldX * flowZoom - anchorX) : 0;
+  graph.scrollTop = anchor ? Math.max(0, worldY * flowZoom - anchorY) : 0;
+}
 
-function folderDepths(folders, edges) {
-  const depths = new Map(folders.map((folder) => [folder, 0]));
-  const folderEdges = edges.map((edge) => [folderOf(edge.from), folderOf(edge.to)]).filter(([from, to]) => from !== to);
-  for (let pass = 0; pass < folders.length; pass++) {
-    let changed = false;
-    for (const [from, to] of folderEdges) {
-      const next = Math.min(folders.length - 1, (depths.get(from) || 0) + 1);
-      if (next > (depths.get(to) || 0)) { depths.set(to, next); changed = true; }
-    }
-    if (!changed) break;
-  }
-  return depths;
+function fitFlowGraph() {
+  if (!flowWorldWidth || !flowWorldHeight || graph.clientWidth <= 0 || graph.clientHeight <= 0) return false;
+  const availableWidth = Math.max(1, graph.clientWidth - 36);
+  const availableHeight = Math.max(1, graph.clientHeight - 36);
+  setFlowZoom(Math.min(2.5, availableWidth / flowWorldWidth, availableHeight / flowWorldHeight));
+  initialFlowFit = false;
+  return true;
 }
 
 function render(flow) {
@@ -176,25 +217,34 @@ function render(flow) {
     const folder = folderOf(node.id);
     ensureFolder(folder).nodes.push(node);
   });
-  const topFolders = [...tree.children.values()];
+  const topFolders = [...tree.children.values()].sort((a, b) => a.path.localeCompare(b.path, 'ja'));
   const topFolderOf = (file) => {
     const folder = folderOf(file);
     return folder === '(root)' ? folder : folder.split('/')[0];
   };
   const topEdges = view.edges.map((edge) => ({ from: topFolderOf(edge.from), to: topFolderOf(edge.to) }));
-  const depths = folderDepths(topFolders.map((folder) => folder.path), topEdges);
+  const layered = window.FlowLayout.layerFolders(topFolders.map((folder) => folder.path), topEdges);
   const columns = new Map();
   topFolders.forEach((folder) => {
-    const depth = depths.get(folder.path) || 0;
+    const depth = layered.depthByFolder.get(folder.path) || 0;
     if (!columns.has(depth)) columns.set(depth, []);
     columns.get(depth).push(folder);
   });
+  for (const [depth, folders] of columns) {
+    const order = new Map((layered.columns.get(depth) || []).map((id, index) => [id, index]));
+    folders.sort((left, right) => order.get(left.path) - order.get(right.path));
+  }
+  const layerEntries = [...columns].sort(([left], [right]) => left - right);
 
-  const folderWidth = 214, folderGapX = 100, folderGapY = 30, nodeHeight = 36, nodeGap = 6, headerHeight = 27, padding = 42;
+  const folderWidth = 214, layoutGapX = 30, folderGapX = 48, folderGapY = 48;
+  const nodeHeight = 36, nodeGap = 6, headerHeight = 27, padding = 18, layoutPadding = 42;
   const folderPositions = new Map(), nodePositions = new Map();
   const measureFolder = (folder, depth) => {
     folder.width = Math.max(132, folderWidth - depth * 18);
-    folder.nodes.sort((a, b) => a.id.localeCompare(b.id));
+    const nodeIds = folder.nodes.map((node) => node.id);
+    const orderedNodeIds = window.FlowLayout.orderNodes(nodeIds, view.edges);
+    const nodeOrder = new Map(orderedNodeIds.map((id, index) => [id, index]));
+    folder.nodes.sort((a, b) => nodeOrder.get(a.id) - nodeOrder.get(b.id));
     const children = [...folder.children.values()].sort((a, b) => a.path.localeCompare(b.path, 'ja'));
     children.forEach((child) => measureFolder(child, depth + 1));
     const nodesHeight = folder.nodes.length * nodeHeight + Math.max(0, folder.nodes.length - 1) * nodeGap;
@@ -202,6 +252,26 @@ function render(flow) {
     folder.height = headerHeight + 10 + nodesHeight + (nodesHeight && childrenHeight ? 10 : 0) + childrenHeight + 10;
   };
   topFolders.forEach((folder) => measureFolder(folder, 0));
+  const orderedFolders = layerEntries.flatMap(([, folders]) => folders);
+  const optimizedLayout = window.FlowLayout.optimizeFolderGrid(
+    orderedFolders.map((folder) => ({ id: folder.path, width: folder.width, height: folder.height })),
+    topEdges,
+    graph.clientWidth - 36,
+    graph.clientHeight - 36,
+    layoutGapX,
+    30,
+    layoutPadding,
+  );
+  const maxFolderWidth = Math.max(0, ...orderedFolders.map((folder) => folder.width));
+  for (const position of optimizedLayout.positions.values()) {
+    const column = Math.round((position.x - layoutPadding) / (maxFolderWidth + layoutGapX));
+    position.x = padding + column * (maxFolderWidth + folderGapX);
+  }
+  optimizedLayout.width = padding * 2 + optimizedLayout.columnCount * maxFolderWidth
+    + Math.max(0, optimizedLayout.columnCount - 1) * folderGapX;
+  optimizedLayout.height = optimizedLayout.positions.size
+    ? Math.ceil(Math.max(...[...optimizedLayout.positions.values()].map((position) => position.y + position.height)) + padding)
+    : padding * 2;
   const placeFolder = (folder, x, y, depth) => {
     folderPositions.set(folder.path, { x, y, width: folder.width, height: folder.height, folder });
     let cursor = y + headerHeight + 10;
@@ -215,16 +285,10 @@ function render(flow) {
       cursor += child.height + 10;
     });
   };
-  let totalHeight = padding;
-  for (const [depth, columnFolders] of columns) {
-    let y = padding;
-    columnFolders.sort((a, b) => a.path.localeCompare(b.path, 'ja')).forEach((folder) => {
-      const x = padding + depth * (folderWidth + folderGapX);
-      placeFolder(folder, x, y, 0);
-      y += folder.height + folderGapY;
-    });
-    totalHeight = Math.max(totalHeight, y);
-  }
+  orderedFolders.forEach((folder) => {
+    const position = optimizedLayout.positions.get(folder.path);
+    placeFolder(folder, position.x, position.y, 0);
+  });
   const applyFolderOffsets = (folder, parentX = 0, parentY = 0) => {
     const own = savedFolderOffsets[folder.path] || {};
     const offsetX = parentX + (Number.isFinite(own.x) ? own.x : 0);
@@ -235,15 +299,39 @@ function render(flow) {
     [...folder.children.values()].forEach((child) => applyFolderOffsets(child, offsetX, offsetY));
   };
   topFolders.forEach((folder) => applyFolderOffsets(folder));
-  const maxDepth = Math.max(0, ...columns.keys());
-  const width = Math.max(graph.clientWidth, padding * 2 + (maxDepth + 1) * folderWidth + maxDepth * folderGapX, ...[...folderPositions.values()].map((position) => position.x + position.width + padding));
-  const height = Math.max(graph.clientHeight, totalHeight + padding - folderGapY, ...[...folderPositions.values()].map((position) => position.y + position.height + padding));
-  const root = svg('svg', { class: 'flow-svg', width, height, viewBox: `0 0 ${width} ${height}` });
-  root.style.transformOrigin = '0 0';
-  if (flowZoom !== 1) root.style.transform = `scale(${flowZoom})`;
+  const separated = window.FlowLayout.separateOverlappingFolders(orderedFolders.map((folder) => {
+    const position = folderPositions.get(folder.path);
+    return { id: folder.path, x: position.x, y: position.y, width: position.width, height: position.height };
+  }), folderGapY);
+  const targetY = new Map(separated.map((folder) => [folder.id, folder.y]));
+  const moveFolderTree = (folder, deltaY) => {
+    if (!deltaY) return;
+    folderPositions.get(folder.path).y += deltaY;
+    folder.nodes.forEach((node) => { nodePositions.get(node.id).y += deltaY; });
+    [...folder.children.values()].forEach((child) => moveFolderTree(child, deltaY));
+  };
+  topFolders.forEach((folder) => moveFolderTree(folder, targetY.get(folder.path) - folderPositions.get(folder.path).y));
+  const bounds = window.FlowLayout.normalizeBounds(folderPositions, nodePositions, view.edges, nodeHeight, padding, folderOf);
+  const layoutWidth = optimizedLayout.width;
+  flowWorldWidth = Math.max(1, bounds.width, layoutWidth);
+  flowWorldHeight = Math.max(1, bounds.height, optimizedLayout.height);
+  const root = svg('svg', { class: 'flow-svg', width: Math.ceil(flowWorldWidth * flowZoom), height: Math.ceil(flowWorldHeight * flowZoom), viewBox: `0 0 ${flowWorldWidth} ${flowWorldHeight}`, preserveAspectRatio: 'none' });
+  root.dataset.layoutColumns = String(optimizedLayout.columnCount);
+  root.dataset.layoutScore = optimizedLayout.score.toFixed(2);
+  root.dataset.layoutMetrics = JSON.stringify(optimizedLayout.metrics);
+  const resizeCanvasToPositions = () => {
+    const currentBounds = window.FlowLayout.normalizeBounds(folderPositions, nodePositions, view.edges, nodeHeight, padding, folderOf, false);
+    flowWorldWidth = Math.max(1, currentBounds.width, layoutWidth);
+    flowWorldHeight = Math.max(1, currentBounds.height, optimizedLayout.height);
+    root.setAttribute('viewBox', `0 0 ${flowWorldWidth} ${flowWorldHeight}`);
+    root.setAttribute('width', String(Math.ceil(flowWorldWidth * flowZoom)));
+    root.setAttribute('height', String(Math.ceil(flowWorldHeight * flowZoom)));
+  };
   const defs = svg('defs');
   const marker = svg('marker', { id: 'arrow', markerWidth: 8, markerHeight: 8, refX: 7, refY: 3, orient: 'auto' });
-  marker.append(svg('path', { d: 'M0 0v6l7-3z', class: 'flow-arrow' })); defs.append(marker); root.append(defs);
+  marker.append(svg('path', { d: 'M0 0v6l7-3z', class: 'flow-arrow' })); defs.append(marker);
+  const includeMarker = svg('marker', { id: 'include-arrow', markerWidth: 8, markerHeight: 8, refX: 7, refY: 3, orient: 'auto' });
+  includeMarker.append(svg('path', { d: 'M0 0v6l7-3z', class: 'flow-arrow include-arrow' })); defs.append(includeMarker); root.append(defs);
 
   const folderElements = new Map(), nodeElements = new Map();
   const drawFolder = (folder) => {
@@ -277,16 +365,17 @@ function render(flow) {
   const edgeLayer = svg('g', { class: 'flow-edges' });
   const drawEdges = () => {
     edgeLayer.replaceChildren();
+    const routes = window.FlowLayout.routeEdges(view.edges, nodePositions, nodeHeight, folderOf, folderPositions);
     view.edges.forEach((edge) => {
-    const from = nodePositions.get(edge.from), to = nodePositions.get(edge.to); if (!from || !to) return;
-    if (folderOf(edge.from) === folderOf(edge.to)) {
-      const x1 = from.x + from.width, y1 = from.y + nodeHeight / 2, x2 = to.x + to.width, y2 = to.y + nodeHeight / 2;
-      const loop = 52 + Math.abs(y2 - y1) * 0.18;
-      const path = svg('path', { d: `M${x1} ${y1}C${x1 + loop} ${y1} ${x2 + loop} ${y2} ${x2} ${y2}`, class: `flow-edge folder-edge ${edge.kind === 'include' ? 'include-edge' : ''}`, 'marker-end': 'url(#arrow)' }); path.dataset.from = edge.from; path.dataset.to = edge.to; edgeLayer.append(path);
-      return;
-    }
-    const x1 = from.x + from.width, y1 = from.y + nodeHeight / 2, x2 = to.x, y2 = to.y + nodeHeight / 2, offset = Math.max(35, Math.abs(x2 - x1) / 2);
-    const path = svg('path', { d: `M${x1} ${y1}C${x1 + offset} ${y1} ${x2 - offset} ${y2} ${x2} ${y2}`, class: `flow-edge ${edge.kind === 'include' ? 'include-edge' : ''}`, 'marker-end': 'url(#arrow)' }); path.dataset.from = edge.from; path.dataset.to = edge.to; edgeLayer.append(path);
+      const route = routes.get(edge); if (!route) return;
+      const isInclude = edge.kind === 'include';
+      const path = svg('path', { d: route.d, class: `flow-edge ${route.type}-edge ${isInclude ? 'include-edge' : ''}`, 'marker-end': isInclude ? 'url(#include-arrow)' : 'url(#arrow)' });
+      path.dataset.from = edge.from; path.dataset.to = edge.to; path.dataset.kind = edge.kind || 'goto'; edgeLayer.append(path);
+      if (edge.kind === 'goto' && edge.transitions?.length) {
+        const title = svg('title');
+        title.textContent = edge.transitions.map((item) => `${item.fromScene || 'scene'} → ${item.toScene || fileLabel(edge.to)}${item.choice ? ` · ${item.choice}` : ''} (line ${item.line})`).join('\n');
+        path.append(title);
+      }
     });
   };
   drawEdges();
@@ -297,7 +386,10 @@ function render(flow) {
     const item = svg('g', { class: `flow-node${node.reachable === false ? ' unreachable' : ''}${node.error ? ' error' : ''}${warning ? ' warning' : ''}`, transform: `translate(${position.x} ${position.y})`, tabindex: 0, role: 'button' });
     item.dataset.file = node.id;
     item.append(svg('rect', { width: position.width, height: nodeHeight, rx: 3 }));
-    const name = svg('text', { x: 11, y: 22 }); name.textContent = fileLabel(node.id); item.append(name);
+    const name = svg('text', { x: 11, y: 22 });
+    const sceneCount = node.sceneNames?.length || node.scenes?.total || 0;
+    name.textContent = sceneCount > 1 ? `${fileLabel(node.id)} · ${sceneCount} scenes` : fileLabel(node.id);
+    item.append(name);
     if (node.diagnostics?.length) { const title = svg('title'); title.textContent = node.diagnostics.map((diagnostic) => diagnostic.message).join('\n'); item.append(title); }
     item.addEventListener('click', () => selectNode(node.id));
     item.addEventListener('dblclick', () => { if (!sendToEditor({ type: 'scene-flow:open-scene', scene: node.id })) location.href = '/?scene=' + encodeURIComponent(node.id); });
@@ -309,7 +401,9 @@ function render(flow) {
     if (!dragState) return;
     const point = root.createSVGPoint(); point.x = event.clientX; point.y = event.clientY;
     const current = point.matrixTransform(root.getScreenCTM().inverse());
-    const dx = current.x - dragState.startX, dy = current.y - dragState.startY;
+    let dx = current.x - dragState.startX, dy = current.y - dragState.startY;
+    dx = Math.max(dx, padding - Math.min(...dragState.items.map((item) => item.x)));
+    dy = Math.max(dy, padding - Math.min(...dragState.items.map((item) => item.y)));
     if (Math.abs(dx) + Math.abs(dy) > 2) dragState.moved = true;
     if (!dragState.moved) return;
     dragState.dx = dx; dragState.dy = dy;
@@ -318,6 +412,7 @@ function render(flow) {
       element?.setAttribute('transform', `translate(${position.x} ${position.y})`);
     });
     drawEdges();
+    resizeCanvasToPositions();
   });
   const finishNodeDrag = () => {
     if (!dragState) return;
@@ -331,6 +426,7 @@ function render(flow) {
   root.addEventListener('pointerup', finishNodeDrag);
   root.addEventListener('pointercancel', finishNodeDrag);
   graph.replaceChildren(root);
+  if (initialFlowFit) fitFlowGraph();
   status.textContent = '準備完了';
   const count = (value, singular) => `${value} ${singular}${value === 1 ? '' : 's'}`;
   flowCount.textContent = [count(folderPositions.size, 'folder'), count(view.nodes.length, 'scene'), count(view.edges.length, 'relation')].join(' / ');
@@ -348,9 +444,32 @@ function showFlowLoadError(error) {
 }
 window.addEventListener('message', (event) => {
   if (event.origin !== location.origin || event.source !== window.parent) return;
-  if (event.data?.type === 'scene-flow:refresh') refreshFlowGraph().catch(showFlowLoadError);
+  if (event.data?.type === 'scene-flow:refresh') {
+    if (typeof event.data.projectRoot === 'string' && flowProjectRoot && event.data.projectRoot !== flowProjectRoot) {
+      flowProjectRoot = event.data.projectRoot;
+      selected = '';
+      flowTestSelectionKey = '';
+      flowVariableDrafts.clear();
+      flowTestLine.value = '';
+      flowTestVars.replaceChildren();
+      layoutStorageKey = `novel-scene-flow-layout:${flowProjectRoot || location.origin}`;
+      try { savedFolderOffsets = JSON.parse(localStorage.getItem(layoutStorageKey) || '{}') || {}; } catch { savedFolderOffsets = {}; }
+      initialFlowFit = true;
+    }
+    refreshFlowGraph().catch(showFlowLoadError);
+  }
+  if (event.data?.type === 'scene-flow:line-picked') {
+    const node = data?.nodes.find((item) => item.id === selected);
+    const scene = node?.sceneLocations?.find((item) => item.name === flowTestScene.value);
+    const line = Number(event.data.line);
+    if (node && scene && event.data.file === node.id && event.data.scene === scene.name && Number.isSafeInteger(line) && line >= scene.line && line <= scene.endLine) {
+      flowTestLine.value = String(line);
+      updateFlowTestPanel();
+    }
+  }
 });
 fetch('/api/project', { cache: 'no-store' }).then((response) => response.ok ? response.json() : {}).catch(() => ({})).then((project) => {
+  flowProjectRoot = project.projectRoot || '';
   layoutStorageKey = `novel-scene-flow-layout:${project.projectRoot || location.origin}`;
   try { savedFolderOffsets = JSON.parse(localStorage.getItem(layoutStorageKey) || '{}') || {}; } catch { savedFolderOffsets = {}; }
   return refreshFlowGraph();
@@ -379,25 +498,189 @@ graph.addEventListener('wheel', (event) => {
     return;
   }
   event.preventDefault();
-  const rect = graph.getBoundingClientRect();
-  const x = event.clientX - rect.left, y = event.clientY - rect.top;
-  const nextZoom = Math.max(0.45, Math.min(2.5, flowZoom * Math.exp(-event.deltaY * 0.001)));
+  const nextZoom = flowZoom * Math.exp(-event.deltaY * 0.001);
   if (nextZoom === flowZoom) return;
-  const factor = nextZoom / flowZoom;
-  root.style.transformOrigin = '0 0'; root.style.transform = `scale(${nextZoom})`;
-  graph.scrollLeft = (graph.scrollLeft + x) * factor - x;
-  graph.scrollTop = (graph.scrollTop + y) * factor - y;
-  flowZoom = nextZoom;
+  setFlowZoom(nextZoom, { x: event.clientX, y: event.clientY });
 }, { passive: false });
 let resizeTimer;
-window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => data && render(data), 100); });
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (!data) return; render(data); fitFlowGraph(); }, 100); });
 
 document.querySelectorAll('[data-flow-view]').forEach((link) => link.addEventListener('click', (event) => { if (sendToEditor({ type: 'scene-flow:view', view: link.dataset.flowView })) event.preventDefault(); }));
-document.querySelectorAll('[data-flow-action]').forEach((button) => button.addEventListener('click', () => { const action = button.dataset.flowAction; if (action === 'editor') { if (!sendToEditor({ type: 'scene-flow:view', view: 'explorer' })) window.location.href = '/'; } if (action === 'validate') document.querySelector('#validate')?.click(); if (action === 'toggle-details') document.querySelector('.details')?.classList.toggle('is-hidden'); if (action === 'help' && !sendToEditor({ type: 'scene-flow:help' })) window.location.href = '/?help=language'; }));
+document.querySelectorAll('[data-flow-action]').forEach((button) => button.addEventListener('click', () => {
+  const action = button.dataset.flowAction;
+  if (action === 'editor') { if (!sendToEditor({ type: 'scene-flow:view', view: 'explorer' })) window.location.href = '/'; }
+  if (action === 'toggle-details') document.querySelector('.details')?.classList.toggle('is-hidden');
+  if (action === 'help' && !sendToEditor({ type: 'scene-flow:help' })) window.location.href = '/?help=language';
+  if (action === 'fit') fitFlowGraph();
+  if (action === 'auto-layout' && data) {
+    savedFolderOffsets = {};
+    try { if (layoutStorageKey) localStorage.setItem(layoutStorageKey, '{}'); } catch { /* storage can be disabled */ }
+    flowZoom = 1;
+    render(data);
+    fitFlowGraph();
+  }
+}));
 
 const filterPanel = document.createElement('div');
 filterPanel.className = 'flow-filters';
-filterPanel.innerHTML = '<label>Filter <input id="flow-search" type="search" placeholder="scene or diagnostic" autocomplete="off"></label><label class="flow-check"><input id="show-includes" type="checkbox" checked> show include relations</label>';
-document.querySelector('.controls .range')?.before(filterPanel);
-document.querySelector('#flow-search')?.addEventListener('input', (event) => { flowFilter.query = event.target.value; if (data) render(data); });
-document.querySelector('#show-includes')?.addEventListener('change', (event) => { flowFilter.showIncludes = event.target.checked; if (data) render(data); });
+filterPanel.innerHTML = '<label>Filter <input id="flow-search" type="search" placeholder="scene or diagnostic" autocomplete="off"></label><label class="flow-check"><input id="show-includes" type="checkbox"> show include relations</label>';
+document.querySelector('.controls h1')?.after(filterPanel);
+const flowTestPanel = document.createElement('section');
+flowTestPanel.className = 'flow-test-panel';
+flowTestPanel.innerHTML = '<h2>ここからテスト</h2><div id="flow-test-file" class="flow-test-file">ノードを選択</div><label class="flow-test-field">開始scene<select id="flow-test-scene"></select></label><label class="flow-test-field">開始行<span class="flow-test-line-controls"><input id="flow-test-line" type="text" inputmode="numeric" autocomplete="off"><button id="flow-test-pick-line" type="button" aria-label="編集画面で開始行を選ぶ" title="編集画面で開始行を選ぶ">&gt;</button></span></label><div class="flow-test-subtitle">変数の初期値 <span>空欄は変更なし</span></div><div id="flow-test-vars"></div><button id="flow-test-run" type="button">ここから再生</button><div id="flow-test-message" role="status"></div>';
+filterPanel.after(flowTestPanel);
+const flowTestScene = document.querySelector('#flow-test-scene');
+const flowTestLine = document.querySelector('#flow-test-line');
+const flowTestVars = document.querySelector('#flow-test-vars');
+let flowDomainRequest = 0;
+let flowDomains = {};
+let flowTestSelectionKey = '';
+const flowVariableDrafts = new Map();
+async function refreshFlowDomains(node, scene, line, names) {
+  const requestId = ++flowDomainRequest;
+  flowDomains = {};
+  const run = document.querySelector('#flow-test-run');
+  if (!node || !scene || !names.length) return;
+  run.disabled = true;
+  try {
+    const query = new URLSearchParams({ file: node.id, scene: scene.name, line: String(line), names: names.join(',') });
+    const response = await fetch(`/api/flow-domains?${query}`, { cache: 'no-store' });
+    const result = await response.json();
+    if (!response.ok) throw Error(result.error || '値集合を解析できませんでした');
+    if (requestId !== flowDomainRequest) return;
+    flowDomains = result.domains || {};
+    for (const input of flowTestVars.querySelectorAll('input[data-name]')) {
+      const found = flowDomains[input.dataset.name] || { kind: 'unknown', values: [] };
+      input.dataset.domainKind = found.kind;
+      input.dataset.domainValues = JSON.stringify(found.values);
+      const label = input.parentElement.querySelector('.flow-test-domain');
+      if (label) {
+        const values = found.values.map((value) => input.dataset.type === 'str' ? JSON.stringify(value) : value);
+        label.textContent = found.kind === 'unknown' ? '不明' : found.kind === 'exact' ? `確定: ${values[0]}` : `候補 ${values.length}: ${values.slice(0, 4).join(' / ')}${values.length > 4 ? ' …' : ''}`;
+        label.title = found.kind === 'unknown' ? '静的に値集合を限定できません' : values.join(' / ');
+      }
+    }
+    run.disabled = false;
+  } catch (error) {
+    if (requestId !== flowDomainRequest) return;
+    flowTestVars.querySelectorAll('.flow-test-domain').forEach((label) => { label.textContent = '解析不可'; });
+    document.querySelector('#flow-test-message').textContent = error.message;
+    run.disabled = false;
+  }
+}
+function updateFlowTestPanel() {
+  if (!flowTestPanel || !data) return;
+  const node = data.nodes.find((item) => item.id === selected);
+  document.querySelector('#flow-test-file').textContent = node?.id || 'ノードを選択';
+  const previousScene = flowTestScene.value;
+  const previousLine = flowTestLine.value;
+  const previousValues = new Map([...flowTestVars.querySelectorAll('input[data-name]')].map((input) => [input.dataset.name, input.value]));
+  if (flowTestSelectionKey) flowVariableDrafts.set(flowTestSelectionKey, previousValues);
+  flowTestScene.replaceChildren();
+  for (const scene of node?.sceneLocations || []) {
+    const option = document.createElement('option'); option.value = scene.name; option.textContent = scene.name; flowTestScene.append(option);
+  }
+  if ([...flowTestScene.options].some((option) => option.value === previousScene)) flowTestScene.value = previousScene;
+  const selectedScene = node?.sceneLocations?.find((scene) => scene.name === flowTestScene.value) || node?.sceneLocations?.[0];
+  const selectionKey = selectedScene ? `${node.id}\0${selectedScene.name}` : '';
+  const sameSelection = selectionKey === flowTestSelectionKey;
+  const draftValues = sameSelection ? previousValues : flowVariableDrafts.get(selectionKey) || new Map();
+  flowTestLine.value = sameSelection ? previousLine : selectedScene?.line || '';
+  flowTestSelectionKey = selectionKey;
+  flowTestLine.min = selectedScene?.line || 1;
+  flowTestLine.max = selectedScene?.endLine || '';
+  ++flowDomainRequest;
+  flowDomains = {};
+  flowTestVars.replaceChildren();
+  const line = flowTestLine.value === '' ? null : Number(flowTestLine.value);
+  const validLine = line === null || Boolean(selectedScene && Number.isSafeInteger(line) && line >= selectedScene.line && line <= selectedScene.endLine);
+  const cutoff = line === null || !validLine ? selectedScene?.line || 1 : line;
+  const variables = (node?.variables || []).filter((variable) => {
+    const type = variableTypeLabel(variable.type);
+    const structure = variable.type?.kind === 'struct' && (node.structTypes?.find((item) => item.name === variable.type.name)
+      || node.characterTypes?.find((item) => item.name === variable.type.name));
+    if (!['int', 'str', 'dict<int>', 'dict<str>'].includes(type) && !structure) return false;
+    if (!variable.mutable) return false;
+    if (variable.scope !== 'global' && !(variable.definitions || []).some((definition) => (definition.file || node.id) === node.id && Number(definition.line || 0) < cutoff)) return false;
+    return (variable.references || []).some((reference) => (reference.file || node.id) === node.id && Number(reference.line || 0) >= cutoff);
+  });
+  const seen = new Set();
+  for (const variable of variables) {
+    if (seen.has(variable.name)) continue;
+    seen.add(variable.name);
+    const row = document.createElement('label'); row.className = 'flow-test-variable';
+    const name = document.createElement('span'); name.textContent = `${variable.name} : ${variableTypeLabel(variable.type)}`;
+    const info = document.createElement('small'); info.className = 'flow-test-domain'; info.textContent = '解析中';
+    const input = document.createElement('input'); input.type = 'text'; input.autocomplete = 'off'; input.dataset.name = variable.name; input.dataset.type = variableTypeLabel(variable.type); input.placeholder = '変更なし';
+    if (variable.type?.kind === 'struct') {
+      const fields = node.structTypes?.find((item) => item.name === variable.type.name)?.fields
+        || node.characterTypes?.find((item) => item.name === variable.type.name)?.fields;
+      if (fields) input.dataset.fields = JSON.stringify(fields);
+    }
+    input.value = draftValues.get(variable.name) || '';
+    row.append(name, info, input); flowTestVars.append(row);
+  }
+  if (!seen.size) flowTestVars.textContent = '変更が必要な変数はありません';
+  document.querySelector('#flow-test-run').disabled = !selectedScene || !validLine;
+  document.querySelector('#flow-test-message').textContent = validLine ? '' : `${selectedScene?.line || 1}〜${selectedScene?.endLine || 1}行から指定してください`;
+  if (selectedScene && validLine) sendToEditor({ type: 'scene-flow:start-line-preview', file: node.id, scene: selectedScene.name, line: cutoff });
+  if (seen.size && selectedScene && validLine) refreshFlowDomains(node, selectedScene, cutoff, [...seen]);
+}
+flowTestScene.addEventListener('change', updateFlowTestPanel);
+flowTestLine.addEventListener('input', () => {
+  updateFlowTestPanel();
+  const node = data?.nodes.find((item) => item.id === selected);
+  const scene = node?.sceneLocations?.find((item) => item.name === flowTestScene.value);
+  const line = Number(flowTestLine.value);
+  if (node && scene && Number.isSafeInteger(line) && line >= scene.line && line <= scene.endLine) {
+    sendToEditor({ type: 'scene-flow:start-line-preview', file: node.id, scene: scene.name, line });
+  }
+});
+document.querySelector('#flow-test-pick-line').addEventListener('click', () => {
+  const node = data?.nodes.find((item) => item.id === selected);
+  const scene = node?.sceneLocations?.find((item) => item.name === flowTestScene.value);
+  if (node && scene) {
+    sendToEditor({ type: 'scene-flow:pick-line', file: node.id, scene: scene.name, startLine: scene.line, endLine: scene.endLine });
+  }
+});
+flowTestVars.addEventListener('input', (event) => {
+  if (!event.target.matches('input[data-name]') || !flowTestSelectionKey) return;
+  const draft = flowVariableDrafts.get(flowTestSelectionKey) || new Map();
+  draft.set(event.target.dataset.name, event.target.value);
+  flowVariableDrafts.set(flowTestSelectionKey, draft);
+});
+document.querySelector('#flow-test-run').addEventListener('click', () => {
+  const node = data?.nodes.find((item) => item.id === selected);
+  if (!node) return;
+  const scene = node.sceneLocations?.find((item) => item.name === flowTestScene.value);
+  const line = flowTestLine.value === '' ? null : Number(flowTestLine.value);
+  const message = document.querySelector('#flow-test-message');
+  if (line !== null && (!Number.isSafeInteger(line) || !scene || line < scene.line || line > scene.endLine)) { message.textContent = '選択したscene内の行を指定してください'; return; }
+  const variables = {};
+  for (const input of flowTestVars.querySelectorAll('input[data-name]')) {
+    const exact = flowDomains[input.dataset.name];
+    const valueText = input.value !== '' ? input.value : exact?.kind === 'exact' ? exact.values[0] : null;
+    if (valueText === null) continue;
+    if (input.dataset.type === 'int' && !/^[+-]?\d+$/.test(valueText)) { message.textContent = `${input.dataset.name} は整数で入力してください`; input.focus(); return; }
+    if (input.dataset.type.startsWith('dict<')) {
+      let value;
+      try { value = JSON.parse(valueText); } catch { message.textContent = `${input.dataset.name} はJSON辞書で入力してください`; input.focus(); return; }
+      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.values(value).some((entry) => input.dataset.type === 'dict<int>' ? !(Number.isSafeInteger(entry) || (typeof entry === 'string' && /^[+-]?\d+$/.test(entry))) : typeof entry !== 'string')) { message.textContent = `${input.dataset.name} の値の型が正しくありません`; input.focus(); return; }
+    }
+    if (input.dataset.fields) {
+      let value;
+      try { value = JSON.parse(valueText); } catch { message.textContent = `${input.dataset.name} はJSON構造体で入力してください`; input.focus(); return; }
+      const fields = JSON.parse(input.dataset.fields);
+      const matches = value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === Object.keys(fields).length
+        && Object.entries(fields).every(([name, type]) => type === 'int'
+          ? Number.isSafeInteger(value[name]) || (typeof value[name] === 'string' && /^[+-]?\d+$/.test(value[name]))
+          : typeof value[name] === 'string');
+      if (!matches) { message.textContent = `${input.dataset.name} のフィールドが型と一致しません`; input.focus(); return; }
+    }
+    variables[input.dataset.name] = { type: input.dataset.fields ? 'struct' : input.dataset.type, value: valueText, ...(input.dataset.fields ? { fields: JSON.parse(input.dataset.fields) } : {}) };
+  }
+  if (!sendToEditor({ type: 'scene-flow:debug-play', file: node.id, scene: scene?.name, line, variables })) { message.textContent = '編集画面内のシーンフローから実行してください'; return; }
+  message.textContent = '再生を準備しています…';
+});
+document.querySelector('#flow-search')?.addEventListener('input', (event) => { flowFilter.query = event.target.value; if (data) { render(data); fitFlowGraph(); } });
+document.querySelector('#show-includes')?.addEventListener('change', (event) => { flowFilter.showIncludes = event.target.checked; if (data) { render(data); fitFlowGraph(); } });

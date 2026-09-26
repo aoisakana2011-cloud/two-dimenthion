@@ -1,209 +1,24 @@
-asset bg courtyard = "asset/bg/mori.jpg"
+asset bg heian_hall = "asset/bg/heian-banquet.png"
 
-character sora {
-  name = "ソラ"
-  affection = 0
-  pose normal = "asset/char/aokami-transparent.png"
+character goi {
+  name = "五位"
+  pose normal = "asset/char/goi.png"
 }
 
-character nene {
-  name = "ネネ"
-  pose normal = "asset/char/hatena-transparent.png"
-  pose smile = "asset/char/tundere.png"
+character toshihito {
+  name = "利仁"
+  pose normal = "asset/char/toshihito.png"
 }
-
-fn add_affection(amount: int) -> int {
-  return affection + amount
-}
-
-fn add_sora(amount: int) -> int {
-  return sora_affection + amount
-}
-
-fn add_nene(amount: int) -> int {
-  return nene_affection + amount
-}
-
-fn find_clue() -> int {
-  return clue + 1
-}
-
-fn announce_day(day: int) -> none {
-  say narrator "物語の{day}日目"
-  return
-}
-
-fn remember(text: str) -> none {
-  say narrator "記憶: {text}"
-  return
-}
-
-fn encourage() -> int {
-  return affection + 2
-}
-
-include chapters/chapter01.tds
-include chapters/chapter02.tds
-include chapters/chapter03.tds
-include chapters/chapter04.tds
-include routes/sora.tds
-include routes/nene.tds
-include routes/common.tds
-include routes/after.tds
-include routes/summer.tds
-include gaiden/letter.tds
-include gaiden/memory.tds
-include gaiden/future.tds
-include gaiden/origin.tds
-include gaiden/epilogue.tds
-include chapters/interlude01.tds
-include chapters/interlude02.tds
-include appendix/club.tds
-include appendix/archive.tds
-include appendix/dream.tds
-include appendix/voices.tds
-include chapters/chapter05.tds
-include chapters/chapter06.tds
-include chapters/chapter07.tds
-include chapters/chapter08.tds
-include routes/true.tds
-include routes/ensemble.tds
-include gaiden/teacher.tds
-include gaiden/childhood.tds
-include gaiden/after-ten-years.tds
-include appendix/locations.tds
-include appendix/chronology.tds
-include appendix/unused-melodies.tds
-
-global int affection = 0
-global int sora_affection = 0
-global int nene_affection = 0
-global int clue = 0
-global int chapter = 1
-global str route = "common"
 
 scene main {
-  bg courtyard
-  effect fade black 300
-  say narrator "雨上がりの帰り道"
-  say narrator "この町には、誰も知らない音楽室がある。"
-  set chapter = 1
-  choice "どの物語を読みますか？" {
-    "本編を最初から始める" {
-      goto "chapters/chapter01.tds"
-    }
-    "追加シナリオを選ぶ" {
-      goto extra_story_menu
-    }
-  }
-}
-
-scene final_common {
-  say narrator "三人で見つけた歌は、町の小さな舞台で披露された。"
-  say narrator "過去の記憶は、未来へ渡す物語になった。"
-  say narrator "END - 雨上がりの合唱"
-  wait 300
-}
-
-scene final_sora {
-  say sora "あの日の鍵が、私たちをここまで連れてきたんだね。"
-  say narrator "ソラと主人公は、完成した楽譜を新しい部室に飾った。"
-  say narrator "END - 青い旋律"
-  wait 300
-}
-
-scene final_nene {
-  say nene "今度は、私たちの歌を最初から作ろう。"
-  say narrator "ネネの笑顔とともに、新しい季節が始まった。"
-  say narrator "END - 星の譜面"
-  wait 300
-}
-
-scene final_quiet {
-  say narrator "答えを急がないことも、ひとつの選択だった。"
-  say narrator "雨の季節は、またいつか戻ってくる。"
-  say narrator "END - 静かな約束"
-  wait 300
-}
-
-scene extra_story_menu {
-  choice "読みたい追加シナリオの種類を選んでください" {
-    "追加章・幕間" {
-      goto extra_chapter_menu
-    }
-    "別ルート・後日談" {
-      goto extra_route_menu
-    }
-    "外伝" {
-      goto gaiden_menu
-    }
-    "資料・補遺" {
-      goto appendix_menu
-    }
-    "エンディング一覧" {
-      goto ending_menu
-    }
-    "本編を始める" {
-      goto "chapters/chapter01.tds"
-    }
-  }
-}
-
-scene extra_chapter_menu {
-  choice "読みたい章を選んでください" {
-    "第5章" { goto "chapters/chapter05.tds" }
-    "第6章" { goto "chapters/chapter06.tds" }
-    "第7章" { goto "chapters/chapter07.tds" }
-    "第8章" { goto "chapters/chapter08.tds" }
-    "幕間・第一話" { goto "chapters/interlude01.tds" }
-    "幕間・第二話" { goto "chapters/interlude02.tds" }
-    "追加シナリオ一覧へ戻る" { goto extra_story_menu }
-  }
-}
-
-scene extra_route_menu {
-  choice "読みたいルートを選んでください" {
-    "放課後の後日談" { goto "routes/after.tds" }
-    "夏の発表会ルート" { goto "routes/summer.tds" }
-    "真相ルート" { goto "routes/true.tds" }
-    "三人の合唱ルート" { goto "routes/ensemble.tds" }
-    "追加シナリオ一覧へ戻る" { goto extra_story_menu }
-  }
-}
-
-scene gaiden_menu {
-  choice "読みたい外伝を選んでください" {
-    "手紙の外伝" { goto "gaiden/letter.tds" }
-    "記憶の外伝" { goto "gaiden/memory.tds" }
-    "未来の外伝" { goto "gaiden/future.tds" }
-    "起源の外伝" { goto "gaiden/origin.tds" }
-    "エピローグ" { goto "gaiden/epilogue.tds" }
-    "先生の外伝" { goto "gaiden/teacher.tds" }
-    "子ども時代の外伝" { goto "gaiden/childhood.tds" }
-    "十年後の外伝" { goto "gaiden/after-ten-years.tds" }
-    "追加シナリオ一覧へ戻る" { goto extra_story_menu }
-  }
-}
-
-scene appendix_menu {
-  choice "資料を選んでください" {
-    "部室の資料" { goto "appendix/club.tds" }
-    "記録のアーカイブ" { goto "appendix/archive.tds" }
-    "夢の断片" { goto "appendix/dream.tds" }
-    "声の資料" { goto "appendix/voices.tds" }
-    "場所一覧" { goto "appendix/locations.tds" }
-    "物語の年表" { goto "appendix/chronology.tds" }
-    "未使用曲の記録" { goto "appendix/unused-melodies.tds" }
-    "追加シナリオ一覧へ戻る" { goto extra_story_menu }
-  }
-}
-
-scene ending_menu {
-  choice "読みたいエンディングを選んでください" {
-    "雨上がりの合唱" { goto final_common }
-    "青い旋律" { goto final_sora }
-    "星の譜面" { goto final_nene }
-    "静かな約束" { goto final_quiet }
-    "追加シナリオ一覧へ戻る" { goto extra_story_menu }
-  }
+  bg heian_hall
+  show goi.normal left fade 350
+  say narrator "平安の都。摂政の邸には、名を呼ばれることのない侍がいた。"
+  say narrator "人はただ、その位階で彼を『五位』と呼んだ。"
+  say narrator "衣は褪せ、鼻は冬の風に赤い。彼の言葉に耳を貸す者は少ない。"
+  say narrator "それでも五位には、誰にも明かさない願いが一つあった。"
+  say goi "……芋粥を、いつか心ゆくまで食べてみたい。"
+  say narrator "山の芋を甘葛で煮た粥。年に一度、宴の残りをほんの少し口にできるだけ。"
+  say narrator "その小さな望みを、五位は長いあいだ胸の奥で温めていた。"
+  goto "chapters/banquet.tds"
 }

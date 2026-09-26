@@ -158,7 +158,7 @@ async function resolveProjectScript(source, scenesRoot, seen = new Set(), source
   script.body = globals;
   return script;
 }
-async function compileProject(source, assetsRoot, scenesRoot, globalVariables = new Map(), characters = new Map(), sourceName = 'current') {
+async function compileProject(source, assetsRoot, scenesRoot, globalVariables = new Map(), characters = new Map(), sourceName = 'current', options = {}) {
   const script = await resolveProjectScript(source, scenesRoot, new Set(), sourceName);
   // JSON static variables are real global declarations, not merely checker
   // metadata.  Every packaged file receives them; preserveGlobals initializes
@@ -169,7 +169,7 @@ async function compileProject(source, assetsRoot, scenesRoot, globalVariables = 
     script.body = script.globals;
   }
   const context = projectContext(script, globalVariables, characters, sourceName);
-  return validateProgram(compile(script, context.globals, context.characters), assetsRoot, scenesRoot);
+  return validateProgram(compile(script, context.globals, context.characters, Boolean(options.debug)), assetsRoot, scenesRoot);
 }
 function projectContext(script, globalVariables, characters, sourceName = 'current') {
   const globals = new Map(globalVariables), visibleCharacters = new Map(characters);

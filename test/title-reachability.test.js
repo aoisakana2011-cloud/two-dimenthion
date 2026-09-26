@@ -1,17 +1,26 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
 const path = require('node:path');
-const { analyzeScript, sceneReachability } = require('../dist/checker/analyzer');
-const { resolveProjectScript } = require('../tools/project');
+process.env.NOVEL_PROJECT_ROOT = path.resolve(__dirname, '../Title');
+const { sceneGraph } = require('../Edit/server');
 
-test('Title exposes every included chapter, route, gaiden, appendix, and ending from its opening menu', async () => {
-  const scenesRoot = path.resolve(__dirname, '../Title/senario');
-  const source = await fs.readFile(path.join(scenesRoot, 'main.tds'), 'utf8');
-  const script = await resolveProjectScript(source, scenesRoot, new Set(), 'main.tds');
-  const unreachable = analyzeScript(script, 'main.tds').filter((item) => item.code === 'unreachable-scene');
-  const reachability = sceneReachability(script);
+test('Imogayu reaches every chapter and both endings without scene diagnostics', async () => {
+  const graph = await sceneGraph();
+  const files = graph.nodes.map(node => node.id);
+  assert.deepEqual(files, [
+    'chapters/banquet.tds', 'chapters/feast.tds', 'chapters/lake.tds',
+    'chapters/road.tds', 'endings/another.tds', 'endings/quiet.tds', 'main.tds',
+  ]);
+  assert.deepEqual(graph.nodes.flatMap(node => node.diagnostics || []), []);
 
-  assert.deepEqual(unreachable, []);
-  assert.equal(reachability.reachableScenes.size, script.scenes.length);
+  const reached = new Set(['main.tds']);
+  const queue = ['main.tds'];
+  for (const file of queue) {
+    for (const edge of graph.edges.filter(edge => edge.from === file && edge.kind === 'goto')) {
+      if (reached.has(edge.to)) continue;
+      reached.add(edge.to);
+      queue.push(edge.to);
+    }
+  }
+  assert.deepEqual([...reached].sort(), [...files].sort());
 });

@@ -7,10 +7,11 @@ const fs = require('node:fs/promises');
 const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
+const { readRecentProjects, rememberProject } = require('./recent-projects');
+const { ProjectChangeTracker } = require('./project-changes');
 
 const EDIT_ROOT = __dirname;
 const REPO_ROOT = path.resolve(EDIT_ROOT, '..');
-const RECENT_FILE = path.join(os.homedir(), '.novel-editor', 'recent.json');
 const { projectLayout, projectOption, looksLikeProject, seedEmptyProject, parseSettings, settingTemplate, assertProjectSettingFile } = require('../tools/project-layout');
 const { readStaticVariables } = require('../tools/static-variables');
 let layout = projectLayout(projectOption(require.main === module ? process.argv.slice(2) : []));
@@ -81,32 +82,6 @@ const DEFAULT_PLAYER_UI_THEME = Object.freeze({
 function isEditorTree(root) {
   const resolved = path.resolve(root);
   return resolved === EDIT_ROOT || resolved === REPO_ROOT;
-}
-
-async function readRecentProjects() {
-  try {
-    const data = JSON.parse(await fs.readFile(RECENT_FILE, 'utf8'));
-    const paths = Array.isArray(data?.paths) ? data.paths : [];
-    const existing = [];
-    for (const entry of paths) {
-      if (typeof entry !== 'string' || !entry.trim()) continue;
-      try {
-        const stat = await fs.stat(entry);
-        if (stat.isDirectory()) existing.push(path.resolve(entry));
-      } catch { /* skip missing folders */ }
-    }
-    return [...new Set(existing)].slice(0, 12);
-  } catch {
-    return [];
-  }
-}
-
-async function rememberProject(root) {
-  const resolved = path.resolve(root);
-  const paths = [resolved, ...(await readRecentProjects()).filter((entry) => entry !== resolved)].slice(0, 12);
-  await fs.mkdir(path.dirname(RECENT_FILE), { recursive: true });
-  await fs.writeFile(RECENT_FILE, JSON.stringify({ paths }, null, 2) + '\n', 'utf8');
-  return paths;
 }
 
 async function projectInfo() {
@@ -350,7 +325,7 @@ async function openProjectFolder(requested, create = false) {
   }
   if (!stat.isDirectory()) throw new Error('フォルダーを指定してください。');
   if (!looksLikeProject(resolved) && !create) {
-    const error = new Error('作品フォルダーではありません。新規作成しますか？');
+    const error = new Error('作品フォルダーではありません。setting.txt があるフォルダーを選んでください。');
     error.needsCreate = true;
     error.projectRoot = resolved;
     error.isEmpty = (await fs.readdir(resolved)).length === 0;
@@ -525,17 +500,66 @@ async function listProjectFiles() {
   return result.sort((a, b) => a.path.localeCompare(b.path, 'ja'));
 }
 
+async function scanProjectFileSignatures(root) {
+  const project = projectLayout(root);
+  const signatures = new Map();
+  async function visit(directory, prefix) {
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    const files = entries.filter((entry) => entry.isFile());
+    for (let index = 0; index < files.length; index += 32) {
+      await Promise.all(files.slice(index, index + 32).map(async (entry) => {
+        const relative = `${prefix}/${entry.name}`;
+        const stat = await fs.lstat(path.join(directory, entry.name), { bigint: true });
+        if (stat.isFile()) signatures.set(relative, `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`);
+      }));
+    }
+    for (const entry of entries.filter((item) => item.isDirectory())) {
+      const relative = `${prefix}/${entry.name}`;
+      signatures.set(relative, 'directory');
+      await visit(path.join(directory, entry.name), relative);
+    }
+  }
+  for (const directory of [project.settings.scenario_dir, project.settings.asset_dir]) {
+    signatures.set(directory, 'directory');
+    await visit(path.join(root, directory), directory);
+  }
+  for (const name of ['variables.json', 'assets.json']) {
+    const relative = `.novel/${name}`;
+    try {
+      const stat = await fs.lstat(path.join(root, relative), { bigint: true });
+      if (stat.isFile()) signatures.set(relative, `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`);
+    } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  }
+  return signatures;
+}
+
+const projectChangeTracker = new ProjectChangeTracker(scanProjectFileSignatures);
+
 async function sceneGraph() {
   const { sceneReachability } = require('../dist/checker/analyzer');
   const analysis = await createProjectAnalysisContext();
+  const firstProjectSceneByFile = new Map();
+  const { parse } = require('../dist');
+  for (const script of analysis.scripts) {
+    try {
+      const firstScene = parse(script.source).scenes[0];
+      if (firstScene) firstProjectSceneByFile.set(String(script.name).replaceAll('\\', '/').toLocaleLowerCase('en-US'), firstScene.name);
+    } catch { /* per-file diagnostics are reported by the normal graph pass */ }
+  }
   const nodes = [];
   const edges = [];
-  const edgeKeys = new Set();
-  const addEdge = (from, to, kind) => {
+  const edgeKeys = new Map();
+  const addEdge = (from, to, kind, transition = null) => {
     const key = JSON.stringify([from, to, kind]);
-    if (!to || edgeKeys.has(key)) return;
-    edgeKeys.add(key);
-    edges.push({ from, to, kind });
+    if (!to) return;
+    let edge = edgeKeys.get(key);
+    if (!edge) {
+      edge = { from, to, kind };
+      if (kind === 'goto') edge.transitions = [];
+      edgeKeys.set(key, edge);
+      edges.push(edge);
+    }
+    if (transition && !edge.transitions.some((item) => JSON.stringify(item) === JSON.stringify(transition))) edge.transitions.push(transition);
   };
   const diagnosticForError = (error, file) => ({
     code: 'project-error', severity: 'error',
@@ -554,15 +578,51 @@ async function sceneGraph() {
     const scenesByName = new Map(ast.scenes.map((scene) => [scene.name, scene]));
     const localGotos = [];
     const seenLocalGotos = new Set();
-    for (const match of source.matchAll(/^\s*goto\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:#.*)?$/gmi)) {
-      const target = scenesByName.get(match[1]);
-      if (!target) continue;
-      const file = target.file || name;
-      const key = JSON.stringify([target.name, file]);
-      if (seenLocalGotos.has(key)) continue;
-      seenLocalGotos.add(key);
-      localGotos.push({ scene: target.name, file, gotoLine: source.slice(0, match.index).split(/\r?\n/).length });
+    const firstSceneByFile = new Map();
+    for (const scene of ast.scenes) {
+      const sceneFile = String(scene.file || name).replaceAll('\\', '/').toLocaleLowerCase('en-US');
+      if (!firstSceneByFile.has(sceneFile)) firstSceneByFile.set(sceneFile, scene.name);
     }
+    const visitGotos = (statements, sourceScene, choiceLabel = '') => {
+      for (const statement of statements || []) {
+        if (statement.kind === 'goto') {
+          const target = scenesByName.get(statement.scene);
+          const sourceFile = statement.file || name;
+          const targetFile = target?.file || name;
+          const normalizedTarget = String(statement.scene || '').replaceAll('\\', '/');
+          const targetPath = sceneName(normalizedTarget);
+          const targetIsFile = Boolean(targetPath && /\.(?:tds|txt)$/i.test(normalizedTarget));
+          const resolvedTargetFile = targetIsFile ? targetPath : targetFile;
+          const resolvedTargetScene = target?.name || (targetIsFile ? firstSceneByFile.get(targetPath.toLocaleLowerCase('en-US')) || firstProjectSceneByFile.get(targetPath.toLocaleLowerCase('en-US')) : undefined) || '';
+          const transition = {
+            fromScene: sourceScene || '',
+            toScene: resolvedTargetScene,
+            choice: choiceLabel,
+            line: Number(statement.line) || 1,
+          };
+          if (sourceFile === name && resolvedTargetFile !== name && targetIsFile) {
+            addEdge(name, resolvedTargetFile, 'goto', transition);
+          } else if (target && sourceFile === name && targetFile === name) {
+            const key = JSON.stringify([target.name, targetFile]);
+            if (!seenLocalGotos.has(key)) {
+              seenLocalGotos.add(key);
+              localGotos.push({ scene: target.name, file: targetFile, gotoLine: statement.line || 1, fromScene: sourceScene || '', choice: choiceLabel });
+            }
+          }
+        }
+        if (statement.kind === 'if') {
+          visitGotos(statement.body, sourceScene, choiceLabel);
+          for (const branch of statement.elseIf) visitGotos(branch.body, sourceScene, choiceLabel);
+          visitGotos(statement.otherwise, sourceScene, choiceLabel);
+        } else if (statement.kind === 'for' || statement.kind === 'while') visitGotos(statement.body, sourceScene, choiceLabel);
+        else if (statement.kind === 'choice') for (const option of statement.options) {
+          const label = option.label?.kind === 'literal' ? String(option.label.value) : choiceLabel;
+          visitGotos(option.body, sourceScene, label);
+        }
+      }
+    };
+    for (const scene of ast.scenes) if ((scene.file || name) === name && reachability.reachableScenes.has(scene.name)) visitGotos(scene.body, scene.name);
+    for (const fn of ast.functions) if ((fn.file || name) === name) visitGotos(fn.body, `function ${fn.name}`);
     for (const target of ast.includes.map((value) => sceneName(value)).filter(Boolean)) addEdge(name, target, 'include');
     let diagnostics = [];
     let report = null;
@@ -592,6 +652,13 @@ async function sceneGraph() {
       label: name,
       variables,
       localGotos,
+      sceneNames: ast.scenes.filter((scene) => (scene.file || name) === name).map((scene) => scene.name),
+      sceneLocations: ast.scenes.filter((scene) => (scene.file || name) === name).map((scene) => ({ name: scene.name, line: Number(scene.line) || 1, endLine: Number(scene.endLine) || Number(scene.line) || 1 })),
+      structTypes: ast.structs.map((struct) => ({ name: struct.name, fields: struct.fields })),
+      characterTypes: analysis.scripts.flatMap((item) => (item.ast?.characters || []).map((character) => ({
+        name: `character:${character.name}`,
+        fields: Object.fromEntries(character.properties.map((property) => [property.name, property.value.kind === 'literal' && typeof property.value.value === 'string' ? 'str' : 'int'])),
+      }))),
       diagnostics,
       error,
       scenes: {
@@ -1071,12 +1138,12 @@ async function validate(source, name = '', analysis = null, includeProgram = fal
   }
 }
 
-async function compileSource(source, name = '', analysis = null) {
+async function compileSource(source, name = '', analysis = null, options = {}) {
   const projectAnalysis = analysis || await createProjectAnalysisContext();
   const [globalVariables, characters] = await Promise.all([
     globalVariableTable(name, projectAnalysis), globalCharacterTable(name, projectAnalysis),
   ]);
-  return compileProject(source, ASSETS_ROOT, SCENES_ROOT, globalVariables, characters, name || 'current');
+  return compileProject(source, ASSETS_ROOT, SCENES_ROOT, globalVariables, characters, name || 'current', options);
 }
 
 async function buildWholeProject(name) {
@@ -1162,7 +1229,7 @@ async function serveStatic(response, pathname) {
     return;
   }
   const relative = pathname === '/' ? 'index.html' : pathname.slice(1);
-  if (!['index.html', 'editor.js', 'styles.css', 'player.html', 'player.js', 'runtime.js', 'player.css', 'flow.html', 'flow.js', 'flow-validation.js', 'flow.css', 'engine.html', 'assets/desktop-icon.png', 'shared/formatter.js', 'docs/tds-language-and-editor-guide.md'].includes(relative)) {
+  if (!['index.html', 'editor.js', 'styles.css', 'scrollbars.css', 'player.html', 'player.js', 'runtime.js', 'player.css', 'flow.html', 'flow.js', 'flow-layout.js', 'flow.css', 'engine.html', 'assets/desktop-icon.png', 'shared/formatter.js', 'docs/tds-language-and-editor-guide.md'].includes(relative)) {
     text(response, 404, 'Not found');
     return;
   }
@@ -1196,6 +1263,7 @@ async function handleApi(request, response, url) {
     return json(response, 200, { scenes: await listScenes() });
   }
   if (request.method === 'GET' && url.pathname === '/api/files') return json(response, 200, { title: layout.title, projectRoot: PROJECT_ROOT, scenarioDir: layout.settings.scenario_dir, files: await listProjectFiles() });
+  if (request.method === 'GET' && url.pathname === '/api/project/changes') return json(response, 200, await projectChangeTracker.changes(PROJECT_ROOT, String(url.searchParams.get('since') || '').slice(0, 500)));
   if (request.method === 'GET' && url.pathname === '/api/project') return json(response, 200, await projectInfo());
   if (request.method === 'PUT' && url.pathname === '/api/project/settings') {
     try { return json(response, 200, { ok: true, ...(await updateProjectSettings(await readJson(request))) }); }
@@ -1244,6 +1312,27 @@ async function handleApi(request, response, url) {
     return json(response, 200, { ok: true });
   }
   if (request.method === 'GET' && url.pathname === '/api/scene-graph') return json(response, 200, await sceneGraph());
+  if (request.method === 'GET' && url.pathname === '/api/flow-domains') {
+    const file = url.searchParams.get('file') || '';
+    const scene = url.searchParams.get('scene') || '';
+    const line = Number(url.searchParams.get('line'));
+    const names = (url.searchParams.get('names') || '').split(',').filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)).slice(0, 128);
+    if (!scene || !Number.isSafeInteger(line) || line < 1 || !names.length) return json(response, 400, { error: '開始位置または変数が不正です' });
+    try {
+      const { analyzeStartDomains } = require('./flow-domains');
+      const source = await readSceneSource(file);
+      const ast = await resolveProjectScript(source, SCENES_ROOT, new Set(), file);
+      const target = ast.scenes.find((item) => item.name === scene && (item.file || file) === file);
+      if (!target || line < target.line || line > (target.endLine || target.line)) return json(response, 400, { error: 'scene内の行を指定してください' });
+      const configured = await readStaticVariables(DATA_ROOT);
+      const analysis = await createProjectAnalysisContext();
+      const characters = await globalCharacterTable(file, analysis);
+      const definitions = [...characters.values()].flatMap((character) => character.definition ? [character.definition] : []);
+      // Scene Flow launches the selected file as a fresh runtime entry, so its
+      // own globals are initialized before the selected scene and line.
+      return json(response, 200, { domains: analyzeStartDomains(ast, scene, line, names, configured.declarations, true, configured.table.constraints, definitions) });
+    } catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
+  }
   if (request.method === 'POST' && url.pathname === '/api/validate-flow') { const body = await readJson(request); return json(response, 200, await validateFlow(body.start, body.end)); }
   if (request.method === 'GET' && url.pathname === '/api/scene-config') {
     return json(response, 200, await readSceneConfig());
@@ -1320,7 +1409,7 @@ async function handleApi(request, response, url) {
   if (request.method === 'POST' && url.pathname === '/api/compile') {
     const body = await readJson(request);
     if (typeof body.source !== 'string') return json(response, 400, { error: 'source is required' });
-    try { return json(response, 200, { ok: true, program: await compileSource(body.source, sceneName(body.name || '') || '') }); }
+    try { return json(response, 200, { ok: true, program: await compileSource(body.source, sceneName(body.name || '') || '', null, { debug: body.debug === true }) }); }
     catch (error) { return json(response, 400, { ok: false, error: error instanceof Error ? error.message : String(error) }); }
   }
   if (request.method === 'POST' && url.pathname === '/api/native-build') {

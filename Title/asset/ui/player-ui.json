@@ -4,18 +4,18 @@
     "width": 1280,
     "height": 720,
     "backdrop": { "bottomFog": {
-      "enabled": true,
+      "enabled": false,
       "color": [
-      255,
-      250,
-      253,
+      246,
+      239,
+      221,
       255
       ],
       "height": 300
     } }
   },
   "dialog": {
-    "image": "dialogue-panel-romance.png",
+    "image": "dialogue-panel-washi-v2.png",
     "x": 100,
     "y": 510,
     "width": 1080,
@@ -27,9 +27,9 @@
       "height": 100,
       "size": 24,
       "color": [
-        76,
-        57,
-        76,
+        50,
+        42,
+        32,
         255
       ]
     },
@@ -38,15 +38,15 @@
       "y": 6,
       "width": 280,
       "height": 40,
-      "image": "speaker-plate-romance.png",
-      "text": { "x": 0, "y": 0, "width": 280, "height": 40, "size": 27, "color": [76, 57, 76, 255] }
+      "image": "speaker-plate-washi-v2.png",
+      "text": { "x": 0, "y": 0, "width": 280, "height": 40, "size": 27, "color": [50, 42, 32, 255] }
     }
   },
   "choices": {
     "x": 330,
     "y": 220,
-    "image": "choice-romance.png",
-    "activeImage": "choice-active.png",
+    "image": "choice-washi-v2.png",
+    "activeImage": "choice-washi-active-v2.png",
     "width": 620,
     "height": 230,
     "itemHeight": 48,
@@ -58,9 +58,9 @@
       "height": 48,
       "size": 19,
       "color": [
-        76,
-        57,
-        76,
+        50,
+        42,
+        32,
         255
       ]
     }

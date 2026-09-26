@@ -1148,36 +1148,42 @@ function optimizeInstructions(instructions, effects, constants = new Map(), opti
     return output;
 }
 const characterTypeName = (name) => `character:${name}`;
-function characterDeclarations(script) {
-    return script.characters.map((character) => ({
+function characterDeclarations(characters) {
+    return characters.map((character) => ({
         kind: 'declare', name: character.name, type: { kind: 'struct', name: characterTypeName(character.name) },
         initial: { kind: 'dict', entries: character.properties.map((property) => ({ key: property.name, value: property.value })) },
         line: character.line, column: character.column,
     }));
 }
-function compile(script, externalGlobals = new Map(), externalCharacters = new Map()) {
+function compile(script, externalGlobals = new Map(), externalCharacters = new Map(), debug = false) {
     (0, analyzer_1.assertAnalyzed)(script, 'current', externalGlobals, externalCharacters);
     const constraints = externalGlobals.constraints;
     const compiler = new Compiler();
-    const implicitCharacterGlobals = characterDeclarations(script);
+    const externalCharacterSources = [...externalCharacters.values()]
+        .filter((character) => !(character instanceof Set))
+        .flatMap((character) => character.definition ? [character.definition] : []);
+    const implicitCharacterGlobals = characterDeclarations(script.characters);
+    const externalCharacterGlobals = characterDeclarations(externalCharacterSources);
     const runtimeScript = { ...script, globals: [...implicitCharacterGlobals, ...script.globals] };
     const metadataGlobals = new Map(externalGlobals);
     for (const name of externalCharacters.keys())
         metadataGlobals.set(name, { kind: 'struct', name: characterTypeName(name) });
     const variables = compiler.variables(runtimeScript, metadataGlobals);
-    const rawGlobals = compiler.statements(runtimeScript.globals);
+    // A file can be launched directly by Scene Flow. Materialize external
+    // character definitions as globals so their statically known fields (for
+    // example display names) exist even when the declaring file was not run.
+    // On an ordinary file transfer preserveGlobals keeps the existing value.
+    const rawGlobals = compiler.statements([...externalCharacterGlobals, ...runtimeScript.globals]);
     const rawFunctions = script.functions.map((fn) => compiler.function(fn));
     const effects = functionWrites(rawFunctions, new Set([...externalGlobals.keys(), ...runtimeScript.globals.filter((statement) => statement.kind === 'declare').map((statement) => statement.name)]));
     // A transferred file executes globals with preserve=true: an existing
     // global keeps its value instead of receiving the declaration initializer.
     // Do not fold declaration-derived values in this scope.
-    const globals = optimizeInstructions(rawGlobals, effects, new Map(), { preserveDeclarations: true }, undefined, constraints);
-    const functions = rawFunctions.map((instruction) => instruction.op === 'function'
+    const globals = debug ? rawGlobals : optimizeInstructions(rawGlobals, effects, new Map(), { preserveDeclarations: true }, undefined, constraints);
+    const functions = debug ? rawFunctions : rawFunctions.map((instruction) => instruction.op === 'function'
         ? { ...instruction, body: optimizeInstructions(instruction.body, effects, new Map(), { preserveDeclarations: false }, new Set(instruction.params.map((param) => param.name)), constraints) }
         : instruction);
-    const externalCharacterDefinitions = [...externalCharacters.values()]
-        .filter((character) => !(character instanceof Set))
-        .flatMap((character) => character.definition ? [character.definition] : [])
+    const externalCharacterDefinitions = externalCharacterSources
         .map(({ properties: _properties, ...character }) => ({ ...character, external: true }));
     return {
         version: 2,
@@ -1185,7 +1191,7 @@ function compile(script, externalGlobals = new Map(), externalCharacters = new M
         characters: [...externalCharacterDefinitions, ...script.characters.map(({ properties: _properties, ...character }) => character)],
         globals,
         functions,
-        scenes: script.scenes.map((scene) => ({ name: scene.name, instructions: optimizeInstructions(compiler.statements(scene.body), effects, new Map(), { preserveDeclarations: false }, undefined, constraints) })),
+        scenes: script.scenes.map((scene) => ({ name: scene.name, file: scene.file, line: scene.line, instructions: debug ? compiler.statements(scene.body) : optimizeInstructions(compiler.statements(scene.body), effects, new Map(), { preserveDeclarations: false }, undefined, constraints) })),
         variables,
     };
 }
@@ -1279,6 +1285,17 @@ class Compiler {
                     ref(s.target, bindings, loc);
                 if (s.kind === 'command' || s.kind === 'call')
                     s.args.forEach(e => ref(e, bindings, loc));
+                if (s.kind === 'command' && s.args[0]?.kind === 'literal' && typeof s.args[0].value === 'string') {
+                    const commandName = s.name;
+                    const speaker = commandName === 'say' && s.args[0].value !== 'narrator' && s.args[0].value !== 'none'
+                        ? s.args[0].value : '';
+                    const shownCharacter = commandName === 'show' ? /^([A-Za-z_][A-Za-z0-9_]*)\./.exec(s.args[0].value)?.[1] || '' : '';
+                    const hiddenCharacter = commandName === 'hide' ? s.args[0].value : '';
+                    const characterName = speaker || shownCharacter || hiddenCharacter;
+                    if (characterName && bindings.has(characterName)) {
+                        ref({ kind: 'variable', name: characterName, line: s.args[0].line, column: s.args[0].column }, bindings, loc);
+                    }
+                }
                 if (s.kind === 'return' && s.value)
                     ref(s.value, bindings, loc);
                 if (s.kind === 'if') {
@@ -1356,7 +1373,7 @@ class Compiler {
         return result;
     }
     statements(statements) {
-        return statements.map((statement) => this.statement(statement));
+        return statements.map((statement) => ({ ...this.statement(statement), file: statement.file, line: statement.line }));
     }
     function(fn) {
         const body = this.statements(fn.body);

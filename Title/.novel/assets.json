@@ -2,31 +2,42 @@
   "$schema": "./assets.schema.json",
   "assets": [
     {
-      "type": "char",
-      "name": "sora",
-      "pose": "normal",
-      "path": "asset/char/aokami-transparent.png",
-      "definedIn": "routes/true.tds"
+      "type": "bg",
+      "name": "heian_hall",
+      "path": "asset/bg/heian-banquet.png",
+      "definedIn": "main.tds"
     },
     {
       "type": "char",
-      "name": "nene",
+      "name": "goi",
       "pose": "normal",
-      "path": "asset/char/hatena-transparent.png",
-      "definedIn": "routes/true.tds"
+      "path": "asset/char/goi.png",
+      "definedIn": "main.tds"
     },
     {
       "type": "char",
-      "name": "nene",
-      "pose": "smile",
-      "path": "asset/char/tundere.png",
-      "definedIn": "routes/true.tds"
+      "name": "toshihito",
+      "pose": "normal",
+      "path": "asset/char/toshihito.png",
+      "definedIn": "main.tds"
     },
     {
       "type": "bg",
-      "name": "courtyard",
-      "path": "asset/bg/mori.jpg",
-      "definedIn": "main.tds"
+      "name": "tsuruga_manor",
+      "path": "asset/bg/tsuruga-manor.png",
+      "definedIn": "chapters/feast.tds"
+    },
+    {
+      "type": "bg",
+      "name": "lake_biwa",
+      "path": "asset/bg/lake-biwa.png",
+      "definedIn": "chapters/lake.tds"
+    },
+    {
+      "type": "bg",
+      "name": "winter_road",
+      "path": "asset/bg/winter-road.png",
+      "definedIn": "chapters/road.tds"
     }
   ]
 }

@@ -22,6 +22,7 @@ async function main() {
   await fs.access(executable);
   const port = await availablePort();
   const env = { ...process.env, PORT: String(port) };
+  env.NOVEL_EDITOR_RECENT_FILE = path.join(os.tmpdir(), `novel-editor-smoke-recent-${process.pid}.json`);
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.NOVEL_PROJECT_ROOT;
 
@@ -49,6 +50,9 @@ async function main() {
     const html = await response.text();
     assert.equal(response.status, 200, `editor page request failed: ${response.status}`);
     assert.match(html, /app-shell/, 'packaged editor HTML was not served');
+    const scrollbarCss = await fetch(`${url}/scrollbars.css`);
+    assert.equal(scrollbarCss.status, 200, 'packaged scrollbar theme stylesheet was not served');
+    assert.match(await scrollbarCss.text(), /scrollbar-width:\s*thin/);
     const project = await (await fetch(`${url}/api/project`)).json();
     startupWorkspace = project.projectRoot;
     assert.equal(path.dirname(startupWorkspace), os.tmpdir());

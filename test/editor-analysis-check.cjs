@@ -11,7 +11,8 @@ const assert = require('node:assert/strict');
   const auditProjectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-editor-analysis-'));
   const previousProjectRoot = process.env.NOVEL_PROJECT_ROOT;
   const auditLayout = seedEmptyProject(auditProjectRoot);
-  await fs.writeFile(path.join(auditLayout.scenesRoot, 'analysis-side.tds'), 'scene analysis_side {\n  goto analysis_side_target\n}\nscene analysis_side_target { wait 1 }\n');
+  await fs.writeFile(path.join(auditLayout.scenesRoot, 'analysis-side.tds'), 'scene analysis_side { choice { "continue" { goto analysis_side_target } "open chapter" { goto "analysis-target.tds" } } }\nscene analysis_side_target { wait 1 }\n');
+  await fs.writeFile(path.join(auditLayout.scenesRoot, 'analysis-target.tds'), 'scene analysis_target { wait 1 }\n');
   await fs.writeFile(path.join(auditLayout.assetsRoot, 'char', 'aokami.png'), Buffer.alloc(0));
   await fs.writeFile(path.join(auditLayout.dataRoot, 'variables.json'), JSON.stringify({ staticVariables: [
     { name: 'route', type: 'str', value: 'summer', possibleValues: ['summer', 'winter'] },
@@ -72,6 +73,31 @@ const assert = require('node:assert/strict');
     await editor.waitFor();
     const initialSceneGraph = await page.evaluate(async () => (await (await fetch('/api/scene-graph')).json()));
     assert.deepEqual(initialSceneGraph.nodes.find((node) => node.id === 'analysis-side.tds')?.localGotos?.map((item) => item.scene), ['analysis_side_target']);
+    const apiExternalGoto = initialSceneGraph.edges.find((edge) => edge.from === 'analysis-side.tds' && edge.to === 'analysis-target.tds');
+    assert.ok(apiExternalGoto, 'file-target goto is represented as a Scene Flow connection');
+    assert.equal(apiExternalGoto.transitions[0].fromScene, 'analysis_side');
+    assert.equal(apiExternalGoto.transitions[0].toScene, 'analysis_target');
+    assert.equal(apiExternalGoto.transitions[0].choice, 'open chapter');
+    assert.ok(apiExternalGoto.transitions[0].line > 0);
+    await page.locator('[data-activity="presentation"]').click();
+    const presentationCardStyle = await page.locator('.presentation-card').first().evaluate((element) => ({
+      background: getComputedStyle(element).backgroundColor,
+      borderLeft: getComputedStyle(element).borderLeftWidth,
+    }));
+    assert.deepEqual(presentationCardStyle, { background: 'rgba(0, 0, 0, 0)', borderLeft: '0px' }, 'presentation guidance uses flat workbench sections rather than cards');
+    await page.locator('[data-presentation-action="player-ui"]').click();
+    const settingsGroupStyle = await page.locator('.player-ui-settings-group').first().evaluate((element) => ({
+      background: getComputedStyle(element).backgroundColor,
+      borderLeft: getComputedStyle(element).borderLeftWidth,
+    }));
+    assert.deepEqual(settingsGroupStyle, { background: 'rgba(0, 0, 0, 0)', borderLeft: '0px' }, 'player settings groups are separated by rules instead of boxed cards');
+    const builtinColor = await page.evaluate(() => {
+      const sample = document.createElement('span'); sample.className = 'hl-builtin'; document.body.append(sample);
+      const color = getComputedStyle(sample).color; sample.remove(); return color;
+    });
+    assert.equal(builtinColor, 'rgb(117, 190, 255)', 'built-in syntax highlighting follows the editor blue accent, not purple');
+    await page.locator('.project-settings-close').click();
+    await page.locator('[data-activity="explorer"]').click();
     await page.locator('[data-menu="help"]').click();
     await page.locator('[data-menu-action="syntax"]').click();
     assert.equal(await page.locator('.language-guide strong').textContent(), '.tds 構文ヘルプ');
@@ -142,6 +168,9 @@ const assert = require('node:assert/strict');
       if (await folder.locator('xpath=following-sibling::div[1]').getAttribute('hidden') !== null) await folder.click();
     }
     const currentFile = page.locator(`#file-tree .scene-file[data-path="senario/${currentScene}"]`);
+    const activeSource = await editor.inputValue();
+    const localTargetScene = activeSource.match(/^\s*scene\s+([A-Za-z_][A-Za-z0-9_]*)/m)?.[1];
+    assert.ok(localTargetScene, `the active scenario has a scene declaration: ${currentScene}`);
     let injectExplorerGraph = null;
     await page.route('**/api/scene-graph', async (route) => {
       if (!injectExplorerGraph) return route.continue();
@@ -154,7 +183,7 @@ const assert = require('node:assert/strict');
       ];
       await route.fulfill({ json: {
         version: 2,
-        nodes: [{ id: currentScene, variables, localGotos: emptyTargets ? [] : [{ scene: 'analysis_side_target', file: currentScene, gotoLine: 1 }], reachable: emptyTargets }],
+        nodes: [{ id: currentScene, variables, localGotos: emptyTargets ? [] : [{ scene: localTargetScene, file: currentScene, gotoLine: 1 }], reachable: emptyTargets }],
         edges: emptyTargets ? [] : [
           ...['chapters/chapter01.tds', 'routes/sora.tds', 'routes/nene.tds'].map((to) => ({ from: currentScene, to, kind: 'goto' })),
           { from: currentScene, to: 'shared/common.tds', kind: 'include' },
@@ -165,26 +194,79 @@ const assert = require('node:assert/strict');
     await currentFile.click({ button: 'right' });
     await page.locator('.file-context-menu [role="menuitem"]').nth(2).click();
     const fileInfo = page.locator('#file-info');
-    await page.waitForFunction(() => document.querySelector('#file-info .file-info-summary')?.textContent.includes('3')).catch(async (error) => {
+    await page.waitForFunction(() => document.querySelector('#file-info .file-info-stat-local')?.textContent === '遷移先 4').catch(async (error) => {
       const rendered = await fileInfo.textContent();
       throw Error(`explorer metadata did not render; injected=${injectExplorerGraph}; scene=${await page.locator('#scene-name').inputValue()}; info=${rendered}; ${error.message}`);
     });
+    assert.equal(await fileInfo.locator('.file-info-stat-local').textContent(), '遷移先 4');
     assert.equal(await fileInfo.locator('.file-info-section').count(), 3);
+    const inspectorStyle = await fileInfo.evaluate((element) => ({
+      background: getComputedStyle(element).backgroundColor,
+      sidebarBackground: getComputedStyle(element.closest('.sidebar')).backgroundColor,
+      outerOverflowY: getComputedStyle(element).overflowY,
+      innerOverflowY: getComputedStyle(element.querySelector('.file-info-list')).overflowY,
+    }));
+    assert.deepEqual(inspectorStyle, { background: 'rgba(0, 0, 0, 0)', sidebarBackground: 'rgb(24, 24, 24)', outerOverflowY: 'visible', innerOverflowY: 'visible' }, 'inspector uses the sidebar surface and does not create nested scrollbars');
+    const inspectorPalette = await fileInfo.evaluate((element) => {
+      const title = getComputedStyle(element.querySelector('.file-info-title'));
+      const local = getComputedStyle(element.querySelector('.file-info-stat-local'));
+      const variables = getComputedStyle(element.querySelector('.file-info-stat-variables'));
+      const count = getComputedStyle(element.querySelector('.file-info-section-count'));
+      const link = getComputedStyle(element.querySelector('.file-info-link'));
+      const targetMeta = getComputedStyle(element.querySelector('.file-info-target-meta'));
+      const list = getComputedStyle(element.querySelector('.file-info-list'));
+      return {
+        titleRail: title.borderLeftWidth,
+        titleInset: title.paddingLeft,
+        local: [local.color, local.backgroundColor, local.borderTopWidth],
+        variables: [variables.color, variables.backgroundColor, variables.borderTopWidth],
+        count: [count.color, count.backgroundColor, count.borderRadius],
+        link: [link.backgroundColor, link.borderTopWidth, link.appearance],
+        linkDecoration: getComputedStyle(element.querySelector('.file-info-link'), '::before').content,
+        targetMetaInset: targetMeta.paddingLeft,
+        listStyle: list.listStyleType,
+      };
+    });
+    assert.deepEqual(inspectorPalette, {
+      titleRail: '0px',
+      titleInset: '0px',
+      local: ['rgb(157, 157, 157)', 'rgba(0, 0, 0, 0)', '0px'],
+      variables: ['rgb(157, 157, 157)', 'rgba(0, 0, 0, 0)', '0px'],
+      count: ['rgb(133, 133, 133)', 'rgba(0, 0, 0, 0)', '0px'],
+      link: ['rgba(0, 0, 0, 0)', '0px', 'none'],
+      linkDecoration: 'none',
+      targetMetaInset: '5px',
+      listStyle: 'none',
+    }, 'file metadata counts are neutral text rather than colored badge chips');
+    const selectedTextStyle = await editor.evaluate((element) => {
+      const scene = element.value.match(/\bscene\s+([A-Za-z_][A-Za-z0-9_]*)/);
+      if (!scene) throw new Error('active scenario has no selectable scene declaration');
+      const start = scene.index + scene[0].lastIndexOf(scene[1]);
+      element.focus();
+      element.setSelectionRange(start, start + scene[1].length);
+      return {
+        selectedText: element.value.slice(element.selectionStart, element.selectionEnd),
+        selectionBackground: getComputedStyle(element, '::selection').backgroundColor,
+      };
+    });
+    assert.deepEqual(selectedTextStyle, { selectedText: localTargetScene, selectionBackground: 'rgba(38, 79, 120, 0.4)' }, 'selection tint stays translucent so syntax-colored text remains visible');
+    if (process.env.NOVEL_EDITOR_SCREENSHOT) await page.screenshot({ path: process.env.NOVEL_EDITOR_SCREENSHOT });
+    await editor.evaluate((element) => { element.setSelectionRange(0, 0); element.blur(); });
     assert.equal(await fileInfo.locator('[data-kind="local-targets"] .file-info-list li').count(), 1);
-    assert.match(await fileInfo.locator('[data-kind="local-targets"]').textContent(), /analysis_side_target/);
+    assert.match(await fileInfo.locator('[data-kind="local-targets"]').textContent(), new RegExp(localTargetScene));
     await fileInfo.locator('.file-info-link-scene').click();
-    assert.equal(await editor.evaluate((element) => element.value.slice(element.selectionStart, element.selectionEnd)), 'analysis_side_target', 'a local goto entry navigates to its scene declaration');
+    assert.equal(await editor.evaluate((element) => element.value.slice(element.selectionStart, element.selectionEnd)), localTargetScene, 'a local goto entry navigates to its scene declaration');
     assert.equal(await fileInfo.locator('[data-kind="targets"] .file-info-list li').count(), 3);
     assert.match(await fileInfo.locator('[data-kind="targets"]').textContent(), /chapters\/chapter01\.tds/);
     assert.equal(await fileInfo.locator('[data-kind="variables"] .file-info-list li').count(), 3, 'a large reference count is summarized per binding, not expanded into hundreds of rows');
     assert.match(await fileInfo.locator('[data-kind="variables"]').textContent(), /route_summer/);
     assert.match(await fileInfo.locator('[data-kind="variables"]').textContent(), /このファイルの定義 1 · 参照 690/);
     assert.equal(await fileInfo.locator('[data-kind="variables"] .file-info-variable-jump').count(), 3);
-    assert.match(await fileInfo.locator('.file-info-summary').textContent(), /到達不能/);
+    assert.equal(await fileInfo.locator('.file-info-stat-warning').count(), 1, 'unreachable files show a warning badge in the summary');
     injectExplorerGraph = 'empty';
     await currentFile.click({ button: 'right' });
     await page.locator('.file-context-menu [role="menuitem"]').nth(2).click();
-    await page.waitForFunction(() => document.querySelector('#file-info .file-info-summary')?.textContent.includes('同一ファイル 0'));
+    await page.waitForFunction(() => document.querySelector('#file-info .file-info-stat-local')?.textContent === '遷移先 0');
     assert.equal(await fileInfo.locator('[data-kind="local-targets"]').count(), 0);
     assert.equal(await fileInfo.locator('[data-kind="targets"]').count(), 0, 'an empty transition section is omitted instead of showing a dead disclosure bar');
     await page.unroute('**/api/scene-graph');
@@ -234,12 +316,12 @@ const assert = require('node:assert/strict');
     });
     await page.locator('[data-menu="file"]').click();
     await page.locator('[data-menu-action="open-project"]').click();
-    await page.locator('#project-picker-open').click();
+    const folderPrompt = page.locator('.editor-dialog').filter({ has: page.locator('input') });
+    await folderPrompt.getByRole('button', { name: '決定' }).click();
     await page.locator('.editor-dialog').waitFor();
     assert.equal(projectOpenRequests, 0, 'dirty right pane must be confirmed before the project switch request');
     await page.locator('.editor-dialog').getByRole('button', { name: 'キャンセル' }).click();
     assert.equal(await splitFrame.locator('body').evaluate((element) => element.ownerDocument.defaultView.novelEditorApi.isDirty()), true);
-    await page.locator('#project-picker-close').click();
     await saveAllFromMenu();
     await page.waitForFunction(() => document.querySelector('#split-frame')?.contentWindow?.novelEditorApi?.isDirty() === false);
     assert.equal(await page.locator('#save-split').count(), 0);
@@ -365,7 +447,7 @@ const assert = require('node:assert/strict');
     assert.equal(await editor.inputValue(), 'choice ');
     await editor.fill('if(score==1)');
     await editor.press('Enter');
-    assert.equal(await editor.inputValue(), 'if (score == 1) {\n\n}\n');
+    assert.equal(await editor.inputValue(), 'if (score == 1) {\n  \n}\n');
     await editor.fill(`str editor_title = "文字列"
 scene analysis {
   if 1 == 2 {
@@ -373,7 +455,7 @@ scene analysis {
   }
   say narrator editor_title
 }`);
-    await page.waitForTimeout(1500);
+    await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('constant-condition'), null, { timeout: 10000 });
     const resultText = await page.locator('#result').textContent();
     if (!resultText.includes('constant-condition')) throw new Error(`Live diagnostics were not rendered: ${resultText}`);
     assert.match(await page.locator('#result').textContent(), /警告 [1-9]/);
@@ -736,19 +818,19 @@ scene analysis {
     await editor.fill('scene generated');
     await editor.press('Escape');
     await editor.press('Enter');
-    assert.equal(await editor.inputValue(), 'scene generated {\n\n}\n');
+    assert.equal(await editor.inputValue(), 'scene generated {\n  \n}\n');
     await editor.fill('scene braced {');
     await editor.press('Escape');
     await editor.press('Enter');
-    assert.equal(await editor.inputValue(), 'scene braced {\n\n}');
+    assert.equal(await editor.inputValue(), 'scene braced {\n  \n}');
     await editor.fill('fn greet(name: str) -> none');
     await editor.press('Escape');
     await editor.press('Enter');
-    assert.equal(await editor.inputValue(), 'fn greet(name: str) -> none {\n\n}\n');
+    assert.equal(await editor.inputValue(), 'fn greet(name: str) -> none {\n  \n}\n');
     await editor.fill('fn build() -> dict[str]');
     await editor.press('Escape');
     await editor.press('Enter');
-    assert.equal(await editor.inputValue(), 'fn build() -> dict[str] {\n\n}\n');
+    assert.equal(await editor.inputValue(), 'fn build() -> dict[str] {\n  \n}\n');
     await editor.fill('choice');
     await editor.press('Escape');
     await editor.press('Enter');
@@ -760,13 +842,13 @@ scene analysis {
     await editor.fill('elif ready');
     await editor.press('Escape');
     await editor.press('Enter');
-    assert.equal(await editor.inputValue(), 'elif ready {\n\n}\n');
+    assert.equal(await editor.inputValue(), 'elif ready {\n  \n}\n');
     await editor.fill('scene closing {\n  say narrator "done"\n  ');
     await editor.press('}');
     assert.equal(await editor.inputValue(), 'scene closing {\n  say narrator "done"\n}');
     await editor.fill('scene virtual {\nsay narrator "line"');
     await editor.evaluate((element) => element.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertLineBreak' })));
-    assert.equal(await editor.inputValue(), 'scene virtual {\n  say narrator "line"\n');
+    assert.equal(await editor.inputValue(), 'scene virtual {\nsay narrator "line"\n', 'ordinary newline does not reformat preceding lines');
     await editor.fill('scene virtual_close {\n  say narrator "line"\n  ');
     await editor.evaluate((element) => element.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: '}' })));
     assert.equal(await editor.inputValue(), 'scene virtual_close {\n  say narrator "line"\n}');

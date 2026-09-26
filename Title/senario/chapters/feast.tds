@@ -1,0 +1,41 @@
+asset bg tsuruga_manor = "asset/bg/tsuruga-manor.png"
+
+scene night_before {
+  effect fade black 350
+  bg tsuruga_manor
+  show goi.normal center
+  say narrator "館の寝所は暖かかった。けれど五位は眠れない。"
+  say narrator "庭から、下人たちへ命じる声が聞こえてくる。"
+  say narrator "『夜明けまでに山の芋を持って参れ。一人につき一本だ』"
+  say goi "あれは……芋粥のためでござろうか。"
+  say narrator "五位は、まだ見ぬ膳を思い浮かべた。"
+  say narrator "いつか食べたいと願ったものが、いま手の届く所にある。"
+  say narrator "だがその夜、空腹よりも大きなものが胸を占めていた。"
+  goto morning_porridge
+}
+
+scene morning_porridge {
+  effect fade white 300
+  bg tsuruga_manor
+  show goi.normal left
+  show toshihito.normal right
+  say narrator "朝。庭には山の芋が山と積まれていた。"
+  say narrator "いくつもの大釜から湯気が上がる。"
+  say narrator "五位の前には、銀の器になみなみと注がれた芋粥。"
+  say toshihito "さあ。望みどおり、飽くまで召されよ。"
+  say goi "……いただきまする。"
+  say narrator "一口目は、確かにあの宴と同じ甘さだった。"
+  say narrator "二口目には、五位は庭で働く人々の姿を見た。"
+  say narrator "三口目を飲むころには、椀の向こうにまだ幾つもの器が並んでいた。"
+  say goi "これほどの量を、私一人のために。"
+  say toshihito "足りぬなら、いくらでも用意しよう。"
+  say narrator "五位の願いは叶った。だが、かつて望んだ『いつか』はもうない。"
+  choice "五位は椀をどうする？" {
+    "椀を置き、礼を言う" {
+      goto "endings/quiet.tds"
+    }
+    "もう一口だけ飲み、胸の内を話す" {
+      goto "endings/another.tds"
+    }
+  }
+}

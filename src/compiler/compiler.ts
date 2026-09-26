@@ -11,7 +11,7 @@ export type CompiledExpr =
   | { kind: 'call'; name: string; args: CompiledExpr[] }
   | { kind: 'dict'; entries: Array<{ key: string; value: CompiledExpr }> };
 
-export type Instruction =
+export type Instruction = (
   | { op: 'declare'; type: ValueType; name: string; initial?: CompiledExpr; constant?: boolean }
   | { op: 'set'; target: CompiledExpr; value: CompiledExpr }
   | { op: 'unset'; target: CompiledExpr }
@@ -23,10 +23,11 @@ export type Instruction =
   | { op: 'function'; name: string; returnType: ValueType; params: Array<{ type: ValueType; name: string }>; body: Instruction[] }
   | { op: 'call'; name: string; args: CompiledExpr[] }
   | { op: 'return'; value?: CompiledExpr }
-  | { op: 'goto'; scene: string };
+  | { op: 'goto'; scene: string }
+) & { file?: string; line?: number };
 
 export interface CompiledCondition { expression: CompiledExpr; }
-export interface CompiledScene { name: string; instructions: Instruction[]; }
+export interface CompiledScene { name: string; file?: string; line?: number; instructions: Instruction[]; }
 export interface VariableLocation { file?: string; line?: number; column?: number; scope: 'global' | 'function' | 'scene' | 'local'; container: string; kind?: 'definition' | 'expression' | 'interpolation' | 'assignment'; }
 export interface VariableEntry { name: string; type: ValueType; scope: 'global' | 'function' | 'scene' | 'local'; definedIn: string; definitions: VariableLocation[]; references: VariableLocation[]; mutable: boolean; }
 export type CompiledCharacter = Omit<Character, 'properties'> & { external?: boolean };
@@ -918,36 +919,42 @@ function optimizeInstructions(
 }
 
 const characterTypeName = (name: string) => `character:${name}`;
-function characterDeclarations(script: Script): Statement[] {
-  return script.characters.map((character) => ({
+function characterDeclarations(characters: Character[]): Statement[] {
+  return characters.map((character) => ({
     kind: 'declare', name: character.name, type: { kind: 'struct', name: characterTypeName(character.name) },
     initial: { kind: 'dict', entries: character.properties.map((property) => ({ key: property.name, value: property.value })) },
     line: character.line, column: character.column,
   }));
 }
 
-export function compile(script: Script, externalGlobals = new Map<string, ValueType>(), externalCharacters = new Map<string, Set<string> | ExternalCharacter>()): CompiledProgram {
+export function compile(script: Script, externalGlobals = new Map<string, ValueType>(), externalCharacters = new Map<string, Set<string> | ExternalCharacter>(), debug = false): CompiledProgram {
   assertAnalyzed(script, 'current', externalGlobals, externalCharacters);
   const constraints = (externalGlobals as Map<string, ValueType> & { constraints?: ReadonlyMap<string, VariableConstraint> }).constraints;
   const compiler = new Compiler();
-  const implicitCharacterGlobals = characterDeclarations(script);
+  const externalCharacterSources = [...externalCharacters.values()]
+    .filter((character): character is ExternalCharacter => !(character instanceof Set))
+    .flatMap((character) => character.definition ? [character.definition] : []);
+  const implicitCharacterGlobals = characterDeclarations(script.characters);
+  const externalCharacterGlobals = characterDeclarations(externalCharacterSources);
   const runtimeScript = { ...script, globals: [...implicitCharacterGlobals, ...script.globals] };
   const metadataGlobals = new Map(externalGlobals);
   for (const name of externalCharacters.keys()) metadataGlobals.set(name, { kind: 'struct', name: characterTypeName(name) });
   const variables = compiler.variables(runtimeScript, metadataGlobals);
-  const rawGlobals = compiler.statements(runtimeScript.globals);
+  // A file can be launched directly by Scene Flow. Materialize external
+  // character definitions as globals so their statically known fields (for
+  // example display names) exist even when the declaring file was not run.
+  // On an ordinary file transfer preserveGlobals keeps the existing value.
+  const rawGlobals = compiler.statements([...externalCharacterGlobals, ...runtimeScript.globals]);
   const rawFunctions = script.functions.map((fn) => compiler.function(fn));
   const effects = functionWrites(rawFunctions, new Set([...externalGlobals.keys(), ...runtimeScript.globals.filter((statement) => statement.kind === 'declare').map((statement) => statement.name)]));
   // A transferred file executes globals with preserve=true: an existing
   // global keeps its value instead of receiving the declaration initializer.
   // Do not fold declaration-derived values in this scope.
-  const globals = optimizeInstructions(rawGlobals, effects, new Map(), { preserveDeclarations: true }, undefined, constraints);
-  const functions = rawFunctions.map((instruction) => instruction.op === 'function'
+  const globals = debug ? rawGlobals : optimizeInstructions(rawGlobals, effects, new Map(), { preserveDeclarations: true }, undefined, constraints);
+  const functions = debug ? rawFunctions : rawFunctions.map((instruction) => instruction.op === 'function'
     ? { ...instruction, body: optimizeInstructions(instruction.body, effects, new Map(), { preserveDeclarations: false }, new Set(instruction.params.map((param) => param.name)), constraints) }
     : instruction);
-  const externalCharacterDefinitions = [...externalCharacters.values()]
-    .filter((character): character is ExternalCharacter => !(character instanceof Set))
-    .flatMap((character) => character.definition ? [character.definition] : [])
+  const externalCharacterDefinitions = externalCharacterSources
     .map(({ properties: _properties, ...character }) => ({ ...character, external: true }));
 
   return {
@@ -956,7 +963,7 @@ export function compile(script: Script, externalGlobals = new Map<string, ValueT
     characters: [...externalCharacterDefinitions, ...script.characters.map(({ properties: _properties, ...character }) => character)],
     globals,
     functions,
-    scenes: script.scenes.map((scene) => ({ name: scene.name, instructions: optimizeInstructions(compiler.statements(scene.body), effects, new Map(), { preserveDeclarations: false }, undefined, constraints) })),
+    scenes: script.scenes.map((scene) => ({ name: scene.name, file: scene.file, line: scene.line, instructions: debug ? compiler.statements(scene.body) : optimizeInstructions(compiler.statements(scene.body), effects, new Map(), { preserveDeclarations: false }, undefined, constraints) })),
     variables,
   };
 }
@@ -1021,6 +1028,17 @@ class Compiler {
         }
         if (s.kind === 'unset') ref(s.target, bindings, loc);
         if (s.kind === 'command' || s.kind === 'call') s.args.forEach(e => ref(e, bindings, loc));
+        if (s.kind === 'command' && s.args[0]?.kind === 'literal' && typeof s.args[0].value === 'string') {
+          const commandName = s.name;
+          const speaker = commandName === 'say' && s.args[0].value !== 'narrator' && s.args[0].value !== 'none'
+            ? s.args[0].value : '';
+          const shownCharacter = commandName === 'show' ? /^([A-Za-z_][A-Za-z0-9_]*)\./.exec(s.args[0].value)?.[1] || '' : '';
+          const hiddenCharacter = commandName === 'hide' ? s.args[0].value : '';
+          const characterName = speaker || shownCharacter || hiddenCharacter;
+          if (characterName && bindings.has(characterName)) {
+            ref({ kind: 'variable', name: characterName, line: s.args[0].line, column: s.args[0].column }, bindings, loc);
+          }
+        }
         if (s.kind === 'return' && s.value) ref(s.value, bindings, loc);
         if (s.kind === 'if') {
           ref(s.condition.expression, bindings, loc);
@@ -1083,7 +1101,7 @@ class Compiler {
   }
 
   statements(statements: Statement[]): Instruction[] {
-    return statements.map((statement) => this.statement(statement));
+    return statements.map((statement) => ({ ...this.statement(statement), file: statement.file, line: statement.line }));
   }
 
   function(fn: FunctionDef): Instruction {

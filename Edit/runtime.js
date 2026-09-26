@@ -107,6 +107,21 @@
     if (!DEFAULT_SLOTS.includes(slot)) throw Error(`未知の配置場所 '${slot}' です`);
     return slot;
   }
+  function instructionsFromLine(instructions, file, line) {
+    for (let index = 0; index < instructions.length; index++) {
+      const instruction = instructions[index];
+      if ((!file || !instruction.file || instruction.file === file) && Number(instruction.line) >= line) return instructions.slice(index);
+      const bodies = instruction.op === 'if'
+        ? [instruction.body, ...instruction.elseIf.map((branch) => branch.body), instruction.otherwise]
+        : instruction.op === 'choice' ? instruction.options.map((option) => option.body)
+          : instruction.op === 'for' || instruction.op === 'while' ? [instruction.body] : [];
+      for (const body of bodies) {
+        const suffix = instructionsFromLine(body, file, line);
+        if (suffix) return [...suffix, ...instructions.slice(index + 1)];
+      }
+    }
+    return null;
+  }
   function sceneStateCommand(state, name, args) {
     const op = { name, args: copy(args) };
     if (name === 'bg') {
@@ -331,6 +346,7 @@
     }
     async exec(list, preserveGlobals = false) {
       for (const c of list) {
+        await this.host.beforeInstruction?.(c, this);
         if (c.op === 'declare') {
           const frame = this.frames.findLast(f => !this.loopFrames.has(f));
           if (preserveGlobals && frame === this.globals && own(frame, c.name)) {
@@ -414,7 +430,7 @@
       }
       return null;
     }
-    async run(p) {
+    async run(p, debug = null) {
       let transferred = false;
       this.sceneState = createSceneState();
       const recordTransfer = async (target, external) => {
@@ -430,7 +446,16 @@
         await this.host.program?.(p, this.sceneState);
         let result = await this.exec(p.globals, transferred);
         const scenes = new Map(p.scenes.map(s => [s.name, s.instructions]));
-        if (!result && p.scenes.length) result = await this.exec(p.scenes[0].instructions);
+        if (!transferred && debug?.variables) {
+          for (const [name, value] of Object.entries(debug.variables)) this.globals[name] = value;
+        }
+        const selectedScene = !transferred && debug?.scene ? p.scenes.find((scene) => scene.name === debug.scene) : null;
+        if (!transferred && debug?.scene && !selectedScene) throw Error(`Unknown debug scene '${debug.scene}'.`);
+        const firstScene = selectedScene || p.scenes[0];
+        const firstInstructions = !transferred && debug?.line && firstScene
+          ? instructionsFromLine(firstScene.instructions, firstScene.file, debug.line) : null;
+        if (!transferred && debug?.line && !firstInstructions) throw Error(`Line ${debug.line} has no executable instruction in scene '${firstScene?.name || ''}'.`);
+        if (!result && firstScene) result = await this.exec(firstInstructions || firstScene.instructions);
         while (result?.kind === 'goto' && scenes.has(result.scene)) {
           await recordTransfer(result.scene, false);
           result = await this.exec(scenes.get(result.scene));

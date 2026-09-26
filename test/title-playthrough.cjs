@@ -66,6 +66,16 @@ async function stopServer(child) {
       if (state.error) throw Error(`player reported error: ${state.error}`);
       if (state.choices.length) {
         if (!capturedChoice) {
+          const choiceImageWidth = await page.evaluate(async () => {
+            const background = getComputedStyle(document.querySelector('#choices .choice')).backgroundImage;
+            const assetUrl = background.match(/^url\(["']?(.*?)["']?\)$/)?.[1];
+            if (!assetUrl) return 0;
+            const image = new Image();
+            image.src = assetUrl;
+            await image.decode();
+            return image.naturalWidth;
+          });
+          assert.ok(choiceImageWidth > 0, 'choice paper artwork did not load');
           await page.screenshot({ path: path.join(root, 'build', 'title-choice.png') });
           capturedChoice = true;
         }
@@ -75,7 +85,7 @@ async function stopServer(child) {
         continue;
       }
       if (state.text && state.text !== '読み込み中…' && state.text !== previousText) {
-        if (state.text.includes('この章の記録は')) break;
+        if (state.text.includes('終　—')) break;
         const speaker = await page.locator('#speaker-text').textContent();
         if (!capturedDialogue && speaker && await page.locator('.actor').count() >= 1) {
           await page.screenshot({ path: path.join(root, 'build', 'title-dialogue.png') });
@@ -89,10 +99,10 @@ async function stopServer(child) {
       await page.waitForTimeout(10);
     }
 
-    assert.ok(Date.now() < deadline, 'playthrough did not reach the route chapter end');
-    assert.ok(sayAdvances > 100, `expected substantial dialogue interaction, got ${sayAdvances}`);
-    assert.ok(choicesMade >= 1, `expected to operate a route choice, got ${choicesMade}`);
-    for (const expected of ['chapters/chapter01.tds', 'chapters/chapter02.tds', 'chapters/chapter03.tds', 'chapters/chapter04.tds', 'routes/sora.tds']) {
+    assert.ok(Date.now() < deadline, 'playthrough did not reach an ending');
+    assert.ok(sayAdvances > 45, `expected substantial dialogue interaction, got ${sayAdvances}`);
+    assert.ok(choicesMade >= 4, `expected to operate the story choices, got ${choicesMade}`);
+    for (const expected of ['chapters/banquet.tds', 'chapters/road.tds', 'chapters/lake.tds', 'chapters/feast.tds', 'endings/quiet.tds']) {
       assert.ok(loadedFiles.includes(expected), `missing file transition ${expected}; loaded: ${loadedFiles.join(', ')}`);
     }
     assert.deepEqual(errors, []);
@@ -115,10 +125,10 @@ async function stopServer(child) {
         const canvas = document.createElement('canvas');
         canvas.width = canvas.height = 1;
         const context = canvas.getContext('2d', { willReadFrequently: true });
-        context.drawImage(image, 0, 0, 1, 1);
+        context.drawImage(image, 0, 0);
         return context.getImageData(0, 0, 1, 1).data[3];
       }
-      return { sora: await alphaAt('aokami-transparent.png'), nene: await alphaAt('hatena-transparent.png') };
+      return { goi: await alphaAt('goi.png'), toshihito: await alphaAt('toshihito.png') };
     });
     const fogGradient = await page.evaluate(() => {
       const canvas = document.querySelector('#bottom-fog');
@@ -128,8 +138,10 @@ async function stopServer(child) {
         bottom: context.getImageData(Math.floor(canvas.width / 2), canvas.height - 1, 1, 1).data[3],
       };
     });
-    assert.ok(fogGradient.top < fogGradient.bottom, `mist must grow stronger from bottom to top: ${JSON.stringify(fogGradient)}`);
-    assert.ok(spriteAlpha.sora < 240 && spriteAlpha.nene < 240, `character sprite corners retain the baked checker background: ${JSON.stringify(spriteAlpha)}`);
+    assert.equal(fogGradient.top, 0, `historical artwork should not have a white fog overlay: ${JSON.stringify(fogGradient)}`);
+    assert.equal(fogGradient.bottom, 0, `historical artwork should not have a white fog overlay: ${JSON.stringify(fogGradient)}`);
+    assert.equal(spriteAlpha.goi, 0, `goi sprite corner must be transparent: ${JSON.stringify(spriteAlpha)}`);
+    assert.equal(spriteAlpha.toshihito, 0, `toshihito sprite corner must be transparent: ${JSON.stringify(spriteAlpha)}`);
     const textLayout = await page.evaluate(() => {
       const text = document.querySelector('#text');
       const original = text.textContent;
@@ -147,8 +159,54 @@ async function stopServer(child) {
       const rect = document.querySelector('#stage').getBoundingClientRect();
       return { viewportWidth: innerWidth, viewportHeight: innerHeight, transform: getComputedStyle(document.querySelector('#stage')).transform, x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
     });
-    assert.ok(mobileLayout.x >= -1 && mobileLayout.y >= -1 && mobileLayout.right <= 391 && mobileLayout.bottom <= 845, `stage does not fit portrait viewport: ${JSON.stringify(mobileLayout)}`);
+    assert.ok(mobileLayout.width >= 391 - 1 && mobileLayout.height >= 845 - 1, `stage does not cover portrait viewport: ${JSON.stringify(mobileLayout)}`);
     console.log(`MOBILE ${JSON.stringify(mobileLayout)} SPRITE_ALPHA ${JSON.stringify(spriteAlpha)} FOG ${JSON.stringify(fogGradient)} TEXT ${JSON.stringify(textLayout)}`);
+
+    const alternatePage = await browser.newPage();
+    alternatePage.setDefaultTimeout(10_000);
+    const alternateErrors = [];
+    const alternateFiles = [];
+    alternatePage.on('pageerror', error => alternateErrors.push(error.message));
+    alternatePage.on('request', request => {
+      const url = new URL(request.url());
+      if (url.pathname === '/api/scene') alternateFiles.push(url.searchParams.get('name'));
+    });
+    await alternatePage.goto(`${server.base}/player.html?source=main.tds`);
+    let alternateChoices = 0;
+    let alternatePreviousText = '';
+    let alternateReachedEnd = false;
+    const alternateDeadline = Date.now() + 60_000;
+    while (Date.now() < alternateDeadline) {
+      const state = await alternatePage.evaluate(() => ({
+        text: document.querySelector('#text')?.textContent || '',
+        choices: document.querySelectorAll('#choices .choice').length,
+        error: document.querySelector('#speaker-text')?.textContent === 'PLAYER ERROR'
+          ? document.querySelector('#text')?.textContent : '',
+      }));
+      if (state.error) throw Error(`alternate ending player error: ${state.error}`);
+      if (state.choices) {
+        await alternatePage.locator('#choices .choice').nth(alternateChoices === 3 ? 1 : 0).click();
+        alternateChoices++;
+        alternatePreviousText = '';
+        continue;
+      }
+      if (state.text && state.text !== '読み込み中…' && state.text !== alternatePreviousText) {
+        if (state.text.includes('終　—')) {
+          alternateReachedEnd = true;
+          break;
+        }
+        alternatePreviousText = state.text;
+        await alternatePage.locator('#next').click();
+        continue;
+      }
+      await alternatePage.waitForTimeout(10);
+    }
+    assert.ok(alternateReachedEnd, 'alternate ending did not finish');
+    assert.equal(alternateChoices, 4, 'alternate ending should follow the final choice');
+    assert.ok(alternateFiles.includes('endings/another.tds'), `missing alternate ending transition: ${alternateFiles.join(', ')}`);
+    assert.deepEqual(alternateErrors, []);
+    await alternatePage.close();
+
     const nativeExe = process.env.NOVEL_NATIVE_EXE || path.join(root, 'native', 'build', 'Release', 'novel_player.exe');
     const nativeRun = spawnSync(nativeExe, [path.join(project, '.novel', 'build', 'main.nsp.json'), '--headless'], {
       cwd: root, encoding: 'utf8', timeout: 30_000, maxBuffer: 20 * 1024 * 1024,
@@ -156,11 +214,12 @@ async function stopServer(child) {
     assert.equal(nativeRun.status, 0, nativeRun.stderr || nativeRun.error?.message);
     const nativeTranscript = JSON.parse(nativeRun.stdout);
     const spokenLines = nativeTranscript.commands.filter(command => command.name === 'say').map(command => String(command.args[1]));
-    for (const expected of ['第一章・雨の校舎・第1節', '第四章・最後の鍵・第1節', 'ソラルート・青い旋律・第1節']) {
+    for (const expected of ['平安の都。摂政の邸には、名を呼ばれることのない侍がいた。', '数日後。二人は冬の都を出た。', '五位は小さくくしゃみをした。']) {
       assert.ok(spokenLines.includes(expected), `native runtime did not reach ${expected}`);
     }
     console.log(`PASS Title Native runtime: ${spokenLines.length} lines, globals ${JSON.stringify(nativeTranscript.globals)}`);
     console.log(`PASS Title Browser playthrough: ${sayAdvances} dialogue advances, ${choicesMade} choices, loaded ${loadedFiles.join(' -> ')}`);
+    console.log(`PASS Title alternate ending: ${alternateChoices} choices, loaded ${alternateFiles.join(' -> ')}`);
   } finally {
     await browser?.close();
     await stopServer(server?.child);

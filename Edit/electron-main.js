@@ -2,6 +2,7 @@ const { app, BrowserWindow, dialog, Menu, ipcMain } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const { prepareStartupWorkspace, removeStartupWorkspace } = require('./packaged-project');
+const { findStartupProject } = require('./recent-projects');
 
 Menu.setApplicationMenu(null);
 
@@ -12,21 +13,20 @@ let mainWindow = null;
 let quitting = false;
 let closeSavePending = false;
 let startupWorkspace = '';
-let showProjectPickerOnStartup = false;
+let temporaryStartupWorkspace = false;
 
-function startEditorServer() {
+async function startEditorServer() {
+  const selectedProject = await findStartupProject(process.env.NOVEL_PROJECT_ROOT);
+  temporaryStartupWorkspace = !selectedProject;
+  const projectRoot = selectedProject || (startupWorkspace = prepareStartupWorkspace(app.getPath('temp')));
   return new Promise((resolve, reject) => {
-    showProjectPickerOnStartup = !process.env.NOVEL_PROJECT_ROOT;
-    const projectRoot = showProjectPickerOnStartup
-      ? (startupWorkspace = prepareStartupWorkspace(app.getPath('temp')))
-      : process.env.NOVEL_PROJECT_ROOT;
     editorServer = spawn(process.execPath, [serverPath], {
       cwd: projectRoot,
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
         NOVEL_PROJECT_ROOT: projectRoot,
-        ...(showProjectPickerOnStartup ? { NOVEL_TEMP_STARTUP_WORKSPACE: '1' } : {}),
+        ...(temporaryStartupWorkspace ? { NOVEL_TEMP_STARTUP_WORKSPACE: '1' } : {}),
       },
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -92,15 +92,14 @@ function createWindow(url) {
   });
   const editorUrl = new URL(url);
   editorUrl.searchParams.set('desktop', '1');
-  if (showProjectPickerOnStartup) editorUrl.searchParams.set('welcome', '1');
   mainWindow.loadURL(editorUrl.toString());
 }
 
 ipcMain.handle('novel-editor:select-folder', async (event) => {
   if (!mainWindow || event.sender !== mainWindow.webContents) return null;
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: '作品フォルダーを選択',
-    properties: ['openDirectory', 'createDirectory'],
+    title: 'フォルダーを開く',
+    properties: ['openDirectory'],
   });
   return result.canceled ? null : result.filePaths[0] || null;
 });

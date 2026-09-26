@@ -15,10 +15,13 @@ const minimap = document.querySelector('#minimap');
 const minimapContent = document.querySelector('#minimap-content');
 const minimapViewport = document.querySelector('#minimap-viewport');
 const editorTabs = document.querySelector('#editor-tabs');
+let flowStartPreviewFile = '';
+let flowStartPreviewLine = 0;
+let flowLinePicker = null;
+let flowPickHoverLine = 0;
 const documentActions = document.querySelector('.document-actions');
 if (documentActions) document.querySelector('.topbar-right')?.prepend(documentActions);
 if (new URLSearchParams(location.search).get('embedded') === '1') document.documentElement.classList.add('embedded-editor');
-let pickerWelcome = new URLSearchParams(location.search).get('welcome') === '1';
 
 const closeMenus = () => {
   document.querySelectorAll('[data-menu-popup]').forEach((popup) => { popup.hidden = true; });
@@ -38,14 +41,17 @@ document.querySelectorAll('[data-menu]').forEach((button) => button.addEventList
 document.addEventListener('click', (event) => { if (!event.target.closest('.menu-item')) closeMenus(); });
 
 let currentProjectRoot = '';
+let debugExecutingFile = '';
+let debugExecutingLine = 0;
 let scenarioDirectory = 'senario';
-let pickerMode = 'open';
-let pickerPath = '';
 let catalog = {};
 let suggestions = [];
 let suggestionIndex = 0;
 let completionRange = null;
 let sceneNames = [];
+let quickWorkspaceSymbolsPromise = null;
+let pendingEditorChord = '';
+let editorChordTimer = null;
 let knownVariables = [];
 let staticVariableDeclarations = new Map();
 let knownVariableDataLoaded = false;
@@ -59,6 +65,9 @@ let fileInfoBase = null;
 let validationSequence = 0;
 let isDirty = false;
 let sceneRevision = '';
+let projectChangesToken = '';
+let projectChangesInFlight = false;
+let workspaceReadyForPolling = false;
 let middleScroll = null;
 let minimapDrag = null;
 const undoStack = [];
@@ -292,6 +301,75 @@ function insert(text, separateLine = true) {
   editor.dispatchEvent(new Event('input'));
 }
 
+function lineCodeBeforeComment(line) {
+  let quoted = false;
+  let escaped = false;
+  for (let index = 0; index < line.length; index++) {
+    const char = line[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') quoted = false;
+    } else if (char === '"') quoted = true;
+    else if (char === '#' || (char === '/' && line[index + 1] === '/')) return line.slice(0, index);
+  }
+  return line;
+}
+
+function insertEditorRange(from, to, text, caretInText) {
+  rememberUndo();
+  editor.value = `${editor.value.slice(0, from)}${text}${editor.value.slice(to)}`;
+  editor.focus();
+  editor.setSelectionRange(from + caretInText, from + caretInText);
+  editor.dispatchEvent(new Event('input'));
+}
+
+function insertEditorBlockAtLineEnd(caret, lineStart, openingBrace = false) {
+  const header = editor.value.slice(lineStart, caret);
+  const indent = /^[ \t]*/.exec(header)[0];
+  const bodyIndent = `${indent}  `;
+  const formattedHeader = openingBrace ? '' : `${indent}${formatSource(header.slice(indent.length)).trimEnd()}`;
+  const text = openingBrace ? `\n${bodyIndent}\n${indent}}` : `${formattedHeader} {\n${bodyIndent}\n${indent}}\n`;
+  const end = !openingBrace && editor.value[caret] === '\n' ? caret + 1 : caret;
+  insertEditorRange(openingBrace ? caret : lineStart, end, text, (openingBrace ? 1 : formattedHeader.length + 3) + bodyIndent.length);
+}
+
+function insertEditorNewline() {
+  const source = editor.value;
+  const start = editor.selectionStart;
+  const end = editor.selectionEnd;
+  const lineStart = source.lastIndexOf('\n', start - 1) + 1;
+  const lineEndAt = source.indexOf('\n', start);
+  const lineEnd = lineEndAt < 0 ? source.length : lineEndAt;
+  const line = source.slice(lineStart, lineEnd);
+  const indent = /^[ \t]*/.exec(line)[0];
+  let from = start;
+  let to = end;
+  let insertion = `\n${indent}`;
+  let caretInInsertion = insertion.length;
+
+  // Enter inside existing indentation starts a new line without doubling it.
+  if (start === end && start <= lineStart + indent.length) {
+    from = lineStart;
+    to = lineStart + indent.length;
+  } else if (start === end && !line.trim()) {
+    // Keep the next line ready for typing, but do not leave spaces on the blank line.
+    from = lineStart;
+    to = lineEnd;
+  } else {
+    const before = source.slice(lineStart, start);
+    const after = source.slice(end, lineEnd);
+    const openBrace = /\{[ \t]*$/.test(lineCodeBeforeComment(before));
+    if (openBrace) {
+      insertion = `\n${indent}  `;
+      caretInInsertion = insertion.length;
+      if (/^[ \t]*\}/.test(after)) insertion += `\n${indent}`;
+    }
+  }
+
+  insertEditorRange(from, to, insertion, caretInInsertion);
+}
+
 function adjustSelectionIndent(outdent = false) {
   const source = editor.value;
   const start = editor.selectionStart;
@@ -338,7 +416,7 @@ function adjustSelectionIndent(outdent = false) {
 
 function notifySceneFlowRefresh() {
   const frame = document.querySelector('#scene-flow-frame');
-  if (frame?.src && frame.contentWindow) frame.contentWindow.postMessage({ type: 'scene-flow:refresh' }, location.origin);
+  if (frame?.src && frame.contentWindow) frame.contentWindow.postMessage({ type: 'scene-flow:refresh', projectRoot: currentProjectRoot }, location.origin);
 }
 
 async function request(url, options) {
@@ -356,6 +434,7 @@ async function request(url, options) {
 async function refreshScenes(selected = '') {
   const { scenes } = await request('/api/scenes');
   sceneNames = scenes;
+  quickWorkspaceSymbolsPromise = null;
   if (!sceneList) return refreshFiles();
   sceneList.replaceChildren();
   const root = { folders: new Map(), files: [] };
@@ -556,8 +635,7 @@ function renderFileInfo() {
     error.textContent = info.error;
     stats.append(error);
   } else {
-    addStat('local', '同一ファイル', (info.localGotos || []).length);
-    addStat('external', '別ファイル', info.targets.length);
+    addStat('local', '遷移先', (info.localGotos || []).length + info.targets.length);
     addStat('variables', '変数', info.variables.length);
     if (info.reachable === false) addStat('warning', '未到達', '');
   }
@@ -2064,6 +2142,11 @@ function createNewSceneDraft() {
 }
 document.querySelector('#new-scene')?.addEventListener('click', createNewSceneDraft);
 editor.addEventListener('input', () => {
+  editorFindScope = null;
+  editorFindSelectionCandidate = null;
+  editorFindScopeButton?.setAttribute('aria-pressed', 'false');
+  editorFindScopeButton?.classList.remove('active');
+  refreshEditorFind();
   variableTooltipRequestId++;
   hideVariableTooltip();
   currentVariableAnalysis = null;
@@ -2094,6 +2177,7 @@ editor.addEventListener('drop', (event) => {
   insertFormattedExternalText(dropped);
 });
 editor.addEventListener('beforeinput', (event) => {
+  if (event.isComposing) return;
   if (event.inputType === 'insertText' && event.data === '}' && editor.selectionStart === editor.selectionEnd) {
     const caret = editor.selectionStart;
     const lineStart = editor.value.lastIndexOf('\n', caret - 1) + 1;
@@ -2108,9 +2192,7 @@ editor.addEventListener('beforeinput', (event) => {
   }
   if (event.inputType === 'insertLineBreak') {
     event.preventDefault();
-    const start = editor.selectionStart;
-    const end = editor.selectionEnd;
-    replaceWithFormattedSource(`${editor.value.slice(0, start)}\n${editor.value.slice(end)}`, start + 1);
+    insertEditorNewline();
     return;
   }
   if (!event.inputType?.startsWith('history')) rememberUndo();
@@ -2137,15 +2219,144 @@ document.addEventListener('click', (event) => {
 });
 document.addEventListener('keydown', (event) => {
   const formatKey = event.code === 'KeyF' || event.key?.toLowerCase() === 'f';
+  const commandKey = event.ctrlKey || event.metaKey;
+  const keyIs = (code, key) => event.code === code || event.key?.toLowerCase() === key.toLowerCase();
+  if (pendingEditorChord && ['Control', 'Shift', 'Alt', 'Meta'].includes(event.key)) return;
+  if (pendingEditorChord) {
+    clearTimeout(editorChordTimer);
+    pendingEditorChord = '';
+    if (commandKey && !event.altKey && !event.shiftKey && (keyIs('KeyC', 'c') || keyIs('KeyU', 'u'))) {
+      event.preventDefault();
+      toggleLineComments(event.key?.toLowerCase() === 'u' ? 'uncomment' : 'comment');
+      return;
+    }
+  }
+  if (commandKey && !event.altKey && !event.shiftKey && keyIs('KeyK', 'k')) {
+    event.preventDefault();
+    pendingEditorChord = 'ctrl-k';
+    editorChordTimer = setTimeout(() => { pendingEditorChord = ''; }, 900);
+    return;
+  }
+  if (event.key === 'F1' || (commandKey && event.shiftKey && !event.altKey && keyIs('KeyP', 'p'))) {
+    event.preventDefault();
+    event.stopPropagation();
+    openCommandPalette();
+    return;
+  }
+  if (commandKey && !event.shiftKey && !event.altKey && keyIs('KeyP', 'p')) {
+    event.preventDefault();
+    event.stopPropagation();
+    openQuickOpen();
+    return;
+  }
+  if (commandKey && !event.shiftKey && !event.altKey && keyIs('KeyO', 'o')) {
+    event.preventDefault();
+    event.stopPropagation();
+    chooseProjectFolder().catch(showError);
+    return;
+  }
+  if (commandKey && !event.shiftKey && !event.altKey && keyIs('KeyG', 'g')) {
+    event.preventDefault();
+    event.stopPropagation();
+    openQuickOpen('line');
+    return;
+  }
+  if (commandKey && !event.shiftKey && !event.altKey && event.key === ',') {
+    event.preventDefault();
+    event.stopPropagation();
+    showProjectSettings().catch(showError);
+    return;
+  }
+  if (commandKey && !event.shiftKey && !event.altKey && keyIs('KeyB', 'b')) {
+    event.preventDefault();
+    event.stopPropagation();
+    document.querySelector('.app-shell')?.classList.toggle('sidebar-hidden');
+    return;
+  }
+  if (commandKey && event.shiftKey && !event.altKey && keyIs('KeyE', 'e')) {
+    event.preventDefault();
+    event.stopPropagation();
+    activateExplorerView();
+    if (fileTree) {
+      fileTree.tabIndex = -1;
+      fileTree.focus({ preventScroll: true });
+    }
+    return;
+  }
+  if (commandKey && event.shiftKey && !event.altKey && keyIs('KeyO', 'o')) {
+    event.preventDefault();
+    event.stopPropagation();
+    openQuickOpen('symbol');
+    return;
+  }
+  if (commandKey && !event.shiftKey && !event.altKey && keyIs('KeyT', 't')) {
+    event.preventDefault();
+    event.stopPropagation();
+    openQuickOpen('workspace-symbol');
+    return;
+  }
+  if (commandKey && !event.shiftKey && !event.altKey && keyIs('Slash', '/')) {
+    event.preventDefault();
+    toggleLineComments();
+    return;
+  }
+  if (event.altKey && !commandKey && !event.ctrlKey && !event.shiftKey && keyIs('KeyZ', 'z')) {
+    event.preventDefault();
+    toggleWordWrap();
+    return;
+  }
+  if (event.key === 'F12' && !event.shiftKey && !event.altKey) {
+    event.preventDefault();
+    goToDefinition().catch(showError);
+    return;
+  }
+  if (commandKey && event.shiftKey && !event.altKey && keyIs('KeyM', 'm')) {
+    event.preventDefault();
+    focusProblems();
+    return;
+  }
+  if (!quickAccessPanel.hidden && event.key === 'Escape') {
+    event.preventDefault();
+    closeQuickAccess();
+    return;
+  }
+  if (quickAccessPanel.hidden && event.key === 'F8') {
+    event.preventDefault();
+    navigateDiagnostic(event.shiftKey ? -1 : 1);
+    return;
+  }
+  if (commandKey && !event.altKey && !event.shiftKey && formatKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    openEditorFind(false);
+    return;
+  }
+  if (commandKey && !event.altKey && !event.shiftKey && (event.code === 'KeyH' || event.key?.toLowerCase() === 'h')) {
+    event.preventDefault();
+    event.stopPropagation();
+    openEditorFind(true);
+    return;
+  }
+  if (!editorFindPanel.hidden && event.key === 'F3') {
+    event.preventDefault();
+    event.shiftKey ? navigateEditorFind(-1) : navigateEditorFind(1);
+    return;
+  }
   if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && formatKey) {
     event.preventDefault();
     event.stopPropagation();
     formatCode();
     return;
   }
+  if (event.key === 'Escape' && !editorFindPanel.hidden) {
+    event.preventDefault();
+    closeEditorFind();
+    return;
+  }
   if (event.key === 'Escape') hideVariableTooltip();
 }, true);
 editor.addEventListener('scroll', () => { lineNumbers.scrollTop = editor.scrollTop; if (highlight) { highlight.scrollTop = editor.scrollTop; highlight.scrollLeft = editor.scrollLeft; } updateMiniMap(); updateSuggestions(); });
+editor.addEventListener('scroll', () => { editorFindHighlights.scrollTop = editor.scrollTop; editorFindHighlights.scrollLeft = editor.scrollLeft; });
 const beginMiddleScroll = (event) => {
   if (event.button !== 1) return;
   event.preventDefault();
@@ -2208,6 +2419,7 @@ minimap?.addEventListener('wheel', (event) => {
   editor.scrollLeft += event.deltaX;
 }, { passive: false });
 editor.addEventListener('keydown', (event) => {
+  if (event.isComposing || event.key === 'Process') return;
   if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'z') {
     event.preventDefault();
     restoreEditorHistory(event.shiftKey ? redoStack : undoStack, event.shiftKey ? undoStack : redoStack);
@@ -2231,7 +2443,8 @@ editor.addEventListener('keydown', (event) => {
       return;
     }
   }
-  if (event.key === 'Enter' && suggestions.length) {
+  if (event.key === 'Enter' && suggestions.length
+    && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
     event.preventDefault();
     event.stopImmediatePropagation();
     acceptSuggestion();
@@ -2279,6 +2492,21 @@ editor.addEventListener('keydown', (event) => {
     saveAllScenes().catch(showError);
     return;
   }
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
+    && (event.code === 'BracketLeft' || event.code === 'BracketRight')) {
+    event.preventDefault();
+    adjustSelectionIndent(event.code === 'BracketLeft');
+    return;
+  }
+  if (event.key === 'Home' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+    event.preventDefault();
+    const caret = editor.selectionDirection === 'backward' ? editor.selectionStart : editor.selectionEnd;
+    const lineStart = editor.value.lastIndexOf('\n', caret - 1) + 1;
+    const firstText = lineStart + /^[ \t]*/.exec(editor.value.slice(lineStart))[0].length;
+    const destination = caret === firstText ? lineStart : firstText;
+    editor.setSelectionRange(destination, destination);
+    return;
+  }
   if (event.key === '}' && !event.ctrlKey && !event.metaKey && !event.altKey && editor.selectionStart === editor.selectionEnd) {
     const caret = editor.selectionStart;
     const lineStart = editor.value.lastIndexOf('\n', caret - 1) + 1;
@@ -2299,18 +2527,18 @@ editor.addEventListener('keydown', (event) => {
     const lineEnd = editor.value.indexOf('\n', lineStart) < 0 ? editor.value.length : editor.value.indexOf('\n', lineStart);
     const fullLine = editor.value.slice(lineStart, lineEnd);
     const trimmedLine = fullLine.trim();
-    const indent = fullLine.match(/^\s*/)?.[0] || '';
-    if (/^"(?:\\.|[^"\\])*"\s*\{$/.test(trimmedLine)) {
+    const atLineEnd = editor.selectionStart === editor.selectionEnd && editor.selectionStart === lineEnd;
+    if (atLineEnd && /^"(?:\\.|[^"\\])*"\s*\{$/.test(trimmedLine)) {
       event.preventDefault();
       event.stopImmediatePropagation();
       const caret = lineStart + fullLine.length;
       const opening = lineStart + fullLine.lastIndexOf('{');
       const hasClosingBrace = matchingClosingBrace(editor.value, opening) >= caret;
-      const insertion = hasClosingBrace ? '\n' : '\n\n}';
-      replaceWithFormattedSource(`${editor.value.slice(0, caret)}${insertion}${editor.value.slice(caret)}`, caret + 1);
+      if (hasClosingBrace) { insertEditorNewline(); return; }
+      insertEditorBlockAtLineEnd(caret, lineStart, true);
       return;
     }
-    if (trimmedLine === '}' && isChoiceOptionClose(editor.value, lineStart)) {
+    if (atLineEnd && trimmedLine === '}' && isChoiceOptionClose(editor.value, lineStart)) {
       event.preventDefault();
       event.stopImmediatePropagation();
       const caret = lineStart + fullLine.length;
@@ -2320,43 +2548,39 @@ editor.addEventListener('keydown', (event) => {
       return;
     }
     const ifLine = fullLine.match(/^(\s*if(?:\s+|(?=\())[^{}]+?)\s*$/);
-    if (ifLine && !trimmedLine.endsWith('{')) {
+    if (atLineEnd && ifLine && !trimmedLine.endsWith('{')) {
       event.preventDefault();
       event.stopImmediatePropagation();
       const caret = lineStart + fullLine.length;
-      const point = caret < editor.value.length && editor.value[caret] === '\n' ? caret + 1 : caret;
-      const insertion = ' {\n\n}\n';
-      replaceWithFormattedSource(`${editor.value.slice(0, point)}${insertion}${editor.value.slice(point)}`, point + 3);
+      insertEditorBlockAtLineEnd(caret, lineStart);
       return;
     }
-    if (/^(?:scene|fn|if|elif|else|for|while|character|struct)\b[\s\S]*\{\s*$/.test(trimmedLine)) {
+    if (atLineEnd && /^(?:scene|fn|if|elif|else|for|while|character|struct)\b[\s\S]*\{\s*$/.test(trimmedLine)) {
       event.preventDefault();
       event.stopImmediatePropagation();
       const caret = lineStart + fullLine.length;
       const opening = lineStart + fullLine.lastIndexOf('{');
       const hasClosingBrace = matchingClosingBrace(editor.value, opening) >= caret;
-      const insertion = hasClosingBrace ? '\n' : '\n\n}';
-      replaceWithFormattedSource(`${editor.value.slice(0, caret)}${insertion}${editor.value.slice(caret)}`, caret + 1);
+      if (hasClosingBrace) { insertEditorNewline(); return; }
+      insertEditorBlockAtLineEnd(caret, lineStart, true);
       return;
     }
     const structuralHeader = fullLine.match(/^\s*(?:scene\s+[A-Za-z_][A-Za-z0-9_-]*|fn\s+[A-Za-z_][A-Za-z0-9_-]*\s*\([^{}]*\)(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*(?:\s*\[\s*[A-Za-z_][A-Za-z0-9_]*\s*\])?)?|for\s+.+|while\s+.+|elif\s+.+|character\s+[A-Za-z_][A-Za-z0-9_-]*|struct\s+[A-Za-z_][A-Za-z0-9_-]*|else)\s*$/);
-    if (structuralHeader) {
+    if (atLineEnd && structuralHeader) {
       event.preventDefault();
       event.stopImmediatePropagation();
       const caret = lineStart + fullLine.length;
-      const point = caret < editor.value.length && editor.value[caret] === '\n' ? caret + 1 : caret;
-      const insertion = ' {\n\n}\n';
-      replaceWithFormattedSource(`${editor.value.slice(0, point)}${insertion}${editor.value.slice(point)}`, point + 3);
+      insertEditorBlockAtLineEnd(caret, lineStart);
       return;
     }
-    if (/^choice(?:\s+"(?:\\.|[^"\\])*")?\s*\{\s*$/.test(trimmedLine)) {
+    if (atLineEnd && /^choice(?:\s+"(?:\\.|[^"\\])*")?\s*\{\s*$/.test(trimmedLine)) {
       event.preventDefault();
       event.stopImmediatePropagation();
       const caret = lineStart + fullLine.length;
       const opening = lineStart + fullLine.lastIndexOf('{');
       const hasClosingBrace = matchingClosingBrace(editor.value, opening) >= caret;
       if (hasClosingBrace) {
-        replaceWithFormattedSource(`${editor.value.slice(0, caret)}\n${editor.value.slice(caret)}`, caret + 1);
+        insertEditorNewline();
       } else {
         const block = '\n"" {\n}\n}';
         replaceWithFormattedSource(`${editor.value.slice(0, caret)}${block}${editor.value.slice(caret)}`, caret + 2);
@@ -2364,7 +2588,7 @@ editor.addEventListener('keydown', (event) => {
       return;
     }
     const choiceLine = fullLine.match(/^(\s*choice(?:\s+"(?:\\.|[^"\\])*"\s*)?)$/);
-    if (choiceLine) {
+    if (atLineEnd && choiceLine) {
       event.preventDefault();
       event.stopImmediatePropagation();
       const caret = lineStart + fullLine.length;
@@ -2372,16 +2596,10 @@ editor.addEventListener('keydown', (event) => {
       replaceWithFormattedSource(`${editor.value.slice(0, caret)}${block}${editor.value.slice(caret)}`, caret + block.indexOf('""') + 1);
       return;
     }
-    // 改行後の字下げは構文成形器に任せ、カーソルも成形後の行頭へ戻す。
+    // 通常の改行は現在行だけ編集し、執筆途中の文書全体を書き換えない。
     event.preventDefault();
     event.stopImmediatePropagation();
-    const caret = editor.selectionStart;
-    replaceWithFormattedSource(`${editor.value.slice(0, caret)}\n${editor.value.slice(editor.selectionEnd)}`, caret + 1);
-    return;
-  }
-  if (event.key === 'Enter' && suggestions.length) {
-    event.preventDefault();
-    acceptSuggestion();
+    insertEditorNewline();
     return;
   }
   if (event.key === 'Tab' && (event.shiftKey || editor.selectionStart !== editor.selectionEnd)) {
@@ -2444,11 +2662,76 @@ async function loadWorkspace(keepScene = false) {
   else if (sceneNames.length) await openScene(sceneNames[0]);
 }
 
-async function postProjectOpen(folder, create) {
+async function pollProjectChanges() {
+  if (!workspaceReadyForPolling || !currentProjectRoot || document.hidden || projectChangesInFlight) return;
+  projectChangesInFlight = true;
+  const root = currentProjectRoot;
+  try {
+    const changes = await request(`/api/project/changes?since=${encodeURIComponent(projectChangesToken)}`, { cache: 'no-store' });
+    if (!workspaceReadyForPolling || root !== currentProjectRoot || changes.root !== root) return;
+    const hadToken = Boolean(projectChangesToken);
+    projectChangesToken = changes.token;
+    if (changes.reset && !hadToken) return;
+    const scenePrefix = `${scenarioDirectory}/`;
+    const added = changes.added || [], removed = changes.removed || [], changed = changes.changed || [];
+    const structural = changes.reset || [...added, ...removed].some((name) => !name.startsWith('.novel/'));
+    const sceneChanged = changes.reset || [...added, ...changed, ...removed].some((name) => name.startsWith(scenePrefix) && /\.tds$/i.test(name));
+    const currentPath = sceneName.value ? `${scenePrefix}${sceneName.value}` : '';
+    const currentChanged = changes.reset || (currentPath && [...added, ...changed, ...removed].includes(currentPath));
+    if (structural) await refreshScenes(sceneName.value);
+    if (!workspaceReadyForPolling || root !== currentProjectRoot) return;
+    if (sceneChanged) {
+      quickWorkspaceSymbolsPromise = null;
+      if (sceneFlowHost && !sceneFlowHost.hidden) notifySceneFlowRefresh();
+      if (sceneFlow && !sceneFlow.hidden) refreshSceneGraph().catch(() => {});
+      if (sceneName.value) scheduleValidation();
+    }
+    if (changes.reset || [...added, ...changed, ...removed].includes('.novel/variables.json')) {
+      setKnownVariableData(await request('/api/variables', { cache: 'no-store' }));
+      currentVariableAnalysis = null;
+    }
+    if (changes.reset || [...added, ...changed, ...removed].includes('.novel/assets.json')) await refreshCatalog();
+    if (!currentChanged || !sceneName.value) return;
+    if (isDirty) {
+      setStatus('編集中のファイルが外部で変更されました。未保存の内容は保持しています。', 'warning');
+      return;
+    }
+    const name = sceneName.value;
+    const previousRevision = sceneRevision;
+    let latest;
+    try { latest = await request(`/api/scene?name=${encodeURIComponent(name)}`, { cache: 'no-store' }); }
+    catch (error) {
+      if (removed.includes(currentPath)) setStatus('開いているファイルが外部で削除されました。表示中の内容は保持しています。', 'warning');
+      else throw error;
+      return;
+    }
+    if (root !== currentProjectRoot || sceneName.value !== name || isDirty || sceneRevision !== previousRevision || latest.revision === previousRevision) return;
+    const selectionStart = editor.selectionStart, selectionEnd = editor.selectionEnd, scrollTop = editor.scrollTop;
+    editor.value = latest.source;
+    sceneRevision = String(latest.revision || '');
+    clearEditorHistory();
+    editor.setSelectionRange(Math.min(selectionStart, editor.value.length), Math.min(selectionEnd, editor.value.length));
+    editor.scrollTop = scrollTop;
+    updateLineNumbers();
+    updateHighlight();
+    scheduleValidation();
+    showFileInfo(name).catch(() => {});
+    setStatus(`${name} の外部変更を反映しました`, 'ok');
+  } finally {
+    projectChangesInFlight = false;
+  }
+}
+
+setInterval(() => pollProjectChanges().catch((error) => console.warn('Project change check failed:', error)), 4000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) pollProjectChanges().catch((error) => console.warn('Project change check failed:', error));
+});
+
+async function postProjectOpen(folder) {
   const response = await fetch('/api/project/open', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path: folder, create }),
+    body: JSON.stringify({ path: folder, create: false }),
   });
   const data = await response.json();
   return { ok: response.ok, status: response.status, data };
@@ -2461,10 +2744,10 @@ async function confirmProjectSwitch() {
 }
 
 async function applyOpenedProject(info) {
+  closeDebugPlayer();
+  workspaceReadyForPolling = false;
+  projectChangesToken = '';
   currentProjectRoot = info.projectRoot || '';
-  pickerWelcome = false;
-  document.documentElement.classList.remove('project-selection-required');
-  hideProjectPicker();
   // A project switch is a hard workspace boundary: discard tabs, split-editor
   // state, diagnostics and the previous document before fetching the new tree.
   openTabs.length = 0;
@@ -2481,173 +2764,36 @@ async function applyOpenedProject(info) {
   if (activeProject.projectRoot !== currentProjectRoot) throw new Error('選択した作品フォルダーへの切り替えを確認できませんでした。もう一度お試しください。');
   window.dispatchEvent(new CustomEvent('novel-editor:workspace-ready', { detail: { projectRoot: currentProjectRoot, scenes: [...sceneNames] } }));
   setStatus(`${info.title || '作品'} を開きました`, 'ok');
+  workspaceReadyForPolling = true;
+  pollProjectChanges().catch((error) => console.warn('Project change check failed:', error));
 }
 
-async function openProjectAt(folder, create = false) {
+async function openProjectAt(folder) {
   if (!(await confirmProjectSwitch())) return;
-  const result = await postProjectOpen(folder, create);
-  if (result.status === 409 && result.data.needsCreate && result.data.isEmpty) {
-    const initialized = await postProjectOpen(result.data.projectRoot, true);
-    if (!initialized.ok) throw new Error(initialized.data.error || '選択した空フォルダーを作品として準備できませんでした。');
-    await applyOpenedProject(initialized.data);
-    return;
-  }
-  if (result.status === 409 && result.data.needsCreate) {
-    if (!await uiAsk(`${result.data.projectRoot}\nはまだ作品フォルダーではありません。ここに新規作品を作成しますか？`, '作成する')) return;
-    const created = await postProjectOpen(result.data.projectRoot, true);
-    if (!created.ok) throw new Error(created.data.error || '作品を作成できませんでした。');
-    await applyOpenedProject(created.data);
-    return;
-  }
+  const result = await postProjectOpen(folder);
   if (!result.ok) throw new Error(result.data.error || '作品フォルダーを開けませんでした。');
   await applyOpenedProject(result.data);
 }
 
-function hideProjectPicker() {
-  if (pickerWelcome) return;
-  document.querySelector('#project-picker')?.setAttribute('hidden', '');
+async function chooseProjectFolder() {
+  const folder = window.novelDesktop?.selectFolder
+    ? await window.novelDesktop.selectFolder()
+    : await uiPrompt('開くフォルダーのパス', currentProjectRoot || '');
+  if (!folder?.trim()) return;
+  await openProjectAt(folder.trim());
 }
 
-async function renderProjectPicker(target = pickerPath) {
-  const list = document.querySelector('#project-picker-list');
-  const pathInput = document.querySelector('#project-picker-path');
-  const recentBox = document.querySelector('#project-picker-recent');
-  const title = document.querySelector('#project-picker-title');
-  const openButton = document.querySelector('#project-picker-open');
-  const createButton = document.querySelector('#project-picker-create');
-  if (!list || !pathInput) return;
-  title.textContent = pickerMode === 'create' ? '新しい作品フォルダー' : '作品フォルダーを開く';
-  const browse = await request(`/api/browse?path=${encodeURIComponent(target || '')}`);
-  const project = await request('/api/project');
-  pickerPath = browse.path || '';
-  pathInput.value = pickerPath;
-  if (openButton) openButton.disabled = !pickerPath;
-  if (createButton) createButton.disabled = !pickerPath;
-  list.replaceChildren();
-  if (browse.parent !== null) {
-    const up = document.createElement('button');
-    up.type = 'button';
-    up.className = 'project-picker-item';
-    up.textContent = '… 上のフォルダー';
-    up.onclick = () => renderProjectPicker(browse.parent).catch(showError);
-    list.append(up);
-  }
-  for (const entry of browse.entries || []) {
-    const item = document.createElement('button');
-    item.type = 'button';
-    item.className = 'project-picker-item';
-    item.textContent = `${entry.shortcut ? '☆ ' : '📁 '}${entry.name}`;
-    item.title = entry.path;
-    item.onclick = () => renderProjectPicker(entry.path).catch(showError);
-    item.ondblclick = () => (pickerMode === 'create' ? renderProjectPicker(entry.path) : openProjectAt(entry.path, false)).catch(showError);
-    list.append(item);
-  }
-  recentBox.replaceChildren();
-  for (const folder of project.recent || []) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = folder;
-    button.title = folder;
-    button.onclick = () => openProjectAt(folder, false).catch(showError);
-    recentBox.append(button);
-  }
-}
-
-async function showProjectPicker(mode = 'open', welcome = false) {
-  pickerMode = mode;
-  pickerWelcome = welcome;
-  const overlay = document.querySelector('#project-picker');
-  if (!overlay) return;
-  if (window.novelDesktop?.selectFolder) {
-    return;
-  }
-  overlay.classList.toggle('project-picker-welcome', welcome);
-  const closeButton = document.querySelector('#project-picker-close');
-  if (closeButton) closeButton.hidden = welcome;
-  const copy = document.querySelector('.project-picker-copy');
-  if (copy) copy.textContent = welcome ? 'フォルダを選ぶか作成してください。' : 'ディスク上の任意の場所から作品フォルダーを開きます。空のフォルダーは新規作品として作成できます。';
-  overlay.hidden = false;
-  if (!currentProjectRoot) {
-    const project = await request('/api/project');
-    currentProjectRoot = project.projectRoot || '';
-  }
-  let target = currentProjectRoot || pickerPath;
-  if (welcome) {
-    const roots = await request('/api/browse');
-    target = roots.entries?.find((entry) => entry.name === 'ホーム')?.path || '';
-  }
-  await renderProjectPicker(target);
-  document.querySelector('#project-picker-path')?.focus();
-}
-
-async function chooseProjectFolder(mode = 'open') {
-  if (!window.novelDesktop?.selectFolder) return showProjectPicker(mode);
-  const folder = await window.novelDesktop.selectFolder();
-  if (!folder) return;
-  if (mode === 'create') {
-    const name = (await uiPrompt('新しい作品フォルダー名', 'gamesenario')).trim();
-    if (!name) return;
-    const target = `${folder.replace(/[\\/]+$/, '')}/${name}`;
-    const result = await postProjectOpen(target, true);
-    if (!result.ok) throw new Error(result.data.error || '作品を作成できませんでした。');
-    await applyOpenedProject(result.data);
-    return;
-  }
-  await openProjectAt(folder, false);
-}
-
-document.querySelector('#open-project')?.addEventListener('click', () => chooseProjectFolder('open').catch(showError));
-document.querySelector('#new-project')?.addEventListener('click', () => chooseProjectFolder('create').catch(showError));
-document.querySelector('#project-picker-close')?.addEventListener('click', hideProjectPicker);
-document.querySelector('#project-picker-up')?.addEventListener('click', async () => {
-  const browse = await request(`/api/browse?path=${encodeURIComponent(pickerPath || '')}`);
-  await renderProjectPicker(browse.parent ?? '');
-});
-document.querySelector('#project-picker-go')?.addEventListener('click', () => {
-  renderProjectPicker(document.querySelector('#project-picker-path')?.value || '').catch(showError);
-});
-document.querySelector('#project-picker-path')?.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') renderProjectPicker(event.currentTarget.value || '').catch(showError);
-});
-document.querySelector('#project-picker-path')?.addEventListener('input', (event) => {
-  const hasPath = Boolean(event.currentTarget.value.trim());
-  document.querySelector('#project-picker-open').disabled = !hasPath;
-  document.querySelector('#project-picker-create').disabled = !hasPath;
-});
-document.querySelector('#project-picker-open')?.addEventListener('click', () => {
-  const folder = document.querySelector('#project-picker-path')?.value || pickerPath;
-  openProjectAt(folder, false).catch(showError);
-});
-
-document.querySelector('#project-picker-create')?.addEventListener('click', async () => {
-  const parent = document.querySelector('#project-picker-path')?.value || pickerPath;
-  const name = (await uiPrompt('新しい作品フォルダー名', 'gamesenario')).trim();
-  if (!name) return;
-  const folder = `${parent.replace(/[\\/]+$/, '')}/${name}`;
-  openProjectAt(folder, true).catch(showError);
-});
-document.querySelector('#project-picker')?.addEventListener('click', (event) => {
-  if (event.target.id === 'project-picker') hideProjectPicker();
-});
-window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !document.querySelector('#project-picker')?.hidden) {
-    event.preventDefault();
-    if (pickerWelcome) return;
-    hideProjectPicker();
-  }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o' && !event.shiftKey && !document.documentElement.classList.contains('embedded-editor')) {
-    event.preventDefault();
-    chooseProjectFolder('open').catch(showError);
-  }
-});
+document.querySelector('#open-project')?.addEventListener('click', () => chooseProjectFolder().catch(showError));
 
 Promise.all([request('/api/project'), loadWorkspace(true)])
   .then(([project]) => {
     currentProjectRoot = project.projectRoot || '';
+    workspaceReadyForPolling = true;
+    pollProjectChanges().catch((error) => console.warn('Project change check failed:', error));
     setStatus('編集を開始できます', 'ok');
     const startupProjectRoot = currentProjectRoot;
     const restoreStartupScene = () => {
-      if (pickerWelcome || currentProjectRoot !== startupProjectRoot || sceneName.value || isDirty) return;
+      if (currentProjectRoot !== startupProjectRoot || sceneName.value || isDirty) return;
       const remembered = localStorage.getItem(lastSceneKey());
       const candidate = selectedScene || remembered;
       if (candidate && sceneNames.includes(candidate)) openScene(candidate).then(() => { if (!selectedSymbol) return; const match = new RegExp(`^\\s*(?:global\\s+)?(?:int|string|str|bool|struct|const)\\s+${selectedSymbol}\\b`, 'm').exec(editor.value); if (match) revealEditorRange(match.index, match.index + selectedSymbol.length); }).catch(showError);
@@ -2657,9 +2803,6 @@ Promise.all([request('/api/project'), loadWorkspace(true)])
     setTimeout(restoreStartupScene, 800);
   })
   .catch(showError);
-if (pickerWelcome) {
-  showProjectPicker('open', true).catch(showError);
-}
 updateLineNumbers();
 updateHighlight();
 const selectedScene = new URLSearchParams(location.search).get('scene');
@@ -2714,8 +2857,11 @@ function updateHighlight() {
     const lineNumber = index + 1;
     const item = byLine.get(lineNumber);
     const classes = ['hl-line'];
+    if (sceneName.value === debugExecutingFile && lineNumber === debugExecutingLine) classes.push('hl-running');
     if (item) classes.push(`hl-${item.severity}`);
     if (unreachableLines.has(lineNumber)) classes.push('hl-unreachable');
+    if (sceneName.value === flowStartPreviewFile && lineNumber === flowStartPreviewLine) classes.push('hl-start');
+    if (sceneName.value === flowLinePicker?.file && lineNumber === flowPickHoverLine) classes.push('hl-pick-hover');
     return `<span class="${classes.join(' ')}">${highlightSource(line) || ' '}</span>`;
   }).join('\n');
   updateMiniMap();
@@ -3012,6 +3158,312 @@ function selectCurrentLine() {
   editor.focus();
 }
 
+const editorFindPanel = document.querySelector('#editor-find');
+const editorFindHighlights = document.querySelector('#editor-find-highlights');
+const editorFindInput = document.querySelector('#editor-find-input');
+const editorReplaceInput = document.querySelector('#editor-replace-input');
+const editorReplaceRow = document.querySelector('#editor-replace-row');
+const editorFindCount = document.querySelector('#editor-find-count');
+const editorFindScopeButton = document.querySelector('#editor-find-scope');
+const MAX_EDITOR_FIND_HIGHLIGHTS = 1000;
+const editorFindOptions = new Set();
+const editorFindMatches = [];
+const editorFindHistory = [];
+let editorFindActiveIndex = -1;
+let editorFindScope = null;
+let editorFindSelectionCandidate = null;
+let editorFindHistoryIndex = -1;
+let editorFindHistoryDraft = '';
+
+function syncEditorFindFieldWidths() {
+  if (!editorFindPanel || editorFindPanel.hidden) return;
+  const width = editorFindInput.getBoundingClientRect().width;
+  if (width <= 0) return;
+  editorReplaceInput.style.flex = `0 0 ${width}px`;
+}
+
+if (typeof ResizeObserver !== 'undefined') new ResizeObserver(syncEditorFindFieldWidths).observe(editorFindPanel);
+window.addEventListener('resize', syncEditorFindFieldWidths);
+
+function editorFindPattern(query) {
+  let source = editorFindOptions.has('regex') ? query : query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (editorFindOptions.has('word')) source = `\\b(?:${source})\\b`;
+  return new RegExp(source, editorFindOptions.has('case') ? 'gu' : 'giu');
+}
+
+function refreshEditorFind() {
+  if (!editorFindPanel || editorFindPanel.hidden) return;
+  editorFindMatches.length = 0;
+  editorFindPanel.classList.remove('has-error');
+  const query = editorFindInput.value;
+  if (!query) {
+    editorFindActiveIndex = -1;
+    updateEditorFindCount();
+    updateEditorFindHighlights();
+    return;
+  }
+  let matcher;
+  try { matcher = editorFindPattern(query); }
+  catch (error) {
+    editorFindActiveIndex = -1;
+    editorFindPanel.classList.add('has-error');
+    updateEditorFindCount();
+    editorFindCount.textContent = `正規表現エラー: ${error.message}`;
+    updateEditorFindHighlights();
+    return;
+  }
+  const source = editor.value;
+  const rangeStart = editorFindScope ? Math.max(0, Math.min(source.length, editorFindScope.start)) : 0;
+  const rangeEnd = editorFindScope ? Math.max(rangeStart, Math.min(source.length, editorFindScope.end)) : source.length;
+  const rangeText = source.slice(rangeStart, rangeEnd);
+  let match;
+  while ((match = matcher.exec(rangeText)) !== null) {
+    if (match[0].length) {
+      editorFindMatches.push({
+        start: rangeStart + match.index,
+        end: rangeStart + match.index + match[0].length,
+        text: match[0],
+        captures: Array.from(match).slice(1),
+        groups: match.groups || {},
+      });
+    } else {
+      matcher.lastIndex += 1;
+    }
+  }
+  const selectedStart = editor.selectionStart;
+  const selectedEnd = editor.selectionEnd;
+  const selectedMatch = editorFindMatches.findIndex((item) => item.start === selectedStart && item.end === selectedEnd);
+  editorFindActiveIndex = selectedMatch >= 0 ? selectedMatch : editorFindMatches.findIndex((item) => item.start >= selectedStart);
+  if (editorFindActiveIndex < 0 && editorFindMatches.length) editorFindActiveIndex = 0;
+  updateEditorFindCount();
+  updateEditorFindHighlights();
+  if (editorFindActiveIndex >= 0) selectEditorFindMatch(editorFindActiveIndex);
+}
+
+function updateEditorFindCount() {
+  const total = editorFindMatches.length;
+  editorFindCount.textContent = total && editorFindActiveIndex >= 0
+    ? `${editorFindActiveIndex + 1} / ${total} 件`
+    : '結果はありません。';
+  document.querySelector('#editor-replace-one').disabled = editorFindActiveIndex < 0;
+  document.querySelector('#editor-replace-all').disabled = total === 0;
+}
+
+function updateEditorFindHighlights() {
+  if (!editorFindHighlights) return;
+  if (editorFindPanel.hidden || !editorFindMatches.length) {
+    editorFindHighlights.hidden = true;
+    editorFindHighlights.replaceChildren();
+    return;
+  }
+  const nodes = [];
+  let cursor = 0;
+  // Keep the transparent overlay DOM bounded for broad queries in large scripts.
+  const visibleMatches = editorFindMatches.slice(0, MAX_EDITOR_FIND_HIGHLIGHTS).map((match, index) => ({ match, index }));
+  if (editorFindActiveIndex >= MAX_EDITOR_FIND_HIGHLIGHTS) visibleMatches.push({ match: editorFindMatches[editorFindActiveIndex], index: editorFindActiveIndex });
+  visibleMatches.sort((left, right) => left.match.start - right.match.start);
+  visibleMatches.forEach(({ match, index }) => {
+    if (match.start > cursor) nodes.push(document.createTextNode(editor.value.slice(cursor, match.start)));
+    const mark = document.createElement('mark');
+    mark.className = index === editorFindActiveIndex ? 'editor-find-hit editor-find-hit-active' : 'editor-find-hit';
+    mark.textContent = editor.value.slice(match.start, match.end);
+    nodes.push(mark);
+    cursor = match.end;
+  });
+  if (cursor < editor.value.length) nodes.push(document.createTextNode(editor.value.slice(cursor)));
+  editorFindHighlights.replaceChildren(...nodes);
+  editorFindHighlights.hidden = false;
+}
+
+function selectEditorFindMatch(index) {
+  if (!editorFindMatches.length) return;
+  editorFindActiveIndex = (index + editorFindMatches.length) % editorFindMatches.length;
+  const match = editorFindMatches[editorFindActiveIndex];
+  editor.setSelectionRange(match.start, match.end);
+  const line = editor.value.slice(0, match.start).split('\n').length;
+  const lineHeight = editorLineHeight();
+  updateEditorFindCount();
+  updateEditorFindHighlights();
+  revealEditorFindMatch(match, line, lineHeight);
+}
+
+function revealEditorFindMatch(match, line, lineHeight) {
+  const style = getComputedStyle(editor);
+  const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+  const paddingBottom = Number.parseFloat(style.paddingBottom) || 0;
+  const targetTop = paddingTop + (line - 1) * lineHeight;
+  const visibleTop = editor.scrollTop + paddingTop;
+  const visibleBottom = editor.scrollTop + editor.clientHeight - paddingBottom;
+  if (targetTop < visibleTop) {
+    editor.scrollTop = Math.max(0, targetTop - paddingTop - lineHeight * 2);
+  } else if (targetTop + lineHeight > visibleBottom) {
+    editor.scrollTop = Math.max(0, targetTop + lineHeight - editor.clientHeight + paddingBottom);
+  }
+
+  const activeMark = editorFindHighlights.querySelector('.editor-find-hit-active');
+  if (activeMark) {
+    const markRect = activeMark.getBoundingClientRect();
+    const editorRect = editor.getBoundingClientRect();
+    const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+    const paddingRight = Number.parseFloat(style.paddingRight) || 0;
+    const contentLeft = editorRect.left + editor.clientLeft + paddingLeft;
+    const contentRight = editorRect.right - editor.clientLeft - paddingRight;
+    if (markRect.left < contentLeft) editor.scrollLeft = Math.max(0, editor.scrollLeft - (contentLeft - markRect.left));
+    else if (markRect.right > contentRight) editor.scrollLeft += markRect.right - contentRight;
+  }
+
+  if (highlight) { highlight.scrollTop = editor.scrollTop; highlight.scrollLeft = editor.scrollLeft; }
+  editorFindHighlights.scrollTop = editor.scrollTop;
+  editorFindHighlights.scrollLeft = editor.scrollLeft;
+  lineNumbers.scrollTop = editor.scrollTop;
+}
+
+function navigateEditorFind(direction) {
+  if (!editorFindInput.value) { editorFindInput.focus(); return; }
+  if (!editorFindMatches.length) { refreshEditorFind(); return; }
+  selectEditorFindMatch((editorFindActiveIndex < 0 ? 0 : editorFindActiveIndex) + direction);
+}
+
+function rememberEditorFindQuery() {
+  const query = editorFindInput.value;
+  if (!query) return;
+  const previous = editorFindHistory.at(-1);
+  if (query !== previous) editorFindHistory.push(query);
+  if (editorFindHistory.length > 50) editorFindHistory.shift();
+  editorFindHistoryIndex = -1;
+}
+
+function browseEditorFindHistory(direction) {
+  if (!editorFindHistory.length) return;
+  if (direction < 0) {
+    if (editorFindHistoryIndex < 0) {
+      editorFindHistoryDraft = editorFindInput.value;
+      editorFindHistoryIndex = editorFindHistory.length;
+    }
+    editorFindHistoryIndex = Math.max(0, editorFindHistoryIndex - 1);
+    editorFindInput.value = editorFindHistory[editorFindHistoryIndex];
+  } else if (editorFindHistoryIndex >= 0) {
+    editorFindHistoryIndex += 1;
+    editorFindInput.value = editorFindHistoryIndex >= editorFindHistory.length
+      ? (editorFindHistoryIndex = -1, editorFindHistoryDraft)
+      : editorFindHistory[editorFindHistoryIndex];
+  } else return;
+  editorFindInput.setSelectionRange(editorFindInput.value.length, editorFindInput.value.length);
+  refreshEditorFind();
+}
+
+function openEditorFind(showReplace) {
+  const selectionStart = editor.selectionStart;
+  const selectionEnd = editor.selectionEnd;
+  const selectedText = editor.value.slice(selectionStart, selectionEnd);
+  editorFindSelectionCandidate = selectionEnd > selectionStart ? { start: selectionStart, end: selectionEnd } : null;
+  if (selectedText && !/[\r\n]/.test(selectedText)) editorFindInput.value = selectedText;
+  editorFindPanel.hidden = false;
+  editorReplaceRow.hidden = false;
+  syncEditorFindFieldWidths();
+  document.querySelector('#editor-find-replace-toggle').setAttribute('aria-expanded', 'true');
+  document.querySelector('#editor-find-replace-toggle').setAttribute('aria-label', '置換欄を隠す');
+  refreshEditorFind();
+  const activeInput = showReplace ? editorReplaceInput : editorFindInput;
+  activeInput.focus();
+  if (activeInput === editorFindInput) editorFindInput.select();
+}
+
+function closeEditorFind() {
+  rememberEditorFindQuery();
+  editorFindPanel.hidden = true;
+  updateEditorFindHighlights();
+  editor.focus({ preventScroll: true });
+}
+
+function expandEditorFindReplacement() {
+  const show = editorReplaceRow.hidden;
+  editorReplaceRow.hidden = !show;
+  const toggle = document.querySelector('#editor-find-replace-toggle');
+  toggle.setAttribute('aria-expanded', String(show));
+  toggle.setAttribute('aria-label', show ? '置換欄を隠す' : '置換欄を表示');
+  if (show) editorReplaceInput.focus();
+}
+
+function editorFindReplacement(match) {
+  const template = editorReplaceInput.value;
+  const before = editor.value.slice(0, match.start);
+  const after = editor.value.slice(match.end);
+  return template.replace(/\$(\$|&|`|'|\d{1,2}|<[^>]+>)/g, (token, key) => {
+    if (key === '$') return '$';
+    if (key === '&') return match.text;
+    if (key === '`') return before;
+    if (key === "'") return after;
+    if (key.startsWith('<')) return match.groups[key.slice(1, -1)] ?? token;
+    const capture = Number(key);
+    return match.captures[capture - 1] ?? token;
+  });
+}
+
+function replaceEditorFindMatch(all = false) {
+  if (!editorFindMatches.length || editorFindActiveIndex < 0) return;
+  const selectedMatches = all ? [...editorFindMatches] : [editorFindMatches[editorFindActiveIndex]];
+  rememberUndo();
+  let source = editor.value;
+  for (const match of selectedMatches.reverse()) {
+    source = `${source.slice(0, match.start)}${editorFindReplacement(match)}${source.slice(match.end)}`;
+  }
+  editorFindScope = null;
+  editorFindSelectionCandidate = null;
+  editor.value = source;
+  editor.setSelectionRange(selectedMatches.at(-1)?.start ?? 0, selectedMatches.at(-1)?.start ?? 0);
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
+  editorReplaceInput.focus();
+}
+
+editorFindInput.addEventListener('input', () => {
+  editorFindHistoryIndex = -1;
+  refreshEditorFind();
+});
+editorFindInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    event.shiftKey ? navigateEditorFind(-1) : navigateEditorFind(1);
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    browseEditorFindHistory(-1);
+  } else if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    browseEditorFindHistory(1);
+  }
+});
+editorReplaceInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && event.ctrlKey) {
+    event.preventDefault();
+    replaceEditorFindMatch(true);
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    replaceEditorFindMatch(false);
+  }
+});
+document.querySelector('#editor-find-replace-toggle').addEventListener('click', expandEditorFindReplacement);
+document.querySelector('#editor-find-close').addEventListener('click', closeEditorFind);
+document.querySelector('#editor-find-previous').addEventListener('click', () => navigateEditorFind(-1));
+document.querySelector('#editor-find-next').addEventListener('click', () => navigateEditorFind(1));
+document.querySelector('#editor-replace-one').addEventListener('click', () => replaceEditorFindMatch(false));
+document.querySelector('#editor-replace-all').addEventListener('click', () => replaceEditorFindMatch(true));
+editorFindScopeButton.addEventListener('click', () => {
+  if (editorFindScope) editorFindScope = null;
+  else if (editorFindSelectionCandidate) editorFindScope = { ...editorFindSelectionCandidate };
+  else return;
+  editorFindScopeButton.setAttribute('aria-pressed', String(Boolean(editorFindScope)));
+  editorFindScopeButton.classList.toggle('active', Boolean(editorFindScope));
+  refreshEditorFind();
+});
+document.querySelectorAll('[data-editor-find-option]').forEach((button) => button.addEventListener('click', () => {
+  const option = button.dataset.editorFindOption;
+  if (editorFindOptions.has(option)) editorFindOptions.delete(option);
+  else editorFindOptions.add(option);
+  button.setAttribute('aria-pressed', String(editorFindOptions.has(option)));
+  button.classList.toggle('active', editorFindOptions.has(option));
+  refreshEditorFind();
+}));
+
 const searchView = document.querySelector('.search-view');
 const searchInput = document.querySelector('#project-search-input');
 const searchSummary = document.querySelector('#search-summary');
@@ -3021,6 +3473,181 @@ let searchTimer = null;
 let searchSequence = 0;
 const sceneFlowHost = document.querySelector('#scene-flow-host');
 const sceneFlowFrame = document.querySelector('#scene-flow-frame');
+let debugPlayerSession = '';
+let debugPlayerPanel = null;
+let debugLocationSequence = 0;
+function closeDebugPlayer() {
+  debugPlayerSession = '';
+  debugLocationSequence++;
+  debugExecutingFile = '';
+  debugExecutingLine = 0;
+  debugPlayerPanel?.remove();
+  debugPlayerPanel = null;
+  editor.classList.remove('debug-running');
+  updateHighlight();
+}
+function stopDebugPlayer(returnToFlow = false) {
+  closeDebugPlayer();
+  if (returnToFlow) showSceneFlowView();
+}
+async function showFlowStartPreview(file, line, focus = false) {
+  const target = scenarioRelativePath(file) || file;
+  if (!sceneNames.includes(target) || !Number.isSafeInteger(line) || line < 1) return;
+  if (focus) {
+    hideSceneFlowView();
+    activateExplorerView();
+  }
+  if (sceneName.value !== target) await openScene(target);
+  flowStartPreviewFile = target;
+  flowStartPreviewLine = line;
+  updateHighlight();
+  if (focus) {
+    const lines = editor.value.split('\n');
+    const start = lines.slice(0, line - 1).reduce((count, text) => count + text.length + 1, 0);
+    const end = Math.min(editor.value.length, start + (lines[line - 1]?.length || 0));
+    revealEditorRange(start, end, line);
+    setStatus(`${target}:${line} 開始行`, 'ok');
+  }
+}
+function flowPickerLineAt(element, event) {
+  const rect = element.getBoundingClientRect();
+  const padding = Number.parseFloat(getComputedStyle(element).paddingTop) || 0;
+  return Math.floor((event.clientY - rect.top + element.scrollTop - padding) / editorLineHeight()) + 1;
+}
+function finishFlowLinePicker(line = null) {
+  const picker = flowLinePicker;
+  if (!picker) return;
+  flowLinePicker = null;
+  flowPickHoverLine = 0;
+  updateHighlight();
+  showSceneFlowView();
+  if (line !== null) sceneFlowFrame.contentWindow?.postMessage({ type: 'scene-flow:line-picked', file: picker.file, scene: picker.scene, line }, location.origin);
+}
+async function beginFlowLinePicker(message) {
+  if (!sceneNames.includes(message.file) || typeof message.scene !== 'string' || !Number.isSafeInteger(message.startLine)
+    || !Number.isSafeInteger(message.endLine) || message.startLine < 1 || message.endLine < message.startLine) throw Error('開始sceneを選び直してください');
+  hideSceneFlowView();
+  activateExplorerView();
+  await openScene(message.file);
+  flowLinePicker = { file: message.file, scene: message.scene, startLine: message.startLine, endLine: message.endLine };
+  flowPickHoverLine = message.startLine;
+  const lines = editor.value.split('\n');
+  const start = lines.slice(0, message.startLine - 1).reduce((count, text) => count + text.length + 1, 0);
+  revealEditorRange(start, start, message.startLine);
+  updateHighlight();
+}
+function acceptFlowLinePicker(line) {
+  const picker = flowLinePicker;
+  if (!picker || !Number.isSafeInteger(line) || line < picker.startLine || line > picker.endLine) return false;
+  finishFlowLinePicker(line);
+  return true;
+}
+editor.addEventListener('mousemove', (event) => {
+  if (!flowLinePicker) return;
+  const line = flowPickerLineAt(editor, event);
+  const next = line >= flowLinePicker.startLine && line <= flowLinePicker.endLine ? line : 0;
+  if (next !== flowPickHoverLine) { flowPickHoverLine = next; updateHighlight(); }
+});
+editor.addEventListener('mouseleave', () => {
+  if (!flowLinePicker || flowPickHoverLine === 0) return;
+  flowPickHoverLine = 0; updateHighlight();
+});
+editor.addEventListener('click', (event) => {
+  if (!flowLinePicker) return;
+  if (acceptFlowLinePicker(flowPickerLineAt(editor, event))) event.stopImmediatePropagation();
+}, true);
+lineNumbers.addEventListener('mousemove', (event) => {
+  if (!flowLinePicker) return;
+  const line = flowPickerLineAt(lineNumbers, event);
+  const next = line >= flowLinePicker.startLine && line <= flowLinePicker.endLine ? line : 0;
+  if (next !== flowPickHoverLine) { flowPickHoverLine = next; updateHighlight(); }
+});
+lineNumbers.addEventListener('mouseleave', () => {
+  if (!flowLinePicker || flowPickHoverLine === 0) return;
+  flowPickHoverLine = 0; updateHighlight();
+});
+lineNumbers.addEventListener('click', (event) => {
+  if (flowLinePicker) acceptFlowLinePicker(flowPickerLineAt(lineNumbers, event));
+});
+async function showDebugLocation(file, line) {
+  const sequence = ++debugLocationSequence;
+  const target = scenarioRelativePath(file) || file;
+  if (!sceneNames.includes(target)) return;
+  if (sceneName.value !== target) await openScene(target);
+  if (sequence !== debugLocationSequence || !debugPlayerSession) return;
+  debugExecutingFile = target;
+  debugExecutingLine = Math.max(1, Number(line) || 1);
+  const location = debugPlayerPanel?.querySelector('[data-debug-location]');
+  if (location) location.textContent = `${target}:${debugExecutingLine}`;
+  updateHighlight();
+  const lines = editor.value.split('\n');
+  const start = lines.slice(0, debugExecutingLine - 1).reduce((count, text) => count + text.length + 1, 0);
+  const end = Math.min(editor.value.length, start + (lines[debugExecutingLine - 1]?.length || 0));
+  editor.classList.add('debug-running');
+  editor.setSelectionRange(start, end);
+  editor.scrollTop = Math.max(0, (debugExecutingLine - 4) * editorLineHeight());
+  highlight.scrollTop = editor.scrollTop;
+  lineNumbers.scrollTop = editor.scrollTop;
+  setStatus(`${target}:${debugExecutingLine} を実行中`, 'ok');
+}
+async function startSceneFlowDebug(message) {
+  if (!sceneNames.includes(message.file)) throw Error('開始ノードが現在の作品にありません');
+  if (message.line !== null && (!Number.isSafeInteger(message.line) || message.line < 1)) throw Error('開始行が不正です');
+  await saveAllScenes();
+  closeDebugPlayer();
+  hideSceneFlowView();
+  activateExplorerView();
+  const panel = document.createElement('section'); panel.className = 'debug-player-panel'; panel.setAttribute('aria-label', 'テスト再生');
+  const bar = document.createElement('div'); bar.className = 'debug-player-bar';
+  const heading = document.createElement('div'); heading.className = 'debug-player-heading';
+  const title = document.createElement('strong'); title.textContent = 'テスト再生';
+  const debugLocationLabel = document.createElement('span'); debugLocationLabel.dataset.debugLocation = ''; debugLocationLabel.textContent = `${message.file}:${message.line ?? message.scene}`;
+  heading.append(title, debugLocationLabel);
+  const actions = document.createElement('div'); actions.className = 'debug-player-actions';
+  const flow = document.createElement('button'); flow.type = 'button'; flow.textContent = 'Scene Flow'; flow.title = '停止してScene Flowへ戻る'; flow.addEventListener('click', () => stopDebugPlayer(true));
+  const stop = document.createElement('button'); stop.type = 'button'; stop.textContent = '停止'; stop.title = 'テスト再生を停止'; stop.addEventListener('click', () => stopDebugPlayer(false));
+  actions.append(flow, stop);
+  const frame = document.createElement('iframe'); frame.title = 'テスト再生機';
+  bar.append(heading, actions); panel.append(bar, frame); document.body.append(panel);
+  debugPlayerPanel = panel;
+  debugPlayerSession = crypto.randomUUID();
+  const url = new URL('/player.html', location.origin);
+  url.searchParams.set('source', message.file);
+  url.searchParams.set('scene', message.scene);
+  if (message.line !== null) url.searchParams.set('line', String(message.line));
+  url.searchParams.set('variables', JSON.stringify(message.variables || {}));
+  url.searchParams.set('debug', debugPlayerSession);
+  frame.src = url.href;
+}
+window.addEventListener('message', (event) => {
+  if (event.origin !== location.origin || !debugPlayerPanel || event.source !== debugPlayerPanel.querySelector('iframe')?.contentWindow) return;
+  const message = event.data;
+  if (!message || message.session !== debugPlayerSession) return;
+  if (message.type === 'novel-debug:location') {
+    const playerWindow = event.source;
+    showDebugLocation(message.file, message.line).catch(showError).finally(() => {
+      playerWindow.postMessage({ type: 'novel-debug:ack', session: message.session, step: message.step }, location.origin);
+    });
+  }
+  else if (message.type === 'novel-debug:done') {
+    setStatus('テスト再生が完了しました', 'ok');
+    const location = debugPlayerPanel?.querySelector('[data-debug-location]');
+    if (location) location.textContent = '完了';
+    debugExecutingFile = ''; debugExecutingLine = 0; editor.classList.remove('debug-running'); updateHighlight();
+  }
+  else if (message.type === 'novel-debug:error') {
+    setStatus(`テスト再生: ${message.error}`, 'error');
+    const location = debugPlayerPanel?.querySelector('[data-debug-location]');
+    if (location) location.textContent = 'エラー';
+    debugExecutingFile = ''; debugExecutingLine = 0; editor.classList.remove('debug-running'); updateHighlight();
+  }
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && debugPlayerPanel) {
+    event.preventDefault();
+    stopDebugPlayer(false);
+  }
+});
 function hideSceneFlowView() {
   if (sceneFlowHost) sceneFlowHost.hidden = true;
 }
@@ -3055,6 +3682,14 @@ window.addEventListener('message', (event) => {
       const match = new RegExp(`^\\s*(?:global\\s+)?(?:int|string|str|bool|struct|const)\\s+${symbol}\\b`, 'm').exec(editor.value);
       if (match) revealEditorRange(match.index, match.index + message.symbol.length);
     }).catch(showError);
+  } else if (message.type === 'scene-flow:debug-play') {
+    startSceneFlowDebug(message).catch(showError);
+  } else if (message.type === 'scene-flow:start-line-preview') {
+    showFlowStartPreview(message.file, message.line).catch(showError);
+  } else if (message.type === 'scene-flow:start-line-focus') {
+    showFlowStartPreview(message.file, message.line, true).catch(showError);
+  } else if (message.type === 'scene-flow:pick-line') {
+    beginFlowLinePicker(message).catch(showError);
   } else if (message.type === 'scene-flow:help') {
     hideSceneFlowView();
     showLanguageGuide();
@@ -3136,8 +3771,7 @@ async function runProjectSearch() {
 function scheduleProjectSearch() { clearTimeout(searchTimer); searchTimer = setTimeout(() => runProjectSearch().catch(showError), 180); }
 
 const menuActions = {
-  'new-project': () => showProjectPicker('create').catch(showError),
-  'open-project': () => chooseProjectFolder('open').catch(showError),
+  'open-project': () => chooseProjectFolder().catch(showError),
   'project-settings': () => showProjectSettings().catch(showError),
   save: () => saveAllFromMenu().catch(showError),
   undo: () => restoreEditorHistory(undoStack, redoStack),
@@ -3158,6 +3792,389 @@ const menuActions = {
   globals: () => showLanguageGuide(),
   about: () => showWorkbenchMessage('.tds シナリオエディタ', 'Title / asset / senario 構成のローカル開発環境です。')
 };
+function toggleWordWrap() {
+  const disabled = document.querySelector('.app-shell')?.classList.toggle('word-wrap-off') || false;
+  try { localStorage.setItem('novel-editor.word-wrap.v1', disabled ? 'off' : 'on'); } catch { /* preference persistence is optional */ }
+  return disabled;
+}
+
+try {
+  if (localStorage.getItem('novel-editor.word-wrap.v1') === 'off') document.querySelector('.app-shell')?.classList.add('word-wrap-off');
+} catch { /* local storage may be disabled */ }
+
+function toggleLineComments(force = '') {
+  const source = editor.value;
+  const selectedStart = editor.selectionStart;
+  const selectedEnd = editor.selectionEnd;
+  const blockStart = source.lastIndexOf('\n', Math.max(0, selectedStart - 1)) + 1;
+  let finalPosition = selectedEnd;
+  if (finalPosition > selectedStart && source[finalPosition - 1] === '\n') finalPosition -= 1;
+  const newline = source.indexOf('\n', finalPosition);
+  const blockEnd = newline < 0 ? source.length : newline;
+  const originalLines = source.slice(blockStart, blockEnd).split('\n');
+  const meaningful = originalLines.filter((line) => line.trim());
+  if (!meaningful.length) return false;
+  const removeComments = force === 'uncomment' || (force !== 'comment' && meaningful.every((line) => /^\s*(?:#|\/\/)/.test(line)));
+  const changedLines = originalLines.map((line, index) => {
+    if (!line.trim()) return line;
+    if (removeComments) return line.replace(/^(\s*)(?:#|\/\/)[ \t]?/, '$1');
+    if (/^\s*(?:#|\/\/)/.test(line)) return line;
+    const indentation = line.match(/^\s*/)[0];
+    return `${indentation}# ${line.slice(indentation.length)}`;
+  });
+  const replacement = changedLines.join('\n');
+  if (replacement === source.slice(blockStart, blockEnd)) return false;
+  rememberUndo();
+  editor.value = `${source.slice(0, blockStart)}${replacement}${source.slice(blockEnd)}`;
+  if (selectedStart === selectedEnd) {
+    let lineColumn = selectedStart - blockStart;
+    if (removeComments) {
+      const marker = /^(\s*)(?:#|\/\/)[ \t]?/.exec(originalLines[0]);
+      if (marker && lineColumn >= marker[0].length) lineColumn -= marker[0].length;
+    } else {
+      const indentationLength = originalLines[0].match(/^\s*/)[0].length;
+      if (lineColumn >= indentationLength) lineColumn += 2;
+    }
+    const caret = Math.min(blockStart + changedLines[0].length, blockStart + lineColumn);
+    editor.setSelectionRange(caret, caret);
+  } else editor.setSelectionRange(blockStart, blockStart + replacement.length);
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
+  editor.focus();
+  return true;
+}
+
+async function goToDefinition() {
+  const caret = editor.selectionStart;
+  const lineStart = editor.value.lastIndexOf('\n', Math.max(0, caret - 1)) + 1;
+  const lineText = editor.value.slice(lineStart, editor.value.indexOf('\n', lineStart) < 0 ? editor.value.length : editor.value.indexOf('\n', lineStart));
+  const token = [...lineText.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)].find((match) => caret - lineStart >= match.index && caret - lineStart <= match.index + match[0].length);
+  if (!token) { setStatus('定義へ移動する名前の上にカーソルを置いてください', 'warning'); return false; }
+  const name = token[0];
+  const localSymbol = extractQuickSymbols(editor.value, sceneName.value).find((item) => item.label === name);
+  if (localSymbol && ['function', 'scene', 'struct', 'character'].includes(localSymbol.kind)) {
+    await jumpToLocation(localSymbol, name);
+    return true;
+  }
+  if (!knownVariableDataLoaded) {
+    try { setKnownVariableData(await request('/api/variables')); } catch { /* local fallback below */ }
+  }
+  const variable = knownVariables.find((item) => item.name === name);
+  const definition = variable?.definitions?.find((item) => item.file && item.line) || variable?.definitions?.find((item) => item.line);
+  if (!definition) { setStatus(`'${name}' の定義位置が見つかりません`, 'warning'); return false; }
+  await jumpToLocation(definition, name);
+  return true;
+}
+
+function focusProblems() {
+  activateExplorerView();
+  const shell = document.querySelector('.app-shell');
+  if (shell?.classList.contains('sidebar-hidden')) shell.classList.remove('sidebar-hidden');
+  const problems = document.querySelector('.validation-card');
+  if (!problems) return;
+  problems.scrollIntoView({ block: 'nearest' });
+  result.tabIndex = -1;
+  result.focus({ preventScroll: true });
+}
+
+let diagnosticCursor = -1;
+function navigateDiagnostic(direction) {
+  const entries = diagnostics.filter(diagnosticForCurrentFile).sort((left, right) => Number(left.line || left.location?.line || 0) - Number(right.line || right.location?.line || 0));
+  if (!entries.length) { setStatus('移動できる問題はありません', 'warning'); return false; }
+  diagnosticCursor = (diagnosticCursor + direction + entries.length) % entries.length;
+  const entry = entries[diagnosticCursor];
+  jumpToLocation(entry.location || { file: sceneName.value, line: entry.line || 1 }).catch(showError);
+  return true;
+}
+
+const quickAccessPanel = document.querySelector('#quick-access');
+const quickAccessInput = document.querySelector('#quick-access-input');
+const quickAccessResults = document.querySelector('#quick-access-results');
+const quickAccessPrefix = document.querySelector('#quick-access-prefix');
+const quickAccessHint = document.querySelector('#quick-access-hint');
+const QUICK_RECENT_COMMANDS_KEY = 'novel-editor.recent-commands.v1';
+const QUICK_RECENT_FILES_KEY = 'novel-editor.recent-files.v1';
+const commandEntries = [
+  ['open-project', 'フォルダーを開く', 'ファイル'],
+  ['project-settings', '作品設定を開く', '設定'], ['save', 'すべて保存', 'ファイル', 'Ctrl+S'],
+  ['undo', '元に戻す', '編集', 'Ctrl+Z'], ['redo', 'やり直す', '編集', 'Ctrl+Y'],
+  ['format', '現在のシーンを整形', '編集', 'Ctrl+Shift+F'], ['format-project', '全シーンを整形', '編集'],
+  ['select-all', 'すべて選択', '選択', 'Ctrl+A'], ['select-line', '現在の行を選択', '選択'],
+  ['toggle-sidebar', 'サイドバーを切り替え', '表示', 'Ctrl+B'], ['toggle-minimap', 'ミニマップを切り替え', '表示'],
+  ['scene-flow', 'シーンフローを開く', '表示'], ['compile', 'プロジェクトを検証・コンパイル', '実行', 'Ctrl+Enter'],
+  ['play', '現在のシーンを再生', '実行'], ['native-build', 'ネイティブ版をビルド', '実行'],
+  ['native-test', 'ネイティブ版の全テスト', '実行'], ['language', '構文ガイドを開く', 'ヘルプ'],
+].map(([id, label, category, key]) => ({ id, label, category, key, run: menuActions[id] }));
+commandEntries.find((item) => item.id === 'open-project').key = 'Ctrl+O';
+commandEntries.push(
+  { id: 'new-scene', label: '新しいシーンを作成', category: 'ファイル', key: 'Ctrl+N', run: createNewSceneDraft },
+  { id: 'quick-open', label: 'シーンファイルを素早く開く', category: '移動', key: 'Ctrl+P', run: () => openQuickOpen() },
+  { id: 'go-to-line', label: '行番号へ移動', category: '移動', key: 'Ctrl+G', run: () => openQuickOpen('line') },
+  { id: 'find-in-file', label: '編集中ファイルを検索', category: '検索', key: 'Ctrl+F', run: () => openEditorFind(false) },
+  { id: 'replace-in-file', label: '編集中ファイルを置換', category: '検索', key: 'Ctrl+H', run: () => openEditorFind(true) },
+  { id: 'search-workspace', label: 'ワークスペースを検索', category: '検索', run: activateSearchView },
+  { id: 'show-explorer', label: 'エクスプローラーを表示', category: '表示', key: 'Ctrl+Shift+E', run: activateExplorerView },
+  { id: 'toggle-word-wrap', label: '行の折り返しを切り替え', category: '表示', key: 'Alt+Z', run: toggleWordWrap },
+  { id: 'toggle-line-comments', label: '行コメントを切り替え', category: '編集', key: 'Ctrl+/', run: toggleLineComments },
+  { id: 'open-settings', label: '作品・表示設定を開く', category: '設定', key: 'Ctrl+,', run: () => showProjectSettings().catch(showError) },
+  { id: 'go-to-definition', label: 'カーソル位置の定義へ移動', category: '移動', key: 'F12', run: goToDefinition },
+  { id: 'show-problems', label: '問題一覧へ移動', category: '表示', key: 'Ctrl+Shift+M', run: focusProblems },
+);
+
+let quickAccessMode = 'command';
+let quickAccessBaseMode = 'command';
+let quickAccessItems = [];
+let quickAccessActiveIndex = 0;
+let quickAccessRequestId = 0;
+let quickAccessDebounce = null;
+let recentQuickCommands = readQuickAccessHistory(QUICK_RECENT_COMMANDS_KEY);
+let recentQuickFiles = readQuickAccessHistory(QUICK_RECENT_FILES_KEY);
+
+function readQuickAccessHistory(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(value) ? value.filter((item) => typeof item === 'string').slice(0, 20) : [];
+  } catch { return []; }
+}
+
+function storeQuickAccessHistory(key, values) {
+  try { localStorage.setItem(key, JSON.stringify(values.slice(0, 20))); } catch { /* storage is optional */ }
+}
+
+function fuzzyScore(query, text) {
+  const needle = query.toLocaleLowerCase();
+  const haystack = String(text).toLocaleLowerCase();
+  if (!needle) return 0;
+  let cursor = 0;
+  let score = 0;
+  let previous = -2;
+  for (const character of needle) {
+    const index = haystack.indexOf(character, cursor);
+    if (index < 0) return null;
+    score += index - cursor + (index === previous + 1 ? -2 : 0) + (index === 0 || /[\s/_.-]/.test(haystack[index - 1]) ? -1 : 0);
+    previous = index;
+    cursor = index + 1;
+  }
+  return score + haystack.length * 0.001;
+}
+
+function makeQuickAccessItem({ label, detail = '', key = '', run, id = '' }) {
+  return { label: String(label), detail: String(detail), key, run, id };
+}
+
+function paintQuickAccessItems(items, emptyMessage = '一致する項目はありません') {
+  quickAccessItems = items;
+  quickAccessActiveIndex = Math.min(quickAccessActiveIndex, Math.max(0, items.length - 1));
+  quickAccessResults.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'quick-access-empty';
+    empty.textContent = emptyMessage;
+    quickAccessResults.append(empty);
+    return;
+  }
+  items.forEach((item, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'quick-access-item';
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', String(index === quickAccessActiveIndex));
+    const main = document.createElement('span'); main.className = 'quick-access-item-main';
+    const label = document.createElement('span'); label.className = 'quick-access-item-label'; label.textContent = item.label;
+    main.append(label);
+    if (item.detail) { const detail = document.createElement('span'); detail.className = 'quick-access-item-description'; detail.textContent = item.detail; main.append(detail); }
+    button.append(main);
+    if (item.key) { const shortcut = document.createElement('kbd'); shortcut.textContent = item.key; button.append(shortcut); }
+    button.addEventListener('mouseenter', () => { quickAccessActiveIndex = index; updateQuickAccessSelection(); });
+    button.addEventListener('click', () => runQuickAccessItem(index));
+    quickAccessResults.append(button);
+  });
+  quickAccessResults.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+}
+
+function updateQuickAccessSelection() {
+  quickAccessResults.querySelectorAll('.quick-access-item').forEach((item, index) => item.setAttribute('aria-selected', String(index === quickAccessActiveIndex)));
+  quickAccessResults.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+}
+
+function filteredItems(items, query, searchText = (item) => `${item.label} ${item.detail}`) {
+  return items.map((item, index) => ({ item, index, score: fuzzyScore(query, searchText(item)) }))
+    .filter((entry) => entry.score !== null)
+    .sort((left, right) => left.score - right.score || left.index - right.index)
+    .slice(0, 80)
+    .map((entry) => entry.item);
+}
+
+function extractQuickSymbols(source, file) {
+  const symbols = [];
+  const patterns = [
+    ['scene', /^\s*scene\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/],
+    ['function', /^\s*fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/],
+    ['struct', /^\s*struct\s+([A-Za-z_][A-Za-z0-9_]*)\b/],
+    ['character', /^\s*character\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/],
+    ['variable', /^\s*(?:global\s+)?(?:const\s+)?(?:int|str|string|bool|float|dict(?:\[(?:int|str)\])?|[A-Z][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|$)/],
+  ];
+  String(source).split(/\r?\n/).forEach((line, index) => {
+    for (const [kind, pattern] of patterns) {
+      const match = pattern.exec(line);
+      if (!match) continue;
+      symbols.push({ label: match[1], kind, file, line: index + 1, column: line.indexOf(match[1]) + 1 });
+      break;
+    }
+  });
+  return symbols;
+}
+
+async function workspaceQuickSymbols() {
+  if (!sceneNames.length) {
+    const data = await request('/api/scenes');
+    sceneNames = data.scenes || [];
+  }
+  if (!quickWorkspaceSymbolsPromise) {
+    quickWorkspaceSymbolsPromise = Promise.all(sceneNames.map(async (file) => {
+      try {
+        const data = await request(`/api/scene?name=${encodeURIComponent(file)}`);
+        return extractQuickSymbols(data.source, file);
+      } catch { return []; }
+    })).then((values) => values.flat());
+  }
+  const symbols = await quickWorkspaceSymbolsPromise;
+  const current = sceneName.value;
+  return [...symbols.filter((item) => item.file !== current), ...extractQuickSymbols(editor.value, current)];
+}
+
+function quickAccessModeForValue(value) {
+  if (value.startsWith('>')) return 'command';
+  if (value.startsWith(':')) return 'line';
+  if (value.startsWith('@')) return 'symbol';
+  if (value.startsWith('#')) return 'workspace-symbol';
+  return quickAccessBaseMode === 'command' ? 'command' : 'file';
+}
+
+async function renderQuickAccess() {
+  const requestId = ++quickAccessRequestId;
+  const value = quickAccessInput.value;
+  const mode = quickAccessModeForValue(value);
+  const query = mode === 'command' ? value.replace(/^>\s*/, '')
+    : mode === 'line' ? value.replace(/^:/, '')
+      : mode === 'symbol' || mode === 'workspace-symbol' ? value.slice(1) : value;
+  quickAccessMode = mode;
+  const modeLabels = {
+    command: ['⌘', '> コマンドを検索'], file: ['⌕', 'ファイルを検索'],
+    line: ['＃', ': 行番号へ移動'], symbol: ['@', '@ ファイル内シンボル'],
+    'workspace-symbol': ['#', '# ワークスペースシンボル'],
+  };
+  const [prefix, placeholder] = modeLabels[mode];
+  quickAccessPrefix.textContent = prefix;
+  quickAccessInput.placeholder = placeholder;
+  quickAccessHint.textContent = mode === 'command' ? '↑↓ 選択　Enter 実行　Esc 閉じる' : '↑↓ 選択　Enter 開く　Esc 閉じる';
+
+  if (mode === 'command') {
+    const recent = recentQuickCommands.map((id) => commandEntries.find((item) => item.id === id)).filter(Boolean);
+    const base = query ? commandEntries : [...recent, ...commandEntries.filter((item) => !recentQuickCommands.includes(item.id))];
+    paintQuickAccessItems(filteredItems(base, query, (item) => `${item.label} ${item.category} ${item.key || ''}`)
+      .map((item) => makeQuickAccessItem({ ...item, detail: item.category })));
+    return;
+  }
+  if (mode === 'file') {
+    const recent = recentQuickFiles.map((file) => sceneNames.includes(file) ? file : null).filter(Boolean);
+    const files = query ? sceneNames : [...recent, ...sceneNames.filter((file) => !recent.includes(file))];
+    paintQuickAccessItems(filteredItems(files.map((file) => makeQuickAccessItem({ label: fileLabel(file), detail: file })), query, (item) => `${item.label} ${item.detail}`)
+      .map((item) => ({ ...item, run: () => {
+        recentQuickFiles = [item.detail, ...recentQuickFiles.filter((file) => file !== item.detail)].slice(0, 20);
+        storeQuickAccessHistory(QUICK_RECENT_FILES_KEY, recentQuickFiles);
+        return openScene(item.detail).then(() => {
+          const active = document.activeElement;
+          if (quickAccessPanel.hidden && (active === document.body || active?.closest('#quick-access'))) editor.focus();
+        });
+      } })));
+    return;
+  }
+  if (mode === 'line') {
+    const match = /^(\d+)(?::(\d+))?$/.exec(query);
+    const line = Number(match?.[1]);
+    const column = Number(match?.[2] || 1);
+    paintQuickAccessItems(match && line > 0 ? [makeQuickAccessItem({
+      label: `行 ${line}${match[2] ? `、列 ${column}` : ''} へ移動`, detail: sceneName.value || '現在のファイル', key: 'Enter',
+      run: () => jumpToLocation({ file: sceneName.value, line, column }),
+    })] : [], '行番号または 行:列 を入力してください');
+    return;
+  }
+  if (mode === 'symbol') {
+    const symbols = extractQuickSymbols(editor.value, sceneName.value);
+    paintQuickAccessItems(filteredItems(symbols, query, (item) => `${item.label} ${item.kind}`)
+      .map((item) => makeQuickAccessItem({ label: item.label, detail: `${item.kind} · ${item.file}:${item.line}`, run: () => jumpToLocation(item, item.label) })));
+    return;
+  }
+  quickAccessResults.replaceChildren(Object.assign(document.createElement('div'), { className: 'quick-access-empty', textContent: 'ワークスペースのシンボルを検索中…' }));
+  try {
+    const symbols = await workspaceQuickSymbols();
+    if (requestId !== quickAccessRequestId || quickAccessPanel.hidden) return;
+    paintQuickAccessItems(filteredItems(symbols, query, (item) => `${item.label} ${item.kind} ${item.file}`)
+      .map((item) => makeQuickAccessItem({ label: item.label, detail: `${item.kind} · ${item.file}:${item.line}`, run: () => jumpToLocation(item, item.label) })));
+  } catch (error) {
+    if (requestId !== quickAccessRequestId) return;
+    paintQuickAccessItems([], error.message || 'シンボルを読み込めませんでした');
+  }
+}
+
+function openQuickAccess(mode = 'command', seed = null) {
+  closeMenus();
+  quickAccessBaseMode = mode;
+  quickAccessMode = mode;
+  quickAccessPanel.hidden = false;
+  quickAccessInput.value = seed ?? ({ command: '>', line: ':', symbol: '@', 'workspace-symbol': '#' }[mode] || '');
+  quickAccessActiveIndex = 0;
+  renderQuickAccess();
+  quickAccessInput.focus();
+  quickAccessInput.setSelectionRange(quickAccessInput.value.length, quickAccessInput.value.length);
+}
+
+function openCommandPalette() { openQuickAccess('command', '>'); }
+function openQuickOpen(mode = 'file') { openQuickAccess(mode, ({ line: ':', symbol: '@', 'workspace-symbol': '#' }[mode] || '')); }
+
+function closeQuickAccess(restoreEditorFocus = true) {
+  quickAccessRequestId++;
+  quickAccessPanel.hidden = true;
+  if (restoreEditorFocus) editor.focus({ preventScroll: true });
+}
+
+function runQuickAccessItem(index = quickAccessActiveIndex) {
+  const item = quickAccessItems[index];
+  if (!item) return;
+  if (item.id) {
+    recentQuickCommands = [item.id, ...recentQuickCommands.filter((id) => id !== item.id)].slice(0, 20);
+    storeQuickAccessHistory(QUICK_RECENT_COMMANDS_KEY, recentQuickCommands);
+  }
+  closeQuickAccess(false);
+  try { Promise.resolve(item.run?.()).catch(showError); } catch (error) { showError(error); }
+}
+
+function quickAccessFuzzyFilter() {
+  quickAccessActiveIndex = 0;
+  clearTimeout(quickAccessDebounce);
+  renderQuickAccess().catch(showError);
+}
+
+quickAccessInput.addEventListener('input', quickAccessFuzzyFilter);
+quickAccessInput.addEventListener('keydown', async (event) => {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    if (!quickAccessItems.length) return;
+    event.preventDefault();
+    const delta = event.key === 'ArrowDown' ? 1 : -1;
+    quickAccessActiveIndex = (quickAccessActiveIndex + delta + quickAccessItems.length) % quickAccessItems.length;
+    updateQuickAccessSelection();
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    clearTimeout(quickAccessDebounce);
+    await renderQuickAccess();
+    if (!quickAccessPanel.hidden) runQuickAccessItem();
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    closeQuickAccess();
+  }
+});
+quickAccessPanel.querySelector('.quick-access-backdrop').addEventListener('click', () => closeQuickAccess());
+
 document.querySelectorAll('[data-menu-action]').forEach((button) => button.addEventListener('click', () => {
   const action = menuActions[button.dataset.menuAction];
   closeMenus();
