@@ -1,0 +1,13 @@
+include common.tds
+
+scene main {
+  bg museum_night
+  show rei.normal left
+  show akechi.normal right
+  say narrator "怜が示したのは、美術品の来歴を隠して売買する仲介人の存在だった。明智は、証言だけで相手を追い詰めないよう釘を刺す。"
+  say akechi "資料を独立に確認する。違法な侵入や脅しで手に入れた証拠は、真実を守る力を弱める。"
+  say rei "分かってる。だから今夜は盗まない。保管庫の外で、記録が表に出るのを待つ。"
+  say narrator "彼女は仮面を机に置き、初めて自分の足で明智の前に立った。"
+  say rei "あなたが見ているのは怪盗じゃなく、私の選択。そう思ってもいい？"
+  goto "routes/rei_04_promise.tds"
+}

@@ -3476,7 +3476,28 @@ const sceneFlowFrame = document.querySelector('#scene-flow-frame');
 let debugPlayerSession = '';
 let debugPlayerPanel = null;
 let debugLocationSequence = 0;
+let debugPlayerFitHandler = null;
+let debugPlayerScreen = { width: 1280, height: 720 };
+function fitDebugPlayerPanel() {
+  if (!debugPlayerPanel) return;
+  const aspect = debugPlayerScreen.width / debugPlayerScreen.height;
+  const narrow = innerWidth <= 900;
+  const widthLimit = Math.min(innerWidth * (narrow ? 0.78 : 0.48), narrow ? 560 : 720, innerWidth - 24);
+  const width = Math.max(160, Math.min(widthLimit, Math.max(160, innerHeight - 60) * aspect));
+  debugPlayerPanel.style.width = `${width}px`;
+  debugPlayerPanel.style.height = `${36 + (width - 2) / aspect}px`;
+  const viewport = debugPlayerPanel.querySelector('.debug-player-viewport');
+  const frame = viewport?.querySelector('iframe');
+  if (!viewport || !frame) return;
+  frame.style.width = `${debugPlayerScreen.width}px`;
+  frame.style.height = `${debugPlayerScreen.height}px`;
+  const bounds = viewport.getBoundingClientRect();
+  const scale = Math.min(bounds.width / debugPlayerScreen.width, bounds.height / debugPlayerScreen.height);
+  frame.style.transform = `scale(${scale})`;
+}
 function closeDebugPlayer() {
+  if (debugPlayerFitHandler) window.removeEventListener('resize', debugPlayerFitHandler);
+  debugPlayerFitHandler = null;
   debugPlayerSession = '';
   debugLocationSequence++;
   debugExecutingFile = '';
@@ -3607,9 +3628,15 @@ async function startSceneFlowDebug(message) {
   const flow = document.createElement('button'); flow.type = 'button'; flow.textContent = 'Scene Flow'; flow.title = '停止してScene Flowへ戻る'; flow.addEventListener('click', () => stopDebugPlayer(true));
   const stop = document.createElement('button'); stop.type = 'button'; stop.textContent = '停止'; stop.title = 'テスト再生を停止'; stop.addEventListener('click', () => stopDebugPlayer(false));
   actions.append(flow, stop);
+  const viewport = document.createElement('div'); viewport.className = 'debug-player-viewport';
   const frame = document.createElement('iframe'); frame.title = 'テスト再生機';
-  bar.append(heading, actions); panel.append(bar, frame); document.body.append(panel);
+  viewport.append(frame);
+  bar.append(heading, actions); panel.append(bar, viewport); document.body.append(panel);
   debugPlayerPanel = panel;
+  debugPlayerScreen = { width: 1280, height: 720 };
+  debugPlayerFitHandler = fitDebugPlayerPanel;
+  window.addEventListener('resize', debugPlayerFitHandler);
+  fitDebugPlayerPanel();
   debugPlayerSession = crypto.randomUUID();
   const url = new URL('/player.html', location.origin);
   url.searchParams.set('source', message.file);
@@ -3623,7 +3650,15 @@ window.addEventListener('message', (event) => {
   if (event.origin !== location.origin || !debugPlayerPanel || event.source !== debugPlayerPanel.querySelector('iframe')?.contentWindow) return;
   const message = event.data;
   if (!message || message.session !== debugPlayerSession) return;
-  if (message.type === 'novel-debug:location') {
+  if (message.type === 'novel-debug:screen') {
+    const width = Number(message.width), height = Number(message.height);
+    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+      debugPlayerScreen = { width, height };
+      debugPlayerPanel.style.setProperty('--debug-player-aspect', `${width} / ${height}`);
+      fitDebugPlayerPanel();
+    }
+  }
+  else if (message.type === 'novel-debug:location') {
     const playerWindow = event.source;
     showDebugLocation(message.file, message.line).catch(showError).finally(() => {
       playerWindow.postMessage({ type: 'novel-debug:ack', session: message.session, step: message.step }, location.origin);

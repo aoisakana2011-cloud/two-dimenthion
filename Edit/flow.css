@@ -64,6 +64,12 @@
 .flow-svg[data-has-selection="true"] .flow-edge.include-edge:not(.is-related) { opacity:.52; }
 .flow-svg[data-has-selection="true"] .flow-edge:not(.is-related):hover { opacity:1; stroke-width:2; }
 .flow-svg[data-has-selection="true"] .flow-edge.is-related { opacity:1; }
+.flow-node.related rect { fill:#2b3035; stroke:#687681; stroke-width:1.15; }
+.flow-node.related text { fill:#e0e3e5; }
+@supports (fill:color-mix(in srgb,#000 50%,#fff)) {
+  .flow-node.related rect { fill:color-mix(in srgb,#2b3035 var(--relation-percent),#252526); stroke:color-mix(in srgb,#687681 var(--relation-percent),#4a4a4a); }
+  .flow-node.related text { fill:color-mix(in srgb,#e0e3e5 var(--relation-percent),#d4d4d4); }
+}
 .legend { gap:9px; }
 .transition-row { margin:4px 0 7px; padding-left:6px; border-left:1px solid #3a3d40; }
 .transition-context { display:block; color:#c7c7c7; font:10px/1.5 Consolas,monospace; overflow-wrap:anywhere; }
@@ -101,7 +107,15 @@
 .flow-test-subtitle span,#flow-test-vars:empty,#flow-test-message { color:#858585; font-size:10px; }
 .flow-test-variable span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:10px Consolas,monospace; }
 .flow-test-domain { overflow:hidden; color:#8d9ca5; font:10px Consolas,monospace; text-overflow:ellipsis; white-space:nowrap; }
-#flow-test-vars { display:grid; gap:2px; color:#858585; font-size:10px; }
+#flow-test-vars { display:grid; gap:9px; color:#858585; font-size:10px; }
+#flow-test-vars .flow-test-group { display:grid; gap:5px; }
+.flow-test-group-heading { padding-bottom:4px; border-bottom:1px solid var(--line); color:#9aabb7; font-size:10px; }
+.flow-test-confirmed-group { gap:3px!important; }
+.flow-test-confirmed-list { color:#c2cbd1; font:10px/1.7 Consolas,monospace; }
+.flow-test-confirmed { display:block; overflow-wrap:anywhere; padding:0; border:0; }
+.flow-test-confirmed-name { color:#aab7bf; }
+.flow-test-confirmed-value { color:#d0d7dc; }
+.flow-test-uncertain-group .flow-test-variable { margin:0 0 4px; }
 #flow-test-run { width:100%; height:27px; margin-top:10px; border:1px solid #356487; border-radius:2px; color:#e6f2fa; background:#1c5b89; cursor:pointer; font-size:11px; }
 #flow-test-run:hover:not(:disabled) { background:#236b9e; }
 #flow-test-run:disabled { opacity:.48; cursor:default; }

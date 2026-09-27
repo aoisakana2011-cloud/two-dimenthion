@@ -133,7 +133,7 @@ async function main() {
     const edgeSummary = await page.locator('.flow-edge').evaluateAll((paths) => ({
       count: paths.length,
       unique: new Set(paths.map((path) => path.getAttribute('d'))).size,
-      uniformRoutes: paths.every((path) => !path.getAttribute('d').includes('C')),
+      uniformRoutes: paths.every((path) => !/[QC]/.test(path.getAttribute('d'))),
       returns: paths.filter((path) => path.classList.contains('return-edge')).length,
       includes: paths.filter((path) => path.classList.contains('include-edge'))
         .every((path) => path.getAttribute('marker-end') === 'url(#include-arrow)'),
@@ -143,7 +143,7 @@ async function main() {
       legend: document.querySelector('.legend')?.textContent || '',
     }));
     assert.equal(edgeSummary.unique, edgeSummary.count, 'parallel edges and loops use distinct SVG paths');
-    assert.ok(edgeSummary.uniformRoutes, 'goto and include connections use one orthogonal route grammar');
+    assert.ok(edgeSummary.uniformRoutes, 'goto and include connections use only straight orthogonal segments');
     assert.ok(edgeSummary.returns >= 2, 'cycles use the dedicated return lanes');
     assert.ok(edgeSummary.includes, 'include edges use their own arrow marker when enabled');
     assert.ok(edgeSummary.includeOpacity >= 0.8, 'include dependencies remain clearly visible');
@@ -151,6 +151,7 @@ async function main() {
     assert.equal(edgeSummary.includeColor, 'rgb(194, 160, 102)', 'include lines use the theme-matched brass accent');
     assert.match(edgeSummary.legend, /シーン遷移/);
     assert.match(edgeSummary.legend, /include/);
+    assert.equal(await page.locator('.flow-crossings').count(), 0, 'crossings remain ordinary plus-shaped intersections without gap overlays');
     const chosenMetrics = await page.locator('.flow-svg').evaluate((svg) => ({
       columns: Number(svg.dataset.layoutColumns), score: Number(svg.dataset.layoutScore), metrics: JSON.parse(svg.dataset.layoutMetrics),
     }));
@@ -288,17 +289,17 @@ async function main() {
         y: folder.getBoundingClientRect().y,
         width: folder.getBoundingClientRect().width,
         height: folder.getBoundingClientRect().height,
+        layoutWidth: folder.getBBox().width,
       }));
       return { positions, screenFolders, metrics: JSON.parse(element.dataset.layoutMetrics) };
     });
     const titleFolders = [...titleLayout.screenFolders].sort((a, b) => a.y - b.y);
-    assert.deepEqual(titleFolders.map(folder => folder.id), ['(root)', 'chapters', 'endings']);
-    assert.ok(titleFolders.every(folder => folder.width >= 165), 'Title scene labels stay readable');
-    for (let index = 1; index < titleFolders.length; index++) {
-      const previous = titleFolders[index - 1], current = titleFolders[index];
-      assert.ok(current.y - previous.y - previous.height >= 32,
-        `Title folders have comfortable vertical spacing: ${JSON.stringify(titleFolders)}`);
-    }
+    const expectedTitleFolders = ['(root)', ...new Set(graphPayload.nodes
+      .map(node => node.id.includes('/') ? node.id.split('/')[0] : null).filter(Boolean))].sort();
+    assert.deepEqual(titleFolders.map(folder => folder.id).sort(), expectedTitleFolders,
+      'the current Title graph displays each top-level folder exactly once');
+    assert.ok(titleFolders.every(folder => folder.layoutWidth >= 165), 'Title scene labels have enough layout width');
+    await assertTopLevelFoldersDoNotOverlap(page, 'current Title folders stay geometrically separate');
     assert.ok(titleLayout.metrics.geometryAfter.verticalDistance <= titleLayout.metrics.geometryBefore.verticalDistance,
       'Title scene connections are no less aligned after geometric placement');
     assert.ok(titleLayout.metrics.geometryAfter.obstructions <= titleLayout.metrics.geometryBefore.obstructions,
@@ -329,6 +330,30 @@ async function main() {
       return hits;
     });
     assert.equal(titleEdgeHits.length, 0, `Title edge paths avoid unrelated folder boxes: ${JSON.stringify(titleEdgeHits)}`);
+    const sharedSegmentHits = await page.locator('.flow-svg').evaluate((element) => {
+      const paths = [...element.querySelectorAll('.flow-edge')].map((path) => {
+        const points = [...path.getAttribute('d').matchAll(/[ML](-?[\d.]+) (-?[\d.]+)/g)]
+          .map((match) => ({ x: Number(match[1]), y: Number(match[2]) }));
+        return points.slice(1).map((point, index) => ({ from: points[index], to: point, edge: `${path.dataset.from} -> ${path.dataset.to}` }));
+      });
+      const overlaps = [];
+      for (let i = 0; i < paths.length; i++) for (let j = i + 1; j < paths.length; j++) {
+        for (const a of paths[i]) for (const b of paths[j]) {
+          const horizontalA = a.from.y === a.to.y, horizontalB = b.from.y === b.to.y;
+          let length = 0;
+          if (horizontalA && horizontalB && a.from.y === b.from.y) {
+            length = Math.min(Math.max(a.from.x, a.to.x), Math.max(b.from.x, b.to.x))
+              - Math.max(Math.min(a.from.x, a.to.x), Math.min(b.from.x, b.to.x));
+          } else if (!horizontalA && !horizontalB && a.from.x === b.from.x) {
+            length = Math.min(Math.max(a.from.y, a.to.y), Math.max(b.from.y, b.to.y))
+              - Math.max(Math.min(a.from.y, a.to.y), Math.min(b.from.y, b.to.y));
+          }
+          if (length > 1) overlaps.push({ first: a.edge, second: b.edge, length, firstSegment: a, secondSegment: b });
+        }
+      }
+      return overlaps;
+    });
+    assert.deepEqual(sharedSegmentHits, [], `Title transitions do not draw on top of each other: ${JSON.stringify(sharedSegmentHits)}`);
     await assertTopLevelFoldersDoNotOverlap(page, 'Title geometric placement keeps its real folders separate');
     if (process.env.NOVEL_FLOW_SCREENSHOT) await page.screenshot({ path: process.env.NOVEL_FLOW_SCREENSHOT, fullPage: false });
     assert.deepEqual(errors, [], 'Scene Flow renders without browser errors');

@@ -3,66 +3,60 @@
   "screen": {
     "width": 1280,
     "height": 720,
-    "backdrop": { "bottomFog": {
-      "enabled": false,
-      "color": [
-      246,
-      239,
-      221,
-      255
-      ],
-      "height": 300
-    } }
+    "backdrop": {
+      "bottomFog": {
+        "enabled": false,
+        "color": [12, 15, 18, 255],
+        "height": 220
+      }
+    }
   },
   "dialog": {
-    "image": "dialogue-panel-washi-v2.png",
-    "x": 100,
-    "y": 510,
-    "width": 1080,
-    "height": 184,
+    "image": "",
+    "x": 72,
+    "y": 500,
+    "width": 1136,
+    "height": 190,
     "message": {
-      "x": 190,
-      "y": 63,
-      "width": 844,
-      "height": 100,
-      "size": 24,
-      "color": [
-        50,
-        42,
-        32,
-        255
-      ]
+      "x": 38,
+      "y": 52,
+      "width": 1060,
+      "height": 112,
+      "size": 25,
+      "color": [245, 244, 239, 255]
     },
     "nameplate": {
-      "x": 24,
-      "y": 6,
-      "width": 280,
-      "height": 40,
-      "image": "speaker-plate-washi-v2.png",
-      "text": { "x": 0, "y": 0, "width": 280, "height": 40, "size": 27, "color": [50, 42, 32, 255] }
+      "x": 20,
+      "y": 8,
+      "width": 320,
+      "height": 38,
+      "image": "",
+      "text": {
+        "x": 0,
+        "y": 0,
+        "width": 320,
+        "height": 38,
+        "size": 22,
+        "color": [227, 232, 235, 255]
+      }
     }
   },
   "choices": {
-    "x": 330,
-    "y": 220,
-    "image": "choice-washi-v2.png",
-    "activeImage": "choice-washi-active-v2.png",
-    "width": 620,
-    "height": 230,
-    "itemHeight": 48,
-    "gap": 10,
+    "x": 290,
+    "y": 190,
+    "image": "",
+    "activeImage": "",
+    "width": 700,
+    "height": 330,
+    "itemHeight": 54,
+    "gap": 12,
     "text": {
       "x": 24,
       "y": 0,
-      "width": 572,
-      "height": 48,
-      "size": 19,
-      "color": [
-        50,
-        42,
-        32,
-        255
-      ]
+      "width": 652,
+      "height": 54,
+      "size": 20,
+      "color": [244, 245, 242, 255]
     }
   }
 }

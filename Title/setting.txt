@@ -1,7 +1,6 @@
 # Novel Script project settings
-# すべて作品フォルダーからの相対パス。/ を使用する。
 scenario_dir = senario
 asset_dir = asset
 start_file = main.tds
-title = 芋粥 — ひと椀の夢
+title = 二十面相は恋を盗む
 native_ui_theme = ui/player-ui.json

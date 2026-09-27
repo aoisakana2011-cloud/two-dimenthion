@@ -46,7 +46,7 @@ test('flow layout wraps long paths to maximize readable viewport scale', () => {
   assert.equal(chooseColumnCount([240, 240, 240], 800, 800, 214, 30, 30, 42), 3);
 });
 
-test('edge routing separates parallel, loop, and backward transitions into distinct lanes', () => {
+test('edge routing separates parallel, loop, and backward transitions into distinct straight lanes', () => {
   const positions = new Map([
     ['a/one.tds', { x: 100, y: 80, width: 160 }],
     ['a/two.tds', { x: 100, y: 130, width: 160 }],
@@ -64,12 +64,12 @@ test('edge routing separates parallel, loop, and backward transitions into disti
   assert.equal(new Set([...routes.values()].map((route) => route.d)).size, edges.length, 'every relationship gets its own path');
   assert.equal(routes.get(edges[2]).type, 'loop');
   assert.equal(routes.get(edges[3]).type, 'return');
-  assert.ok(routes.get(edges[4]).bounds.top < positions.get('a/two.tds').y, 'self-loop arcs above its scene instead of collapsing to a line');
+  assert.ok(routes.get(edges[4]).bounds.top < positions.get('a/two.tds').y, 'self-loop uses an orthogonal return lane above its scene');
   assert.ok(routes.get(edges[3]).bounds.right > 450, 'backward edge gets an outer return lane');
   assert.ok(routes.get(edges[1]).d !== routes.get(edges[0]).d, 'parallel routes do not overlap exactly');
 });
 
-test('high-degree source edges use separate ports and rounded orthogonal routes', () => {
+test('high-degree source edges use separate ports and strictly orthogonal routes', () => {
   const positions = new Map([['main.tds', { x: 0, y: 160, width: 150 }]]);
   const edges = Array.from({ length: 8 }, (_, index) => {
     const id = `chapter/scene${index + 1}.tds`;
@@ -82,7 +82,7 @@ test('high-degree source edges use separate ports and rounded orthogonal routes'
   assert.ok(Math.max(...sourceOffsets) - Math.min(...sourceOffsets) >= 29, 'ports use almost the full node edge');
   assert.ok(sourceOffsets.every((offset, index) => index === 0 || offset > sourceOffsets[index - 1]), 'port order follows destination order to avoid fan crossings');
   assert.equal(new Set(ordered.map((route) => route.d)).size, edges.length, 'each target keeps a distinct visible route');
-  assert.ok(ordered.every((route) => route.d.includes('Q')), 'all connectors use rounded orthogonal bends');
+  assert.ok(ordered.every((route) => !/[QC]/.test(route.d)), 'all connectors use straight horizontal and vertical segments');
 });
 
 test('incoming and outgoing routes on the same right edge use distinct ports', () => {
@@ -103,8 +103,8 @@ test('incoming and outgoing routes on the same right edge use distinct ports', (
   const forwardIncoming = { from: 'routes/left.tds', to: 'chapters/banquet.tds', kind: 'goto' };
   positions.set(forwardIncoming.from, { x: -160, y: 80, width: 140 });
   const forward = routeEdges([forwardIncoming, outgoing], positions, 36, folderOf);
-  assert.equal(forward.get(forwardIncoming).targetOffset, 0, 'left-side arrivals retain their centered port');
-  assert.equal(forward.get(outgoing).sourceOffset, 0, 'a departure without right-side arrivals stays centered');
+  assert.notEqual(forward.get(forwardIncoming).targetOffset, 0, 'isolated left-side arrivals use a staggered port');
+  assert.notEqual(forward.get(outgoing).sourceOffset, 0, 'isolated departures use a staggered port');
 });
 
 test('self-loop returns to its allocated incoming port', () => {
@@ -125,7 +125,7 @@ test('edge bounds include outer return lanes so the complete graph stays in view
   assert.ok(bounds.width >= 450 + 42);
 });
 
-test('a route around an unrelated folder uses the same rounded orthogonal style', () => {
+test('a route around an unrelated folder uses only straight orthogonal segments', () => {
   const edge = { from: 'a/source.tds', to: 'b/target.tds', kind: 'goto' };
   const nodes = new Map([
     [edge.from, { x: 10, y: 120, width: 120 }],
@@ -138,9 +138,36 @@ test('a route around an unrelated folder uses the same rounded orthogonal style'
   ]);
   const route = routeEdges([edge], nodes, 36, (file) => file.split('/')[0], folders).get(edge);
   assert.equal(route.type, 'detour');
-  assert.ok((route.d.match(/Q/g) || []).length >= 3, 'the detour rounds its corners like every other route');
-  assert.doesNotMatch(route.d, /C/, 'detours do not switch to another curve grammar');
+  assert.doesNotMatch(route.d, /[QC]/, 'detours contain no curves or arch-shaped segments');
   assert.ok(route.bounds.top < folders.get('block').y, 'the path passes above the intervening folder');
+});
+
+test('same-folder return lanes do not share collinear path segments', () => {
+  const positions = new Map();
+  const edges = [];
+  for (let index = 0; index < 10; index++) {
+    const id = `routes/scene${String(index).padStart(2, '0')}.tds`;
+    positions.set(id, { x: 100, y: index * 48, width: 180 });
+  }
+  for (let index = 0; index < 10; index++) {
+    edges.push({ from: `routes/scene${String(index).padStart(2, '0')}.tds`, to: `routes/scene${String((index + 4) % 10).padStart(2, '0')}.tds`, kind: 'goto' });
+  }
+  const routes = [...routeEdges(edges, positions, 36, (file) => file.split('/')[0]).values()];
+  const segments = routes.map((route) => route.points.slice(1).map((point, index) => ({ from: route.points[index], to: point })));
+  for (let left = 0; left < segments.length; left++) for (let right = left + 1; right < segments.length; right++) {
+    for (const a of segments[left]) for (const b of segments[right]) {
+      const horizontalA = a.from.y === a.to.y, horizontalB = b.from.y === b.to.y;
+      if (horizontalA && horizontalB && a.from.y === b.from.y) {
+        const overlap = Math.min(Math.max(a.from.x, a.to.x), Math.max(b.from.x, b.to.x))
+          - Math.max(Math.min(a.from.x, a.to.x), Math.min(b.from.x, b.to.x));
+        assert.ok(overlap <= 0, `horizontal paths overlap by ${overlap}`);
+      } else if (!horizontalA && !horizontalB && a.from.x === b.from.x) {
+        const overlap = Math.min(Math.max(a.from.y, a.to.y), Math.max(b.from.y, b.to.y))
+          - Math.max(Math.min(a.from.y, a.to.y), Math.min(b.from.y, b.to.y));
+        assert.ok(overlap <= 0, `vertical paths overlap by ${overlap}`);
+      }
+    }
+  }
 });
 
 test('auto-arrange pushes overlapping folder boxes down without disturbing separate columns', () => {

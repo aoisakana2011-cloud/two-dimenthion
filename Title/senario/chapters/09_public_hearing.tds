@@ -1,0 +1,35 @@
+include common.tds
+
+scene main {
+  bg akechi_office
+  show akechi.normal left
+  say narrator "記者会見の前夜。机には、作品の来歴を裏づける資料と、関係者の安全を守るため伏せる情報が分けて置かれていた。"
+  say akechi "公表することだけが正義ではない。誰に、どの順番で、どこまで知らせるのか。君たちが決めた手順を尊重しよう。"
+  if disclose == 1 {
+    say narrator "独立した専門家の検証結果と返還先を公表し、個人を特定する情報は伏せる。資料の出所もすべて明記した。"
+  } else {
+    say narrator "まず元の所蔵者と関係者へ説明し、公開範囲を確認する。記録の原本は第三者機関へ預け、改変できない形で保全した。"
+  }
+  say narrator "二十面相の予告状は、もう届かない。けれど、真実をどう伝えるかという問いは、私たちの手元に残った。"
+  if selected_route == "mio" {
+    if trust_mio >= 4 {
+      goto "endings/mio_together.tds"
+    } else {
+      goto "endings/mio_unanswered.tds"
+    }
+  } elif selected_route == "chihaya" {
+    if trust_chihaya >= 4 {
+      goto "endings/chihaya_together.tds"
+    } else {
+      goto "endings/chihaya_unanswered.tds"
+    }
+  } elif selected_route == "rei" {
+    if trust_rei >= 4 {
+      goto "endings/rei_together.tds"
+    } else {
+      goto "endings/rei_unanswered.tds"
+    }
+  } else {
+    goto "endings/true_return.tds"
+  }
+}

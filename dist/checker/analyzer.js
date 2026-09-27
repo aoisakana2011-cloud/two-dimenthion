@@ -14,8 +14,8 @@ function at(node) {
         ...(node?.endColumn ? { endColumn: node.endColumn } : {}),
     };
 }
-function diagnostic(file, code, severity, message, node) {
-    return { code, severity, message, file: node?.file || file, ...at(node) };
+function diagnostic(file, code, severity, message, node, variable) {
+    return { code, severity, message, ...(variable !== undefined ? { variable } : {}), file: node?.file || file, ...at(node) };
 }
 function errorDiagnostic(error, file) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1723,7 +1723,7 @@ function analyzeVariableConstraints(statements, file, out, constraints) {
             const value = expression ? constant(expression) : undefined;
             const reason = constraint && value !== undefined ? constraintViolation(value, constraint) : undefined;
             if (reason)
-                out.push(diagnostic(file, 'variable-constraint', 'error', `変数 '${name}' の値は変数テーブルの制約 (${reason}) を満たしません`, statement));
+                out.push(diagnostic(file, 'variable-constraint', 'error', `変数 '${name}' の値は変数テーブルの制約 (${reason}) を満たしません`, statement, name));
         }
         for (const body of nested(statement))
             analyzeVariableConstraints(body, file, out, constraints);
@@ -2131,9 +2131,9 @@ function analyzeBlock(statements, file, out, reachable = true, constants = new M
                 const definitelyOutside = constraint.min !== undefined && bounds.max < constraint.min || constraint.max !== undefined && bounds.min > constraint.max;
                 const mayEscape = constraint.min !== undefined && bounds.min < constraint.min || constraint.max !== undefined && bounds.max > constraint.max;
                 if (definitelyOutside)
-                    out.push(diagnostic(file, 'variable-constraint', 'error', `変数 '${statement.target.name}' への代入値の範囲が変数テーブルの制約外です`, statement));
+                    out.push(diagnostic(file, 'variable-constraint', 'error', `変数 '${statement.target.name}' への代入値の範囲が変数テーブルの制約外です`, statement, statement.target.name));
                 else if (mayEscape)
-                    out.push(diagnostic(file, 'variable-constraint', 'warning', `変数 '${statement.target.name}' への代入値が変数テーブルの範囲を外れる可能性があります`, statement));
+                    out.push(diagnostic(file, 'variable-constraint', 'warning', `変数 '${statement.target.name}' への代入値が変数テーブルの範囲を外れる可能性があります`, statement, statement.target.name));
             }
         }
         if (statement.kind === 'choice') {

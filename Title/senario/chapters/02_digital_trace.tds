@@ -1,0 +1,13 @@
+include common.tds
+
+scene main {
+  bg akechi_office
+  show mio.normal right fade 250
+  say mio "映像は全部、正常に見える。だからこそ変。三台のカメラで、同じ三十七秒だけ時刻がずれてる。"
+  say narrator "澪は端末をこちらへ向けた。ずれは事故ではなく、館内時計の同期ログを書き換えた痕跡だった。"
+  say mio "侵入した人は、監視の死角を作ったんじゃない。私たちに『死角がある』と思わせてる。"
+  say narrator "彼女はログの複製を暗号化し、原本のハッシュ値を記録した。あとから改ざんされても分かるように。"
+  say narrator "予告状の紙片から採取された顔料の記録も、映像の時刻と同じ展示室につながっていた。"
+  set clue = clue + 1
+  goto "chapters/03_opening_gallery.tds"
+}

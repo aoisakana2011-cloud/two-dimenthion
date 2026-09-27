@@ -1,0 +1,10 @@
+include common.tds
+
+scene main {
+  bg museum_night
+  show akechi.normal left
+  say narrator "専門家と元所蔵者の検証を経て、星図は正当な持ち主へ返された。欠けていた台帳も、個人情報を守った形で公開される。"
+  say akechi "怪盗を捕まえるだけでは、事件は終わらない。奪われたものが、正しい場所へ戻るまでだ。"
+  say narrator "二十面相は姿を消した。だが今度の予告状には、盗むという言葉の代わりに、短い礼が記されていた。"
+  say narrator "真相と返還のエンディング。"
+}

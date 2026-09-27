@@ -51,6 +51,10 @@ function applyPlayerUi(themePath, theme) {
     stage.style.transform = `translate(-50%, -50%) ${portrait ? 'rotate(90deg) ' : ''}scale(${scale})`;
   };
   fitStage();
+  const debugSession = new URLSearchParams(location.search).get('debug');
+  if (debugSession && window.parent !== window) {
+    window.parent.postMessage({ type: 'novel-debug:screen', session: debugSession, width: screen.width, height: screen.height }, location.origin);
+  }
   window.addEventListener('resize', fitStage);
   window.visualViewport?.addEventListener('resize', fitStage);
 }
@@ -96,6 +100,13 @@ function url(type, name, pose) {
 }
 function slotClass(slot) {
   return slot === 'far_left' ? 'far-left' : slot === 'far_right' ? 'far-right' : slot;
+}
+function sizeSpriteLikeNative(sprite) {
+  if (!sprite.naturalWidth || !sprite.naturalHeight) return;
+  const { width, height } = playerTheme.screen;
+  const scale = Math.min(width / sprite.naturalWidth, height / sprite.naturalHeight);
+  sprite.style.width = `${sprite.naturalWidth * scale}px`;
+  sprite.style.height = `${sprite.naturalHeight * scale}px`;
 }
 
 async function media(type, name, mode, operation, runtime) {
@@ -187,6 +198,7 @@ async function command(c) {
     e.dataset.slot = pos;
     e.src = url('char', charName, pose);
     await e.decode();
+    sizeSpriteLikeNative(e);
     if (!e.parentNode) $('characters').append(e);
     if (showChar && a[fadeOffset] === 'fade') await fade(e, 0, 1, a[fadeOffset + 1]);
   } else if (n === 'hide') {
@@ -219,6 +231,7 @@ async function command(c) {
     e.dataset.slot = pos;
     e.src = url('image', imgName);
     await e.decode();
+    sizeSpriteLikeNative(e);
     $('images').append(e);
   }
 }

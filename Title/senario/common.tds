@@ -1,0 +1,31 @@
+asset bg museum_night = "asset/bg/museum-night.png"
+asset bg akechi_office = "asset/bg/akechi-office.png"
+asset bg rooftop_rain = "asset/bg/rooftop-rain.png"
+asset bg conservation_lab = "asset/bg/conservation-lab.png"
+
+character rei {
+  name = "如月 怜"
+  pose normal = "asset/char/rei.png"
+}
+
+character mio {
+  name = "星野 澪"
+  pose normal = "asset/char/mio.png"
+}
+
+character chihaya {
+  name = "天宮 千早"
+  pose normal = "asset/char/chihaya.png"
+}
+
+character akechi {
+  name = "明智 小五郎"
+  pose normal = "asset/char/akechi.png"
+}
+
+global int clue = 0
+global int trust_rei = 0
+global int trust_mio = 0
+global int trust_chihaya = 0
+global str selected_route = "common"
+global int disclose = 0

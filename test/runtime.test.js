@@ -10,6 +10,15 @@ const { validate: validateEditorSource, compileSource: compileEditorSource } = r
 const { pack, validateVariableFlow } = require('../tools/pack');
 const { compileProject, resolveProjectScript } = require('../tools/project');
 const program = source => JSON.parse(JSON.stringify(compile(parse(source))));
+async function nativeExecutableForTest(t) {
+  if (process.env.NOVEL_NATIVE_EXE) {
+    await fs.access(process.env.NOVEL_NATIVE_EXE);
+    return process.env.NOVEL_NATIVE_EXE;
+  }
+  const local = path.resolve(__dirname, '../native/build/Release/novel_player.exe');
+  try { await fs.access(local); return local; }
+  catch { t.skip('Build the native player or set NOVEL_NATIVE_EXE to enable parity checks'); return null; }
+}
 async function run(source, host = {}) {
   const rt = new Runtime({ command: async () => {}, choice: async () => 0, ...host });
   await rt.run(program(source)); return rt;
@@ -1306,9 +1315,9 @@ test('JSON static variables are typed globals with exact integer values', async 
   const assignmentResetsThreshold = analyzeScript(parse('if difficulty < 2 { set difficulty = difficulty + 1\nif difficulty < 2 { wait 1 } }'), 'constraint-int-range-assignment.tds', constrainedGlobals);
   assert.equal(assignmentResetsThreshold.some((item) => item.code === 'constant-condition' && item.line === 2), false);
   const mayEscapeDiagnostics = analyzeScript(parse('set difficulty = difficulty + 1'), 'constraint-assignment.tds', constrainedGlobals);
-  assert.ok(mayEscapeDiagnostics.some((item) => item.code === 'variable-constraint' && item.severity === 'warning'));
+  assert.equal(mayEscapeDiagnostics.find((item) => item.code === 'variable-constraint' && item.severity === 'warning')?.variable, 'difficulty');
   const outsideDiagnostics = analyzeScript(parse('set difficulty = difficulty + 10'), 'constraint-assignment-outside.tds', constrainedGlobals);
-  assert.ok(outsideDiagnostics.some((item) => item.code === 'variable-constraint' && item.severity === 'error'));
+  assert.equal(outsideDiagnostics.find((item) => item.code === 'variable-constraint' && item.severity === 'error')?.variable, 'difficulty');
   const duplicateChoiceDiagnostics = analyzeScript(parse('choice { "same" { wait 1 } "same" { wait 1 } }'), 'duplicate-choice.tds', constrainedGlobals);
   assert.ok(duplicateChoiceDiagnostics.some((item) => item.code === 'duplicate-choice-label'));
   await fs.writeFile(path.join(scenesRoot, 'main.tds'), 'if difficulty > 5 { wait 1 } else { wait 2 }');
@@ -1377,8 +1386,8 @@ test('JSON static variables are typed globals with exact integer values', async 
   await assert.rejects(pack(path.join(scenesRoot, 'main.tds'), path.join(dir, 'out/duplicate-values.json'), { scenesRoot, assetsRoot, dataRoot }), /possibleValues/);
 });
 test('native and browser runtimes agree on functions, loops, choice and scene transitions', async t => {
-  const exe = process.env.NOVEL_NATIVE_EXE;
-  if (!exe) return t.skip('Set NOVEL_NATIVE_EXE to the built native player');
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-native-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'test.nsp.json');
@@ -1398,8 +1407,8 @@ test('native and browser runtimes agree on functions, loops, choice and scene tr
 });
 
 test('native and browser runtimes agree on nested interpolation side effects', async t => {
-  const exe = process.env.NOVEL_NATIVE_EXE;
-  if (!exe) return t.skip('Set NOVEL_NATIVE_EXE to the built native player');
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
   const source = `
     int state = 0
     str template = "{mutate()}"

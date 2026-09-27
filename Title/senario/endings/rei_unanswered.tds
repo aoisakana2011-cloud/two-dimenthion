@@ -1,0 +1,10 @@
+include common.tds
+
+scene main {
+  bg rooftop_rain
+  show rei.normal left
+  say narrator "怜はひとりで夜明け前の街へ消えた。明智は彼女の告白を記録し、正規の返還手続きを始める。"
+  say rei "次に会うとき、私はどんな顔をしているかな。あなたが見つけてくれたら、答えを聞かせて。"
+  say narrator "仮面の事件は終わった。それでも、雨上がりの屋上を通るたび、私は彼女の問いを思い出す。"
+  say narrator "怜と交わした、再会を待つエンディング。"
+}

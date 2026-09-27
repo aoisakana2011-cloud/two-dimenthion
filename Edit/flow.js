@@ -123,8 +123,50 @@ function selectNode(file) {
   document.querySelectorAll('.flow-node').forEach((node) => node.classList.toggle('selected', node.dataset.file === file));
   const flowSvg = graph.querySelector('.flow-svg');
   if (flowSvg) flowSvg.dataset.hasSelection = 'true';
+  const outgoingNeighbors = new Map();
+  const incomingNeighbors = new Map();
+  const addNeighbor = (map, from, to) => {
+    if (!map.has(from)) map.set(from, []);
+    map.get(from).push(to);
+  };
   document.querySelectorAll('.flow-edge').forEach((edge) => {
-    edge.classList.toggle('is-related', edge.dataset.from === file || edge.dataset.to === file);
+    const isRelated = edge.dataset.from === file || edge.dataset.to === file;
+    edge.classList.toggle('is-related', isRelated);
+    addNeighbor(outgoingNeighbors, edge.dataset.from, edge.dataset.to);
+    addNeighbor(incomingNeighbors, edge.dataset.to, edge.dataset.from);
+  });
+  const relationDistances = new Map();
+  const collectDistances = (neighbors) => {
+    const distances = new Map([[file, 0]]);
+    const queue = [file];
+    for (let index = 0; index < queue.length; index++) {
+      const current = queue[index];
+      const distance = distances.get(current) + 1;
+      for (const next of neighbors.get(current) || []) {
+        if (distances.has(next)) continue;
+        distances.set(next, distance);
+        queue.push(next);
+        if (next !== file) {
+          const previousDistance = relationDistances.get(next);
+          if (previousDistance === undefined || distance < previousDistance) relationDistances.set(next, distance);
+        }
+      }
+    }
+  };
+  collectDistances(outgoingNeighbors);
+  collectDistances(incomingNeighbors);
+  document.querySelectorAll('.flow-node').forEach((node) => {
+    const isSelected = node.dataset.file === file;
+    const distance = relationDistances.get(node.dataset.file);
+    node.classList.toggle('related', !isSelected && distance !== undefined);
+    if (!isSelected && distance !== undefined) {
+      const strength = Math.max(0, 1 - (distance - 1) / 4);
+      node.style.setProperty('--relation-percent', `${Math.round(strength * 100)}%`);
+      node.dataset.relationDistance = String(distance);
+    } else {
+      node.style.removeProperty('--relation-percent');
+      delete node.dataset.relationDistance;
+    }
   });
   details.replaceChildren();
   details.scrollTop = 0;
@@ -239,8 +281,16 @@ function render(flow) {
   const folderWidth = 214, layoutGapX = 30, folderGapX = 48, folderGapY = 48;
   const nodeHeight = 36, nodeGap = 6, headerHeight = 27, padding = 18, layoutPadding = 42;
   const folderPositions = new Map(), nodePositions = new Map();
+  const internalTransitionCounts = new Map();
+  for (const edge of view.edges) {
+    const sourceFolder = folderOf(edge.from);
+    if (sourceFolder === folderOf(edge.to)) internalTransitionCounts.set(sourceFolder, (internalTransitionCounts.get(sourceFolder) || 0) + 1);
+  }
   const measureFolder = (folder, depth) => {
-    folder.width = Math.max(132, folderWidth - depth * 18);
+    const baseWidth = Math.max(132, folderWidth - depth * 18);
+    const internalTransitions = internalTransitionCounts.get(folder.path) || 0;
+    folder.routeGutter = internalTransitions ? 24 + (internalTransitions - 1) * 12 : 0;
+    folder.width = baseWidth + folder.routeGutter;
     const nodeIds = folder.nodes.map((node) => node.id);
     const orderedNodeIds = window.FlowLayout.orderNodes(nodeIds, view.edges);
     const nodeOrder = new Map(orderedNodeIds.map((id, index) => [id, index]));
@@ -276,7 +326,7 @@ function render(flow) {
     folderPositions.set(folder.path, { x, y, width: folder.width, height: folder.height, folder });
     let cursor = y + headerHeight + 10;
     folder.nodes.forEach((node, index) => {
-      nodePositions.set(node.id, { x: x + 12, y: cursor + index * (nodeHeight + nodeGap), width: folder.width - 24 });
+      nodePositions.set(node.id, { x: x + 12, y: cursor + index * (nodeHeight + nodeGap), width: folder.width - 24 - folder.routeGutter });
     });
     cursor += folder.nodes.length * nodeHeight + Math.max(0, folder.nodes.length - 1) * nodeGap;
     if (folder.nodes.length && folder.children.size) cursor += 10;
@@ -527,7 +577,7 @@ filterPanel.innerHTML = '<label>Filter <input id="flow-search" type="search" pla
 document.querySelector('.controls h1')?.after(filterPanel);
 const flowTestPanel = document.createElement('section');
 flowTestPanel.className = 'flow-test-panel';
-flowTestPanel.innerHTML = '<h2>ここからテスト</h2><div id="flow-test-file" class="flow-test-file">ノードを選択</div><label class="flow-test-field">開始scene<select id="flow-test-scene"></select></label><label class="flow-test-field">開始行<span class="flow-test-line-controls"><input id="flow-test-line" type="text" inputmode="numeric" autocomplete="off"><button id="flow-test-pick-line" type="button" aria-label="編集画面で開始行を選ぶ" title="編集画面で開始行を選ぶ">&gt;</button></span></label><div class="flow-test-subtitle">変数の初期値 <span>空欄は変更なし</span></div><div id="flow-test-vars"></div><button id="flow-test-run" type="button">ここから再生</button><div id="flow-test-message" role="status"></div>';
+flowTestPanel.innerHTML = '<h2>ここからテスト</h2><div id="flow-test-file" class="flow-test-file">ノードを選択</div><label class="flow-test-field">開始scene<select id="flow-test-scene"></select></label><label class="flow-test-field">開始行<span class="flow-test-line-controls"><input id="flow-test-line" type="text" inputmode="numeric" autocomplete="off"><button id="flow-test-pick-line" type="button" aria-label="編集画面で開始行を選ぶ" title="編集画面で開始行を選ぶ">&gt;</button></span></label><div class="flow-test-subtitle">実行時点の変数 <span>確定値は自動適用</span></div><div id="flow-test-vars"></div><button id="flow-test-run" type="button">ここから再生</button><div id="flow-test-message" role="status"></div>';
 filterPanel.after(flowTestPanel);
 const flowTestScene = document.querySelector('#flow-test-scene');
 const flowTestLine = document.querySelector('#flow-test-line');
@@ -535,7 +585,64 @@ const flowTestVars = document.querySelector('#flow-test-vars');
 let flowDomainRequest = 0;
 let flowDomains = {};
 let flowTestSelectionKey = '';
+let flowTestVariableDefinitions = new Map();
 const flowVariableDrafts = new Map();
+function confirmedFlowDomain(name) {
+  const found = flowDomains[name];
+  return found?.kind === 'exact' && Array.isArray(found.values) && found.values.length === 1 ? found : null;
+}
+function displayFlowDomainValue(variable, value) {
+  if (variable.type === 'str') return JSON.stringify(value);
+  if (variable.fields) {
+    try {
+      const object = JSON.parse(value);
+      if (object && typeof object === 'object' && !Array.isArray(object)) {
+        return `{${Object.entries(variable.fields).map(([name, type]) => `${name}: ${type === 'str' ? JSON.stringify(object[name] ?? '') : object[name] ?? ''}`).join(', ')}}`;
+      }
+    } catch {}
+  }
+  return String(value);
+}
+function renderFlowTestVariables() {
+  flowTestVars.replaceChildren();
+  const definitions = [...flowTestVariableDefinitions.values()];
+  const confirmed = definitions.filter((variable) => confirmedFlowDomain(variable.name));
+  const uncertain = definitions.filter((variable) => !confirmedFlowDomain(variable.name));
+  if (confirmed.length) {
+    const group = document.createElement('section'); group.className = 'flow-test-group flow-test-confirmed-group';
+    const heading = document.createElement('div'); heading.className = 'flow-test-group-heading'; heading.textContent = '確定値'; group.append(heading);
+    const list = document.createElement('div'); list.className = 'flow-test-confirmed-list';
+    for (const variable of confirmed) {
+      const value = displayFlowDomainValue(variable, confirmedFlowDomain(variable.name).values[0]);
+      const row = document.createElement('span'); row.className = 'flow-test-confirmed'; row.dataset.name = variable.name; row.dataset.domainKind = 'exact';
+      const name = document.createElement('span'); name.className = 'flow-test-confirmed-name'; name.textContent = `${variable.name} = `;
+      const result = document.createElement('span'); result.className = 'flow-test-confirmed-value'; result.textContent = value; result.title = value;
+      row.append(name, result); list.append(row);
+    }
+    group.append(list);
+    flowTestVars.append(group);
+  }
+  if (uncertain.length) {
+    const group = document.createElement('section'); group.className = 'flow-test-group flow-test-uncertain-group';
+    const heading = document.createElement('div'); heading.className = 'flow-test-group-heading'; heading.textContent = '初期値を指定（不確定）'; group.append(heading);
+    const drafts = flowVariableDrafts.get(flowTestSelectionKey) || new Map();
+    for (const variable of uncertain) {
+      const found = flowDomains[variable.name] || { kind: 'unknown', values: [] };
+      const row = document.createElement('label'); row.className = 'flow-test-variable';
+      const name = document.createElement('span'); name.textContent = `${variable.name} : ${variable.type}`;
+      const info = document.createElement('small'); info.className = 'flow-test-domain';
+      const values = found.values.map((value) => displayFlowDomainValue(variable, value));
+      info.textContent = found.kind === 'finite' ? `候補 ${values.length}: ${values.slice(0, 4).join(' / ')}${values.length > 4 ? ' …' : ''}` : '不明';
+      info.title = found.kind === 'finite' ? values.join(' / ') : '値を特定できないため、開始値を指定できます';
+      const input = document.createElement('input'); input.type = 'text'; input.autocomplete = 'off'; input.dataset.name = variable.name; input.dataset.type = variable.type; input.dataset.domainKind = found.kind; input.dataset.domainValues = JSON.stringify(found.values); input.placeholder = '変更しない場合は空欄';
+      if (variable.fields) input.dataset.fields = JSON.stringify(variable.fields);
+      input.value = drafts.get(variable.name) || '';
+      row.append(name, info, input); group.append(row);
+    }
+    flowTestVars.append(group);
+  }
+  if (!definitions.length) flowTestVars.textContent = '変更が必要な変数はありません';
+}
 async function refreshFlowDomains(node, scene, line, names) {
   const requestId = ++flowDomainRequest;
   flowDomains = {};
@@ -549,21 +656,12 @@ async function refreshFlowDomains(node, scene, line, names) {
     if (!response.ok) throw Error(result.error || '値集合を解析できませんでした');
     if (requestId !== flowDomainRequest) return;
     flowDomains = result.domains || {};
-    for (const input of flowTestVars.querySelectorAll('input[data-name]')) {
-      const found = flowDomains[input.dataset.name] || { kind: 'unknown', values: [] };
-      input.dataset.domainKind = found.kind;
-      input.dataset.domainValues = JSON.stringify(found.values);
-      const label = input.parentElement.querySelector('.flow-test-domain');
-      if (label) {
-        const values = found.values.map((value) => input.dataset.type === 'str' ? JSON.stringify(value) : value);
-        label.textContent = found.kind === 'unknown' ? '不明' : found.kind === 'exact' ? `確定: ${values[0]}` : `候補 ${values.length}: ${values.slice(0, 4).join(' / ')}${values.length > 4 ? ' …' : ''}`;
-        label.title = found.kind === 'unknown' ? '静的に値集合を限定できません' : values.join(' / ');
-      }
-    }
+    renderFlowTestVariables();
     run.disabled = false;
   } catch (error) {
     if (requestId !== flowDomainRequest) return;
-    flowTestVars.querySelectorAll('.flow-test-domain').forEach((label) => { label.textContent = '解析不可'; });
+    flowDomains = Object.fromEntries(names.map((name) => [name, { kind: 'unknown', values: [] }]));
+    renderFlowTestVariables();
     document.querySelector('#flow-test-message').textContent = error.message;
     run.disabled = false;
   }
@@ -575,7 +673,11 @@ function updateFlowTestPanel() {
   const previousScene = flowTestScene.value;
   const previousLine = flowTestLine.value;
   const previousValues = new Map([...flowTestVars.querySelectorAll('input[data-name]')].map((input) => [input.dataset.name, input.value]));
-  if (flowTestSelectionKey) flowVariableDrafts.set(flowTestSelectionKey, previousValues);
+  if (flowTestSelectionKey) {
+    const saved = new Map(flowVariableDrafts.get(flowTestSelectionKey) || []);
+    for (const [name, value] of previousValues) saved.set(name, value);
+    flowVariableDrafts.set(flowTestSelectionKey, saved);
+  }
   flowTestScene.replaceChildren();
   for (const scene of node?.sceneLocations || []) {
     const option = document.createElement('option'); option.value = scene.name; option.textContent = scene.name; flowTestScene.append(option);
@@ -584,7 +686,6 @@ function updateFlowTestPanel() {
   const selectedScene = node?.sceneLocations?.find((scene) => scene.name === flowTestScene.value) || node?.sceneLocations?.[0];
   const selectionKey = selectedScene ? `${node.id}\0${selectedScene.name}` : '';
   const sameSelection = selectionKey === flowTestSelectionKey;
-  const draftValues = sameSelection ? previousValues : flowVariableDrafts.get(selectionKey) || new Map();
   flowTestLine.value = sameSelection ? previousLine : selectedScene?.line || '';
   flowTestSelectionKey = selectionKey;
   flowTestLine.min = selectedScene?.line || 1;
@@ -605,22 +706,20 @@ function updateFlowTestPanel() {
     return (variable.references || []).some((reference) => (reference.file || node.id) === node.id && Number(reference.line || 0) >= cutoff);
   });
   const seen = new Set();
+  flowTestVariableDefinitions = new Map();
   for (const variable of variables) {
     if (seen.has(variable.name)) continue;
     seen.add(variable.name);
-    const row = document.createElement('label'); row.className = 'flow-test-variable';
-    const name = document.createElement('span'); name.textContent = `${variable.name} : ${variableTypeLabel(variable.type)}`;
-    const info = document.createElement('small'); info.className = 'flow-test-domain'; info.textContent = '解析中';
-    const input = document.createElement('input'); input.type = 'text'; input.autocomplete = 'off'; input.dataset.name = variable.name; input.dataset.type = variableTypeLabel(variable.type); input.placeholder = '変更なし';
+    const definition = { name: variable.name, type: variableTypeLabel(variable.type) };
     if (variable.type?.kind === 'struct') {
       const fields = node.structTypes?.find((item) => item.name === variable.type.name)?.fields
         || node.characterTypes?.find((item) => item.name === variable.type.name)?.fields;
-      if (fields) input.dataset.fields = JSON.stringify(fields);
+      if (fields) definition.fields = fields;
     }
-    input.value = draftValues.get(variable.name) || '';
-    row.append(name, info, input); flowTestVars.append(row);
+    flowTestVariableDefinitions.set(variable.name, definition);
   }
   if (!seen.size) flowTestVars.textContent = '変更が必要な変数はありません';
+  else flowTestVars.textContent = '解析中…';
   document.querySelector('#flow-test-run').disabled = !selectedScene || !validLine;
   document.querySelector('#flow-test-message').textContent = validLine ? '' : `${selectedScene?.line || 1}〜${selectedScene?.endLine || 1}行から指定してください`;
   if (selectedScene && validLine) sendToEditor({ type: 'scene-flow:start-line-preview', file: node.id, scene: selectedScene.name, line: cutoff });
@@ -657,27 +756,30 @@ document.querySelector('#flow-test-run').addEventListener('click', () => {
   const message = document.querySelector('#flow-test-message');
   if (line !== null && (!Number.isSafeInteger(line) || !scene || line < scene.line || line > scene.endLine)) { message.textContent = '選択したscene内の行を指定してください'; return; }
   const variables = {};
-  for (const input of flowTestVars.querySelectorAll('input[data-name]')) {
-    const exact = flowDomains[input.dataset.name];
-    const valueText = input.value !== '' ? input.value : exact?.kind === 'exact' ? exact.values[0] : null;
+  for (const definition of flowTestVariableDefinitions.values()) {
+    const exact = confirmedFlowDomain(definition.name);
+    // Confirmed values are authoritative and read-only. Only controls in the
+    // uncertain group can override a start value, even if stale DOM remains.
+    const input = exact ? null : flowTestVars.querySelector(`.flow-test-uncertain-group input[data-name="${CSS.escape(definition.name)}"]`);
+    const valueText = exact ? exact.values[0] : input?.value ? input.value : null;
     if (valueText === null) continue;
-    if (input.dataset.type === 'int' && !/^[+-]?\d+$/.test(valueText)) { message.textContent = `${input.dataset.name} は整数で入力してください`; input.focus(); return; }
-    if (input.dataset.type.startsWith('dict<')) {
+    if (definition.type === 'int' && !/^[+-]?\d+$/.test(valueText)) { message.textContent = `${definition.name} は整数で入力してください`; input?.focus(); return; }
+    if (definition.type.startsWith('dict<')) {
       let value;
-      try { value = JSON.parse(valueText); } catch { message.textContent = `${input.dataset.name} はJSON辞書で入力してください`; input.focus(); return; }
-      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.values(value).some((entry) => input.dataset.type === 'dict<int>' ? !(Number.isSafeInteger(entry) || (typeof entry === 'string' && /^[+-]?\d+$/.test(entry))) : typeof entry !== 'string')) { message.textContent = `${input.dataset.name} の値の型が正しくありません`; input.focus(); return; }
+      try { value = JSON.parse(valueText); } catch { message.textContent = `${definition.name} はJSON辞書で入力してください`; input?.focus(); return; }
+      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.values(value).some((entry) => definition.type === 'dict<int>' ? !(Number.isSafeInteger(entry) || (typeof entry === 'string' && /^[+-]?\d+$/.test(entry))) : typeof entry !== 'string')) { message.textContent = `${definition.name} の値の型が正しくありません`; input?.focus(); return; }
     }
-    if (input.dataset.fields) {
+    if (definition.fields) {
       let value;
-      try { value = JSON.parse(valueText); } catch { message.textContent = `${input.dataset.name} はJSON構造体で入力してください`; input.focus(); return; }
-      const fields = JSON.parse(input.dataset.fields);
+      try { value = JSON.parse(valueText); } catch { message.textContent = `${definition.name} はJSON構造体で入力してください`; input?.focus(); return; }
+      const fields = definition.fields;
       const matches = value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === Object.keys(fields).length
         && Object.entries(fields).every(([name, type]) => type === 'int'
           ? Number.isSafeInteger(value[name]) || (typeof value[name] === 'string' && /^[+-]?\d+$/.test(value[name]))
           : typeof value[name] === 'string');
-      if (!matches) { message.textContent = `${input.dataset.name} のフィールドが型と一致しません`; input.focus(); return; }
+      if (!matches) { message.textContent = `${definition.name} のフィールドが型と一致しません`; input?.focus(); return; }
     }
-    variables[input.dataset.name] = { type: input.dataset.fields ? 'struct' : input.dataset.type, value: valueText, ...(input.dataset.fields ? { fields: JSON.parse(input.dataset.fields) } : {}) };
+    variables[definition.name] = { type: definition.fields ? 'struct' : definition.type, value: valueText, ...(definition.fields ? { fields: definition.fields } : {}) };
   }
   if (!sendToEditor({ type: 'scene-flow:debug-play', file: node.id, scene: scene?.name, line, variables })) { message.textContent = '編集画面内のシーンフローから実行してください'; return; }
   message.textContent = '再生を準備しています…';

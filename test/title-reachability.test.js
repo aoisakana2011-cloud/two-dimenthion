@@ -4,13 +4,11 @@ const path = require('node:path');
 process.env.NOVEL_PROJECT_ROOT = path.resolve(__dirname, '../Title');
 const { sceneGraph } = require('../Edit/server');
 
-test('Imogayu reaches every chapter and both endings without scene diagnostics', async () => {
+test('Modern Nijumenso story reaches every scenario and all three romance routes', async () => {
   const graph = await sceneGraph();
-  const files = graph.nodes.map(node => node.id);
-  assert.deepEqual(files, [
-    'chapters/banquet.tds', 'chapters/feast.tds', 'chapters/lake.tds',
-    'chapters/road.tds', 'endings/another.tds', 'endings/quiet.tds', 'main.tds',
-  ]);
+  const files = graph.nodes.map(node => node.id).filter(file => file !== 'common.tds');
+  assert.equal(files.includes('main.tds'), true);
+  assert.equal(files.length, 31);
   assert.deepEqual(graph.nodes.flatMap(node => node.diagnostics || []), []);
 
   const reached = new Set(['main.tds']);
@@ -23,4 +21,8 @@ test('Imogayu reaches every chapter and both endings without scene diagnostics',
     }
   }
   assert.deepEqual([...reached].sort(), [...files].sort());
+  for (const route of ['mio', 'chihaya', 'rei']) {
+    assert.ok(files.some(file => file.startsWith(`routes/${route}_`)), `missing ${route} route`);
+    assert.ok(files.includes(`endings/${route}_together.tds`), `missing ${route} romance ending`);
+  }
 });

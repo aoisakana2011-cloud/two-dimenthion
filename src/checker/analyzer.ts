@@ -7,6 +7,7 @@ export interface Diagnostic {
   code: string;
   severity: DiagnosticSeverity;
   message: string;
+  variable?: string;
   file: string;
   line: number;
   column: number;
@@ -28,8 +29,8 @@ function at(node?: NodeLocation): Pick<Diagnostic, 'line' | 'column' | 'endLine'
   };
 }
 
-function diagnostic(file: string, code: string, severity: DiagnosticSeverity, message: string, node?: NodeLocation): Diagnostic {
-  return { code, severity, message, file: node?.file || file, ...at(node) };
+function diagnostic(file: string, code: string, severity: DiagnosticSeverity, message: string, node?: NodeLocation, variable?: string): Diagnostic {
+  return { code, severity, message, ...(variable !== undefined ? { variable } : {}), file: node?.file || file, ...at(node) };
 }
 
 function errorDiagnostic(error: unknown, file: string): Diagnostic {
@@ -1432,7 +1433,7 @@ function analyzeVariableConstraints(statements: Statement[], file: string, out: 
       const constraint = name ? constraints.get(name) : undefined;
       const value = expression ? constant(expression) : undefined;
       const reason = constraint && value !== undefined ? constraintViolation(value, constraint) : undefined;
-      if (reason) out.push(diagnostic(file, 'variable-constraint', 'error', `変数 '${name}' の値は変数テーブルの制約 (${reason}) を満たしません`, statement));
+      if (reason) out.push(diagnostic(file, 'variable-constraint', 'error', `変数 '${name}' の値は変数テーブルの制約 (${reason}) を満たしません`, statement, name));
     }
     for (const body of nested(statement)) analyzeVariableConstraints(body, file, out, constraints);
   }
@@ -1791,8 +1792,8 @@ function analyzeBlock(statements: Statement[], file: string, out: Diagnostic[], 
       if (bounds && (constraint.min !== undefined || constraint.max !== undefined)) {
         const definitelyOutside = constraint.min !== undefined && bounds.max < constraint.min || constraint.max !== undefined && bounds.min > constraint.max;
         const mayEscape = constraint.min !== undefined && bounds.min < constraint.min || constraint.max !== undefined && bounds.max > constraint.max;
-        if (definitelyOutside) out.push(diagnostic(file, 'variable-constraint', 'error', `変数 '${statement.target.name}' への代入値の範囲が変数テーブルの制約外です`, statement));
-        else if (mayEscape) out.push(diagnostic(file, 'variable-constraint', 'warning', `変数 '${statement.target.name}' への代入値が変数テーブルの範囲を外れる可能性があります`, statement));
+        if (definitelyOutside) out.push(diagnostic(file, 'variable-constraint', 'error', `変数 '${statement.target.name}' への代入値の範囲が変数テーブルの制約外です`, statement, statement.target.name));
+        else if (mayEscape) out.push(diagnostic(file, 'variable-constraint', 'warning', `変数 '${statement.target.name}' への代入値が変数テーブルの範囲を外れる可能性があります`, statement, statement.target.name));
       }
     }
 

@@ -3,41 +3,55 @@
   "assets": [
     {
       "type": "bg",
-      "name": "heian_hall",
-      "path": "asset/bg/heian-banquet.png",
-      "definedIn": "main.tds"
+      "name": "museum_night",
+      "path": "asset/bg/museum-night.png",
+      "definedIn": "common.tds"
+    },
+    {
+      "type": "bg",
+      "name": "akechi_office",
+      "path": "asset/bg/akechi-office.png",
+      "definedIn": "common.tds"
+    },
+    {
+      "type": "bg",
+      "name": "rooftop_rain",
+      "path": "asset/bg/rooftop-rain.png",
+      "definedIn": "common.tds"
+    },
+    {
+      "type": "bg",
+      "name": "conservation_lab",
+      "path": "asset/bg/conservation-lab.png",
+      "definedIn": "common.tds"
     },
     {
       "type": "char",
-      "name": "goi",
+      "name": "rei",
       "pose": "normal",
-      "path": "asset/char/goi.png",
-      "definedIn": "main.tds"
+      "path": "asset/char/rei.png",
+      "definedIn": "common.tds"
     },
     {
       "type": "char",
-      "name": "toshihito",
+      "name": "mio",
       "pose": "normal",
-      "path": "asset/char/toshihito.png",
-      "definedIn": "main.tds"
+      "path": "asset/char/mio.png",
+      "definedIn": "common.tds"
     },
     {
-      "type": "bg",
-      "name": "tsuruga_manor",
-      "path": "asset/bg/tsuruga-manor.png",
-      "definedIn": "chapters/feast.tds"
+      "type": "char",
+      "name": "chihaya",
+      "pose": "normal",
+      "path": "asset/char/chihaya.png",
+      "definedIn": "common.tds"
     },
     {
-      "type": "bg",
-      "name": "lake_biwa",
-      "path": "asset/bg/lake-biwa.png",
-      "definedIn": "chapters/lake.tds"
-    },
-    {
-      "type": "bg",
-      "name": "winter_road",
-      "path": "asset/bg/winter-road.png",
-      "definedIn": "chapters/road.tds"
+      "type": "char",
+      "name": "akechi",
+      "pose": "normal",
+      "path": "asset/char/akechi.png",
+      "definedIn": "common.tds"
     }
   ]
 }

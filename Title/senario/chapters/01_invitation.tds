@@ -1,0 +1,20 @@
+include common.tds
+
+scene main {
+  bg akechi_office
+  show akechi.normal left
+  say narrator "探偵事務所の壁には、過去の事件記録が並んでいる。どの写真にも、同じ仮面だけが残されていた。"
+  say akechi "二十面相は顔を変える。変装だけじゃない。肩書きも、経歴も、時には善意まで借りる。"
+  say narrator "明智は予告状を机に置いた。紙の繊維に、展示室では使われていない顔料がわずかに付いている。"
+  say akechi "警備システムの解析なら星野澪。美術品の来歴なら天宮千早。どちらに先に話を聞く？"
+  choice "最初に頼る相手を選ぶ" {
+    "星野澪に、映像と通信記録を見てもらう" {
+      set trust_mio = trust_mio + 1
+      goto "chapters/02_digital_trace.tds"
+    }
+    "天宮千早に、作品の来歴を調べてもらう" {
+      set trust_chihaya = trust_chihaya + 1
+      goto "chapters/02_provenance.tds"
+    }
+  }
+}

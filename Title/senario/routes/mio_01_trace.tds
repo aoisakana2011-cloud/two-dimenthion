@@ -1,0 +1,13 @@
+include common.tds
+
+scene main {
+  bg akechi_office
+  show mio.normal left
+  say narrator "澪の解析環境には、消されたはずの監視ログが残っていた。復元の鍵は、明智が出発前に送った短い音声メモ。"
+  say mio "私を信じてくれたの、うれしい。でも事件のために信じたのか、私だからなのかは、まだ聞かないでおく。"
+  say narrator "音声の背景には、駅の発車ベルと、改札を通る電子音が重なっている。"
+  say mio "この時刻に明智さんが乗れる列車は一つ。行き先は、古い収蔵庫のある湾岸地区。"
+  say narrator "彼女は解析の根拠を一つずつ説明してから、端末を閉じた。"
+  set clue = clue + 1
+  goto "routes/mio_02_archive.tds"
+}

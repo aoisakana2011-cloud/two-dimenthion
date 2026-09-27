@@ -1,24 +1,14 @@
-asset bg heian_hall = "asset/bg/heian-banquet.png"
-
-character goi {
-  name = "五位"
-  pose normal = "asset/char/goi.png"
-}
-
-character toshihito {
-  name = "利仁"
-  pose normal = "asset/char/toshihito.png"
-}
+include common.tds
 
 scene main {
-  bg heian_hall
-  show goi.normal left fade 350
-  say narrator "平安の都。摂政の邸には、名を呼ばれることのない侍がいた。"
-  say narrator "人はただ、その位階で彼を『五位』と呼んだ。"
-  say narrator "衣は褪せ、鼻は冬の風に赤い。彼の言葉に耳を貸す者は少ない。"
-  say narrator "それでも五位には、誰にも明かさない願いが一つあった。"
-  say goi "……芋粥を、いつか心ゆくまで食べてみたい。"
-  say narrator "山の芋を甘葛で煮た粥。年に一度、宴の残りをほんの少し口にできるだけ。"
-  say narrator "その小さな望みを、五位は長いあいだ胸の奥で温めていた。"
-  goto "chapters/banquet.tds"
+  bg museum_night
+  show akechi.normal left fade 350
+  say narrator "東京、二〇二六年。私は二十四歳。明智探偵事務所で、調査記録の整理を任されている。"
+  say narrator "その夜、都心の私立美術館に一通の予告状が届いた。"
+  say akechi "差出人は『二十面相』。今夜八時、展示中の《青い星図》をいただく、とある。"
+  say narrator "怪盗の名は、新聞にも警察資料にも何度も現れる。顔も年齢も、性別すら確かな記録がない。"
+  say akechi "現場を見に行こう。君も来るんだ。見たものを先入観で埋めないこと。"
+  say narrator "そのとき、封筒の裏に小さな文字があるのに気づいた。『本物を見分ける人を、ひとり連れてきて』。"
+  set clue = clue + 1
+  goto "chapters/01_invitation.tds"
 }

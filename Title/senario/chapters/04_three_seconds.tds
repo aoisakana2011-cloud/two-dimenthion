@@ -1,0 +1,15 @@
+include common.tds
+
+scene main {
+  bg museum_night
+  show rei.normal left
+  show mio.normal right
+  say narrator "午後八時。展示室の照明が三秒だけ消え、戻ったとき、ケースの中には同じ星図があった。"
+  say mio "映像は止まっていない。照明の制御ログも正常。でも、観客のスマートフォンには一斉に別の映像が届いてる。"
+  say narrator "配信画面には、星図を抱えて走る怪盗の姿。けれど現場のケースは閉じたままだ。"
+  say rei "見たものを信じるのは簡単。でも、記録されたものを疑うのは勇気がいる。"
+  say narrator "彼女の視線は千早の手元に止まった。展示台の留め具に、ごく薄い新しい傷がある。"
+  say chihaya "これは私が見つけた記録と関係してる。あの作品は、いま展示されているものだけが本物とは限らない。"
+  set clue = clue + 1
+  goto "chapters/05_false_detective.tds"
+}

@@ -1,0 +1,4340 @@
+{
+  "format": "novel-script-package",
+  "version": 1,
+  "source": "chapters/banquet.tds",
+  "program": {
+    "version": 2,
+    "assets": [
+      {
+        "kind": "asset",
+        "type": "bg",
+        "name": "heian_hall",
+        "path": "asset/bg/heian-banquet.png",
+        "line": 1,
+        "column": 1,
+        "file": "current"
+      }
+    ],
+    "characters": [
+      {
+        "kind": "character",
+        "name": "goi",
+        "poses": [
+          {
+            "name": "normal",
+            "path": "asset/char/goi.png",
+            "line": 5,
+            "column": 3
+          }
+        ],
+        "line": 3,
+        "column": 1,
+        "endLine": 6,
+        "endColumn": 1,
+        "external": true
+      },
+      {
+        "kind": "character",
+        "name": "toshihito",
+        "poses": [
+          {
+            "name": "normal",
+            "path": "asset/char/toshihito.png",
+            "line": 10,
+            "column": 3
+          }
+        ],
+        "line": 8,
+        "column": 1,
+        "endLine": 11,
+        "endColumn": 1,
+        "external": true
+      }
+    ],
+    "globals": [
+      {
+        "op": "declare",
+        "type": {
+          "kind": "struct",
+          "name": "character:goi"
+        },
+        "name": "goi",
+        "initial": {
+          "kind": "dict",
+          "entries": [
+            {
+              "key": "name",
+              "value": {
+                "kind": "literal",
+                "value": "五位"
+              }
+            }
+          ]
+        },
+        "line": 3
+      },
+      {
+        "op": "declare",
+        "type": {
+          "kind": "struct",
+          "name": "character:toshihito"
+        },
+        "name": "toshihito",
+        "initial": {
+          "kind": "dict",
+          "entries": [
+            {
+              "key": "name",
+              "value": {
+                "kind": "literal",
+                "value": "利仁"
+              }
+            }
+          ]
+        },
+        "line": 8
+      }
+    ],
+    "functions": [],
+    "scenes": [
+      {
+        "name": "banquet",
+        "file": "current",
+        "line": 3,
+        "instructions": [
+          {
+            "op": "command",
+            "name": "bg",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "heian_hall"
+              }
+            ],
+            "file": "current",
+            "line": 4
+          },
+          {
+            "op": "command",
+            "name": "show",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "goi.normal"
+              },
+              {
+                "kind": "literal",
+                "value": "left"
+              }
+            ],
+            "file": "current",
+            "line": 5
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "正月二日。摂政の邸で大きな宴が開かれた。"
+              }
+            ],
+            "file": "current",
+            "line": 6
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "客が去ると、侍たちは残された膳を囲む。"
+              }
+            ],
+            "file": "current",
+            "line": 7
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "銀の器の底に、五位の待ち続けた芋粥があった。"
+              }
+            ],
+            "file": "current",
+            "line": 8
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "goi"
+              },
+              {
+                "kind": "literal",
+                "value": "今年は、ことに甘いのう。"
+              }
+            ],
+            "file": "current",
+            "line": 9
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "一口、もう一口。椀はたちまち空になった。"
+              }
+            ],
+            "file": "current",
+            "line": 10
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "goi"
+              },
+              {
+                "kind": "literal",
+                "value": "いつになれば、これに飽くことができるのかのう。"
+              }
+            ],
+            "file": "current",
+            "line": 11
+          },
+          {
+            "op": "command",
+            "name": "show",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "toshihito.normal"
+              },
+              {
+                "kind": "literal",
+                "value": "right"
+              },
+              {
+                "kind": "literal",
+                "value": "fade"
+              },
+              {
+                "kind": "integer",
+                "value": "300"
+              }
+            ],
+            "file": "current",
+            "line": 12
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "toshihito"
+              },
+              {
+                "kind": "literal",
+                "value": "五位殿は、芋粥に飽かれたことがないのか。"
+              }
+            ],
+            "file": "current",
+            "line": 13
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "笑い声が、列席した侍たちの間に広がった。"
+              }
+            ],
+            "file": "current",
+            "line": 14
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "声の主は藤原利仁。大柄で、豪胆な武人だった。"
+              }
+            ],
+            "file": "current",
+            "line": 15
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "toshihito"
+              },
+              {
+                "kind": "literal",
+                "value": "それなら、わしがお飽かせしよう。"
+              }
+            ],
+            "file": "current",
+            "line": 16
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "goi"
+              },
+              {
+                "kind": "literal",
+                "value": "……まことでござるか。"
+              }
+            ],
+            "file": "current",
+            "line": 17
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "toshihito"
+              },
+              {
+                "kind": "literal",
+                "value": "疑うなら、試してみるがよい。"
+              }
+            ],
+            "file": "current",
+            "line": 18
+          },
+          {
+            "op": "choice",
+            "prompt": {
+              "kind": "literal",
+              "value": "五位はどう答える？"
+            },
+            "options": [
+              {
+                "label": {
+                  "kind": "literal",
+                  "value": "願いを口にする"
+                },
+                "body": [
+                  {
+                    "op": "goto",
+                    "scene": "banquet_accept",
+                    "file": "current",
+                    "line": 20
+                  }
+                ]
+              },
+              {
+                "label": {
+                  "kind": "literal",
+                  "value": "行き先を確かめる"
+                },
+                "body": [
+                  {
+                    "op": "goto",
+                    "scene": "banquet_question",
+                    "file": "current",
+                    "line": 21
+                  }
+                ]
+              }
+            ],
+            "file": "current",
+            "line": 19
+          }
+        ]
+      },
+      {
+        "name": "banquet_accept",
+        "file": "current",
+        "line": 25,
+        "instructions": [
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "goi"
+              },
+              {
+                "kind": "literal",
+                "value": "ありがたく、お言葉に甘えまする。"
+              }
+            ],
+            "file": "current",
+            "line": 26
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "五位は笑われるのを承知で、初めて自分の願いを声にした。"
+              }
+            ],
+            "file": "current",
+            "line": 27
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "toshihito"
+              },
+              {
+                "kind": "literal",
+                "value": "よし。数日のうちに迎えに参ろう。"
+              }
+            ],
+            "file": "current",
+            "line": 28
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "五位の胸には、不安と同じだけの期待が残った。"
+              }
+            ],
+            "file": "current",
+            "line": 29
+          },
+          {
+            "op": "goto",
+            "scene": "chapters/road.tds",
+            "file": "current",
+            "line": 30
+          }
+        ]
+      },
+      {
+        "name": "banquet_question",
+        "file": "current",
+        "line": 33,
+        "instructions": [
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "goi"
+              },
+              {
+                "kind": "literal",
+                "value": "ありがたいお話でござる。ですが、どちらへ参るので。"
+              }
+            ],
+            "file": "current",
+            "line": 34
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "toshihito"
+              },
+              {
+                "kind": "literal",
+                "value": "それは道すがら話そう。よい湯のある所でもある。"
+              }
+            ],
+            "file": "current",
+            "line": 35
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "利仁は笑った。五位には、その笑みの意味が読めなかった。"
+              }
+            ],
+            "file": "current",
+            "line": 36
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "goi"
+              },
+              {
+                "kind": "literal",
+                "value": "……それならば、お供いたします。"
+              }
+            ],
+            "file": "current",
+            "line": 37
+          },
+          {
+            "op": "goto",
+            "scene": "chapters/road.tds",
+            "file": "current",
+            "line": 38
+          }
+        ]
+      }
+    ],
+    "variables": [
+      {
+        "name": "goi",
+        "type": {
+          "kind": "struct",
+          "name": "character:goi"
+        },
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [],
+        "references": [
+          {
+            "scope": "scene",
+            "container": "banquet",
+            "line": 5,
+            "column": 8,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "banquet",
+            "line": 9,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "banquet",
+            "line": 11,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "banquet",
+            "line": 17,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "banquet_accept",
+            "line": 26,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "banquet_question",
+            "line": 34,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "banquet_question",
+            "line": 37,
+            "column": 3,
+            "kind": "expression"
+          }
+        ],
+        "mutable": true
+      },
+      {
+        "name": "toshihito",
+        "type": {
+          "kind": "struct",
+          "name": "character:toshihito"
+        },
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [],
+        "references": [
+          {
+            "scope": "scene",
+            "container": "banquet",
+            "line": 12,
+            "column": 8,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "banquet",
+            "line": 13,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "banquet",
+            "line": 16,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "banquet",
+            "line": 18,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "banquet_accept",
+            "line": 28,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "banquet_question",
+            "line": 35,
+            "column": 3,
+            "kind": "expression"
+          }
+        ],
+        "mutable": true
+      }
+    ]
+  },
+  "files": {
+    "main.tds": {
+      "version": 2,
+      "assets": [
+        {
+          "kind": "asset",
+          "type": "bg",
+          "name": "heian_hall",
+          "path": "asset/bg/heian-banquet.png",
+          "line": 1,
+          "column": 1,
+          "file": "current"
+        }
+      ],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "goi",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/goi.png",
+              "line": 5,
+              "column": 3,
+              "file": "current"
+            }
+          ],
+          "line": 3,
+          "column": 1,
+          "endLine": 6,
+          "endColumn": 1,
+          "file": "current"
+        },
+        {
+          "kind": "character",
+          "name": "toshihito",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/toshihito.png",
+              "line": 10,
+              "column": 3,
+              "file": "current"
+            }
+          ],
+          "line": 8,
+          "column": 1,
+          "endLine": 11,
+          "endColumn": 1,
+          "file": "current"
+        }
+      ],
+      "globals": [
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:goi"
+          },
+          "name": "goi",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "五位"
+                }
+              }
+            ]
+          },
+          "line": 3
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:toshihito"
+          },
+          "name": "toshihito",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "利仁"
+                }
+              }
+            ]
+          },
+          "line": 8
+        }
+      ],
+      "functions": [],
+      "scenes": [
+        {
+          "name": "main",
+          "file": "current",
+          "line": 13,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "bg",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "heian_hall"
+                }
+              ],
+              "file": "current",
+              "line": 14
+            },
+            {
+              "op": "command",
+              "name": "show",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi.normal"
+                },
+                {
+                  "kind": "literal",
+                  "value": "left"
+                },
+                {
+                  "kind": "literal",
+                  "value": "fade"
+                },
+                {
+                  "kind": "integer",
+                  "value": "350"
+                }
+              ],
+              "file": "current",
+              "line": 15
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "平安の都。摂政の邸には、名を呼ばれることのない侍がいた。"
+                }
+              ],
+              "file": "current",
+              "line": 16
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "人はただ、その位階で彼を『五位』と呼んだ。"
+                }
+              ],
+              "file": "current",
+              "line": 17
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "衣は褪せ、鼻は冬の風に赤い。彼の言葉に耳を貸す者は少ない。"
+                }
+              ],
+              "file": "current",
+              "line": 18
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "それでも五位には、誰にも明かさない願いが一つあった。"
+                }
+              ],
+              "file": "current",
+              "line": 19
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "……芋粥を、いつか心ゆくまで食べてみたい。"
+                }
+              ],
+              "file": "current",
+              "line": 20
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "山の芋を甘葛で煮た粥。年に一度、宴の残りをほんの少し口にできるだけ。"
+                }
+              ],
+              "file": "current",
+              "line": 21
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "その小さな望みを、五位は長いあいだ胸の奥で温めていた。"
+                }
+              ],
+              "file": "current",
+              "line": 22
+            },
+            {
+              "op": "goto",
+              "scene": "chapters/banquet.tds",
+              "file": "current",
+              "line": 23
+            }
+          ]
+        }
+      ],
+      "variables": [
+        {
+          "name": "goi",
+          "type": {
+            "kind": "struct",
+            "name": "character:goi"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 3,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 15,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 20,
+              "column": 3,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "toshihito",
+          "type": {
+            "kind": "struct",
+            "name": "character:toshihito"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 8,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "chapters/banquet.tds": {
+      "version": 2,
+      "assets": [
+        {
+          "kind": "asset",
+          "type": "bg",
+          "name": "heian_hall",
+          "path": "asset/bg/heian-banquet.png",
+          "line": 1,
+          "column": 1,
+          "file": "current"
+        }
+      ],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "goi",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/goi.png",
+              "line": 5,
+              "column": 3
+            }
+          ],
+          "line": 3,
+          "column": 1,
+          "endLine": 6,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "toshihito",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/toshihito.png",
+              "line": 10,
+              "column": 3
+            }
+          ],
+          "line": 8,
+          "column": 1,
+          "endLine": 11,
+          "endColumn": 1,
+          "external": true
+        }
+      ],
+      "globals": [
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:goi"
+          },
+          "name": "goi",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "五位"
+                }
+              }
+            ]
+          },
+          "line": 3
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:toshihito"
+          },
+          "name": "toshihito",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "利仁"
+                }
+              }
+            ]
+          },
+          "line": 8
+        }
+      ],
+      "functions": [],
+      "scenes": [
+        {
+          "name": "banquet",
+          "file": "current",
+          "line": 3,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "bg",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "heian_hall"
+                }
+              ],
+              "file": "current",
+              "line": 4
+            },
+            {
+              "op": "command",
+              "name": "show",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi.normal"
+                },
+                {
+                  "kind": "literal",
+                  "value": "left"
+                }
+              ],
+              "file": "current",
+              "line": 5
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "正月二日。摂政の邸で大きな宴が開かれた。"
+                }
+              ],
+              "file": "current",
+              "line": 6
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "客が去ると、侍たちは残された膳を囲む。"
+                }
+              ],
+              "file": "current",
+              "line": 7
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "銀の器の底に、五位の待ち続けた芋粥があった。"
+                }
+              ],
+              "file": "current",
+              "line": 8
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "今年は、ことに甘いのう。"
+                }
+              ],
+              "file": "current",
+              "line": 9
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "一口、もう一口。椀はたちまち空になった。"
+                }
+              ],
+              "file": "current",
+              "line": 10
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "いつになれば、これに飽くことができるのかのう。"
+                }
+              ],
+              "file": "current",
+              "line": 11
+            },
+            {
+              "op": "command",
+              "name": "show",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito.normal"
+                },
+                {
+                  "kind": "literal",
+                  "value": "right"
+                },
+                {
+                  "kind": "literal",
+                  "value": "fade"
+                },
+                {
+                  "kind": "integer",
+                  "value": "300"
+                }
+              ],
+              "file": "current",
+              "line": 12
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "五位殿は、芋粥に飽かれたことがないのか。"
+                }
+              ],
+              "file": "current",
+              "line": 13
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "笑い声が、列席した侍たちの間に広がった。"
+                }
+              ],
+              "file": "current",
+              "line": 14
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "声の主は藤原利仁。大柄で、豪胆な武人だった。"
+                }
+              ],
+              "file": "current",
+              "line": 15
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "それなら、わしがお飽かせしよう。"
+                }
+              ],
+              "file": "current",
+              "line": 16
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "……まことでござるか。"
+                }
+              ],
+              "file": "current",
+              "line": 17
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "疑うなら、試してみるがよい。"
+                }
+              ],
+              "file": "current",
+              "line": 18
+            },
+            {
+              "op": "choice",
+              "prompt": {
+                "kind": "literal",
+                "value": "五位はどう答える？"
+              },
+              "options": [
+                {
+                  "label": {
+                    "kind": "literal",
+                    "value": "願いを口にする"
+                  },
+                  "body": [
+                    {
+                      "op": "goto",
+                      "scene": "banquet_accept",
+                      "file": "current",
+                      "line": 20
+                    }
+                  ]
+                },
+                {
+                  "label": {
+                    "kind": "literal",
+                    "value": "行き先を確かめる"
+                  },
+                  "body": [
+                    {
+                      "op": "goto",
+                      "scene": "banquet_question",
+                      "file": "current",
+                      "line": 21
+                    }
+                  ]
+                }
+              ],
+              "file": "current",
+              "line": 19
+            }
+          ]
+        },
+        {
+          "name": "banquet_accept",
+          "file": "current",
+          "line": 25,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "ありがたく、お言葉に甘えまする。"
+                }
+              ],
+              "file": "current",
+              "line": 26
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "五位は笑われるのを承知で、初めて自分の願いを声にした。"
+                }
+              ],
+              "file": "current",
+              "line": 27
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "よし。数日のうちに迎えに参ろう。"
+                }
+              ],
+              "file": "current",
+              "line": 28
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "五位の胸には、不安と同じだけの期待が残った。"
+                }
+              ],
+              "file": "current",
+              "line": 29
+            },
+            {
+              "op": "goto",
+              "scene": "chapters/road.tds",
+              "file": "current",
+              "line": 30
+            }
+          ]
+        },
+        {
+          "name": "banquet_question",
+          "file": "current",
+          "line": 33,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "ありがたいお話でござる。ですが、どちらへ参るので。"
+                }
+              ],
+              "file": "current",
+              "line": 34
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "それは道すがら話そう。よい湯のある所でもある。"
+                }
+              ],
+              "file": "current",
+              "line": 35
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "利仁は笑った。五位には、その笑みの意味が読めなかった。"
+                }
+              ],
+              "file": "current",
+              "line": 36
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "……それならば、お供いたします。"
+                }
+              ],
+              "file": "current",
+              "line": 37
+            },
+            {
+              "op": "goto",
+              "scene": "chapters/road.tds",
+              "file": "current",
+              "line": 38
+            }
+          ]
+        }
+      ],
+      "variables": [
+        {
+          "name": "goi",
+          "type": {
+            "kind": "struct",
+            "name": "character:goi"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "banquet",
+              "line": 5,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "banquet",
+              "line": 9,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "banquet",
+              "line": 11,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "banquet",
+              "line": 17,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "banquet_accept",
+              "line": 26,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "banquet_question",
+              "line": 34,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "banquet_question",
+              "line": 37,
+              "column": 3,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "toshihito",
+          "type": {
+            "kind": "struct",
+            "name": "character:toshihito"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "banquet",
+              "line": 12,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "banquet",
+              "line": 13,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "banquet",
+              "line": 16,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "banquet",
+              "line": 18,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "banquet_accept",
+              "line": 28,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "banquet_question",
+              "line": 35,
+              "column": 3,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "chapters/road.tds": {
+      "version": 2,
+      "assets": [
+        {
+          "kind": "asset",
+          "type": "bg",
+          "name": "winter_road",
+          "path": "asset/bg/winter-road.png",
+          "line": 1,
+          "column": 1,
+          "file": "current"
+        }
+      ],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "goi",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/goi.png",
+              "line": 5,
+              "column": 3
+            }
+          ],
+          "line": 3,
+          "column": 1,
+          "endLine": 6,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "toshihito",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/toshihito.png",
+              "line": 10,
+              "column": 3
+            }
+          ],
+          "line": 8,
+          "column": 1,
+          "endLine": 11,
+          "endColumn": 1,
+          "external": true
+        }
+      ],
+      "globals": [
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:goi"
+          },
+          "name": "goi",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "五位"
+                }
+              }
+            ]
+          },
+          "line": 3
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:toshihito"
+          },
+          "name": "toshihito",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "利仁"
+                }
+              }
+            ]
+          },
+          "line": 8
+        }
+      ],
+      "functions": [],
+      "scenes": [
+        {
+          "name": "winter_journey",
+          "file": "current",
+          "line": 3,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "effect",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "fade"
+                },
+                {
+                  "kind": "literal",
+                  "value": "black"
+                },
+                {
+                  "kind": "integer",
+                  "value": "250"
+                }
+              ],
+              "file": "current",
+              "line": 4
+            },
+            {
+              "op": "command",
+              "name": "bg",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "winter_road"
+                }
+              ],
+              "file": "current",
+              "line": 5
+            },
+            {
+              "op": "command",
+              "name": "show",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi.normal"
+                },
+                {
+                  "kind": "literal",
+                  "value": "left"
+                }
+              ],
+              "file": "current",
+              "line": 6
+            },
+            {
+              "op": "command",
+              "name": "show",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito.normal"
+                },
+                {
+                  "kind": "literal",
+                  "value": "right"
+                }
+              ],
+              "file": "current",
+              "line": 7
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "数日後。二人は冬の都を出た。"
+                }
+              ],
+              "file": "current",
+              "line": 8
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "利仁は先を行き、五位は慣れない馬上で手綱を握る。"
+                }
+              ],
+              "file": "current",
+              "line": 9
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "湯の湧く所とは、粟田口あたりでござろうか。"
+                }
+              ],
+              "file": "current",
+              "line": 10
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "もう少し先だ。"
+                }
+              ],
+              "file": "current",
+              "line": 11
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "家並みは途切れ、枯れた田に鴉が降りた。"
+                }
+              ],
+              "file": "current",
+              "line": 12
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "では、山科でござるな。"
+                }
+              ],
+              "file": "current",
+              "line": 13
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "もう少し。"
+                }
+              ],
+              "file": "current",
+              "line": 14
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "山科を越え、三井寺を過ぎても、馬は止まらない。"
+                }
+              ],
+              "file": "current",
+              "line": 15
+            },
+            {
+              "op": "choice",
+              "prompt": {
+                "kind": "literal",
+                "value": "五位は何をする？"
+              },
+              "options": [
+                {
+                  "label": {
+                    "kind": "literal",
+                    "value": "もう一度、行き先を尋ねる"
+                  },
+                  "body": [
+                    {
+                      "op": "goto",
+                      "scene": "road_question",
+                      "file": "current",
+                      "line": 17
+                    }
+                  ]
+                },
+                {
+                  "label": {
+                    "kind": "literal",
+                    "value": "黙って景色を見つめる"
+                  },
+                  "body": [
+                    {
+                      "op": "goto",
+                      "scene": "road_silent",
+                      "file": "current",
+                      "line": 18
+                    }
+                  ]
+                }
+              ],
+              "file": "current",
+              "line": 16
+            }
+          ]
+        },
+        {
+          "name": "road_question",
+          "file": "current",
+          "line": 22,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "利仁殿。これより先は、どちらへ。"
+                }
+              ],
+              "file": "current",
+              "line": 23
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "ようやく訊いたな。越前の敦賀まで行く。"
+                }
+              ],
+              "file": "current",
+              "line": 24
+            },
+            {
+              "op": "goto",
+              "scene": "road_reveal",
+              "file": "current",
+              "line": 25
+            }
+          ]
+        },
+        {
+          "name": "road_silent",
+          "file": "current",
+          "line": 28,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "白い息が、馬の首の向こうへ流れてゆく。"
+                }
+              ],
+              "file": "current",
+              "line": 29
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "そろそろ言っておこう。行き先は越前の敦賀だ。"
+                }
+              ],
+              "file": "current",
+              "line": 30
+            },
+            {
+              "op": "goto",
+              "scene": "road_reveal",
+              "file": "current",
+              "line": 31
+            }
+          ]
+        },
+        {
+          "name": "road_reveal",
+          "file": "current",
+          "line": 34,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "敦賀……。あの遠い敦賀でござるか。"
+                }
+              ],
+              "file": "current",
+              "line": 35
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "湯治のつもりで来た五位は、思わず手綱を引いた。"
+                }
+              ],
+              "file": "current",
+              "line": 36
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "初めからそうと分かれば、支度もできたものを。"
+                }
+              ],
+              "file": "current",
+              "line": 37
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "わしが一人いれば十分。道中の心配は要らぬ。"
+                }
+              ],
+              "file": "current",
+              "line": 38
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "不安は消えない。それでも五位は、馬首を返さなかった。"
+                }
+              ],
+              "file": "current",
+              "line": 39
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "芋粥に飽くまで食べる。その約束だけが彼を前へ進ませた。"
+                }
+              ],
+              "file": "current",
+              "line": 40
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "夕暮れの野に、一匹の狐が現れた。"
+                }
+              ],
+              "file": "current",
+              "line": 41
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "よい使者がいた。館へ先触れを頼もう。"
+                }
+              ],
+              "file": "current",
+              "line": 42
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "利仁は狐を捕え、敦賀の館へ迎えを出すよう言い聞かせた。"
+                }
+              ],
+              "file": "current",
+              "line": 43
+            },
+            {
+              "op": "choice",
+              "prompt": {
+                "kind": "literal",
+                "value": "狐の行方を見ながら、五位は――"
+              },
+              "options": [
+                {
+                  "label": {
+                    "kind": "literal",
+                    "value": "狐を信じてみる"
+                  },
+                  "body": [
+                    {
+                      "op": "goto",
+                      "scene": "fox_believe",
+                      "file": "current",
+                      "line": 45
+                    }
+                  ]
+                },
+                {
+                  "label": {
+                    "kind": "literal",
+                    "value": "半信半疑のまま進む"
+                  },
+                  "body": [
+                    {
+                      "op": "goto",
+                      "scene": "fox_doubt",
+                      "file": "current",
+                      "line": 46
+                    }
+                  ]
+                }
+              ],
+              "file": "current",
+              "line": 44
+            }
+          ]
+        },
+        {
+          "name": "fox_believe",
+          "file": "current",
+          "line": 50,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "あれほど早く走るなら、先に着くやもしれませぬな。"
+                }
+              ],
+              "file": "current",
+              "line": 51
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "そなたも、少しは旅を楽しむ顔になった。"
+                }
+              ],
+              "file": "current",
+              "line": 52
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "狐の影は枯れ草の向こうへ消えた。"
+                }
+              ],
+              "file": "current",
+              "line": 53
+            },
+            {
+              "op": "goto",
+              "scene": "chapters/lake.tds",
+              "file": "current",
+              "line": 54
+            }
+          ]
+        },
+        {
+          "name": "fox_doubt",
+          "file": "current",
+          "line": 57,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "人の言葉を、獣が運ぶものでござろうか。"
+                }
+              ],
+              "file": "current",
+              "line": 58
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "明日になれば分かる。"
+                }
+              ],
+              "file": "current",
+              "line": 59
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "狐の影は枯れ草の向こうへ消えた。"
+                }
+              ],
+              "file": "current",
+              "line": 60
+            },
+            {
+              "op": "goto",
+              "scene": "chapters/lake.tds",
+              "file": "current",
+              "line": 61
+            }
+          ]
+        }
+      ],
+      "variables": [
+        {
+          "name": "goi",
+          "type": {
+            "kind": "struct",
+            "name": "character:goi"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "winter_journey",
+              "line": 6,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "winter_journey",
+              "line": 10,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "winter_journey",
+              "line": 13,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "road_question",
+              "line": 23,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "road_reveal",
+              "line": 35,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "road_reveal",
+              "line": 37,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "fox_believe",
+              "line": 51,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "fox_doubt",
+              "line": 58,
+              "column": 3,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "toshihito",
+          "type": {
+            "kind": "struct",
+            "name": "character:toshihito"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "winter_journey",
+              "line": 7,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "winter_journey",
+              "line": 11,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "winter_journey",
+              "line": 14,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "road_question",
+              "line": 24,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "road_silent",
+              "line": 30,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "road_reveal",
+              "line": 38,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "road_reveal",
+              "line": 42,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "fox_believe",
+              "line": 52,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "fox_doubt",
+              "line": 59,
+              "column": 3,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "chapters/lake.tds": {
+      "version": 2,
+      "assets": [
+        {
+          "kind": "asset",
+          "type": "bg",
+          "name": "lake_biwa",
+          "path": "asset/bg/lake-biwa.png",
+          "line": 1,
+          "column": 1,
+          "file": "current"
+        }
+      ],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "goi",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/goi.png",
+              "line": 5,
+              "column": 3
+            }
+          ],
+          "line": 3,
+          "column": 1,
+          "endLine": 6,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "toshihito",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/toshihito.png",
+              "line": 10,
+              "column": 3
+            }
+          ],
+          "line": 8,
+          "column": 1,
+          "endLine": 11,
+          "endColumn": 1,
+          "external": true
+        }
+      ],
+      "globals": [
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:goi"
+          },
+          "name": "goi",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "五位"
+                }
+              }
+            ]
+          },
+          "line": 3
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:toshihito"
+          },
+          "name": "toshihito",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "利仁"
+                }
+              }
+            ]
+          },
+          "line": 8
+        }
+      ],
+      "functions": [],
+      "scenes": [
+        {
+          "name": "lake_shore",
+          "file": "current",
+          "line": 3,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "effect",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "fade"
+                },
+                {
+                  "kind": "literal",
+                  "value": "black"
+                },
+                {
+                  "kind": "integer",
+                  "value": "250"
+                }
+              ],
+              "file": "current",
+              "line": 4
+            },
+            {
+              "op": "command",
+              "name": "bg",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "lake_biwa"
+                }
+              ],
+              "file": "current",
+              "line": 5
+            },
+            {
+              "op": "command",
+              "name": "show",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi.normal"
+                },
+                {
+                  "kind": "literal",
+                  "value": "left"
+                }
+              ],
+              "file": "current",
+              "line": 6
+            },
+            {
+              "op": "command",
+              "name": "show",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito.normal"
+                },
+                {
+                  "kind": "literal",
+                  "value": "right"
+                }
+              ],
+              "file": "current",
+              "line": 7
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "翌朝。琵琶湖の岸には冷たい雲が垂れこめていた。"
+                }
+              ],
+              "file": "current",
+              "line": 8
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "松の間に、二頭の替え馬と大勢の郎等が待っている。"
+                }
+              ],
+              "file": "current",
+              "line": 9
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "迎えが……。まさか、あの狐が本当に。"
+                }
+              ],
+              "file": "current",
+              "line": 10
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "白髪の郎等が、昨夜の不思議な出来事を語った。"
+                }
+              ],
+              "file": "current",
+              "line": 11
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "館の奥方が突然、狐の言葉を伝えたという。"
+                }
+              ],
+              "file": "current",
+              "line": 12
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "どうだ。獣も、わしの使いになる。"
+                }
+              ],
+              "file": "current",
+              "line": 13
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "驚き入りました。"
+                }
+              ],
+              "file": "current",
+              "line": 14
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "五位は頭を下げた。だが、その胸に残ったのは驚きだけではない。"
+                }
+              ],
+              "file": "current",
+              "line": 15
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "多くの人を動かせる者と、ただ一杯の粥を夢見る自分。"
+                }
+              ],
+              "file": "current",
+              "line": 16
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "二人の隔たりが、湖の広さのように感じられた。"
+                }
+              ],
+              "file": "current",
+              "line": 17
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "もうすぐ着く。今夜はゆっくり休まれよ。"
+                }
+              ],
+              "file": "current",
+              "line": 18
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "夕暮れ、馬は敦賀の館へ入った。"
+                }
+              ],
+              "file": "current",
+              "line": 19
+            },
+            {
+              "op": "command",
+              "name": "hide",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "fade"
+                },
+                {
+                  "kind": "integer",
+                  "value": "250"
+                }
+              ],
+              "file": "current",
+              "line": 20
+            },
+            {
+              "op": "goto",
+              "scene": "chapters/feast.tds",
+              "file": "current",
+              "line": 21
+            }
+          ]
+        }
+      ],
+      "variables": [
+        {
+          "name": "goi",
+          "type": {
+            "kind": "struct",
+            "name": "character:goi"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "lake_shore",
+              "line": 6,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "lake_shore",
+              "line": 10,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "lake_shore",
+              "line": 14,
+              "column": 3,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "toshihito",
+          "type": {
+            "kind": "struct",
+            "name": "character:toshihito"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "lake_shore",
+              "line": 7,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "lake_shore",
+              "line": 13,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "lake_shore",
+              "line": 18,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "lake_shore",
+              "line": 20,
+              "column": 8,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "chapters/feast.tds": {
+      "version": 2,
+      "assets": [
+        {
+          "kind": "asset",
+          "type": "bg",
+          "name": "tsuruga_manor",
+          "path": "asset/bg/tsuruga-manor.png",
+          "line": 1,
+          "column": 1,
+          "file": "current"
+        }
+      ],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "goi",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/goi.png",
+              "line": 5,
+              "column": 3
+            }
+          ],
+          "line": 3,
+          "column": 1,
+          "endLine": 6,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "toshihito",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/toshihito.png",
+              "line": 10,
+              "column": 3
+            }
+          ],
+          "line": 8,
+          "column": 1,
+          "endLine": 11,
+          "endColumn": 1,
+          "external": true
+        }
+      ],
+      "globals": [
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:goi"
+          },
+          "name": "goi",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "五位"
+                }
+              }
+            ]
+          },
+          "line": 3
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:toshihito"
+          },
+          "name": "toshihito",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "利仁"
+                }
+              }
+            ]
+          },
+          "line": 8
+        }
+      ],
+      "functions": [],
+      "scenes": [
+        {
+          "name": "night_before",
+          "file": "current",
+          "line": 3,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "effect",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "fade"
+                },
+                {
+                  "kind": "literal",
+                  "value": "black"
+                },
+                {
+                  "kind": "integer",
+                  "value": "350"
+                }
+              ],
+              "file": "current",
+              "line": 4
+            },
+            {
+              "op": "command",
+              "name": "bg",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "tsuruga_manor"
+                }
+              ],
+              "file": "current",
+              "line": 5
+            },
+            {
+              "op": "command",
+              "name": "show",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi.normal"
+                },
+                {
+                  "kind": "literal",
+                  "value": "center"
+                }
+              ],
+              "file": "current",
+              "line": 6
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "館の寝所は暖かかった。けれど五位は眠れない。"
+                }
+              ],
+              "file": "current",
+              "line": 7
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "庭から、下人たちへ命じる声が聞こえてくる。"
+                }
+              ],
+              "file": "current",
+              "line": 8
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "『夜明けまでに山の芋を持って参れ。一人につき一本だ』"
+                }
+              ],
+              "file": "current",
+              "line": 9
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "あれは……芋粥のためでござろうか。"
+                }
+              ],
+              "file": "current",
+              "line": 10
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "五位は、まだ見ぬ膳を思い浮かべた。"
+                }
+              ],
+              "file": "current",
+              "line": 11
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "いつか食べたいと願ったものが、いま手の届く所にある。"
+                }
+              ],
+              "file": "current",
+              "line": 12
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "だがその夜、空腹よりも大きなものが胸を占めていた。"
+                }
+              ],
+              "file": "current",
+              "line": 13
+            },
+            {
+              "op": "goto",
+              "scene": "morning_porridge",
+              "file": "current",
+              "line": 14
+            }
+          ]
+        },
+        {
+          "name": "morning_porridge",
+          "file": "current",
+          "line": 17,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "effect",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "fade"
+                },
+                {
+                  "kind": "literal",
+                  "value": "white"
+                },
+                {
+                  "kind": "integer",
+                  "value": "300"
+                }
+              ],
+              "file": "current",
+              "line": 18
+            },
+            {
+              "op": "command",
+              "name": "bg",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "tsuruga_manor"
+                }
+              ],
+              "file": "current",
+              "line": 19
+            },
+            {
+              "op": "command",
+              "name": "show",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi.normal"
+                },
+                {
+                  "kind": "literal",
+                  "value": "left"
+                }
+              ],
+              "file": "current",
+              "line": 20
+            },
+            {
+              "op": "command",
+              "name": "show",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito.normal"
+                },
+                {
+                  "kind": "literal",
+                  "value": "right"
+                }
+              ],
+              "file": "current",
+              "line": 21
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "朝。庭には山の芋が山と積まれていた。"
+                }
+              ],
+              "file": "current",
+              "line": 22
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "いくつもの大釜から湯気が上がる。"
+                }
+              ],
+              "file": "current",
+              "line": 23
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "五位の前には、銀の器になみなみと注がれた芋粥。"
+                }
+              ],
+              "file": "current",
+              "line": 24
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "さあ。望みどおり、飽くまで召されよ。"
+                }
+              ],
+              "file": "current",
+              "line": 25
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "……いただきまする。"
+                }
+              ],
+              "file": "current",
+              "line": 26
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "一口目は、確かにあの宴と同じ甘さだった。"
+                }
+              ],
+              "file": "current",
+              "line": 27
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "二口目には、五位は庭で働く人々の姿を見た。"
+                }
+              ],
+              "file": "current",
+              "line": 28
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "三口目を飲むころには、椀の向こうにまだ幾つもの器が並んでいた。"
+                }
+              ],
+              "file": "current",
+              "line": 29
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "これほどの量を、私一人のために。"
+                }
+              ],
+              "file": "current",
+              "line": 30
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "足りぬなら、いくらでも用意しよう。"
+                }
+              ],
+              "file": "current",
+              "line": 31
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "五位の願いは叶った。だが、かつて望んだ『いつか』はもうない。"
+                }
+              ],
+              "file": "current",
+              "line": 32
+            },
+            {
+              "op": "choice",
+              "prompt": {
+                "kind": "literal",
+                "value": "五位は椀をどうする？"
+              },
+              "options": [
+                {
+                  "label": {
+                    "kind": "literal",
+                    "value": "椀を置き、礼を言う"
+                  },
+                  "body": [
+                    {
+                      "op": "goto",
+                      "scene": "endings/quiet.tds",
+                      "file": "current",
+                      "line": 35
+                    }
+                  ]
+                },
+                {
+                  "label": {
+                    "kind": "literal",
+                    "value": "もう一口だけ飲み、胸の内を話す"
+                  },
+                  "body": [
+                    {
+                      "op": "goto",
+                      "scene": "endings/another.tds",
+                      "file": "current",
+                      "line": 38
+                    }
+                  ]
+                }
+              ],
+              "file": "current",
+              "line": 33
+            }
+          ]
+        }
+      ],
+      "variables": [
+        {
+          "name": "goi",
+          "type": {
+            "kind": "struct",
+            "name": "character:goi"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "night_before",
+              "line": 6,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "night_before",
+              "line": 10,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "morning_porridge",
+              "line": 20,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "morning_porridge",
+              "line": 26,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "morning_porridge",
+              "line": 30,
+              "column": 3,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "toshihito",
+          "type": {
+            "kind": "struct",
+            "name": "character:toshihito"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "morning_porridge",
+              "line": 21,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "morning_porridge",
+              "line": 25,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "morning_porridge",
+              "line": 31,
+              "column": 3,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "endings/another.tds": {
+      "version": 2,
+      "assets": [],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "goi",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/goi.png",
+              "line": 5,
+              "column": 3
+            }
+          ],
+          "line": 3,
+          "column": 1,
+          "endLine": 6,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "toshihito",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/toshihito.png",
+              "line": 10,
+              "column": 3
+            }
+          ],
+          "line": 8,
+          "column": 1,
+          "endLine": 11,
+          "endColumn": 1,
+          "external": true
+        }
+      ],
+      "globals": [
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:goi"
+          },
+          "name": "goi",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "五位"
+                }
+              }
+            ]
+          },
+          "line": 3
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:toshihito"
+          },
+          "name": "toshihito",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "利仁"
+                }
+              }
+            ]
+          },
+          "line": 8
+        }
+      ],
+      "functions": [],
+      "scenes": [
+        {
+          "name": "another_ending",
+          "file": "current",
+          "line": 1,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "五位は椀を持ち上げ、もう一口だけ飲んだ。"
+                }
+              ],
+              "file": "current",
+              "line": 2
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "利仁殿。京で飲む一口を、私は何年も待っておりました。"
+                }
+              ],
+              "file": "current",
+              "line": 3
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "今朝は腹いっぱいでござる。けれど、少し寂しいのでござる。"
+                }
+              ],
+              "file": "current",
+              "line": 4
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "願いが叶ったというのに、か。"
+                }
+              ],
+              "file": "current",
+              "line": 5
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "叶う前の私には、明日を待つ楽しみがありました。"
+                }
+              ],
+              "file": "current",
+              "line": 6
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "利仁は答えず、庭に目を向けた。昨日の狐が軒先にいる。"
+                }
+              ],
+              "file": "current",
+              "line": 7
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "あの使者にも、粥を分けてやろう。"
+                }
+              ],
+              "file": "current",
+              "line": 8
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "ええ。それがよろしゅうござる。"
+                }
+              ],
+              "file": "current",
+              "line": 9
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "狐の前に小さな椀が置かれた。"
+                }
+              ],
+              "file": "current",
+              "line": 10
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "五位は、もう粥を欲しがらなかった。"
+                }
+              ],
+              "file": "current",
+              "line": 11
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "それでも、冷えた庭に立つ狐が一口目を飲む姿を、長く見守った。"
+                }
+              ],
+              "file": "current",
+              "line": 12
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "終　—　芥川龍之介『芋粥』を原案とした再構成"
+                }
+              ],
+              "file": "current",
+              "line": 13
+            },
+            {
+              "op": "command",
+              "name": "wait",
+              "args": [
+                {
+                  "kind": "integer",
+                  "value": "300"
+                }
+              ],
+              "file": "current",
+              "line": 14
+            }
+          ]
+        }
+      ],
+      "variables": [
+        {
+          "name": "goi",
+          "type": {
+            "kind": "struct",
+            "name": "character:goi"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "another_ending",
+              "line": 3,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "another_ending",
+              "line": 4,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "another_ending",
+              "line": 6,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "another_ending",
+              "line": 9,
+              "column": 3,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "toshihito",
+          "type": {
+            "kind": "struct",
+            "name": "character:toshihito"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "another_ending",
+              "line": 5,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "another_ending",
+              "line": 8,
+              "column": 3,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "endings/quiet.tds": {
+      "version": 2,
+      "assets": [],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "goi",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/goi.png",
+              "line": 5,
+              "column": 3
+            }
+          ],
+          "line": 3,
+          "column": 1,
+          "endLine": 6,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "toshihito",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/toshihito.png",
+              "line": 10,
+              "column": 3
+            }
+          ],
+          "line": 8,
+          "column": 1,
+          "endLine": 11,
+          "endColumn": 1,
+          "external": true
+        }
+      ],
+      "globals": [
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:goi"
+          },
+          "name": "goi",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "五位"
+                }
+              }
+            ]
+          },
+          "line": 3
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:toshihito"
+          },
+          "name": "toshihito",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "利仁"
+                }
+              }
+            ]
+          },
+          "line": 8
+        }
+      ],
+      "functions": [],
+      "scenes": [
+        {
+          "name": "quiet_ending",
+          "file": "current",
+          "line": 1,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "ありがたく頂戴いたしました。もう十分でござる。"
+                }
+              ],
+              "file": "current",
+              "line": 2
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "利仁は新しい椀を勧めかけ、ふと手を止めた。"
+                }
+              ],
+              "file": "current",
+              "line": 3
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "軒先に、昨日の狐が座っている。"
+                }
+              ],
+              "file": "current",
+              "line": 4
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "toshihito"
+                },
+                {
+                  "kind": "literal",
+                  "value": "あの使者にも、馳走を分けてやれ。"
+                }
+              ],
+              "file": "current",
+              "line": 5
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "狐は庭で粥を食べ始めた。"
+                }
+              ],
+              "file": "current",
+              "line": 6
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "goi"
+                },
+                {
+                  "kind": "literal",
+                  "value": "あれも、腹を空かせていたのでござろうな。"
+                }
+              ],
+              "file": "current",
+              "line": 7
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "五位はかつて、一口を待つだけで幸せだった自分を思い出す。"
+                }
+              ],
+              "file": "current",
+              "line": 8
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "満たされた器の前で、願いそのものが静かに遠ざかっていた。"
+                }
+              ],
+              "file": "current",
+              "line": 9
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "冬の朝の冷気が、熱くなった鼻先を冷ます。"
+                }
+              ],
+              "file": "current",
+              "line": 10
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "五位は小さくくしゃみをした。"
+                }
+              ],
+              "file": "current",
+              "line": 11
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "終　—　芥川龍之介『芋粥』を原案とした再構成"
+                }
+              ],
+              "file": "current",
+              "line": 12
+            },
+            {
+              "op": "command",
+              "name": "wait",
+              "args": [
+                {
+                  "kind": "integer",
+                  "value": "300"
+                }
+              ],
+              "file": "current",
+              "line": 13
+            }
+          ]
+        }
+      ],
+      "variables": [
+        {
+          "name": "goi",
+          "type": {
+            "kind": "struct",
+            "name": "character:goi"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "quiet_ending",
+              "line": 2,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "quiet_ending",
+              "line": 7,
+              "column": 3,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "toshihito",
+          "type": {
+            "kind": "struct",
+            "name": "character:toshihito"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "quiet_ending",
+              "line": 5,
+              "column": 3,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    }
+  },
+  "native_ui": {
+    "native_ui_theme": "ui/player-ui.json"
+  }
+}

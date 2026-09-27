@@ -1326,11 +1326,27 @@ async function handleApi(request, response, url) {
       if (!target || line < target.line || line > (target.endLine || target.line)) return json(response, 400, { error: 'scene内の行を指定してください' });
       const configured = await readStaticVariables(DATA_ROOT);
       const analysis = await createProjectAnalysisContext();
-      const characters = await globalCharacterTable(file, analysis);
+      const [globalVariables, characters] = await Promise.all([
+        globalVariableTable(file, analysis), globalCharacterTable(file, analysis),
+      ]);
       const definitions = [...characters.values()].flatMap((character) => character.definition ? [character.definition] : []);
+      const trustedConstraints = new Map(configured.table.constraints);
+      if (trustedConstraints.size) {
+        const { analyzeScript } = require('../dist/checker/analyzer');
+        const context = projectContext(ast, globalVariables, characters, file);
+        const constraintDiagnostics = analyzeScript({
+          ...ast,
+          globals: [...configured.declarations, ...ast.globals],
+          body: [...configured.declarations, ...ast.body],
+        }, file, context.globals, context.characters);
+        for (const diagnostic of constraintDiagnostics) {
+          if (diagnostic.code !== 'variable-constraint' || diagnostic.severity === 'info') continue;
+          if (diagnostic.variable) trustedConstraints.delete(diagnostic.variable);
+        }
+      }
       // Scene Flow launches the selected file as a fresh runtime entry, so its
       // own globals are initialized before the selected scene and line.
-      return json(response, 200, { domains: analyzeStartDomains(ast, scene, line, names, configured.declarations, true, configured.table.constraints, definitions) });
+      return json(response, 200, { domains: analyzeStartDomains(ast, scene, line, names, configured.declarations, true, trustedConstraints, definitions, [...globalVariables.keys()], globalVariables) });
     } catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
   }
   if (request.method === 'POST' && url.pathname === '/api/validate-flow') { const body = await readJson(request); return json(response, 200, await validateFlow(body.start, body.end)); }

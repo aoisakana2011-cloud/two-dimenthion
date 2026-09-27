@@ -1,0 +1,15 @@
+include common.tds
+
+scene main {
+  bg akechi_office
+  show akechi.normal left
+  say narrator "翌朝、事務所に明智が二人現れた。片方は合鍵を持ち、もう片方は昨日の事件を細部まで知っていた。"
+  say akechi "名乗りだけで決めるな。声も顔も、本人らしく見えるように作れる。"
+  say narrator "二人は互いを偽物だと主張する。だが片方の端末には、昨夜の監視ログが一分だけ欠けていた。"
+  say mio "本人確認は一つの情報に頼らない。記録の出所、時刻、改変履歴を合わせて確かめよう。"
+  say chihaya "それから、本人にしか答えられない問いを作る。秘密を知っていることと、本人であることは違うから。"
+  say narrator "窓辺に白いカードが差し込まれた。『本物を選ぶより、偽物を作った理由を考えて』。"
+  say akechi "私は資料館へ行く。君たちは二人と話して、何が食い違うか見つけてくれ。"
+  set clue = clue + 1
+  goto "chapters/06_missing_mentor.tds"
+}

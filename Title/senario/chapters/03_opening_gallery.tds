@@ -1,0 +1,17 @@
+include common.tds
+
+scene main {
+  bg museum_night
+  show akechi.normal left
+  show chihaya.normal right
+  say narrator "午後七時四十分。展示室は閉館後の静けさに包まれていた。ガラスケースの星図だけが青く照らされている。"
+  say chihaya "作品の表面に傷はない。でも照明の反射が、昼に見たときと少し違う。"
+  say akechi "ケースには触れないで。警備員にも、いつもどおり巡回してもらおう。"
+  say narrator "入館記録に不審な名前はない。だが、監視カメラには展示室へ入る人影がひとつも映っていなかった。"
+  say narrator "閉館後のロビーから、柔らかな拍手がひとつ聞こえた。"
+  show rei.normal center fade 300
+  say rei "招待に応じてくれてありがとう。今夜、盗まれるのは絵じゃない。あなたたちが信じている筋書きよ。"
+  say narrator "黒いコートの女性は、警備員の制止より早く非常口へ消えた。床に残ったのは、白い仮面の片目だけ。"
+  set clue = clue + 1
+  goto "chapters/04_three_seconds.tds"
+}

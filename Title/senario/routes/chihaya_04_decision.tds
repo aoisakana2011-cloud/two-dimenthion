@@ -1,0 +1,18 @@
+include common.tds
+
+scene main {
+  bg rooftop_rain
+  show chihaya.normal left
+  say narrator "千早は、報告書の公開前に店主へ原稿を見せた。彼の希望で、家族の名前は伏せ、託された作品の記録だけを残すことになった。"
+  say chihaya "歴史の空白を埋めるとき、誰かの暮らしまで勝手に公開してはいけない。あなたが一緒に考えてくれてよかった。"
+  say narrator "工房を出たあと、千早は次の休みに小さな美術館へ行こうと誘った。仕事ではなく、二人で見たい展示があるらしい。"
+  choice "千早の誘いに、どう答える？" {
+    "一緒に行きたいと伝え、気持ちも打ち明ける" {
+      set trust_chihaya = trust_chihaya + 1
+      goto "chapters/07_after_choice.tds"
+    }
+    "まず事件を最後まで見届けてから返事をする" {
+      goto "chapters/07_after_choice.tds"
+    }
+  }
+}

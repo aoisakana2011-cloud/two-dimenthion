@@ -136,26 +136,13 @@
     return order;
   }
 
-  function roundedPolylinePath(points, radius = 5) {
+  function orthogonalPolylinePath(points) {
     const path = [points[0]];
     for (const point of points.slice(1)) {
       const last = path[path.length - 1];
       if (point.x !== last.x || point.y !== last.y) path.push(point);
     }
-    let d = `M${path[0].x} ${path[0].y}`;
-    for (let index = 1; index < path.length - 1; index++) {
-      const previous = path[index - 1], corner = path[index], next = path[index + 1];
-      const inX = corner.x - previous.x, inY = corner.y - previous.y;
-      const outX = next.x - corner.x, outY = next.y - corner.y;
-      const inLength = Math.hypot(inX, inY), outLength = Math.hypot(outX, outY);
-      if (Math.abs(inX * outY - inY * outX) < 1e-6) { d += `L${corner.x} ${corner.y}`; continue; }
-      const bend = Math.min(radius, inLength / 2, outLength / 2);
-      const before = { x: corner.x - inX / inLength * bend, y: corner.y - inY / inLength * bend };
-      const after = { x: corner.x + outX / outLength * bend, y: corner.y + outY / outLength * bend };
-      d += `L${before.x} ${before.y}Q${corner.x} ${corner.y} ${after.x} ${after.y}`;
-    }
-    const end = path[path.length - 1];
-    return d + `L${end.x} ${end.y}`;
+    return `M${path[0].x} ${path[0].y}` + path.slice(1).map((point) => `L${point.x} ${point.y}`).join('');
   }
 
   function routeEdges(edges, nodePositions, nodeHeight, folderOf, folderPositions = null) {
@@ -185,8 +172,16 @@
     });
     const portOffset = (list, edge, source) => {
       const ranked = rankPorts(list, source);
+      if (ranked.length < 2) {
+        // Offset even isolated ports slightly: separate folders often place
+        // their first node on the same row, where centered leads would share
+        // long horizontal runs before reaching their distinct routing lanes.
+        const key = `${source ? 'out' : 'in'}:${edgeKey(edge)}`;
+        const hash = [...key].reduce((sum, character) => (sum * 31 + character.charCodeAt(0)) >>> 0, 7);
+        return ((hash % 9) - 4) * 1.5;
+      }
       const index = ranked.indexOf(edge);
-      return ranked.length < 2 ? 0 : (index / (ranked.length - 1) - 0.5) * Math.min(nodeHeight - 6, (ranked.length - 1) * 4.5);
+      return (index / (ranked.length - 1) - 0.5) * Math.min(nodeHeight - 6, (ranked.length - 1) * 4.5);
     };
     const sharedSourcePorts = new Map(), sharedTargetPorts = new Map();
     for (const [file, arriving] of rightIncoming) {
@@ -207,7 +202,9 @@
     });
     for (const list of loops.values()) sorted(list, edgeKey);
     backwards.sort((a, b) => edgeKey(a).localeCompare(edgeKey(b), 'ja'));
-    const maxRight = Math.max(0, ...[...nodePositions.values()].map((position) => position.x + position.width));
+    const maxRight = folderPositions?.size
+      ? Math.max(0, ...[...folderPositions.values()].map((position) => position.x + position.width))
+      : Math.max(0, ...[...nodePositions.values()].map((position) => position.x + position.width));
     const topFolder = (file) => {
       const folder = folderOf(file);
       return folder === '(root)' ? folder : folder.split('/')[0];
@@ -227,7 +224,7 @@
       let points, type;
       if (sameFolder) {
         const list = loops.get(folderOf(edge.from)), lane = list.indexOf(edge);
-        const channel = 38 + lane * 13 + Math.min(80, Math.abs(y2 - y1) * 0.06);
+        const channel = 24 + lane * 12;
         const right = Math.max(x1, x2) + channel;
         const selfLoop = edge.from === edge.to;
         const lift = selfLoop ? 28 + lane * 8 : 0;
@@ -241,8 +238,8 @@
         type = 'return';
       } else {
         const list = groups.get(`${folderOf(edge.from)}\u0000${folderOf(edge.to)}`), lane = list.indexOf(edge);
-        const bend = (lane - (list.length - 1) / 2) * 9, dx = x2 - x1;
-        const channel = dx > 12 ? Math.max(x1 + 6, Math.min(x2 - 6, x1 + dx / 2 + bend)) : x1 + dx / 2;
+        const dx = x2 - x1;
+        const channel = x1 + dx / 2 + (lane - (list.length - 1) / 2) * 12;
         points = [{ x: x1, y: y1 }, { x: channel, y: y1 }, { x: channel, y: y2 }, { x: x2, y: y2 }];
         type = 'forward';
         if (obstacles.length && dx > 30) {
@@ -266,12 +263,12 @@
           }
         }
       }
-      const d = roundedPolylinePath(points);
+      const d = orthogonalPolylinePath(points);
       const bounds = {
         left: Math.min(...points.map((point) => point.x)), top: Math.min(...points.map((point) => point.y)),
         right: Math.max(...points.map((point) => point.x)), bottom: Math.max(...points.map((point) => point.y)),
       };
-      routes.set(edge, { d, type, bounds, x1, y1, x2, y2, sourceOffset, targetOffset });
+      routes.set(edge, { d, type, bounds, x1, y1, x2, y2, sourceOffset, targetOffset, points });
     }
     return routes;
   }

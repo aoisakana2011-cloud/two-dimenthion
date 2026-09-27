@@ -625,7 +625,7 @@ html.electron-desktop .menu-bar, html.electron-desktop .menu-popup, html.electro
 .hl-line.hl-start { background:#3b4a3fa8; box-decoration-break:clone; -webkit-box-decoration-break:clone; }
 .hl-line.hl-pick-hover { background:#315474a8 !important; box-decoration-break:clone; -webkit-box-decoration-break:clone; }
 #editor.debug-running::selection { background:#315474a8; }
-.debug-player-panel { position:fixed; z-index:4000; right:12px; bottom:12px; width:min(48vw,720px); height:min(64vh,600px); display:flex; flex-direction:column; border:1px solid #3c3c3c; background:#181818; box-shadow:0 8px 28px #0009; }
+.debug-player-panel { position:fixed; z-index:4000; right:12px; bottom:12px; width:min(48vw,720px); display:flex; flex-direction:column; border:1px solid #3c3c3c; background:#181818; box-shadow:0 8px 28px #0009; }
 .debug-player-bar { min-height:34px; flex:none; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 9px; border-bottom:1px solid #333; color:#c8c8c8; font-size:11px; }
 .debug-player-heading { min-width:0; display:flex; align-items:center; gap:9px; }
 .debug-player-heading strong { flex:none; color:#e0e0e0; font-weight:500; }
@@ -634,5 +634,6 @@ html.electron-desktop .menu-bar, html.electron-desktop .menu-popup, html.electro
 .debug-player-bar button { min-height:24px; padding:2px 7px; border:1px solid transparent; border-radius:2px; color:#aaa; background:transparent; cursor:pointer; font:11px system-ui,sans-serif; }
 .debug-player-bar button:hover { color:#fff; background:#252526; }
 .debug-player-bar button:last-child { border-color:#4b4b4b; color:#c8c8c8; }
-.debug-player-panel iframe { min-height:0; flex:1; width:100%; border:0; background:#111; }
-@media(max-width:900px) { .debug-player-panel { right:8px; bottom:8px; width:min(78vw,560px); height:52vh; } }
+.debug-player-viewport { position:relative; flex:none; width:100%; aspect-ratio:var(--debug-player-aspect,16 / 9); overflow:hidden; background:#111; }
+.debug-player-viewport iframe { position:absolute; top:0; left:0; display:block; width:1280px; height:720px; max-width:none; max-height:none; border:0; background:#111; transform-origin:top left; }
+@media(max-width:900px) { .debug-player-panel { right:8px; bottom:8px; width:min(78vw,560px); } }

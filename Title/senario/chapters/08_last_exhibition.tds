@@ -1,0 +1,22 @@
+include common.tds
+
+scene main {
+  bg museum_night
+  show akechi.normal left
+  show rei.normal right
+  say narrator "閉館後の美術館。展示ケースは空で、警備員たちは誰も侵入者を見ていないと言う。"
+  say akechi "作品はどこへ消えた？"
+  say rei "消えたのは、作品じゃない。『最初からここにあった』という記録よ。"
+  say narrator "床に置かれた封筒には、欠けていた寄贈台帳の写しと、複数の所有者の名前が記されていた。"
+  say narrator "真相を公表すれば、協力者の安全が危うくなる。隠せば、作品を失った人々の記憶まで消されてしまう。"
+  choice "事件の最後に、守るものを決める" {
+    "記録を検証して公表し、被害を受けた人へ返す" {
+      set disclose = 1
+      set clue = clue + 1
+      goto "chapters/09_public_hearing.tds"
+    }
+    "今夜は証拠を保全し、明智の判断を待つ" {
+      goto "endings/quiet_night.tds"
+    }
+  }
+}
