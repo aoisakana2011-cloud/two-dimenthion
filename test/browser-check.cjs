@@ -26,6 +26,7 @@ const assert = require('node:assert/strict');
     });
     let source = `asset image first = "asset/${relative}"
  asset image second = "asset/${relative}"
+asset bg room = "asset/${relative}"
  asset voice greeting = "asset/${audioRelative}"
 character hero {
   name = "Hero"
@@ -36,13 +37,17 @@ character friend {
   pose normal = "asset/${relative}"
 }
 str result = str(9007199254740992 + 1)
+float shift = 0.5
 fn answer() -> int { int n = 7
 return n }
 show image first left
  show image second right
  play voice greeting blocking
+bg room
 show hero.normal left fade 10
-show friend.normal right x-12 y+34
+show friend.normal right x-(shift * 23.0) y+(shift * 69.0)
+move character friend by x+(7.25) y-(5.25) over 10
+move bg by x+(6.5) y-(3.25)
 clear image first
 hide hero
 choice "choose" {
@@ -58,8 +63,9 @@ choice "choose" {
     assert.equal(await page.locator('#image-second').count(), 1);
     assert.equal(await page.locator('#char-hero').count(), 0);
     assert.equal(await page.locator('#char-friend').count(), 1);
-    assert.equal(await page.locator('#char-friend').evaluate(element => element.style.transform), 'translateX(calc(-50% - 12px))');
-    assert.equal(await page.locator('#char-friend').evaluate(element => element.style.bottom), '-34px');
+    assert.equal(await page.locator('#char-friend').evaluate(element => element.style.transform), 'translateX(calc(-50% - 4.25px))');
+    assert.equal(await page.locator('#char-friend').evaluate(element => element.style.bottom), '-29.25px');
+    assert.equal(await page.locator('#background').evaluate(element => element.style.transform), 'translate(6.5px, -3.25px)');
     await page.locator('.choice').click();
     await page.waitForFunction(() => document.querySelector('#text').textContent === '9007199254740993:7');
     assert.equal(await page.locator('#speaker').textContent(), 'Hero');
@@ -108,7 +114,7 @@ show hero.normal far_left`;
     await page.waitForFunction(() => document.querySelector('#speaker').textContent === 'PLAYER ERROR');
     assert.match(await page.locator('#text').textContent(), /除算/);
     assert.deepEqual(errors, []);
-    console.log('PASS browser: API BigInt round trip, character pixel offsets, image clear, fade, choice click, function call, error propagation, audit runtime cases and const diagnostics');
+    console.log('PASS browser: API BigInt round trip, character pixel offsets/movement, background movement, image clear, fade, choice click, function call, error propagation, audit runtime cases and const diagnostics');
   } finally {
     await browser?.close(); await new Promise(resolve => server.close(resolve));
     // dir was created with mkdtemp directly below the resolved assets root.

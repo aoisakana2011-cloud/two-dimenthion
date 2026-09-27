@@ -16,14 +16,25 @@
     return String(value);
   }
   function integer(value) {
-    if (typeof value === 'number' && !Number.isSafeInteger(value)) throw Error('不正確な整数です');
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value) || value < Number(MIN) || value >= Number(MAX) + 1) throw Error('64bit 整数の範囲外です');
+      value = Math.trunc(value);
+    }
     if (typeof value === 'string' && !/^[+-]?\d+$/.test(value)) throw Error('int への変換に失敗しました');
     const n = BigInt(value);
     if (n < MIN || n > MAX) throw Error('64bit 整数オーバーフローが発生しました');
     return n;
   }
+  function floating(value) {
+    if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') throw Error('float への変換に失敗しました');
+    if (typeof value === 'string' && !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) throw Error('float への変換に失敗しました');
+    const result = Number(value);
+    if (!Number.isFinite(result)) throw Error('float は有限値でなければなりません');
+    return Object.is(result, -0) ? 0 : result;
+  }
   function matches(value, type) {
     if (type === 'int') return typeof value === 'bigint';
+    if (type === 'float') return typeof value === 'number' && Number.isFinite(value);
     if (type === 'str') return typeof value === 'string';
     if (type && type.kind === 'struct') return value && typeof value === 'object';
     return value && typeof value === 'object' && typeof type === 'object' && Object.values(value).every(v => matches(v, type.value));
@@ -65,16 +76,46 @@
     const axes = new Set();
     let index = start;
     while (typeof args[index] === 'string') {
-      const match = /^([xy])([+-])(\d+)$/.exec(args[index]);
+      const match = /^([xy])([+-])(\d+)?$/.exec(args[index]);
       if (!match) break;
       if (axes.has(match[1])) throw Error(`show の位置ずらしは ${match[1]} を一度だけ指定できます`);
-      const amount = Number(match[3]);
-      if (!Number.isSafeInteger(amount) || amount > 1_000_000) throw Error('show の位置ずらしは ±1000000 px 以内で指定してください');
+      const raw = match[3] === undefined ? args[++index] : match[3];
+      const amount = typeof raw === 'bigint' ? Number(raw) : Number(raw);
+      if (!Number.isFinite(amount) || Math.abs(amount) > 1_000_000) throw Error('show の位置ずらしは ±1000000 px 以内で指定してください');
       axes.add(match[1]);
       offsets[match[1]] = match[2] === '+' ? amount : -amount;
       index++;
     }
     return { ...offsets, transitionIndex: index };
+  }
+  function moveOptions(args) {
+    const targetKind = args[0];
+    const target = targetKind === 'character' ? args[1] : 'bg';
+    const byIndex = targetKind === 'character' ? 2 : 1;
+    const start = byIndex + 1;
+    if (args[byIndex] !== 'by') throw Error('move requires by before pixel offsets');
+    const delta = { x: 0, y: 0 };
+    const axes = new Set();
+    let index = start;
+    for (; index < args.length; index++) {
+      const match = /^([xy])([+-])(\d+)?$/.exec(args[index] || '');
+      if (!match) break;
+      if (axes.has(match[1])) throw Error(`move の ${match[1]} は一度だけ指定できます`);
+      const raw = match[3] === undefined ? args[++index] : match[3];
+      const amount = Number(raw);
+      if (!Number.isFinite(amount) || Math.abs(amount) > 1_000_000) throw Error('move の移動量は±1000000 px 以内にしてください');
+      axes.add(match[1]);
+      delta[match[1]] = match[2] === '+' ? amount : -amount;
+    }
+    if (!axes.size) throw Error('move requires at least one pixel offset');
+    let durationMs = 0;
+    if (index < args.length) {
+      if (index + 2 !== args.length || args[index] !== 'over') throw Error('move duration must use over <ms>');
+      const duration = integer(args[index + 1]);
+      if (duration < 0n || duration > BigInt(MAX_TIME_MS)) throw Error('Invalid move duration');
+      durationMs = Number(duration);
+    }
+    return { targetKind, target, delta, durationMs };
   }
   function beginTransition(state, transition) {
     const startedAt = state.logicalTimeMs;
@@ -140,7 +181,25 @@
   }
   function sceneStateCommand(state, name, args) {
     const op = { name, args: copy(args) };
-    if (name === 'bg') {
+    if (name === 'move') {
+      const move = moveOptions(args);
+      const current = move.targetKind === 'bg' ? state.background : state.characters[move.target];
+      if (!current || (move.targetKind === 'character' && !current.visible)) throw Error(`move target '${move.target}' is not currently visible`);
+      const fromX = current.offsetX || 0;
+      const fromY = current.offsetY || 0;
+      const toX = fromX + move.delta.x;
+      const toY = fromY + move.delta.y;
+      if (Math.abs(toX) > 1_000_000 || Math.abs(toY) > 1_000_000) throw Error('move target position exceeds ±1000000 px');
+      const transition = beginTransition(state, { type: 'move', durationMs: move.durationMs });
+      Object.assign(current, { offsetX: toX, offsetY: toY, transition });
+      op.move = { ...move, fromX, fromY, toX, toY };
+      if (move.durationMs) {
+        const actionId = `move:${++state.revision}`;
+        op.actionId = actionId;
+        op.blocking = true;
+        registerAction(state, { id: actionId, kind: 'move', targetKind: move.targetKind, target: move.target, durationMs: move.durationMs, startedAt: state.logicalTimeMs, blocking: true });
+      }
+    } else if (name === 'bg') {
       const replacedAsset = state.background?.asset;
       if (replacedAsset) op.replacedAsset = replacedAsset;
       state.background = { asset: args[0], transition: beginTransition(state, { type: 'instant', durationMs: 0 }) };
@@ -292,7 +351,7 @@
     }
     async textAsync(value) {
       const source = this.text(value);
-      const matches = [...source.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\(\)\}/g)];
+      const matches = [...source.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\(\)\}/g)];
       if (!matches.length) return source;
       let result = '', cursor = 0;
       for (const match of matches) {
@@ -305,6 +364,7 @@
     async value(x) {
       if (!x) return null;
       if (x.kind === 'integer') return integer(x.value);
+      if (x.kind === 'float') return floating(x.value);
       if (x.kind === 'literal') return typeof x.value === 'string' ? x.value : integer(x.value);
       if (x.kind === 'load') return copy(this.get(x.name));
       if (x.kind === 'dict') {
@@ -321,13 +381,28 @@
         // The magnitude of INT64_MIN is allowed only as the operand of unary minus.
         if (x.operator === '-' && x.value.kind === 'integer') return integer(-BigInt(x.value.value));
         const v = await this.value(x.value);
-        return x.operator === 'not' ? !v : integer(x.operator === '-' ? -v : v);
+        return x.operator === 'not' ? !v : typeof v === 'number' ? floating(x.operator === '-' ? -v : v) : integer(x.operator === '-' ? -v : v);
       }
       if (x.kind === 'binary') {
         const a = await this.value(x.left);
         if (x.operator === 'and') return a && await this.value(x.right);
         if (x.operator === 'or') return a || await this.value(x.right);
         const b = await this.value(x.right);
+        if (typeof a === 'number' && typeof b === 'number') {
+          if ((x.operator === '/' || x.operator === '%') && b === 0) throw Error('0 で除算することはできません');
+          switch (x.operator) {
+            case '+': return floating(a + b);
+            case '-': return floating(a - b);
+            case '*': return floating(a * b);
+            case '/': return floating(a / b);
+            case '==': return a === b;
+            case '!=': return a !== b;
+            case '>': return a > b;
+            case '>=': return a >= b;
+            case '<': return a < b;
+            case '<=': return a <= b;
+          }
+        }
         switch (x.operator) {
           case '+': return typeof a === 'string' && typeof b === 'string' ? a + b : integer(a + b);
           case '-': return integer(a - b);
@@ -346,6 +421,7 @@
         const args = []; for (const a of x.args) args.push(await this.value(a));
         if (x.name === 'str') return String(args[0]);
         if (x.name === 'int') return integer(args[0]);
+        if (x.name === 'float') return floating(args[0]);
         return this.call(x.name, args);
       }
       throw Error(`未知の式 '${x.kind}' です`);
@@ -369,7 +445,7 @@
           const frame = this.frames.findLast(f => !this.loopFrames.has(f));
           if (preserveGlobals && frame === this.globals && own(frame, c.name)) {
             if (!matches(frame[c.name], c.type)) throw Error(`ファイル間で変数 '${c.name}' の型が一致しません`);
-          } else frame[c.name] = c.initial ? await this.value(c.initial) : c.type === 'int' ? 0n : c.type === 'str' ? '' : Object.create(null);
+          } else frame[c.name] = c.initial ? await this.value(c.initial) : c.type === 'int' ? 0n : c.type === 'float' ? 0 : c.type === 'str' ? '' : Object.create(null);
           if (c.constant) { const names = this.readonlyFrames.get(frame) || new Set(); names.add(c.name); this.readonlyFrames.set(frame, names); }
         } else if (c.op === 'set') {
           const val = await this.value(c.value);
@@ -392,6 +468,7 @@
           else if (c.name === 'effect') advanceSceneTime(this.sceneState, operation.args[2] === undefined ? 500 : operation.args[2]);
           else if (c.name === 'show' && operation.args[0] !== 'image' && operation.args[operation.transitionIndex] === 'fade') advanceSceneTime(this.sceneState, operation.args[operation.transitionIndex + 1]);
           else if (c.name === 'hide' && operation.args[1] === 'fade') advanceSceneTime(this.sceneState, operation.args[2]);
+          else if (c.name === 'move' && operation.blocking) advanceSceneTime(this.sceneState, operation.move.durationMs);
           if (operation.blocking) {
             finishAction(this.sceneState, operation.actionId);
             if (c.name === 'hide' && args[1] === 'fade') {
@@ -490,6 +567,6 @@
     if (a === b) return true;
     return a && b && typeof a === 'object' && typeof b === 'object' && Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(k => own(b, k) && equal(a[k], b[k]));
   }
-  if (typeof module !== 'undefined') module.exports = { Runtime, integer, createSceneState, sceneStateCommand, advanceSceneTime };
-  else root.NovelRuntime = { Runtime, integer, createSceneState, sceneStateCommand, advanceSceneTime };
+  if (typeof module !== 'undefined') module.exports = { Runtime, integer, floating, createSceneState, sceneStateCommand, advanceSceneTime };
+  else root.NovelRuntime = { Runtime, integer, floating, createSceneState, sceneStateCommand, advanceSceneTime };
 })(globalThis);

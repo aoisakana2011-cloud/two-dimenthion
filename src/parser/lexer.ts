@@ -66,6 +66,18 @@ export class Lexer {
   private readNumber(start: Pos): Token {
     let value = '';
     while (this.isDigit(this.peek())) value += this.advance();
+    if (this.peek() === '.' && this.isDigit(this.peek(1))) {
+      value += this.advance();
+      while (this.isDigit(this.peek())) value += this.advance();
+    }
+    if (this.peek() === 'e' || this.peek() === 'E') {
+      const sign = this.peek(1) === '+' || this.peek(1) === '-' ? 2 : 1;
+      if (this.isDigit(this.peek(sign))) {
+        value += this.advance();
+        if (sign === 2) value += this.advance();
+        while (this.isDigit(this.peek())) value += this.advance();
+      }
+    }
     return this.token('number', value, start);
   }
   private readWord(start: Pos): Token {

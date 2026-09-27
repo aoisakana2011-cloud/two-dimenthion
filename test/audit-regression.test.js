@@ -98,7 +98,7 @@ test('audit: includes retain functions on external transfers and initialize depe
   await fs.mkdir(scenesRoot);await fs.mkdir(assetsRoot);
   const files={
     'main.tds':'goto "next.tds"',
-    'next.tds':'include common.tds\nint result = read_value()',
+    'next.tds':'include common.tds as common\nint result = common.read_value()',
     'common.tds':'int value = 8\nfn read_value() -> int { return value }',
   };
   for(const [name,source] of Object.entries(files))await fs.writeFile(path.join(scenesRoot,name),source);

@@ -1,7 +1,7 @@
  'use strict';
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { compileProject, sceneFile, inside, assetPaths, gotos } = require('./project');
+const { compileProject, resolveProjectScript, sceneFile, inside, assetPaths, gotos } = require('./project');
 const { parse } = require('../dist');
 const { inferValueType } = require('../dist/checker/type-checker');
 const { projectLayout, projectOption, layoutForInput, entryFile, positionalArguments, assertProjectDirectory, ensureProjectDirectory } = require('./project-layout');
@@ -29,15 +29,17 @@ async function projectGlobalVariables(scenesRoot, dataRoot) {
       else if (entry.isFile() && entry.name.toLowerCase().endsWith('.tds')) {
         const relative = path.relative(scenesRoot, file).replaceAll('\\', '/');
         const safeFile = await inside(scenesRoot, relative);
-        const script = parse(await fs.readFile(safeFile, 'utf8'));
-        scripts.push({ script, file: relative });
+        const source = await fs.readFile(safeFile, 'utf8');
+        const script = parse(source);
+        const resolved = await resolveProjectScript(source, scenesRoot, new Set(), relative);
+        scripts.push({ script, resolvedFunctions: resolved.functions, file: relative });
         declarationsByFile.set(relative, new Set(script.globals.filter(statement => statement.kind === 'declare').map(statement => statement.name)));
         for (const character of script.characters) {
           if (characterOwners.has(character.name)) throw new Error(`キャラクター '${character.name}' は複数ファイルで宣言されています`);
           characterOwners.set(character.name, relative);
           characters.set(character.name, {
             poses: new Set(character.poses.map(pose => pose.name)),
-            fields: Object.fromEntries(character.properties.map(property => [property.name, property.value.kind === 'literal' && typeof property.value.value === 'string' ? 'str' : 'int'])),
+            fields: Object.fromEntries(character.properties.map(property => [property.name, property.value.kind === 'float' ? 'float' : property.value.kind === 'literal' && typeof property.value.value === 'string' ? 'str' : 'int'])),
             definition: character,
           });
         }
@@ -56,7 +58,7 @@ async function projectGlobalVariables(scenesRoot, dataRoot) {
     }
   }
   await visit(scenesRoot);
-  const pending = scripts.flatMap(({ script, file }) => script.globals.filter(statement => statement.kind === 'declare' && statement.type === 'infer' && (file.toLowerCase() === 'main.tds' || statement.global)).map(statement => ({ statement, functions: script.functions, file })));
+  const pending = scripts.flatMap(({ script, resolvedFunctions, file }) => script.globals.filter(statement => statement.kind === 'declare' && statement.type === 'infer' && (file.toLowerCase() === 'main.tds' || statement.global)).map(statement => ({ statement, functions: resolvedFunctions, file })));
   let lastError;
   while (pending.length) {
     let progress = false;
@@ -104,7 +106,6 @@ async function pack(input, output, roots = {}) {
     const p = await compileProject(source, assetsRoot, scenesRoot, visibleGlobals, visibleCharacters);
     p.includes = []; // Each packaged program already contains its resolved includes.
     files[file] = p;
-    for (const include of localScript.includes) pending.push(sceneFile(include));
     const local = new Set(p.scenes.map(s => s.name));
     for (const target of gotos([...p.globals, ...p.scenes.flatMap(s => s.instructions)])) if (!local.has(target)) pending.push(sceneFile(target));
   }

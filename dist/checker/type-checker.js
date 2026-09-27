@@ -38,10 +38,12 @@ function sameType(left, right) {
 const characterTypeName = (name) => `character:${name}`;
 const characterInfo = (value) => value instanceof Set ? { poses: value, fields: {} } : value;
 function characterPropertyType(expression) {
+    if (expression.kind === 'float')
+        return 'float';
     if (expression.kind === 'literal')
         return typeof expression.value === 'string' ? 'str' : (typeof expression.value === 'number' || typeof expression.value === 'bigint') ? 'int' : undefined;
     if (expression.kind === 'unary' && (expression.operator === '+' || expression.operator === '-'))
-        return characterPropertyType(expression.value) === 'int' ? 'int' : undefined;
+        return characterPropertyType(expression.value);
     return undefined;
 }
 function interpolationNames(value) {
@@ -81,6 +83,8 @@ function validateNestedInterpolations(value, variables, ctx, seen = new Set()) {
 }
 function expressionType(expression, variables, ctx, expected) {
     const loc = getLocStr(expression);
+    if (expression.kind === 'float')
+        return 'float';
     if (expression.kind === 'literal') {
         if (typeof expression.value === 'string') {
             for (const path of interpolationNames(expression.value)) {
@@ -130,11 +134,15 @@ function expressionType(expression, variables, ctx, expected) {
                 return 'str';
             if (left === 'int' && right === 'int')
                 return 'int';
+            if (left === 'float' && right === 'float')
+                return 'float';
             throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): '+' の左右の型が一致していません (${typeName(left)} と ${typeName(right)})`);
         }
         if (['-', '*', '/', '%'].includes(op)) {
+            if (left === 'float' && right === 'float' && op !== '%')
+                return 'float';
             if (left !== 'int' || right !== 'int') {
-                throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): '${op}' の左右は int でなければなりません`);
+                throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): '${op}' の左右は同じ数値型でなければなりません`);
             }
             return 'int';
         }
@@ -145,8 +153,8 @@ function expressionType(expression, variables, ctx, expected) {
             return 'bool';
         }
         if (['>', '>=', '<', '<='].includes(op)) {
-            if (left !== 'int' || right !== 'int') {
-                throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): '${op}' の左右は int でなければなりません`);
+            if (left !== right || left !== 'int' && left !== 'float') {
+                throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): '${op}' の左右は同じ数値型でなければなりません`);
             }
             return 'bool';
         }
@@ -168,10 +176,10 @@ function expressionType(expression, variables, ctx, expected) {
             return 'bool';
         }
         if (op === '-' || op === '+') {
-            if (inner !== 'int') {
-                throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 単項 '${op}' の対象は int でなければなりません`);
+            if (inner !== 'int' && inner !== 'float') {
+                throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 単項 '${op}' の対象は数値でなければなりません`);
             }
-            return 'int';
+            return inner;
         }
         throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 未知の単項演算子 '${op}' です`);
     }
@@ -209,23 +217,29 @@ function expressionType(expression, variables, ctx, expected) {
         }
         if (!types.length)
             return { kind: 'dict', value: 'int' };
-        if (types.some((t) => typeof t !== 'string' || (t !== 'int' && t !== 'str') || t !== types[0])) {
+        if (types.some((t) => typeof t !== 'string' || (t !== 'int' && t !== 'float' && t !== 'str') || t !== types[0])) {
             throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 辞書の値の型は統一してください`);
         }
         return { kind: 'dict', value: types[0] };
     }
     if (expression.kind === 'call') {
         if (expression.name === 'str') {
-            if (expression.args.length !== 1 || expressionType(expression.args[0], variables, ctx) !== 'int') {
-                throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): str() は int 型の引数を1つ取ります`);
+            if (expression.args.length !== 1 || !['int', 'float'].includes(String(expressionType(expression.args[0], variables, ctx)))) {
+                throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): str() は数値型の引数を1つ取ります`);
             }
             return 'str';
         }
         if (expression.name === 'int') {
-            if (expression.args.length !== 1 || expressionType(expression.args[0], variables, ctx) !== 'str') {
-                throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): int() は str 型の引数を1つ取ります`);
+            if (expression.args.length !== 1 || !['str', 'float'].includes(String(expressionType(expression.args[0], variables, ctx)))) {
+                throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): int() は str または float 型の引数を1つ取ります`);
             }
             return 'int';
+        }
+        if (expression.name === 'float') {
+            if (expression.args.length !== 1 || !['int', 'str', 'float'].includes(String(expressionType(expression.args[0], variables, ctx)))) {
+                throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): float() は数値または str 型の引数を1つ取ります`);
+            }
+            return 'float';
         }
         const fn = ctx.functions.get(expression.name);
         if (!fn) {
@@ -279,22 +293,28 @@ function checkFade(args, variables, ctx, loc) {
         throw new TypeCheckError(`${loc}: 演出は fade <int> で指定してください`);
 }
 const MAX_CHARACTER_OFFSET_PX = 1000000n;
-function characterOffsetEnd(args, start, loc) {
+function characterOffsetEnd(args, start, loc, variables, ctx) {
     const axes = new Set();
     let index = start;
     while (index < args.length) {
         const arg = args[index];
         const value = arg.kind === 'literal' && typeof arg.value === 'string' ? arg.value : '';
-        const match = /^([xy])([+-])(\d+)$/.exec(value);
+        const match = /^([xy])([+-])(\d+)?$/.exec(value);
         if (!match)
             break;
         if (axes.has(match[1]))
             throw new TypeCheckError(`${loc}: 位置ずらしは x / y をそれぞれ1回だけ指定できます`);
         axes.add(match[1]);
-        const amount = BigInt(match[3]);
-        if (amount > MAX_CHARACTER_OFFSET_PX)
-            throw new TypeCheckError(`${loc}: 位置ずらしは ±${MAX_CHARACTER_OFFSET_PX} px 以内で指定してください`);
-        index++;
+        if (match[3]) {
+            if (BigInt(match[3]) > MAX_CHARACTER_OFFSET_PX)
+                throw new TypeCheckError(`${loc}: 位置ずらしは ±${MAX_CHARACTER_OFFSET_PX} px 以内で指定してください`);
+            index++;
+        }
+        else {
+            if (!args[index + 1] || !['int', 'float'].includes(String(expressionType(args[index + 1], variables, ctx))))
+                throw new TypeCheckError(`${loc}: 位置ずらしの式は int または float で指定してください`);
+            index += 2;
+        }
     }
     return index;
 }
@@ -377,7 +397,7 @@ function checkCommand(name, args, variables, ctx, locStr) {
                     throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
                 if (!charDef.has(pose))
                     throw new TypeCheckError(`${locStr}: キャラクター '${charName}' にポーズ '${pose}' はありません`);
-                const transitionStart = characterOffsetEnd(args, 2, locStr);
+                const transitionStart = characterOffsetEnd(args, 2, locStr, variables, ctx);
                 checkFade(args.slice(transitionStart), variables, ctx, locStr);
                 break;
             }
@@ -399,6 +419,27 @@ function checkCommand(name, args, variables, ctx, locStr) {
             }
             else {
                 throw new TypeCheckError(`${locStr}: show の対象は image でなければなりません`);
+            }
+            break;
+        }
+        case 'move': {
+            const targetKind = getArgStr(0);
+            const targetIndex = targetKind === 'character' ? 1 : -1;
+            if (!['character', 'bg'].includes(targetKind))
+                throw new TypeCheckError(`${locStr}: move は move character <id> by x+5 y+5 [over <ms>] または move bg by x+5 y+5 [over <ms>] を使用してください`);
+            const byIndex = targetKind === 'character' ? 2 : 1;
+            if (targetKind === 'character' && !ctx.characters.has(getArgStr(targetIndex)))
+                throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${getArgStr(targetIndex)}' です`);
+            if (getArgStr(byIndex) !== 'by')
+                throw new TypeCheckError(`${locStr}: move の差分の前に by を指定してください`);
+            const start = byIndex + 1;
+            let index = characterOffsetEnd(args, start, locStr, variables, ctx);
+            if (index === start)
+                throw new TypeCheckError(`${locStr}: move は x±px または y±px を1つ以上指定してください`);
+            if (index < args.length) {
+                if (index + 2 !== args.length || getArgStr(index) !== 'over' || expressionType(args[index + 1], variables, ctx) !== 'int')
+                    throw new TypeCheckError(`${locStr}: 移動時間は over <int> で指定してください`);
+                checkDuration(args[index + 1], variables, ctx, locStr, 'move の時間');
             }
             break;
         }
@@ -1177,7 +1218,7 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
                 throw new TypeCheckError(`${getLocStr(struct)}: struct '${struct.name}' が重複しています`);
             declaredStructs.add(struct.name);
             for (const [field, fieldType] of Object.entries(struct.fields)) {
-                if (fieldType !== 'int' && fieldType !== 'str')
+                if (fieldType !== 'int' && fieldType !== 'float' && fieldType !== 'str')
                     throw new TypeCheckError(`${getLocStr(struct)}: struct フィールド '${field}' の型が不正です`);
             }
         });
@@ -1213,7 +1254,7 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
                 if (properties.has(property.name))
                     throw new TypeCheckError(`${getLocStr(property)}: キャラクター '${char.name}' のフィールド '${property.name}' が重複しています`);
                 if (!characterPropertyType(property.value))
-                    throw new TypeCheckError(`${getLocStr(property)}: キャラクターフィールド '${property.name}' は int または str の定数で指定してください`);
+                    throw new TypeCheckError(`${getLocStr(property)}: キャラクターフィールド '${property.name}' は int、float または str の定数で指定してください`);
                 properties.add(property.name);
             }
             const displayName = char.properties.find((property) => property.name === 'name');

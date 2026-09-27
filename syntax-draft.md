@@ -155,16 +155,17 @@ Project/
 ## 4. includeと複数ファイル
 
 ```tds
-include functions.tds
-include "chapter/common.tds"
+include "functions.tds" as funcs
+include "chapter/common.tds" as common
 ```
 
+- importには必ず一意な別名を指定し、関数は `funcs.add(1)` のように修飾して呼び出す。
 - 引用符あり・なしの両形式を使用できる。
 - 拡張子を省略した参照には `.tds` が補われる。
 - 絶対パスと `..` によるプロジェクト外参照は禁止される。
 - includeの循環はエラーになる。
-- include先のアセット、キャラクター、グローバル、関数、シーンは、include元へ統合される。
-- include先のトップレベル命令は、include元の初期化より先に実行される。入れ子のincludeは依存先から実行する。開始シーンはinclude元の最初のシーンを優先する。
+- include先は再利用宣言用モジュールで、シーンや実行命令は書けない。関数名は別名で修飾される。アセット、キャラクター、struct、global宣言は互換性のためプロジェクト共通カタログに統合される。
+- モジュールのglobal宣言は依存先から初期化される。シナリオファイルへの遷移は `goto` のみで行う。
 - include先の `struct` はプロジェクト統合時に型宣言として取り込まれ、include元のグローバル宣言・関数シグネチャ・関数本体から参照できる。循環includeや同名structはエラーになる。
 
 別ファイルへの遷移は `goto` で行う。
@@ -518,15 +519,25 @@ if not score == 0 {
 ```tds
 str text = str(score)
 int value = int("123")
+float ratio = 0.5
+float shifted = float(score) + 1e-3
+int truncated = int(-shifted)
 ```
 
-- `str()` は `int` を1個受け取り `str` を返す。
-- `int()` は `str` を1個受け取り `int` を返す。
+- `str()` は `int` または `float` を1個受け取り `str` を返す。
+- `int()` は `str` または `float` を1個受け取り `int` を返す。小数は0方向へ切り捨てる。
+- `float()` は `int`、`str`、`float` を1個受け取り `float` を返す。
 - 変換不能な文字列は実行時エラー。
 
 ### 10.4 整数
 
 範囲は `-9223372036854775808` から `9223372036854775807`。除算は整数除算。0除算、0による剰余、範囲外の値、算術オーバーフローはエラーになり、ラップアラウンドしない。
+
+### 10.5 小数
+
+`float` は有限の倍精度浮動小数点数。`0.5`、`5.0`、`1e-3` と書ける。`int` と `float` の混合演算は不可。`float(i)` で明示変換する。0除算、NaN、Infinity、範囲外の `int()` 変換は実行時エラー。大きな `int` を `float` に変換すると精度が失われる場合がある。
+
+立ち絵と背景の位置には `x+5`、`y-20` に加えて `x+(式)`、`y-(式)` を指定できる。式は `int` または `float` で、px 単位。例: `show hero.normal left x+(float(3) * 1.5)`、`move character hero by x+(delta) over 16`。各軸は1回、絶対値は1000000 px以下。
 
 ## 11. 代入と削除
 
@@ -602,12 +613,15 @@ show ayase.smile left fade 300
 show ayase.smile left y+50
 show ayase.smile center x+30
 show ayase.smile right x-10 y+40 fade 300
+move character ayase by x+5 y+5 over 300
+move bg by x-8 y+4 over 500
 hide ayase
 hide ayase fade 300
 ```
 
 - `show <character>.<pose> <position>` はキャラクターを表示する。
 - `x+30` / `x-20` / `y+50` / `y-10` でslotの基準位置からpx単位でずらす。x+は右、y+は下。x/y各1回、±1,000,000 pxまで。
+- `move character <id> by x±<px> y±<px> [over <ms>]` は表示中のキャラクターを現在位置から移動する。`move bg by ...` は設定済み背景を移動する。移動量はpx、x+は右、y+は下。指定した時間の移動は完了まで待ち、時間省略時は即時。x/y各1回、累積位置は±1,000,000 pxまで。
 - 既に表示中なら、同じ命令で位置とポーズを更新する。
 - `fade <int>` を付けるとフェードインする。
 - `hide` は必要ならフェードアウトしてから表示を解除する。
@@ -850,6 +864,7 @@ scene chapter1 {
 | 背景 | `bg <bg-id>` / `bgm <bgm-id>` | 種別が一致するアセットID |
 | 表示 | `show <character>.<pose> <far_left\|left\|center\|right\|far_right> [x±<px>] [y±<px>] [fade <ms>]` | 5スロットの立ち絵表示。x+は右、y+は下 |
 | 表示 | `hide <character> [fade <ms>]` | キャラクターを非表示 |
+| 移動 | `move character <id> by [x±<px>] [y±<px>] [over <ms>]` / `move bg by [x±<px>] [y±<px>] [over <ms>]` | 現在位置からの差分移動。時間付きはblocking |
 | 表示 | `show image <image-id> <far_left\|left\|center\|right\|far_right>` / `clear image <image-id>` | 一般画像。fade不可 |
 | 再生 | `play <se\|voice\|bgm> <id>` | 種別が一致するアセットID。voiceは `[blocking\|async]` を追加可能 |
 | 再生 | `play video <id> [blocking\|async]` | 省略時は `async` |

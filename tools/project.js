@@ -90,22 +90,27 @@ function scanTopLevelDeclarations(source) {
       if (name?.type === 'word') structs.push(name.value);
     }
     if (depth === 0 && token.type === 'word' && token.value === 'include') {
-      const next = tokens[index + 1];
+      let includePath, cursor = index + 1;
+      const next = tokens[cursor];
       if (next?.type === 'string') {
-        includes.push(next.value);
-        index += 1;
+        includePath = next.value;
+        cursor++;
       } else {
         const parts = [];
         let previous;
-        for (let cursor = index + 1; cursor < tokens.length && tokens[cursor].type !== 'newline' && tokens[cursor].type !== 'eof'; cursor++) {
+        for (; cursor < tokens.length && tokens[cursor].type !== 'newline' && tokens[cursor].type !== 'eof' && !(tokens[cursor].type === 'word' && tokens[cursor].value === 'as'); cursor++) {
           const pathToken = tokens[cursor];
           if (previous && pathToken.offset > previous.offset + previous.value.length) throw Error('Include path cannot contain spaces');
           parts.push(pathToken.value);
           previous = pathToken;
-          index = cursor;
         }
-        if (parts.length) includes.push(parts.join(''));
+        includePath = parts.join('');
       }
+      if (tokens[cursor]?.value !== 'as' || tokens[cursor + 1]?.type !== 'word') throw Error('include requires an alias: include "module.tds" as module');
+      const alias = tokens[cursor + 1].value;
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(alias)) throw Error(`Invalid include alias '${alias}'`);
+      includes.push({ path: includePath, alias });
+      index = cursor + 1;
     }
     if (token.value === '{') depth++;
     else if (token.value === '}') depth = Math.max(0, depth - 1);
@@ -118,8 +123,8 @@ async function collectIncludedStructs(source, scenesRoot, seen = new Set()) {
   const declarations = scanTopLevelDeclarations(source);
   const discovered = new Set(declarations.structs);
   for (const include of declarations.includes) {
-    const name = sceneFile(include);
-    if (seen.has(name)) throw Error(`include 縺悟ｾｪ迺ｰ縺励※縺・∪縺・ ${name}`);
+    const name = sceneFile(include.path);
+    if (seen.has(name)) throw Error(`include が循環しています: ${name}`);
     const file = await inside(scenesRoot, name);
     const child = await collectIncludedStructs(await fs.readFile(file, 'utf8'), scenesRoot, new Set([...seen, name]));
     for (const struct of child) discovered.add(struct);
@@ -127,26 +132,56 @@ async function collectIncludedStructs(source, scenesRoot, seen = new Set()) {
   return discovered;
 }
 
-async function resolveProjectScript(source, scenesRoot, seen = new Set(), sourceName = 'current') {
+function qualifyImportedFunctions(script, alias) {
+  const names = new Map(script.functions.map((fn) => [fn.name, `${alias}.${fn.name}`]));
+  const qualifyCall = (name) => names.get(name) || (name.includes('.') ? `${alias}.${name}` : name);
+  const visit = (value) => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    if (value.kind === 'call' && typeof value.name === 'string') value.name = qualifyCall(value.name);
+    if (value.kind === 'literal' && typeof value.value === 'string') {
+      value.value = value.value.replace(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\(\)\}/g, (source, name) => `{${qualifyCall(name)}()}`);
+    }
+    Object.values(value).forEach(visit);
+  };
+  visit(script.globals);
+  visit(script.functions);
+  script.functions.forEach((fn) => { fn.name = names.get(fn.name); });
+}
+async function resolveProjectScript(source, scenesRoot, seen = new Set(), sourceName = 'current', isModule = false) {
   const includedStructs = await collectIncludedStructs(source, scenesRoot, seen);
   const script = tagLocations(parse(source, includedStructs), sourceName);
+  if (isModule) {
+    if (script.scenes.length) throw Error(`Module '${sourceName}' cannot declare scenes; use goto to enter a scenario file`);
+    if (script.globals.some((statement) => statement.kind !== 'declare')) throw Error(`Module '${sourceName}' may contain declarations only`);
+  }
   const assets = [...script.assets];
   const characters = [...script.characters];
   const structs = [...script.structs];
   const globals = [];
   const functions = [...script.functions];
   const scenes = [...script.scenes];
+  const includedPaths = new Set();
+  const uniqueAssets = new Set(assets.map((item) => `${item.file || sourceName}:${item.name}`));
+  const uniqueCharacters = new Set(characters.map((item) => `${item.file || sourceName}:${item.name}`));
+  const uniqueStructs = new Set(structs.map((item) => `${item.file || sourceName}:${item.name}`));
+  const uniqueGlobals = new Set(script.globals.filter((item) => item.kind === 'declare').map((item) => `${item.file || sourceName}:${item.name}`));
   for (const include of script.includes) {
-    const name = sceneFile(include);
+    const name = sceneFile(include.path);
     if (seen.has(name)) throw Error(`include が循環しています: ${name}`);
+    if (includedPaths.has(name)) throw Error(`Module '${name}' is included more than once in '${sourceName}'`);
+    includedPaths.add(name);
     const file = await inside(scenesRoot, name);
-    const child = await resolveProjectScript(await fs.readFile(file, 'utf8'), scenesRoot, new Set([...seen, name]), name);
-    assets.push(...child.assets);
-    characters.push(...child.characters);
-    structs.push(...child.structs);
-    globals.push(...child.globals);
+    const child = await resolveProjectScript(await fs.readFile(file, 'utf8'), scenesRoot, new Set([...seen, name]), name, true);
+    qualifyImportedFunctions(child, include.alias);
+    for (const item of child.assets) { const key = `${item.file || name}:${item.name}`; if (!uniqueAssets.has(key)) { uniqueAssets.add(key); assets.push(item); } }
+    for (const item of child.characters) { const key = `${item.file || name}:${item.name}`; if (!uniqueCharacters.has(key)) { uniqueCharacters.add(key); characters.push(item); } }
+    for (const item of child.structs) { const key = `${item.file || name}:${item.name}`; if (!uniqueStructs.has(key)) { uniqueStructs.add(key); structs.push(item); } }
+    for (const item of child.globals) {
+      const key = item.kind === 'declare' ? `${item.file || name}:${item.name}` : '';
+      if (!key || !uniqueGlobals.has(key)) { if (key) uniqueGlobals.add(key); globals.push(item); }
+    }
     functions.push(...child.functions);
-    scenes.push(...child.scenes);
   }
   script.assets = assets;
   script.characters = characters;

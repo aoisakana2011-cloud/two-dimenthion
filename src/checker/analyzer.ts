@@ -131,6 +131,7 @@ function checkedInteger(expr: Expr, constants: ReadonlyMap<string, Exclude<Const
 }
 
 function expressionKey(expr: Expr): string {
+  if (expr.kind === 'float') return `float:${expr.value}`;
   if (expr.kind === 'literal') return `literal:${String(expr.value)}`;
   if (expr.kind === 'variable') return `variable:${expr.name}`;
   if (expr.kind === 'unary') return `${expr.operator}(${expressionKey(expr.value)})`;
@@ -477,6 +478,7 @@ function conditionImplies(current: Expr, previous: Expr, constants: ReadonlyMap<
 }
 
 function isPureExpression(expr: Expr): boolean {
+  if (expr.kind === 'float') return true;
   if (expr.kind === 'literal') return typeof expr.value !== 'string' || !/\{[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?:\(\))?\}/.test(expr.value);
   if (expr.kind === 'call') return expr.name === 'int' || expr.name === 'str' ? expr.args.every(isPureExpression) : false;
   if (expr.kind === 'binary') return isPureExpression(expr.left) && isPureExpression(expr.right);
@@ -1002,7 +1004,7 @@ function expressionCalls(expr: Expr): Set<string> {
   visitExpressions(expr, (current) => {
     if (current.kind === 'call') calls.add(current.name);
     if (current.kind === 'literal' && typeof current.value === 'string') {
-      for (const match of current.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\(\)\}/g)) calls.add(match[1]);
+      for (const match of current.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\(\)\}/g)) calls.add(match[1]);
     }
   });
   return calls;
@@ -1037,7 +1039,7 @@ function invalidateConstantCalls(expr: Expr, constants: Map<string, Exclude<Cons
   }
   if (expr.kind === 'literal' && typeof expr.value === 'string') {
     let invalidated = false;
-    for (const match of expr.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\(\)\}/g)) invalidated = invalidateConstantCall(match[1], constants) || invalidated;
+    for (const match of expr.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\(\)\}/g)) invalidated = invalidateConstantCall(match[1], constants) || invalidated;
     return invalidated;
   }
   return false;
@@ -1479,6 +1481,15 @@ function analyzeCharacterPlacements(statements: Statement[], file: string, out: 
             }
           }
           for (const [position, occupant] of state) if (occupant === character) state.delete(position);
+        } else if (command?.name === 'move' && command.args[0]?.kind === 'literal' && command.args[0].value === 'character'
+          && command.args[1]?.kind === 'literal' && typeof command.args[1].value === 'string'
+          && ![...state.values()].includes(command.args[1].value)) {
+          const character = command.args[1].value;
+          const key = `${statement.line ?? 1}:${statement.column ?? 1}:${character}`;
+          if (!emitted.has(key)) {
+            emitted.add(key);
+            out.push(diagnostic(file, 'move-unshown-character', 'warning', `character '${character}' is moved before it is statically shown`, statement));
+          }
         }
 
         if (statement.kind === 'if') {
@@ -1605,6 +1616,12 @@ function analyzeAssetReplacements(
             }
           }
           current = assetName;
+        } else if (kind === 'bg' && command?.name === 'move' && command.args[0]?.kind === 'literal' && command.args[0].value === 'bg' && current === undefined) {
+          const key = `${statement.line ?? 1}:${statement.column ?? 1}:bg`;
+          if (!emitted.has(key)) {
+            emitted.add(key);
+            out.push(diagnostic(file, 'move-unset-background', 'warning', 'background is moved before it is statically set', statement));
+          }
         } else if (command?.name === 'clear' && command.args[0]?.kind === 'literal' && command.args[0].value === kind) {
           current = undefined;
         }

@@ -1,8 +1,8 @@
 import { Lexer, Token } from './lexer';
-import { Asset, AssetKind, Character, Condition, Expr, FunctionDef, PrimitiveType, Scene, Script, Statement, StructDef, ValueType } from './ast';
+import { Asset, AssetKind, Character, Condition, Expr, FunctionDef, Include, PrimitiveType, Scene, Script, Statement, StructDef, ValueType } from './ast';
 
 const ASSET_TYPES = new Set<AssetKind>(['bg', 'char', 'bgm', 'se', 'voice', 'video', 'image']);
-const TYPES = new Set(['int', 'str', 'none']);
+const TYPES = new Set(['int', 'float', 'str', 'none']);
 const PRECEDENCE: Record<string, number> = {
   or: 10,
   and: 20,
@@ -12,7 +12,7 @@ const PRECEDENCE: Record<string, number> = {
 };
 
 const KEYWORDS = new Set([
-  'scene', 'asset', 'character', 'struct', 'pose', 'include', 'int', 'str', 'dict', 'none', 'global', 'const', 'let',
+  'scene', 'asset', 'character', 'struct', 'pose', 'include', 'int', 'float', 'str', 'dict', 'none', 'global', 'const', 'let',
   'set', 'unset', 'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'image', 'clear', 'play', 'se', 'effect', 'wait',
   'if', 'elif', 'else', 'and', 'or', 'not', 'choice', 'for', 'from', 'to', 'step', 'while',
   'fn', 'return', 'goto', 'async', 'blocking', 'voice', 'video',
@@ -65,7 +65,8 @@ export class Parser {
     const functions: FunctionDef[] = [];
     const scenes: Scene[] = [];
     const structs: StructDef[] = [];
-    const includes: string[] = [];
+    const includes: Include[] = [];
+    const includeAliases = new Set<string>();
     this.skipLines();
 
     while (!this.at('eof')) {
@@ -85,7 +86,10 @@ export class Parser {
         scenes.push(this.parseScene());
         this.skipLines();
       } else if (this.atWord('include')) {
-        includes.push(this.parseInclude());
+        const include = this.parseInclude();
+        if (includeAliases.has(include.alias)) throw new ParseError(`Include alias '${include.alias}' is already used`, this.current);
+        includeAliases.add(include.alias);
+        includes.push(include);
         this.endLine();
       } else {
         const stmt = this.parseStatement();
@@ -97,24 +101,28 @@ export class Parser {
     return { kind: 'script', assets, characters, structs, globals, functions, scenes, includes, body: globals };
   }
 
-  private parseInclude(): string {
-    this.take();
+  private parseInclude(): Include {
+    const start = this.take();
+    let path: string;
     if (this.current.type === 'string') {
-      const path = this.take();
-      this.rejectUnknownEscapes(path);
-      return path.value;
+      const pathToken = this.take();
+      this.rejectUnknownEscapes(pathToken);
+      path = pathToken.value;
+    } else {
+      const parts: string[] = [];
+      let previous: Token | undefined;
+      while (!this.at('newline') && !this.at('eof') && !(this.atWord('as') && parts.length)) {
+        const token = this.current;
+        if (previous && token.offset > previous.offset + previous.value.length) throw this.error('Include path cannot contain spaces');
+        previous = this.take();
+        parts.push(previous.value);
+      }
+      path = parts.join('');
+      if (!path) throw this.error('Expected include path');
     }
-    const parts: string[] = [];
-    let previous: Token | undefined;
-    while (!this.at('newline') && !this.at('eof')) {
-      const token = this.current;
-      if (previous && token.offset > previous.offset + previous.value.length) throw this.error('Include path cannot contain spaces');
-      previous = this.take();
-      parts.push(previous.value);
-    }
-    const value = parts.join('');
-    if (!value) throw this.error('Expected include path');
-    return value;
+    this.expectWordValue('as');
+    const alias = this.expectIdentifier('Expected include alias after as');
+    return { path, alias, line: start.line, column: start.column };
   }
 
   private parseAsset(): Asset {
@@ -166,7 +174,7 @@ export class Parser {
     while (!this.atValue('}')) {
       const field = this.expectIdentifier('Expected field name'); this.expect(':');
       const type = this.expectWord('Expected field type') as PrimitiveType;
-      if (type !== 'int' && type !== 'str') throw this.error('Struct fields must be int or str');
+      if (type !== 'int' && type !== 'float' && type !== 'str') throw this.error('Struct fields must be int, float or str');
       if (fields[field]) throw this.error(`Duplicate struct field '${field}'`);
       fields[field] = type; this.endLine(); this.skipLines();
     }
@@ -208,7 +216,7 @@ export class Parser {
     if (word === 'dict') {
       this.expect('[');
       const value = this.expectWord('Expected dictionary value type') as PrimitiveType;
-      if (value !== 'int' && value !== 'str') throw this.error('Dictionary value type must be int or str');
+      if (value !== 'int' && value !== 'float' && value !== 'str') throw this.error('Dictionary value type must be int, float or str');
       this.expect(']');
       return { kind: 'dict', value };
     }
@@ -217,11 +225,33 @@ export class Parser {
     throw this.error(`Invalid type '${word}'`);
   }
 
-  private peekToken(): Token { if (!this.buffered.length) this.buffered.push(this.lexer.next()); return this.buffered[0]; }
+  private peekToken(offset = 0): Token {
+    while (this.buffered.length <= offset) this.buffered.push(this.lexer.next());
+    return this.buffered[offset];
+  }
+  private isQualifiedCallAhead(): boolean {
+    if (this.current.type !== 'word') return false;
+    let offset = 0, hasQualifier = false;
+    while (this.peekToken(offset).value === '.') {
+      if (this.peekToken(offset + 1).type !== 'word') return false;
+      hasQualifier = true;
+      offset += 2;
+    }
+    return hasQualifier && this.peekToken(offset).value === '(';
+  }
+  private parseQualifiedCallName(): string {
+    const parts = [this.expectIdentifier('Expected function name')];
+    while (this.optional('.')) parts.push(this.expectIdentifier('Expected qualified function name'));
+    return parts.join('.');
+  }
   private parseStatement(): Statement {
     const token = this.current;
     if (token.type !== 'word') throw this.error('Expected command');
     const command = token.value;
+    if (this.isQualifiedCallAhead()) {
+      const name = this.parseQualifiedCallName();
+      return { kind: 'call', name, args: this.parseCallArgs(), line: token.line, column: token.column };
+    }
 
     switch (command) {
       case 'global': {
@@ -230,7 +260,7 @@ export class Parser {
         if (declaration.kind !== 'declare') throw this.error('global の後には変数宣言が必要です');
         return { ...declaration, global: true, line: token.line, column: token.column };
       }
-      case 'const': case 'int': case 'str': case 'dict': {
+      case 'const': case 'int': case 'float': case 'str': case 'dict': {
         this.take();
         let type: ValueType | 'infer';
         if (command === 'const') {
@@ -238,7 +268,7 @@ export class Parser {
         } else if (command === 'dict') {
           this.expect('[');
           const value = this.expectWord('Expected dictionary value type') as PrimitiveType;
-          if (value !== 'int' && value !== 'str') throw this.error('Dictionary value type must be int or str');
+          if (value !== 'int' && value !== 'float' && value !== 'str') throw this.error('Dictionary value type must be int, float or str');
           this.expect(']');
           type = { kind: 'dict', value };
         } else {
@@ -418,12 +448,21 @@ export class Parser {
         this.expect('.');
         const pose = this.expectIdentifier('Expected character pose');
         args.push({ kind: 'literal', value: `${token.value}.${pose}`, line: token.line, column: token.column });
-      } else if (command === 'show' && args.length >= 2 && token.type === 'word' && ['x', 'y'].includes(token.value) && ['+', '-'].includes(this.peekToken().value)) {
+      } else if (['show', 'move'].includes(command) && args.length >= (command === 'show' ? 2 : args[0]?.kind === 'literal' && args[0].value === 'bg' ? 2 : 3) && token.type === 'word' && ['x', 'y'].includes(token.value) && ['+', '-'].includes(this.peekToken().value)) {
         const axis = this.take();
         const sign = this.take();
-        if (this.current.type !== 'number') throw this.error('show の位置ずらしは x+30 / y-20 の形式で px 整数を指定してください');
+        if (this.optional('(')) {
+          const value = this.parseExpression();
+          this.expect(')');
+          args.push({ kind: 'literal', value: `${axis.value}${sign.value}`, line: axis.line, column: axis.column }, value);
+          continue;
+        }
+        if (this.current.type !== 'number' || !/^\d+$/.test(this.current.value)) throw this.error(`${command} の位置ずらしは x+30 / x+(式) の形式で指定してください`);
         const amount = this.take();
         args.push({ kind: 'literal', value: `${axis.value}${sign.value}${amount.value}`, line: axis.line, column: axis.column });
+      } else if (command === 'move' && token.type === 'word' && (args.length < 3 || token.value === 'over')) {
+        this.take();
+        args.push({ kind: 'literal', value: token.value, line: token.line, column: token.column });
       } else if (token.type === 'word' && ['bg', 'bgm', 'show', 'hide', 'clear', 'play', 'effect'].includes(command)) {
         this.take();
         args.push({ kind: 'literal', value: token.value, line: token.line, column: token.column });
@@ -468,6 +507,10 @@ export class Parser {
     const token = this.current;
     if (token.type === 'number') {
       this.take();
+      if (/[.eE]/.test(token.value)) {
+        if (!Number.isFinite(Number(token.value))) throw new ParseError('float literal must be finite', token);
+        expr = { kind: 'float', value: token.value, line: token.line, column: token.column };
+      } else {
       let val: number | bigint;
       try {
         const bi = BigInt(token.value);
@@ -476,15 +519,21 @@ export class Parser {
         val = Number(token.value);
       }
       expr = { kind: 'literal', value: val, line: token.line, column: token.column };
+      }
     } else if (token.type === 'string') {
       this.rejectUnknownEscapes(this.take());
       expr = { kind: 'literal', value: token.value, line: token.line, column: token.column, sourceColumns: token.sourceColumns };
     } else if (token.type === 'word') {
-      this.take();
-      if (this.atValue('(')) {
-        expr = { kind: 'call', name: token.value, args: this.parseCallArgs(), line: token.line, column: token.column };
+      if (this.isQualifiedCallAhead()) {
+        const name = this.parseQualifiedCallName();
+        expr = { kind: 'call', name, args: this.parseCallArgs(), line: token.line, column: token.column };
       } else {
-        expr = { kind: 'variable', name: token.value, line: token.line, column: token.column };
+        this.take();
+        if (this.atValue('(')) {
+        expr = { kind: 'call', name: token.value, args: this.parseCallArgs(), line: token.line, column: token.column };
+        } else {
+          expr = { kind: 'variable', name: token.value, line: token.line, column: token.column };
+        }
       }
     } else if (this.optional('(')) {
       expr = this.parseExpression();

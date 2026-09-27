@@ -148,6 +148,8 @@ function checkedInteger(expr, constants = new Map()) {
     return inRange(value);
 }
 function expressionKey(expr) {
+    if (expr.kind === 'float')
+        return `float:${expr.value}`;
     if (expr.kind === 'literal')
         return `literal:${String(expr.value)}`;
     if (expr.kind === 'variable')
@@ -601,6 +603,8 @@ function conditionImplies(current, previous, constants) {
     return false;
 }
 function isPureExpression(expr) {
+    if (expr.kind === 'float')
+        return true;
     if (expr.kind === 'literal')
         return typeof expr.value !== 'string' || !/\{[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?:\(\))?\}/.test(expr.value);
     if (expr.kind === 'call')
@@ -1203,7 +1207,7 @@ function expressionCalls(expr) {
         if (current.kind === 'call')
             calls.add(current.name);
         if (current.kind === 'literal' && typeof current.value === 'string') {
-            for (const match of current.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\(\)\}/g))
+            for (const match of current.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\(\)\}/g))
                 calls.add(match[1]);
         }
     });
@@ -1244,7 +1248,7 @@ function invalidateConstantCalls(expr, constants, facts) {
     }
     if (expr.kind === 'literal' && typeof expr.value === 'string') {
         let invalidated = false;
-        for (const match of expr.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\(\)\}/g))
+        for (const match of expr.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\(\)\}/g))
             invalidated = invalidateConstantCall(match[1], constants) || invalidated;
         return invalidated;
     }
@@ -1771,6 +1775,16 @@ function analyzeCharacterPlacements(statements, file, out, initial = new Map(), 
                         if (occupant === character)
                             state.delete(position);
                 }
+                else if (command?.name === 'move' && command.args[0]?.kind === 'literal' && command.args[0].value === 'character'
+                    && command.args[1]?.kind === 'literal' && typeof command.args[1].value === 'string'
+                    && ![...state.values()].includes(command.args[1].value)) {
+                    const character = command.args[1].value;
+                    const key = `${statement.line ?? 1}:${statement.column ?? 1}:${character}`;
+                    if (!emitted.has(key)) {
+                        emitted.add(key);
+                        out.push(diagnostic(file, 'move-unshown-character', 'warning', `character '${character}' is moved before it is statically shown`, statement));
+                    }
+                }
                 if (statement.kind === 'if') {
                     const branchStates = [];
                     branchStates.push(...analyze(statement.body, new Map(state)));
@@ -1908,6 +1922,13 @@ function analyzeAssetReplacements(statements, file, out, kind, code, label, emit
                         }
                     }
                     current = assetName;
+                }
+                else if (kind === 'bg' && command?.name === 'move' && command.args[0]?.kind === 'literal' && command.args[0].value === 'bg' && current === undefined) {
+                    const key = `${statement.line ?? 1}:${statement.column ?? 1}:bg`;
+                    if (!emitted.has(key)) {
+                        emitted.add(key);
+                        out.push(diagnostic(file, 'move-unset-background', 'warning', 'background is moved before it is statically set', statement));
+                    }
                 }
                 else if (command?.name === 'clear' && command.args[0]?.kind === 'literal' && command.args[0].value === kind) {
                     current = undefined;

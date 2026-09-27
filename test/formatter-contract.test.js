@@ -13,6 +13,7 @@ const corpus = [
   'choice "route"{"first"{say narrator "A"}"second"{say narrator "B"}}',
   'global dict[str] labels={"first":{"next":"go"}}',
   'fn calculate(a:int,b:dict[str])->dict[int]{return {"ok":1}}',
+  'float ratio=0.5\nfloat small=1e-3\nshow hero.normal left x+(ratio*2.5)',
   'scene incomplete {\nset value = fn(\n{"key":1}\n)\n}',
   '\uFEFFscene unicode {\u2028say narrator "line"\u2029}',
 ];
@@ -43,6 +44,23 @@ test('shared formatter preserves signed pixel offsets on character display comma
   const source = 'show hero.smile right x-10 y+40 fade 300';
   const formatted = format(source);
   assert.deepEqual(parse(formatted).globals[0].args.slice(2).map(argument => argument.value), ['x-10', 'y+40', 'fade', 300]);
+  assert.equal(format(formatted), formatted);
+});
+
+test('formatter preserves float literals and expression pixel offsets', () => {
+  const source = 'float ratio=0.5\nfloat small=1e-3\nshow hero.normal left x+(ratio*2.5) y-(small)';
+  const formatted = format(source);
+  assert.deepEqual(withoutLocations(parse(formatted)), withoutLocations(parse(source)));
+  assert.equal(format(formatted), formatted);
+});
+
+test('shared formatter preserves relative move commands and px offsets', () => {
+  const source = 'move character hero by x-10 y+40 over 300\nmove bg by x+5';
+  const formatted = format(source);
+  assert.deepEqual(parse(formatted).globals.map(statement => statement.args.map(argument => argument.value)), [
+    ['character', 'hero', 'by', 'x-10', 'y+40', 'over', 300],
+    ['bg', 'by', 'x+5'],
+  ]);
   assert.equal(format(formatted), formatted);
 });
 

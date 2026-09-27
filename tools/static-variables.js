@@ -13,6 +13,13 @@ function error(message) { throw Error(`.novel/variables.json: ${message}`); }
 
 const INT_MIN = -(1n << 63n);
 const INT_MAX = (1n << 63n) - 1n;
+function parseFloatValue(value, name, field) {
+  if (typeof value !== 'number' && typeof value !== 'string') error(`'${name}' の ${field} は有限の小数にしてください`);
+  if (typeof value === 'string' && !/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) error(`'${name}' の ${field} は有限の小数にしてください`);
+  const number = Number(value);
+  if (!Number.isFinite(number)) error(`'${name}' の ${field} は有限の小数にしてください`);
+  return number;
+}
 
 function parseInteger(value, name, field) {
   const text = typeof value === 'string' ? value : Number.isSafeInteger(value) ? String(value) : null;
@@ -26,7 +33,7 @@ function declaration(entry) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) error('staticVariables の各項目はオブジェクトにしてください');
   const { name, type, value, constant = false, min, max, possibleValues } = entry;
   if (typeof name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) error('変数名は英数字と _ で記述してください');
-  if (type !== 'int' && type !== 'str') error(`'${name}' の type は int または str にしてください`);
+  if (!['int', 'float', 'str'].includes(type)) error(`'${name}' の type は int、float または str にしてください`);
   if (typeof constant !== 'boolean') error(`'${name}' の constant は true または false にしてください`);
   if (min !== undefined || max !== undefined || possibleValues !== undefined) {
     if (type === 'str' && (min !== undefined || max !== undefined)) error(`'${name}' の min/max は int でのみ使えます`);
@@ -38,6 +45,17 @@ function declaration(entry) {
     if (possibleValues !== undefined && possibleValues.some((item) => typeof item !== 'string')) error(`'${name}' の possibleValues は文字列だけにしてください`);
     if (possibleValues !== undefined && !possibleValues.includes(value)) error(`'${name}' の value は possibleValues に含めてください`);
     return { kind: 'declare', global: true, constant, type, name, initial: { kind: 'literal', value } };
+  }
+  if (type === 'float') {
+    const number = parseFloatValue(value, name, 'value');
+    const lower = min === undefined ? undefined : parseFloatValue(min, name, 'min');
+    const upper = max === undefined ? undefined : parseFloatValue(max, name, 'max');
+    const values = possibleValues === undefined ? undefined : possibleValues.map((item) => parseFloatValue(item, name, 'possibleValues'));
+    if (lower !== undefined && upper !== undefined && lower > upper) error(`'${name}' の min は max 以下にしてください`);
+    if (values && new Set(values).size !== values.length) error(`'${name}' の possibleValues に重複があります`);
+    if (values?.some((item) => lower !== undefined && item < lower || upper !== undefined && item > upper)) error(`'${name}' の possibleValues は min/max の範囲内にしてください`);
+    if (lower !== undefined && number < lower || upper !== undefined && number > upper || values && !values.includes(number)) error(`'${name}' の value は制約を満たしていません`);
+    return { kind: 'declare', global: true, constant, type, name, initial: { kind: 'float', value: String(number) } };
   }
   // JSON numbers are accepted only while exact.  A decimal string preserves all
   // signed 64-bit values without JSON's floating-point loss.
@@ -95,6 +113,12 @@ async function readStaticVariables(dataRoot) {
         ...(source.min !== undefined ? { min: parseInteger(source.min, item.name, 'min') } : {}),
         ...(source.max !== undefined ? { max: parseInteger(source.max, item.name, 'max') } : {}),
         ...(source.possibleValues !== undefined ? { values: new Set(source.possibleValues.map((value) => parseInteger(value, item.name, 'possibleValues'))) } : {}),
+      });
+    } else if (source?.type === 'float' && (source.min !== undefined || source.max !== undefined || source.possibleValues !== undefined)) {
+      table.constraints.set(item.name, { type: 'float',
+        ...(source.min !== undefined ? { min: parseFloatValue(source.min, item.name, 'min') } : {}),
+        ...(source.max !== undefined ? { max: parseFloatValue(source.max, item.name, 'max') } : {}),
+        ...(source.possibleValues !== undefined ? { values: new Set(source.possibleValues.map((value) => parseFloatValue(value, item.name, 'possibleValues'))) } : {}),
       });
     } else if (source?.type === 'str' && source.possibleValues !== undefined) {
       table.constraints.set(item.name, { type: 'str', values: new Set(source.possibleValues) });

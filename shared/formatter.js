@@ -57,8 +57,7 @@
         continue;
       }
       if (/[0-9]/.test(char)) {
-        index++;
-        while (/[0-9]/.test(source[index] || '')) index++;
+        index += /^\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(source.slice(index))[0].length;
         tokens.push({ kind: 'number', value: source.slice(start, index), start, end: index });
         continue;
       }

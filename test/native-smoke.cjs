@@ -34,6 +34,7 @@ character friend {
   pose normal = "asset/pixel.png"
 }
 int x = 9007199254740993
+float shift = 0.5
 bg room
 bgm music
 play se sound
@@ -50,7 +51,9 @@ clear image gif
 show image first left
 show image second right
 show hero.normal left fade 10
-show friend.normal right x-12 y+34 fade 10
+show friend.normal right x-(shift * 23.0) y+(shift * 69.0) fade 10
+move character friend by x+(7.25) y-(5.25) over 10
+move bg by x+(6.5) y-(3.25)
 show hero.normal center
 clear image first
 hide friend
@@ -70,5 +73,5 @@ choice "test" { "continue" { say none str(x) } }
   const child = spawnSync(exe, [output, '--smoke'], { encoding: 'utf8', timeout: 15000, env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' } });
   assert.equal(child.status, 0, child.stderr || child.error?.message);
   assert.ok(Date.now() - start >= 800, 'blocking video must wait for playback');
-  console.log('PASS native SDL smoke: assets, characters, clear, fade, mixer audio, blocking voice, blocking/async FFmpeg video, choice, say');
+  console.log('PASS native SDL smoke: assets, characters, pixel movement, clear, fade, mixer audio, blocking voice, blocking/async FFmpeg video, choice, say');
 })().catch(e => { console.error(e); process.exitCode = 1; });

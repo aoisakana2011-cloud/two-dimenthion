@@ -58,7 +58,7 @@ Project/
 
 | 対象 | DSLでの指定例 | 実ファイルの基準 |
 |---|---|---|
-| シナリオ | `include common.tds` | `scenario_dir` |
+| 宣言モジュール | `include "common.tds" as common` | `scenario_dir` |
 | 外部goto | `goto "chapter/first.tds"` | `scenario_dir` |
 | 素材 | `"asset/bg/classroom.png"` | 作品ルートの `asset_dir`。`asset/` を付ける表記を推奨 |
 | 開始ファイル | `start_file = main.tds` | 作品ルートの `scenario_dir` |
@@ -84,7 +84,7 @@ Project/
 推奨順序は include、asset/character/struct、global変数、fn、scene です。
 
 ~~~tds
-include functions.tds
+include "functions.tds" as funcs
 asset bg classroom = "asset/bg/classroom.png"
 global int score = 0
 
@@ -92,12 +92,16 @@ fn add(a: int) -> int {
   return a + 1
 }
 
+fn next_score() -> int {
+  return funcs.add(1)
+}
+
 scene main {
   say narrator "開始"
 }
 ~~~
 
-include は引用符を省略できます。拡張子省略時は .tds が補われ、循環includeは禁止です。
+include は `include "functions.tds" as funcs` の形式で、必ず別名を指定します。関数は `funcs.add(1)` のように別名経由で呼び出します。引用符は省略できます。拡張子省略時は .tds が補われ、循環includeは禁止です。include先は宣言モジュールであり、シーンや実行命令は置けません。シナリオファイルへの移動には `goto "chapter/next.tds"` を使います。
 
 ## 素材
 
@@ -238,6 +242,8 @@ show hero.normal center
 show hero.smile left fade 250
 show hero.smile left y+50
 show hero.smile right x-10 y+40 fade 300
+move character hero by x+5 y+5 over 300
+move bg by x-8 y+4 over 500
 show hero.sad far_right
 hide hero
 hide hero fade 250
@@ -246,6 +252,8 @@ clear image logo
 ~~~
 
 位置は far_left、left、center、right、far_right。同じslotへのshowは置き換えです。`x+30` / `x-20` は基準位置から左右へ、`y+50` / `y-10` は上下へpx単位でずらします（x+は右、y+は下）。x/yは各1回、±1,000,000 pxまで指定でき、`fade <ms>` と併用できます。
+
+表示中の立ち絵や設定済み背景は `move character hero by x+5 y+5 over 300` / `move bg by x-8 y+4 over 500` のように、現在位置からpx単位で移動できます。`over <ms>` を付けるとその時間をかけて動き、完了してから次の命令に進みます。時間を省略すると即時移動です。x/yはそれぞれ1回までで、累積位置は±1,000,000 px以内です。
 
 音声・動画:
 
@@ -272,6 +280,8 @@ effect fade white 300
 時間はミリ秒の非負整数。effectの色はblackまたはwhiteです。
 
 ## 変数テーブル
+
+`staticVariables` の `type` は `int` / `float` / `str`。`float` の `value`、`min`、`max`、`possibleValues` には有限の小数を指定できます。整数は従来どおり64-bitの正確な値を保つため、範囲外や桁の大きな値は文字列で指定してください。`int` と `float` の演算には暗黙変換がないため `float(i)` を使います。
 
 .novel/variables.json:
 

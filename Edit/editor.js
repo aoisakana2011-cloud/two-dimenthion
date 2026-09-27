@@ -192,7 +192,7 @@ function highlightSource(source) {
       push('string', source.slice(start, i), closed);
       continue;
     }
-    if (/[0-9]/.test(c)) { const start = i++; while (i < source.length && /[0-9]/.test(source[i])) i++; push('number', source.slice(start, i)); continue; }
+    if (/[0-9]/.test(c)) { const value = /^\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(source.slice(i))[0]; push('number', value); i += value.length; continue; }
     if (/[A-Za-z_]/.test(c)) { const start = i++; while (i < source.length && /[A-Za-z0-9_]/.test(source[i])) i++; push('word', source.slice(start, i)); continue; }
     const pair = source.slice(i, i + 2);
     if (['==', '!=', '>=', '<=', '->', '=>', '..'].includes(pair)) { push('operator', pair); i += 2; continue; }
@@ -203,7 +203,7 @@ function highlightSource(source) {
 
   const significant = tokens.filter((token) => token.kind !== 'space' && token.kind !== 'comment');
   const keywords = new Set(['scene', 'asset', 'character', 'pose', 'struct', 'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'clear', 'play', 'wait', 'effect', 'const', 'global', 'set', 'unset', 'if', 'elif', 'else', 'and', 'or', 'not', 'for', 'from', 'to', 'step', 'while', 'choice', 'fn', 'return', 'goto', 'include']);
-  const types = new Set(['int', 'str', 'none', 'dict']);
+  const types = new Set(['int', 'float', 'str', 'none', 'dict']);
   const builtins = new Set(['narrator', 'left', 'center', 'right', 'far_left', 'far_right', 'fade', 'black', 'white', 'async', 'blocking', 'voice', 'video', 'image', 'se']);
   for (const token of significant) {
     if (token.kind !== 'word') continue;
@@ -236,12 +236,12 @@ function highlightSource(source) {
       const equals = significant.findIndex((token) => token.value === '=');
       if (equals > 0 && significant[equals - 1]?.kind === 'word') significant[equals - 1].role = 'declaration';
     }
-    if (['int', 'str'].includes(first.value)) {
+    if (['int', 'float', 'str'].includes(first.value)) {
       const declaration = significant.find((token, index) => index > 0 && token.kind === 'word');
       if (declaration) declaration.role = 'declaration';
     }
     if (first.value === 'const') {
-      const declaration = significant.find((token, index) => index > 1 && token.kind === 'word' && ['int', 'str', 'dict', ']'].includes(significant[index - 1]?.value));
+      const declaration = significant.find((token, index) => index > 1 && token.kind === 'word' && ['int', 'float', 'str', 'dict', ']'].includes(significant[index - 1]?.value));
       if (declaration) declaration.role = 'declaration';
     }
     if (first.value === 'dict') {
@@ -273,7 +273,7 @@ function highlightSource(source) {
 }
 function updateHighlight() { if (!highlight) return; highlight.innerHTML = highlightSource(editor.value); }
 
-const KEYWORDS = ['scene', 'asset', 'character', 'pose', 'struct', 'int', 'str', 'dict', 'const', 'global', 'say', 'bg', 'bgm', 'show', 'hide', 'clear', 'play', 'wait', 'effect', 'set', 'unset', 'if', 'elif', 'else', 'and', 'or', 'not', 'for', 'while', 'choice', 'fn', 'return', 'goto', 'include'];
+const KEYWORDS = ['scene', 'asset', 'character', 'pose', 'struct', 'int', 'float', 'str', 'dict', 'const', 'global', 'say', 'bg', 'bgm', 'show', 'hide', 'clear', 'play', 'wait', 'effect', 'set', 'unset', 'if', 'elif', 'else', 'and', 'or', 'not', 'for', 'while', 'choice', 'fn', 'return', 'goto', 'include'];
 
 function setStatus(message, kind = '') {
   if (kind !== 'error') document.querySelector('#runtime-error')?.remove();
@@ -763,7 +763,7 @@ async function showFileInfo(path) {
       const scene = await request(`/api/scene?name=${encodeURIComponent(path)}`);
       const source = String(scene.source || '');
       targets = [...source.matchAll(/^\s*goto\s+(?:"([^"]+)"|([^\s]+))/gmi)].map((m) => m[1] || m[2]);
-      variables = [...source.matchAll(/^\s*(?:global\s+)?(?:const\s+)?(int|str|dict)\s+([A-Za-z_][A-Za-z0-9_]*)/gmi)].map((m) => ({ name: m[2], type: m[1], scope: 'global', definedIn: path, definitions: [], references: [] }));
+      variables = [...source.matchAll(/^\s*(?:global\s+)?(?:const\s+)?(int|float|str|dict)\s+([A-Za-z_][A-Za-z0-9_]*)/gmi)].map((m) => ({ name: m[2], type: m[1], scope: 'global', definedIn: path, definitions: [], references: [] }));
     } catch { /* keep empty information */ }
   }
   if (normalizedScenePath(sceneName.value) === path) {
@@ -968,7 +968,7 @@ function hideVariableTooltip() {
 }
 
 function currentSourceVariable(name) {
-  const declaration = new RegExp(`^\\s*(?:global\\s+)?(?:const\\s+)?(int|str|dict\\[(?:int|str)\\]|[A-Z][A-Za-z0-9_]*)\\s+${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=`, 'm');
+  const declaration = new RegExp(`^\\s*(?:global\\s+)?(?:const\\s+)?(int|float|str|dict\\[(?:int|float|str)\\]|[A-Z][A-Za-z0-9_]*)\\s+${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=`, 'm');
   const match = declaration.exec(editor.value);
   if (!match) return null;
   const line = editor.value.slice(0, match.index).split(/\r?\n/).length;
@@ -1493,7 +1493,7 @@ function formatTokens(line) {
       tokens.push({ kind: 'word', value });
       continue;
     }
-    if (/[0-9]/.test(char)) { const start = index++; while (index < line.length && /[0-9]/.test(line[index])) index++; tokens.push({ kind: 'number', value: line.slice(start, index) }); continue; }
+    if (/[0-9]/.test(char)) { const value = /^\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(line.slice(index))[0]; tokens.push({ kind: 'number', value }); index += value.length; continue; }
     const pair = line.slice(index, index + 2);
     if (['==', '!=', '>=', '<=', '->', '=>', '..'].includes(pair)) { tokens.push({ kind: 'operator', value: pair }); index += 2; continue; }
     if ('=+-*/%<>!'.includes(char)) tokens.push({ kind: 'operator', value: char });
@@ -1569,7 +1569,7 @@ function expandStructuralLine(raw, context = []) {
       const statementPrefix = raw.slice(previousBrace + 1, index).trim();
       const headerPrefix = raw.slice(0, index).trim();
       const keyword = /^(\w+)\b/.exec(statementPrefix)?.[1] || '';
-      const statementCommand = /^(?:return|set|unset|say|show|hide|clear|bg|bgm|play|wait|effect|goto|include|global|const|int|str|dict)\b/.test(statementPrefix);
+      const statementCommand = /^(?:return|set|unset|say|show|hide|clear|bg|bgm|play|wait|effect|goto|include|global|const|int|float|str|dict)\b/.test(statementPrefix);
       const parent = context.at(-1);
       const choiceExpression = parent?.kind === 'choice' && !statementCommand && /^(?:"(?:\\.|[^"\\])*"|[A-Za-z_][A-Za-z0-9_.]*(?:\s*\([^{}]*\))?|\d+|[+-]|\(|!|not\b)/.test(statementPrefix);
       const block = !dictionary && (/^(?:scene|fn|if|elif|else|for|while|choice|character|struct)\b/.test(statementPrefix)
@@ -2874,14 +2874,15 @@ const syntaxHints = {
   character: 'character <名前> {\n  name = "表示名"\n  affection = 0\n  pose normal = "画像パス"\n}',
   struct: 'struct <名前> {\n  name: str\n  score: int\n}',
   int: 'int <名前> = <整数>',
+  float: 'float <名前> = <小数> 例: 0.5 / 1e-3',
   str: 'str <名前> = "文字列"',
-  dict: 'dict[int|str] <名前> = { "key": <値> }',
+  dict: 'dict[int|float|str] <名前> = { "key": <値> }',
   const: 'const <型> <名前> = <値>',
   global: 'global [const] <型> <名前> = <値>',
   set: 'set <既存の変数> = <値>',
   say: 'say <文字列リテラルで始まるstr式> または say <話者> <str式>',
   bg: 'bg <背景アセット>', bgm: 'bgm <BGMアセット>', se: 'play se <SEアセット>',
-  show: 'show <名前>.<ポーズ> <位置> [fade <ミリ秒>]', hide: 'hide <名前> [fade <ミリ秒>]',
+  show: 'show <名前>.<ポーズ> <位置> [x+(式)] [y-(式)] [fade <ミリ秒>]', hide: 'hide <名前> [fade <ミリ秒>]',
   if: 'if <条件> { ... } else { ... }', elif: 'elif <条件> { ... }', else: 'else { ... }',
   for: 'for <変数> from <開始> to <終了> [step <幅>] { ... }',
   while: 'while <条件> { ... }', choice: 'choice "質問" { "選択肢" { ... } }',
@@ -2892,6 +2893,7 @@ const syntaxRecipes = {
   asset: { description: '素材ファイルを名前で呼べるようにします。パスを書くのはこの宣言時だけです。', snippet: 'asset bg background = "asset/bg/¦.png"\n' },
   character: { description: '立ち絵とポーズをまとめて定義します。', snippet: 'character hero {\n  name = "主人公"\n  pose normal = "asset/char/hero/¦.png"\n}\n' },
   int: { description: '整数のローカル変数です。ファイル間で共有するなら global を付けます。', snippet: 'int count = ¦0\n' },
+  float: { description: '小数の変数です。整数との混合演算には float(整数) を使います。', snippet: 'float ratio = ¦0.5\n' },
   str: { description: '文字列のローカル変数です。', snippet: 'str name = "¦"\n' },
   global: { description: '複数ファイルから参照できる共有変数です。トップレベルで宣言します。', snippet: 'global int score = ¦0\n' },
   say: { description: '本文が文字列リテラルから始まる式なら話者を省略でき、narrator として扱います。変数や関数呼び出しから始める場合は話者を指定します。', snippet: 'say "¦本文"\n' },

@@ -226,6 +226,28 @@ async function applyEffect(type, color, ms = 500n) {
   $('stage').append(overlay);
   try { await fade(overlay, 1, 0, ms); } finally { overlay.remove(); }
 }
+async function moveLayer(operation) {
+  const move = operation?.move;
+  if (!move) throw Error('move operation metadata is missing');
+  const element = move.targetKind === 'bg' ? $('background') : $(`char-${move.target}`);
+  if (!element) throw Error(`move target '${move.target}' is not currently visible`);
+  const point = (x, y) => move.targetKind === 'bg'
+    ? `translate(${x}px, ${y}px)`
+    : `translateX(calc(-50% + ${x}px))`;
+  const styleAt = (x, y) => move.targetKind === 'bg'
+    ? { transform: point(x, y) }
+    : { transform: point(x, y), bottom: `${-y}px` };
+  const from = styleAt(move.fromX, move.fromY);
+  const to = styleAt(move.toX, move.toY);
+  if (!move.durationMs) {
+    Object.assign(element.style, to);
+    return;
+  }
+  const animation = element.animate([from, to], { duration: move.durationMs, fill: 'forwards' });
+  await animation.finished;
+  Object.assign(element.style, to);
+  animation.cancel();
+}
 
 async function command(c) {
   const a = c.args;
@@ -233,9 +255,12 @@ async function command(c) {
   const poseReference = n === 'show' && /^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(a[0]);
   const showChar = n === 'show' && Boolean(poseReference);
 
-  if (n === 'bg') {
+  if (n === 'move') {
+    await moveLayer(c.operation);
+  } else if (n === 'bg') {
     const src = url('bg', a[0]);
     const preload = new Image(); preload.src = src; await preload.decode();
+    $('background').style.transform = '';
     $('background').style.backgroundImage = `url("${src}")`;
   } else if (showChar) {
     const charName = poseReference[1];
@@ -244,9 +269,10 @@ async function command(c) {
     const transitionIndex = c.operation?.transitionIndex ?? 2;
     let offsetX = 0, offsetY = 0;
     for (let index = 2; index < transitionIndex; index++) {
-      const match = /^([xy])([+-])(\d+)$/.exec(a[index]);
+      const match = /^([xy])([+-])(\d+)?$/.exec(a[index]);
       if (!match) continue;
-      const amount = Number(match[3]) * (match[2] === '+' ? 1 : -1);
+      const raw = match[3] === undefined ? a[++index] : match[3];
+      const amount = Number(raw) * (match[2] === '+' ? 1 : -1);
       if (match[1] === 'x') offsetX = amount; else offsetY = amount;
     }
     document.querySelectorAll(`#characters .actor[data-slot="${CSS.escape(pos)}"]`).forEach(actor => {
@@ -271,7 +297,7 @@ async function command(c) {
     e?.remove();
   } else if (n === 'clear') {
     const target = a[0];
-    if (target === 'bg') $('background').style.backgroundImage = 'none';
+    if (target === 'bg') { $('background').style.backgroundImage = 'none'; $('background').style.transform = ''; }
     else if (target === 'bgm') {
       const bgm = $('bgm');
       bgm.pause();
@@ -395,12 +421,13 @@ async function launchGame() {
     for (const [key, entry] of Object.entries(supplied)) {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw Error(`Invalid debug variable: ${key}`);
       if (entry?.type === 'int') variables[key] = NovelRuntime.integer(entry.value);
+      else if (entry?.type === 'float') variables[key] = NovelRuntime.floating(entry.value);
       else if (entry?.type === 'str') variables[key] = String(entry.value);
-      else if (entry?.type === 'dict<int>' || entry?.type === 'dict<str>') {
+      else if (entry?.type === 'dict<int>' || entry?.type === 'dict<float>' || entry?.type === 'dict<str>') {
         const source = JSON.parse(entry.value);
         if (!source || typeof source !== 'object' || Array.isArray(source)) throw Error(`Invalid debug dictionary: ${key}`);
         const dictionary = Object.create(null);
-        for (const [field, value] of Object.entries(source)) dictionary[field] = entry.type === 'dict<int>' ? NovelRuntime.integer(value) : String(value);
+        for (const [field, value] of Object.entries(source)) dictionary[field] = entry.type === 'dict<int>' ? NovelRuntime.integer(value) : entry.type === 'dict<float>' ? NovelRuntime.floating(value) : String(value);
         variables[key] = dictionary;
       } else if (entry?.type === 'struct') {
         const source = JSON.parse(entry.value);
@@ -410,6 +437,7 @@ async function launchGame() {
         for (const [field, type] of Object.entries(fields)) {
           if (!Object.hasOwn(source, field)) throw Error(`Missing debug structure field: ${field}`);
           if (type === 'int') structure[field] = NovelRuntime.integer(source[field]);
+          else if (type === 'float') structure[field] = NovelRuntime.floating(source[field]);
           else if (type === 'str' && typeof source[field] === 'string') structure[field] = source[field];
           else throw Error(`Invalid debug structure field: ${field}`);
         }

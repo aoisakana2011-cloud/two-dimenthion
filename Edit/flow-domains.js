@@ -19,12 +19,23 @@ const readBinding = (state, name) => state.has(localKey(name)) ? state.get(local
 const putLocal = (state, name, value) => put(state, localKey(name), value);
 const putBinding = (state, name, value) => state.has(localKey(name)) ? putLocal(state, name, value) : put(state, name, value);
 const withinInt = (value) => typeof value !== 'bigint' || value >= INT_MIN && value <= INT_MAX;
+function convertPrimitive(name, item) {
+  if (name === 'str') return String(item);
+  if (name === 'float') {
+    const value = Number(item);
+    if (!Number.isFinite(value)) throw Error('invalid float');
+    return value;
+  }
+  const value = typeof item === 'number' ? BigInt(Math.trunc(item)) : BigInt(item);
+  if (!withinInt(value)) throw Error('int overflow');
+  return value;
+}
 
 function combine(left, right, operation) {
   if (left === null || right === null || left.length * right.length > LIMIT) return null;
   const values = [];
   for (const a of left) for (const b of right) {
-    try { const result = operation(a, b); if (!withinInt(result)) return null; values.push(result); }
+    try { const result = operation(a, b); if (!withinInt(result) || typeof result === 'number' && !Number.isFinite(result)) return null; values.push(result); }
     catch { return null; }
   }
   return domain(values);
@@ -58,6 +69,7 @@ function updateObjectKeys(state, target, objects, keys, value, remove = false) {
 
 function evaluate(expr, state, context = null) {
   if (!expr) return null;
+  if (expr.kind === 'float') return Number.isFinite(Number(expr.value)) ? single(Number(expr.value)) : null;
   if (expr.kind === 'literal') return single(typeof expr.value === 'number' ? BigInt(expr.value) : expr.value);
   if (expr.kind === 'variable') return readBinding(state, expr.name);
   if (expr.kind === 'dict') {
@@ -74,10 +86,10 @@ function evaluate(expr, state, context = null) {
     return object[name];
   });
   if (expr.kind === 'call') {
-    if ((expr.name === 'str' || expr.name === 'int') && expr.args.length === 1) {
+    if (['str', 'int', 'float'].includes(expr.name) && expr.args.length === 1) {
       const args = evaluate(expr.args[0], state, context);
       if (args === null) return null;
-      try { return domain(args.map((item) => expr.name === 'str' ? String(item) : BigInt(item))); } catch { return null; }
+      try { return domain(args.map((item) => convertPrimitive(expr.name, item))); } catch { return null; }
     }
     const fn = context?.functions.get(expr.name);
     if (!fn || !context || expr.args.length !== fn.params.length
@@ -103,7 +115,7 @@ function evaluate(expr, state, context = null) {
       case '+': return a + b;
       case '-': return a - b;
       case '*': return a * b;
-      case '/': if (b === 0n) throw Error('division by zero'); return a / b;
+      case '/': if (b === 0n || b === 0) throw Error('division by zero'); return a / b;
       case '%': if (b === 0n) throw Error('division by zero'); return a % b;
       case '==': return key(a) === key(b);
       case '!=': return key(a) !== key(b);
@@ -140,16 +152,16 @@ function evaluateArguments(expressions, state, context) {
 
 function evaluateWithEffects(expr, state, context = null) {
   if (!expr) return [{ state, values: null }];
-  if (expr.kind === 'literal' || expr.kind === 'variable') return [{ state, values: evaluate(expr, state, context) }];
+  if (expr.kind === 'literal' || expr.kind === 'float' || expr.kind === 'variable') return [{ state, values: evaluate(expr, state, context) }];
   if (expr.kind === 'call') {
     const args = evaluateArguments(expr.args, state, context);
     const result = [];
     for (const path of args) {
-      if ((expr.name === 'str' || expr.name === 'int') && path.args.length === 1) {
+      if (['str', 'int', 'float'].includes(expr.name) && path.args.length === 1) {
         const input = path.args[0];
         if (input === null) result.push({ state: path.state, values: null });
         else {
-          try { result.push({ state: path.state, values: domain(input.map((item) => expr.name === 'str' ? String(item) : BigInt(item))) }); }
+          try { result.push({ state: path.state, values: domain(input.map((item) => convertPrimitive(expr.name, item))) }); }
           catch { result.push({ state: path.state, values: null }); }
         }
         continue;
@@ -165,7 +177,7 @@ function evaluateWithEffects(expr, state, context = null) {
     if (path.values === null) return { ...path, values: null };
     try {
       const values = domain(path.values.map((item) => expr.operator === 'not' ? !item : expr.operator === '-' ? -item : item));
-      return { ...path, values: values?.every(withinInt) ? values : null };
+      return { ...path, values: values?.every((value) => withinInt(value) && (typeof value !== 'number' || Number.isFinite(value))) ? values : null };
     } catch { return { ...path, values: null }; }
   }));
   if (expr.kind === 'dict') {
@@ -212,7 +224,7 @@ function evaluateWithEffects(expr, state, context = null) {
             case '+': return a + b;
             case '-': return a - b;
             case '*': return a * b;
-            case '/': if (b === 0n) throw Error('division by zero'); return a / b;
+            case '/': if (b === 0n || b === 0) throw Error('division by zero'); return a / b;
             case '%': if (b === 0n) throw Error('division by zero'); return a % b;
             case '==': return key(a) === key(b);
             case '!=': return key(a) !== key(b);
@@ -419,7 +431,7 @@ function writes(statements, out = new Set()) {
 
 function hasUserCall(expr) {
   if (!expr || typeof expr !== 'object') return false;
-  if (expr.kind === 'call' && expr.name !== 'str' && expr.name !== 'int') return true;
+  if (expr.kind === 'call' && !['str', 'int', 'float'].includes(expr.name)) return true;
   return Object.values(expr).some((value) => Array.isArray(value) ? value.some(hasUserCall) : value && typeof value === 'object' && hasUserCall(value));
 }
 
@@ -433,7 +445,7 @@ function functionWriteEffects(script) {
     let unknown = false;
     const visitExpr = (expr) => {
       if (!expr || typeof expr !== 'object') return;
-      if (expr.kind === 'call' && expr.name !== 'str' && expr.name !== 'int') calls.add(expr.name);
+      if (expr.kind === 'call' && !['str', 'int', 'float'].includes(expr.name)) calls.add(expr.name);
       if (expr.kind === 'literal' && typeof expr.value === 'string') {
         for (const match of expr.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\(\)\}/g)) calls.add(match[1]);
       }
@@ -518,7 +530,7 @@ function taintCalls(statement, states, mutableNames, functionEffects, context) {
   const calls = new Set();
   const collectCalls = (expr) => {
     if (!expr || typeof expr !== 'object') return;
-    if (expr.kind === 'call' && expr.name !== 'str' && expr.name !== 'int') calls.add(expr.name);
+    if (expr.kind === 'call' && !['str', 'int', 'float'].includes(expr.name)) calls.add(expr.name);
     for (const value of Object.values(expr)) {
       if (Array.isArray(value)) value.forEach(collectCalls);
       else if (value && typeof value === 'object') collectCalls(value);
@@ -687,7 +699,7 @@ function runFunctionStatement(statement, input, mutableNames, context) {
     const normal = (next) => ({ state: next, returned: false, transfer: false, value: null });
     if (statement.kind === 'declare') {
       const initial = statement.initial ? evaluateWithEffects(statement.initial, state, context)
-        : [{ state, values: single(statement.type === 'int' ? 0n : statement.type === 'str' ? '' : {}) }];
+        : [{ state, values: single(statement.type === 'int' ? 0n : statement.type === 'float' ? 0 : statement.type === 'str' ? '' : {}) }];
       result.push(...initial.map((path) => normal(putLocal(path.state, statement.name, path.values))));
     } else if (statement.kind === 'set' || statement.kind === 'unset') {
       let target = statement.target;
@@ -908,7 +920,7 @@ function execute(statement, states, mutableNames, effects, context) {
   for (const state of states) {
     if (statement.kind === 'declare') {
       const initial = statement.initial ? evaluateWithEffects(statement.initial, state, context)
-        : [{ state, values: single(statement.type === 'int' ? 0n : statement.type === 'str' ? '' : {}) }];
+        : [{ state, values: single(statement.type === 'int' ? 0n : statement.type === 'float' ? 0 : statement.type === 'str' ? '' : {}) }];
       result.push(...initial.map((path) => put(path.state, statement.name, path.values)));
     } else if (statement.kind === 'set' || statement.kind === 'unset') {
       let target = statement.target;
@@ -1015,7 +1027,7 @@ function configuredDomain(constraint) {
 }
 
 function templateTypeTag(type) {
-  if (type === 'int' || type === 'str') return type;
+  if (type === 'int' || type === 'float' || type === 'str') return type;
   if (!type || type === 'infer' || type === 'none') return null;
   if (type.kind === 'dict') return `dict:${type.value}`;
   if (type.kind === 'struct') return `struct:${type.name}`;
@@ -1061,7 +1073,7 @@ function collectTemplateTypes(script, staticDeclarations, externalCharacters, ex
   }
   for (const character of [...(script.characters || []), ...(externalCharacters || [])]) {
     const fields = Object.fromEntries(character.properties.map((property) => [
-      property.name, property.value.kind === 'literal'
+      property.name, property.value.kind === 'float' ? 'float' : property.value.kind === 'literal'
         ? typeof property.value.value === 'string' ? 'str' : typeof property.value.value === 'number' || typeof property.value.value === 'bigint' ? 'int' : null
         : null,
     ]));

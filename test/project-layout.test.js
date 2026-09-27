@@ -22,7 +22,7 @@ test('project includes expose struct declarations to the including scene', async
     }
   `);
   const source = `
-    include common.tds
+    include common.tds as common
     User player = { "name": "Yui", "age": 17 }
     fn copy(value: User) -> User { return value }
     scene main { say narrator player.name }

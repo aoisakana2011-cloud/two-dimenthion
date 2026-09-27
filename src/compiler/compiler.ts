@@ -3,6 +3,7 @@ import { assertAnalyzed } from '../checker/analyzer';
 
 export type CompiledExpr =
   | { kind: 'integer'; value: string }
+  | { kind: 'float'; value: string }
   | { kind: 'literal'; value: number | string | bigint }
   | { kind: 'load'; name: string }
   | { kind: 'index'; target: CompiledExpr; key: CompiledExpr }
@@ -38,7 +39,7 @@ type ConstantValue = bigint | string | boolean;
 type VariableConstraint = { type: 'int' | 'str'; min?: bigint; max?: bigint; values?: ReadonlySet<bigint | string> };
 
 function interpolationCalls(value: string): string[] {
-  return [...value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\(\)\}/g)].map((match) => match[1]);
+  return [...value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\(\)\}/g)].map((match) => match[1]);
 }
 
 function hasInterpolation(value: string): boolean {
@@ -398,7 +399,7 @@ function compiledForConstraints(
 function hasImpureCall(expression: CompiledExpr | undefined): boolean {
   if (!expression) return false;
   if (expression.kind === 'literal') return typeof expression.value === 'string' && hasInterpolation(expression.value);
-  if (expression.kind === 'call') return expression.name !== 'str' && expression.name !== 'int' || expression.args.some(hasImpureCall);
+  if (expression.kind === 'call') return !['str', 'int', 'float'].includes(expression.name) || expression.args.some(hasImpureCall);
   if (expression.kind === 'binary') return hasImpureCall(expression.left) || hasImpureCall(expression.right);
   if (expression.kind === 'unary') return hasImpureCall(expression.value);
   if (expression.kind === 'index') return hasImpureCall(expression.target) || hasImpureCall(expression.key);
@@ -1151,6 +1152,7 @@ class Compiler {
 
   private expr(expression: Expr): CompiledExpr {
     switch (expression.kind) {
+      case 'float': return { kind: 'float', value: expression.value };
       case 'literal': return typeof expression.value === 'bigint' ? { kind: 'integer', value: expression.value.toString() } : expression;
       case 'variable': return { kind: 'load', name: expression.name };
       case 'index': return { kind: 'index', target: this.expr(expression.target), key: this.expr(expression.key) };

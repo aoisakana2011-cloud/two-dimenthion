@@ -7,7 +7,7 @@ class CompileError extends Error {
 }
 exports.CompileError = CompileError;
 function interpolationCalls(value) {
-    return [...value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\(\)\}/g)].map((match) => match[1]);
+    return [...value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\(\)\}/g)].map((match) => match[1]);
 }
 function hasInterpolation(value) {
     return /\{[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?:\(\))?\}/.test(value);
@@ -490,7 +490,7 @@ function hasImpureCall(expression) {
     if (expression.kind === 'literal')
         return typeof expression.value === 'string' && hasInterpolation(expression.value);
     if (expression.kind === 'call')
-        return expression.name !== 'str' && expression.name !== 'int' || expression.args.some(hasImpureCall);
+        return !['str', 'int', 'float'].includes(expression.name) || expression.args.some(hasImpureCall);
     if (expression.kind === 'binary')
         return hasImpureCall(expression.left) || hasImpureCall(expression.right);
     if (expression.kind === 'unary')
@@ -1420,6 +1420,7 @@ class Compiler {
     }
     expr(expression) {
         switch (expression.kind) {
+            case 'float': return { kind: 'float', value: expression.value };
             case 'literal': return typeof expression.value === 'bigint' ? { kind: 'integer', value: expression.value.toString() } : expression;
             case 'variable': return { kind: 'load', name: expression.name };
             case 'index': return { kind: 'index', target: this.expr(expression.target), key: this.expr(expression.key) };

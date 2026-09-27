@@ -20,6 +20,7 @@ character friend {
   pose normal = "asset/pixel.png"
 }
 int x = 9007199254740993
+float shift = 0.5
 bg room
 bgm music
 play se sound
@@ -36,7 +37,9 @@ clear image gif
 show image first left
 show image second right
 show hero.normal left fade 10
-show friend.normal right
+show friend.normal right x-(shift * 23.0) y+(shift * 69.0) fade 10
+move character friend by x+(7.25) y-(5.25) over 10
+move bg by x+(6.5) y-(3.25)
 show hero.normal center
 clear image first
 hide friend

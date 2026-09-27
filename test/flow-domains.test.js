@@ -21,6 +21,18 @@ async function play(source, choiceIndex = 0) {
   return output;
 }
 
+test('float values keep exact branch-sensitive domains at debug start', () => {
+  const source = `global float ratio = 0.5
+scene main {
+  choice "choose" {
+    "a" { set ratio = ratio + 0.25 }
+    "b" { set ratio = float(2) / 4.0 }
+  }
+  say narrator "target {ratio}"
+}`;
+  assert.deepEqual(at(source, 'target', ['ratio']).ratio, { kind: 'finite', values: ['0.75', '0.5'] });
+});
+
 test('choice paths retain exact alternative values at the selected line', () => {
   const source = `global int score = 0
 scene main {

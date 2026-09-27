@@ -10,6 +10,7 @@
 #include <vector>
 #include <regex>
 #include <set>
+#include <cmath>
 
 namespace novel {
 using json = nlohmann::json;
@@ -34,9 +35,52 @@ inline Int mul(Int a, Int b) {
     if (a && b && ((a > 0 && b > 0 && a > INT64_MAX / b) || (a > 0 && b < 0 && b < INT64_MIN / a) || (a < 0 && b > 0 && a < INT64_MIN / b) || (a < 0 && b < 0 && a < INT64_MAX / b))) throw std::runtime_error("int64 overflow");
     return a * b;
 }
-inline std::string text(const json& v) { return v.is_string() ? v.get<std::string>() : v.is_null() ? "" : v.dump(); }
+inline double floating(const std::string& s) {
+    if (s.empty() || s[0] == '+' && s.size() == 1) throw std::runtime_error("Invalid finite float: " + s);
+    const size_t start = s[0] == '+' ? 1 : 0;
+    double value{};
+    const auto result = std::from_chars(s.data() + start, s.data() + s.size(), value, std::chars_format::general);
+    if (result.ec != std::errc{} || result.ptr != s.data() + s.size() || !std::isfinite(value)) throw std::runtime_error("Invalid finite float: " + s);
+    return value == 0.0 ? 0.0 : value;
+}
+inline double finite(double value) {
+    if (!std::isfinite(value)) throw std::runtime_error("float must be finite");
+    return value == 0.0 ? 0.0 : value;
+}
+inline std::string floatText(double value) {
+    if (value == 0.0) return "0";
+    char buffer[64];
+    const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value, std::chars_format::general);
+    if (result.ec != std::errc{}) throw std::runtime_error("Cannot format float");
+    std::string source(buffer, result.ptr);
+    const auto exponentAt = source.find_first_of("eE");
+    if (exponentAt == std::string::npos) return source;
+    const int exponent = std::stoi(source.substr(exponentAt + 1));
+    std::string mantissa = source.substr(0, exponentAt);
+    const bool negative = mantissa[0] == '-';
+    if (negative) mantissa.erase(0, 1);
+    const size_t point = mantissa.find('.');
+    const int decimal = int(point == std::string::npos ? mantissa.size() : point) + exponent;
+    if (point != std::string::npos) mantissa.erase(point, 1);
+    const std::string sign = negative ? "-" : "";
+    if (std::abs(value) >= 1e-6 && std::abs(value) < 1e21) {
+        if (decimal <= 0) return sign + "0." + std::string(size_t(-decimal), '0') + mantissa;
+        if (decimal >= int(mantissa.size())) return sign + mantissa + std::string(size_t(decimal - int(mantissa.size())), '0');
+        return sign + mantissa.substr(0, size_t(decimal)) + "." + mantissa.substr(size_t(decimal));
+    }
+    const int scientific = decimal - 1;
+    const std::string normalized = mantissa.substr(0, 1) + (mantissa.size() > 1 ? "." + mantissa.substr(1) : "");
+    return sign + normalized + "e" + (scientific >= 0 ? "+" : "") + std::to_string(scientific);
+}
+inline std::string text(const json& v) {
+    if (v.is_string()) return v.get<std::string>();
+    if (v.is_null()) return "";
+    if (v.is_number_float()) return floatText(v.get<double>());
+    return v.dump();
+}
 inline bool matches(const json& v, const json& type) {
     if (type == "int") return v.is_number_integer();
+    if (type == "float") return v.is_number_float() && std::isfinite(v.get<double>());
     if (type == "str") return v.is_string();
     if (type.is_object() && type.value("kind", "") == "struct") return v.is_object();
     if (!v.is_object() || !type.is_object()) return false;
@@ -103,6 +147,7 @@ public:
         if (e.is_null()) return nullptr;
         const auto kind = e.at("kind").get<std::string>();
         if (kind == "integer") return integer(e.at("value"));
+        if (kind == "float") return floating(e.at("value").get<std::string>());
         if (kind == "literal") {
             auto v = e.at("value");
             if (v.is_number_unsigned() && v.get<uint64_t>() > INT64_MAX) throw std::runtime_error("int64 overflow");
@@ -120,6 +165,7 @@ public:
             if (op == "-" && e.at("value").at("kind") == "integer") return integer("-" + e.at("value").at("value").get<std::string>());
             auto v = value(e.at("value"));
             if (op == "not") return !v.get<bool>();
+            if (v.is_number_float()) return finite(op == "-" ? -v.get<double>() : v.get<double>());
             return op == "-" ? json(sub(0, v.get<Int>())) : v;
         }
         if (kind == "binary") {
@@ -130,6 +176,17 @@ public:
             if (op == "==") return a == b;
             if (op == "!=") return a != b;
             if (op == "+" && a.is_string() && b.is_string()) return a.get<std::string>() + b.get<std::string>();
+            if (a.is_number_float() && b.is_number_float()) {
+                double x = a.get<double>(), y = b.get<double>();
+                if (op == "+") return finite(x + y);
+                if (op == "-") return finite(x - y);
+                if (op == "*") return finite(x * y);
+                if (op == "/") { if (y == 0.0) throw std::runtime_error("Division by zero"); return finite(x / y); }
+                if (op == ">") return x > y;
+                if (op == ">=") return x >= y;
+                if (op == "<") return x < y;
+                if (op == "<=") return x <= y;
+            }
             Int x = a.get<Int>(), y = b.get<Int>();
             if (op == "+") return add(x, y);
             if (op == "-") return sub(x, y);
@@ -148,7 +205,21 @@ public:
             json args = json::array(); for (const auto& a : e.at("args")) args.push_back(value(a));
             auto name = e.at("name").get<std::string>();
             if (name == "str") return text(args.at(0));
-            if (name == "int") return integer(args.at(0).get<std::string>());
+            if (name == "int") {
+                if (args.at(0).is_number_float()) {
+                    const double number = args.at(0).get<double>();
+                    if (!std::isfinite(number) || number < double(INT64_MIN) || number >= double(INT64_MAX)) throw std::runtime_error("int64 overflow");
+                    return Int(std::trunc(number));
+                }
+                return integer(args.at(0).get<std::string>());
+            }
+            if (name == "float") {
+                const auto& argument = args.at(0);
+                if (argument.is_string()) return floating(argument.get<std::string>());
+                if (argument.is_number_integer()) return finite(double(argument.get<Int>()));
+                if (argument.is_number_float()) return finite(argument.get<double>());
+                throw std::runtime_error("Invalid float conversion");
+            }
             return call(name, args);
         }
         throw std::runtime_error("Unknown expression: " + kind);
@@ -177,7 +248,7 @@ public:
                     if (c.value("constant", false)) readonlyGlobals.insert(name);
                     continue;
                 }
-                auto v = c.contains("initial") ? value(c.at("initial")) : c.at("type") == "int" ? json(0) : c.at("type") == "str" ? json("") : json::object();
+                auto v = c.contains("initial") ? value(c.at("initial")) : c.at("type") == "int" ? json(0) : c.at("type") == "float" ? json(0.0) : c.at("type") == "str" ? json("") : json::object();
                 auto frameIndex = locals.size();
                 for (size_t n = locals.size(); n > 0; --n) if (!loopScopes.contains(n - 1)) { frameIndex = n - 1; break; }
                 declarationFrame()[name] = v;

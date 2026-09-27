@@ -9,6 +9,7 @@ const { Runtime } = require('../Edit/runtime');
 const { validate: validateEditorSource, compileSource: compileEditorSource } = require('../Edit/server');
 const { pack, validateVariableFlow } = require('../tools/pack');
 const { compileProject, resolveProjectScript } = require('../tools/project');
+const { readStaticVariables } = require('../tools/static-variables');
 const program = source => JSON.parse(JSON.stringify(compile(parse(source))));
 async function nativeExecutableForTest(t) {
   if (process.env.NOVEL_NATIVE_EXE) {
@@ -23,6 +24,113 @@ async function run(source, host = {}) {
   const rt = new Runtime({ command: async () => {}, choice: async () => 0, ...host });
   await rt.run(program(source)); return rt;
 }
+
+test('float expressions remain distinct from exact int and drive pixel offsets', async () => {
+  const seen = [];
+  const source = `
+float phase = 0.5
+float delta = 0.0
+character hero {
+  name = "Hero"
+  pose normal = "asset/hero.png"
+}
+fn scale(x: float) -> float { return x * 2.0 }
+scene main {
+  set delta = scale(phase) + 0.25
+  show hero.normal center x+(delta * 2.0) y-(float(3))
+  move character hero by x+(delta) y-2 over 16
+  say narrator str(delta)
+}`;
+  const rt = await run(source, { command: async (name, args) => seen.push({ name, args }) });
+  assert.equal(rt.get('phase'), 0.5);
+  assert.deepEqual(seen.find((item) => item.name === 'show').args.slice(2), ['x+', 2.5, 'y-', 3]);
+  assert.deepEqual(seen.find((item) => item.name === 'move').args.slice(3), ['x+', 1.25, 'y-2', 'over', 16n]);
+  assert.equal(seen.find((item) => item.name === 'say').args[1], '1.25');
+  await assert.rejects(run('float bad = 1.0\nscene main { set bad = bad / 0.0 }'), /zero|0/);
+  assert.throws(() => program('float bad = 1 + 0.5\nscene main { wait 1 }'), /型|type/i);
+});
+
+test('native and browser agree on float arithmetic, conversion and overflow', async t => {
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
+  const source = `float ratio = 0.5
+float result = 0.0
+int truncated = 0
+str display = ""
+str tiny = ""
+str medium = ""
+str wide = ""
+str signed = ""
+scene main {
+  set result = (ratio + 0.25) * 2.0
+  set truncated = int(-result)
+  set display = str(result)
+  set tiny = str(1e-7)
+  set medium = str(1e-5)
+  set wide = str(1e20)
+  set signed = str(float("+1.25"))
+}`;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-float-parity-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'float.nsp.json');
+  await fs.writeFile(file, JSON.stringify({ format: 'novel-script-package', version: 1, program: program(source) }));
+  const native = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(native.status, 0, native.stderr || native.error?.message);
+  const browser = await run(source);
+  const actual = JSON.parse(native.stdout).globals;
+  assert.equal(actual.result, browser.get('result'));
+  assert.equal(actual.truncated, Number(browser.get('truncated')));
+  assert.equal(actual.display, browser.get('display'));
+  assert.equal(actual.tiny, browser.get('tiny'));
+  assert.equal(actual.medium, browser.get('medium'));
+  assert.equal(actual.wide, browser.get('wide'));
+  assert.equal(actual.signed, browser.get('signed'));
+  const invalid = 'float result = 1.0\nscene main { set result = result / 0.0 }';
+  await fs.writeFile(file, JSON.stringify({ format: 'novel-script-package', version: 1, program: program(invalid) }));
+  assert.equal(spawnSync(exe, [file, '--headless'], { timeout: 10000 }).status, 1);
+  await assert.rejects(run(invalid));
+});
+
+test('float static variable table retains finite bounds and exact initial value', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-float-table-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const dataRoot = path.join(root, '.novel');
+  await fs.mkdir(dataRoot);
+  const file = path.join(dataRoot, 'variables.json');
+  await fs.writeFile(file, JSON.stringify({ staticVariables: [{ name: 'ratio', type: 'float', value: 0.5, min: 0, max: 1, possibleValues: [0.5, 0.75] }] }));
+  const data = await readStaticVariables(dataRoot);
+  assert.equal(data.declarations[0].initial.value, '0.5');
+  assert.deepEqual([...data.table.constraints.get('ratio').values], [0.5, 0.75]);
+  const scenesRoot = path.join(root, 'senario');
+  const assetsRoot = path.join(root, 'asset');
+  await fs.mkdir(scenesRoot);
+  await fs.mkdir(assetsRoot);
+  const sceneFile = path.join(scenesRoot, 'main.tds');
+  await fs.writeFile(sceneFile, 'scene main { say narrator str(ratio) }');
+  const packed = await pack(sceneFile, path.join(root, 'float.nsp.json'), { scenesRoot, assetsRoot, dataRoot });
+  assert.equal(packed.program.variables.find((variable) => variable.name === 'ratio')?.type, 'float');
+  await fs.writeFile(file, JSON.stringify({ staticVariables: [{ name: 'ratio', type: 'float', value: 'Infinity' }] }));
+  await assert.rejects(readStaticVariables(dataRoot), /有限/);
+});
+
+test('float works in character fields, structs, dictionaries and conversion boundaries', async () => {
+  const source = `struct Vector { dx: float }
+character hero {
+  name = "Hero"
+  height = 1.75
+  pose normal = "asset/hero.png"
+}
+dict[float] gains = { "left": 0.25 }
+Vector vector = { "dx": 0.5 }
+float result = 0.0
+scene main {
+  set result = hero.height + gains["left"] + vector.dx
+}`;
+  assert.equal((await run(source)).get('result'), 2.5);
+  assert.equal((await run('float result = float("+1.25")\nscene main { wait 1 }')).get('result'), 1.25);
+  assert.equal((await run('int result = int(-1.9)\nscene main { wait 1 }')).get('result'), -1n);
+  await assert.rejects(run('int result = int(1e20)\nscene main { wait 1 }'), /overflow|範囲|int/i);
+});
 
 test('editor validation and compile share the source-file contract', async () => {
   const source = 'scene editor_contract {\n  wait 1\n}';
@@ -74,7 +182,7 @@ test('editor project diagnostics locate missing goto and include targets', async
   assert.equal(gotoDiagnostic.column, gotoSource.split(/\r?\n/)[1].indexOf('missing-scene.tds') + 1);
   assert.equal(gotoDiagnostic.endColumn, gotoDiagnostic.column + 'missing-scene.tds'.length);
 
-  const includeSource = 'include "missing-include.tds"\nscene start { wait 1 }';
+  const includeSource = 'include "missing-include.tds" as missing\nscene start { wait 1 }';
   const includeReport = await validateEditorSource(includeSource, 'missing-include.tds');
   const includeDiagnostic = includeReport.diagnostics[0];
   assert.equal(includeDiagnostic.code, 'project-error');
@@ -364,6 +472,31 @@ test('character show offsets update SceneState and preserve fade timing', async 
   assert.equal(shown[3].transitionIndex, 4);
   assert.equal(rt.sceneState.logicalTimeMs, 300);
   assert.equal(rt.sceneState.characters.hero.transition.durationMs, 300);
+});
+
+test('relative move commands accumulate offsets and expose blocking transition state', async () => {
+  const observed = [];
+  const rt = await run(`asset bg room = "asset/room.png"
+character hero { name = "Hero"\npose normal = "asset/hero.png" }
+bg room
+show hero.normal center x+10
+move character hero by x+5 y-8 over 25
+move bg by x-12 y+4`, {
+    command: async (name, args, runtime, operation) => {
+      if (name === 'move') observed.push({ operation, character: runtime.sceneState.characters.hero, background: runtime.sceneState.background });
+    },
+  });
+  assert.deepEqual(observed.map(({ operation }) => operation.move), [
+    { targetKind: 'character', target: 'hero', delta: { x: 5, y: -8 }, durationMs: 25, fromX: 10, fromY: 0, toX: 15, toY: -8 },
+    { targetKind: 'bg', target: 'bg', delta: { x: -12, y: 4 }, durationMs: 0, fromX: 0, fromY: 0, toX: -12, toY: 4 },
+  ]);
+  assert.equal(observed[0].operation.blocking, true);
+  assert.equal(rt.sceneState.actions[observed[0].operation.actionId].status, 'complete');
+  assert.equal(rt.sceneState.characters.hero.offsetX, 15);
+  assert.equal(rt.sceneState.characters.hero.offsetY, -8);
+  assert.equal(rt.sceneState.background.offsetX, -12);
+  assert.equal(rt.sceneState.background.offsetY, 4);
+  assert.equal(rt.sceneState.logicalTimeMs, 25);
 });
 
 test('scene state registers timed effects as blocking actions', async () => {
@@ -672,7 +805,7 @@ test('flow validation rejects disconnected files and accepts local bindings', ()
   assert.deepEqual(boundedResult.checked, ['start.tds', 'end.tds']);
 });
 
-test('flow validation follows include relations and keeps edge kinds', () => {
+test('flow validation does not treat module imports as scenario routes', () => {
   const { validateGraph } = require('../Edit/server');
   const nodes = [
     { id: 'main.tds', variables: [] },
@@ -684,8 +817,8 @@ test('flow validation follows include relations and keeps edge kinds', () => {
     { from: 'common.tds', to: 'ending.tds', kind: 'goto' },
   ];
   const report = validateGraph({ version: 2, nodes, edges }, 'main.tds', 'ending.tds');
-  assert.equal(report.ok, true);
-  assert.deepEqual(report.path, ['main.tds', 'common.tds', 'ending.tds']);
+  assert.equal(report.ok, false);
+  assert.match(report.errors[0].message, /経路がありません/);
   assert.deepEqual(edges.map((edge) => edge.kind), ['include', 'goto']);
 });
 
@@ -1139,45 +1272,60 @@ test('scene graph reachability excludes outgoing gotos from dead code and dead s
   assert.equal(callWidening.reachableScenes.has('common'), true, 'unknown function effects must invalidate path constants');
 });
 
-test('scene reachability follows file-path gotos to the first included scene', async (t) => {
+test('scenario files are reached by goto and cannot be imported as modules', async (t) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-file-goto-reachability-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   await fs.mkdir(path.join(dir, 'chapters'));
   await fs.writeFile(path.join(dir, 'chapters', 'chapter01.tds'), 'scene chapter01_s01 { goto chapter01_s02 }\nscene chapter01_s02 { goto "chapters\\\\chapter02.tds" }');
   await fs.writeFile(path.join(dir, 'chapters', 'chapter02.tds'), 'scene chapter02_s01 { wait 1 }');
-  const script = await resolveProjectScript('include chapters/chapter01.tds\ninclude chapters/chapter02.tds\nscene main { goto "chapters/chapter01.tds" }', dir, new Set(), 'main.tds');
+  const script = await resolveProjectScript('scene main { goto "chapters/chapter01.tds" }', dir, new Set(), 'main.tds');
   const reachability = sceneReachability(script);
-  assert.deepEqual([...reachability.reachableScenes].sort(), ['chapter01_s01', 'chapter01_s02', 'chapter02_s01', 'main']);
-  assert.equal(reachability.externalGotos.size, 0);
+  assert.equal(reachability.reachableScenes.has('main'), true);
+  assert.equal(reachability.externalGotos.size, 1);
   assert.equal(analyzeScript(script).some((item) => item.code === 'unreachable-scene'), false);
-
-  const extensionless = await resolveProjectScript('include chapters/chapter01.tds\ninclude chapters/chapter02.tds\nscene main { goto "chapters/chapter01" }', dir, new Set(), 'main.tds');
-  const extensionlessReachability = sceneReachability(extensionless);
-  assert.deepEqual([...extensionlessReachability.reachableScenes].sort(), ['chapter01_s01', 'chapter01_s02', 'chapter02_s01', 'main']);
-  assert.equal(extensionlessReachability.externalGotos.size, 0, 'file gotos without an extension resolve to .tds files');
-
-  const multiSceneFile = await resolveProjectScript('include chapters/chapter01.tds\nscene main { goto "chapters/chapter01.tds" }', dir, new Set(), 'main.tds');
-  const diagnostics = analyzeScript(multiSceneFile);
-  assert.equal(diagnostics.filter((item) => item.code === 'unreachable-scene').length, 0);
-
-  await fs.writeFile(path.join(dir, 'chapters', 'chapter01.tds'), 'scene chapter01_s01 { set route = "chapter"\ngoto "chapters/chapter02.tds" }');
-  await fs.writeFile(path.join(dir, 'chapters', 'chapter02.tds'), 'scene chapter02_s01 { if route == "chapter" { goto selected } else { goto stale } }\nscene selected { wait 1 }\nscene stale { wait 1 }');
-  const statefulFiles = await resolveProjectScript('global str route = "common"\ninclude chapters/chapter01.tds\ninclude chapters/chapter02.tds\nscene main { goto "chapters/chapter01.tds" }', dir, new Set(), 'main.tds');
-  const statefulReachability = sceneReachability(statefulFiles);
-  assert.equal(statefulReachability.reachableScenes.has('selected'), true, 'mutable state must survive a file-path goto');
-  assert.equal(statefulReachability.reachableScenes.has('stale'), false);
+  await assert.rejects(resolveProjectScript('include chapters/chapter01.tds as chapter\nscene main { wait 1 }', dir, new Set(), 'main.tds'), /cannot declare scenes/);
 });
 
-test('include diagnostics retain the included source file', async t => {
+test('imported module declarations retain their source file provenance', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-location-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
-  await fs.writeFile(path.join(dir, 'child.tds'), 'scene hidden {\n  wait 1\n}');
-  const script = await resolveProjectScript('include child.tds\nscene start { wait 1 }', dir);
-  const diagnostic = analyzeScript(script).find((item) => item.code === 'unreachable-scene' && /hidden/.test(item.message));
-  assert.equal(diagnostic.file, 'child.tds');
-  assert.equal(diagnostic.line, 1);
-  const codes = analyzeScript(script).filter((item) => item.file === 'child.tds').map((item) => item.code);
-  assert.deepEqual(codes, ['unreachable-scene']);
+  await fs.writeFile(path.join(dir, 'child.tds'), 'global int shared = 1');
+  const script = await resolveProjectScript('include child.tds as shared\nscene start { wait 1 }', dir);
+  assert.equal(script.globals.find((item) => item.name === 'shared').file, 'child.tds');
+  assert.equal(analyzeScript(script).some((item) => item.file === 'child.tds'), false);
+});
+
+test('aliased modules namespace imported functions, nested imports and interpolations end to end', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-module-runtime-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.writeFile(path.join(dir, 'math.tds'), 'include inner.tds as inner\nfn twice(x: int) -> int { return inner.add(inner.add(x, 1), 1) }\nfn label() -> str { return "ready" }');
+  await fs.writeFile(path.join(dir, 'inner.tds'), 'fn add(x: int, y: int) -> int { return x + y }');
+  const source = 'include math.tds as nt\nint answer = nt.twice(20)\nscene main { set answer = nt.twice(answer)\nsay narrator "{nt.label()}: {answer}" }';
+  const assetsRoot = path.join(dir, 'assets');
+  await fs.mkdir(assetsRoot);
+  await fs.writeFile(path.join(dir, 'main.tds'), source);
+  const script = await resolveProjectScript(source, dir, new Set(), 'main.tds');
+  assert.deepEqual(script.functions.map((fn) => fn.name).sort(), ['nt.inner.add', 'nt.label', 'nt.twice']);
+  const packed = await pack(path.join(dir, 'main.tds'), path.join(dir, 'module-test.nsp.json'), { scenesRoot: dir, assetsRoot });
+  const runtime = new Runtime({ command: async (name, args, rt) => { if (name === 'say') runtime.lastLine = await rt.textAsync(args[1]); } });
+  await runtime.run(packed.program);
+  assert.equal(runtime.get('answer'), 24n);
+  assert.equal(runtime.lastLine, 'ready: 24');
+  if (process.env.NOVEL_NATIVE_EXE) {
+    const file = path.join(dir, 'module-test.nsp.json');
+    const child = spawnSync(process.env.NOVEL_NATIVE_EXE, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
+    assert.equal(child.status, 0, child.stderr || child.error?.message);
+    assert.equal(JSON.parse(child.stdout).globals.answer, Number(runtime.get('answer')));
+  }
+});
+
+test('module imports reject executable top-level commands and duplicate module paths', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-module-contract-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.writeFile(path.join(dir, 'commands.tds'), 'wait 1');
+  await fs.writeFile(path.join(dir, 'declarations.tds'), 'fn value() -> int { return 1 }');
+  await assert.rejects(resolveProjectScript('include commands.tds as commands\nscene main { wait 1 }', dir, new Set(), 'main.tds'), /declarations only/);
+  await assert.rejects(resolveProjectScript('include declarations.tds as first\ninclude declarations.tds as second\nscene main { wait 1 }', dir, new Set(), 'main.tds'), /included more than once/);
 });
 test('package includes external scenes, validates assets and remains JSON serializable', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-regression-'));
@@ -1212,8 +1360,8 @@ test('project packaging resolves Windows separators in include and goto paths', 
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const scenesRoot = path.join(dir, 'scenes'), assetsRoot = path.join(dir, 'assets');
   await fs.mkdir(path.join(scenesRoot, 'first'), { recursive: true }); await fs.mkdir(assetsRoot);
-  await fs.writeFile(path.join(scenesRoot, 'main.tds'), 'include "first\\\\common.tds"\ngoto "first\\\\next.tds"');
-  await fs.writeFile(path.join(scenesRoot, 'first', 'common.tds'), 'wait 1');
+  await fs.writeFile(path.join(scenesRoot, 'main.tds'), 'include "first\\\\common.tds" as common\ngoto "first\\\\next.tds"');
+  await fs.writeFile(path.join(scenesRoot, 'first', 'common.tds'), 'global int shared = 1');
   await fs.writeFile(path.join(scenesRoot, 'first', 'next.tds'), 'wait 1');
   const data = await pack(path.join(scenesRoot, 'main.tds'), path.join(dir, 'out/game.json'), { scenesRoot, assetsRoot });
   assert.ok(data.files['first/common.tds']);

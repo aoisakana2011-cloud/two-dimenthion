@@ -642,7 +642,10 @@ async function sceneGraph() {
     };
     for (const scene of ast.scenes) if ((scene.file || name) === name && reachability.reachableScenes.has(scene.name)) visitGotos(scene.body, scene.name);
     for (const fn of ast.functions) if ((fn.file || name) === name) visitGotos(fn.body, `function ${fn.name}`);
-    for (const target of ast.includes.map((value) => sceneName(value)).filter(Boolean)) addEdge(name, target, 'include');
+    for (const include of ast.includes) {
+      const target = sceneName(include.path);
+      if (target) addEdge(name, target, 'include');
+    }
     let diagnostics = [];
     let report = null;
     try {
@@ -742,7 +745,7 @@ function validateGraph(graph, start, end) {
       pathFound = currentPath;
       break;
     }
-    const nextNodes = graph.edges.filter((e) => e.from === tail && (!e.kind || e.kind === 'goto' || e.kind === 'include')).map((e) => e.to);
+    const nextNodes = graph.edges.filter((e) => e.from === tail && (!e.kind || e.kind === 'goto')).map((e) => e.to);
     for (const next of nextNodes) {
       if (!visited.has(next)) {
         visited.add(next);
@@ -759,7 +762,7 @@ function validateGraph(graph, start, end) {
     const id = pending.pop();
     if (reachable.has(id)) continue;
     reachable.add(id);
-    if (id !== end) graph.edges.filter((edge) => edge.from === id && (!edge.kind || edge.kind === 'goto' || edge.kind === 'include')).forEach((edge) => pending.push(edge.to));
+    if (id !== end) graph.edges.filter((edge) => edge.from === id && (!edge.kind || edge.kind === 'goto')).forEach((edge) => pending.push(edge.to));
   }
   const checkOrder = [...reachable];
   const errors = [];
@@ -798,7 +801,7 @@ function validateGraph(graph, start, end) {
     const missing = [...required].filter((name) => !state.defined.has(name));
     if (missing.length) errors.push({ file: state.file, message: `初期化前のグローバル変数を参照しています: ${missing.join(', ')}` });
     const nextDefined = new Set([...state.defined, ...declared]);
-    if (state.file !== end) graph.edges.filter((edge) => edge.from === state.file).forEach((edge) => states.push({ file: edge.to, defined: nextDefined }));
+    if (state.file !== end) graph.edges.filter((edge) => edge.from === state.file && (!edge.kind || edge.kind === 'goto')).forEach((edge) => states.push({ file: edge.to, defined: nextDefined }));
   }
 
   return { ok: errors.length === 0, start, end, path: pathFound, checked: checkOrder, errors };

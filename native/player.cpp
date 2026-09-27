@@ -31,6 +31,7 @@ struct Engine {
     struct Sprite { SDL_Texture* texture; std::string position; float alpha = 1; float offsetX = 0; float offsetY = 0; };
     std::map<std::string, Sprite> characters, images;
     SDL_Texture *background = nullptr, *dialog = nullptr, *speakerSkin = nullptr, *choiceSkin = nullptr, *choiceActiveSkin = nullptr;
+    float backgroundOffsetX = 0, backgroundOffsetY = 0;
     std::unique_ptr<Video> video;
     std::map<std::string, std::string> config;
     json gameScreens = json::object();
@@ -323,6 +324,13 @@ struct Engine {
         SDL_FRect rect{x,height-h + s.offsetY * scaleY,w,h}; SDL_SetTextureAlphaModFloat(s.texture,s.alpha);
         SDL_RenderTexture(renderer,s.texture,nullptr,&rect); SDL_SetTextureAlphaModFloat(s.texture,1);
     }
+    void renderBackground() {
+        if (!background) return;
+        const float scaleX = float(width) / float(number("screen.width", 1280));
+        const float scaleY = float(height) / float(number("screen.height", 720));
+        SDL_FRect rect{backgroundOffsetX * scaleX, backgroundOffsetY * scaleY, float(width), float(height)};
+        SDL_RenderTexture(renderer, background, nullptr, &rect);
+    }
     const json& currentScreen() const { return gameScreens.at("screens").at(activeScreen); }
     SDL_FRect screenItemRect(const json& item) const {
         const float sx = float(width) / float(gameScreens.at("canvas").at("width").get<int>());
@@ -413,7 +421,7 @@ struct Engine {
             if (automated) { activeScreen.clear(); titleStarted = true; }
             return;
         }
-        if (background) SDL_RenderTexture(renderer,background,nullptr,nullptr);
+        renderBackground();
         for (const auto& [id,s] : characters) sprite(s);
         for (const auto& [id,s] : images) sprite(s);
         if (number("ui.bottom_fog", 1)) bottomFog();
@@ -462,6 +470,21 @@ struct Engine {
     }
     void command(const std::string& name,const json& args) {
         auto s=[&](size_t i){return args.at(i).get<std::string>();};
+        auto pixelOffset=[&](const std::string& option,size_t& index) -> float {
+            if(option.size()<2 || (option[0]!='x' && option[0]!='y') || (option[1]!='+' && option[1]!='-')) throw std::runtime_error("Invalid pixel offset");
+            double amount=0;
+            if(option.size()==2) {
+                if(++index>=args.size() || !args.at(index).is_number()) throw std::runtime_error("Invalid pixel offset expression");
+                amount=args.at(index).get<double>();
+            } else {
+                int64_t integer=0;
+                const auto parsed=std::from_chars(option.data()+2,option.data()+option.size(),integer);
+                if(parsed.ec!=std::errc{} || parsed.ptr!=option.data()+option.size()) throw std::runtime_error("Invalid pixel offset");
+                amount=double(integer);
+            }
+            if(!std::isfinite(amount) || amount<0 || amount>1000000) throw std::runtime_error("Pixel offset must be between 0 and 1000000");
+            return float(option[1]=='-'?-amount:amount);
+        };
         if(name=="say") {
             speaker=(s(0)=="none" || s(0)=="narrator") ? "" : s(0);
             if(!speaker.empty()) {
@@ -471,11 +494,52 @@ struct Engine {
             text=runtime.interpolate(args.at(1));next=false;if(automated)pump();else while(!next)pump();
         }
         else if(name=="wait") delay(args.at(0).get<int64_t>());
-        else if(name=="bg") background=image(asset("bg",s(0)));
+        else if(name=="bg") { background=image(asset("bg",s(0))); backgroundOffsetX=0; backgroundOffsetY=0; }
         else if(name=="bgm") sound("bgm",s(0));
         else if(name=="play") {
             if(s(0)=="video") {video=std::make_unique<Video>(renderer,utf8Path(asset("video",s(1))));if(args.size()>2 && s(2)=="blocking")while(video)pump();}
             else { auto* track=sound(s(0),s(1)); if(s(0)=="voice" && args.size()>2 && s(2)=="blocking") while(MIX_TrackPlaying(track)) pump(); }
+        } else if(name=="move") {
+            const auto kind=s(0);
+            const bool isCharacter=kind=="character";
+            if(!isCharacter && kind!="bg") throw std::runtime_error("move target must be character or bg");
+            const auto id=isCharacter?s(1):std::string("bg");
+            const size_t offsetStart=isCharacter?3:2;
+            if(s(isCharacter?2:1)!="by") throw std::runtime_error("move requires by before pixel offsets");
+            Sprite* actor=nullptr;
+            if(isCharacter) {
+                const auto found=characters.find(id);
+                if(found==characters.end()) throw std::runtime_error("move target character is not visible: "+id);
+                actor=&found->second;
+            } else if(!background) throw std::runtime_error("move target background is not set");
+            float dx=0,dy=0; bool hasX=false,hasY=false;
+            size_t index=offsetStart;
+            for(;index<args.size();++index) {
+                if(!args.at(index).is_string()) break;
+                const auto option=args.at(index).get<std::string>();
+                if(option=="over") break;
+                if(option.size()<2 || (option[0]!='x' && option[0]!='y') || (option[1]!='+' && option[1]!='-')) throw std::runtime_error("Invalid move pixel offset");
+                const bool isX=option[0]=='x';
+                if((isX && hasX)||(!isX && hasY)) throw std::runtime_error("Duplicate move pixel offset axis");
+                const float value=pixelOffset(option,index);
+                if(isX) {dx=value;hasX=true;} else {dy=value;hasY=true;}
+            }
+            if(!hasX&&!hasY) throw std::runtime_error("move requires at least one pixel offset");
+            int64_t duration=0;
+            if(index<args.size()) {
+                if(index+2!=args.size() || s(index)!="over") throw std::runtime_error("Invalid move duration syntax");
+                duration=args.at(index+1).get<int64_t>();
+            }
+            if(duration<0 || duration>2147483647) throw std::runtime_error("Invalid move duration");
+            const float fromX=isCharacter?actor->offsetX:backgroundOffsetX;
+            const float fromY=isCharacter?actor->offsetY:backgroundOffsetY;
+            const float toX=fromX+float(dx),toY=fromY+float(dy);
+            if(std::abs(toX)>1000000 || std::abs(toY)>1000000) throw std::runtime_error("move target position exceeds +/-1000000 px");
+            auto apply=[&](float t) {
+                if(isCharacter) { actor->offsetX=fromX+(toX-fromX)*t; actor->offsetY=fromY+(toY-fromY)*t; }
+                else { backgroundOffsetX=fromX+(toX-fromX)*t; backgroundOffsetY=fromY+(toY-fromY)*t; }
+            };
+            if(duration) delay(duration,apply); else apply(1);
         } else if(name=="show") {
             if(s(0)=="image") images[s(1)]={image(asset("image",s(1))),s(2)};
             else {
@@ -486,26 +550,25 @@ struct Engine {
                 for(auto it=characters.begin();it!=characters.end();) {
                     if(it->first!=id && it->second.position==position) it=characters.erase(it); else ++it;
                 }
-                int offsetX=0,offsetY=0;
+                float offsetX=0,offsetY=0; bool hasX=false,hasY=false;
                 size_t transitionIndex=2;
                 for(;transitionIndex<args.size();++transitionIndex) {
                     if(!args.at(transitionIndex).is_string()) break;
                     const auto option=args.at(transitionIndex).get<std::string>();
-                    if(option.size()<3 || (option[0]!='x' && option[0]!='y') || (option[1]!='+' && option[1]!='-')) break;
-                    int value=0;
-                    const auto parsed=std::from_chars(option.data()+2,option.data()+option.size(),value);
-                    if(parsed.ec!=std::errc{} || parsed.ptr!=option.data()+option.size() || value<0 || value>1000000) throw std::runtime_error("Invalid show pixel offset");
-                    if(option[1]=='-') value=-value;
+                    if(option.size()<2 || (option[0]!='x' && option[0]!='y') || (option[1]!='+' && option[1]!='-')) break;
+                    if(option[0]=='x' ? hasX : hasY) throw std::runtime_error("Duplicate show pixel offset axis");
+                    const float value=pixelOffset(option,transitionIndex);
+                    if(option[0]=='x') hasX=true; else hasY=true;
                     if(option[0]=='x') offsetX=value; else offsetY=value;
                 }
-                characters[id]={image(asset("char",id,pose)),position,1.0f,float(offsetX),float(offsetY)};
+                characters[id]={image(asset("char",id,pose)),position,1.0f,offsetX,offsetY};
                 if(transitionIndex<args.size() && s(transitionIndex)=="fade")delay(args.at(transitionIndex+1).get<int64_t>(),[&](float t){characters.at(id).alpha=t;});
             }
         } else if(name=="hide") {
             const auto id=s(0);
             if(characters.contains(id) && args.size()>1 && s(1)=="fade")delay(args.at(2).get<int64_t>(),[&](float t){characters.at(id).alpha=1-t;});characters.erase(id);
         }
-        else if(name=="clear") {if(s(0)=="image")images.erase(s(1));else if(s(0)=="bg")background=nullptr;else if(s(0)=="bgm" && bgm)MIX_StopTrack(bgm,0);}
+        else if(name=="clear") {if(s(0)=="image")images.erase(s(1));else if(s(0)=="bg"){background=nullptr;backgroundOffsetX=0;backgroundOffsetY=0;}else if(s(0)=="bgm" && bgm)MIX_StopTrack(bgm,0);}
         else if(name=="effect") {overlayColor=s(1)=="white"?SDL_Color{255,255,255,255}:SDL_Color{0,0,0,255};delay(args.size()>2?args.at(2).get<int64_t>():500,[&](float t){overlay=1-t;});}
         else throw std::runtime_error("Unknown command: "+name);
         pump();

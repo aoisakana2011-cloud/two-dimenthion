@@ -1,4 +1,4 @@
-export type PrimitiveType = 'int' | 'str';
+export type PrimitiveType = 'int' | 'float' | 'str';
 export type ValueType = PrimitiveType | 'none' | { kind: 'dict'; value: PrimitiveType } | { kind: 'struct'; name: string };
 export type DeclaredType = ValueType | 'infer';
 export type AssetKind = 'bg' | 'char' | 'bgm' | 'se' | 'voice' | 'video' | 'image';
@@ -13,6 +13,7 @@ export interface NodeLocation {
 
 export type Expr = NodeLocation & (
   | { kind: 'literal'; value: number | string | bigint; sourceColumns?: number[] }
+  | { kind: 'float'; value: string }
   | { kind: 'variable'; name: string }
   | { kind: 'index'; target: Expr; key: Expr }
   | { kind: 'binary'; operator: string; left: Expr; right: Expr }
@@ -53,7 +54,8 @@ export interface ExternalCharacter { poses: Set<string>; fields: Record<string, 
 export interface StructDef extends NodeLocation { kind: 'struct'; name: string; fields: Record<string, PrimitiveType>; }
 export interface FunctionDef extends NodeLocation { kind: 'function'; name: string; returnType: ValueType; params: Array<{ type: ValueType; name: string; line?: number; column?: number }>; body: Statement[]; }
 export interface Scene extends NodeLocation { kind: 'scene'; name: string; body: Statement[]; }
-export interface Script extends NodeLocation { kind: 'script'; assets: Asset[]; characters: Character[]; structs: StructDef[]; globals: Statement[]; functions: FunctionDef[]; scenes: Scene[]; includes: string[]; body: Statement[]; }
+export interface Include extends NodeLocation { path: string; alias: string; }
+export interface Script extends NodeLocation { kind: 'script'; assets: Asset[]; characters: Character[]; structs: StructDef[]; globals: Statement[]; functions: FunctionDef[]; scenes: Scene[]; includes: Include[]; body: Statement[]; }
 
 export type TokenType = 'word' | 'string' | 'number' | 'symbol' | 'newline' | 'eof';
 export type Token = { type: TokenType; value: string; line: number; column: number; offset: number; unknownEscapes?: string[]; sourceColumns?: number[] };

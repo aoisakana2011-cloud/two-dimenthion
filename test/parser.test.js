@@ -66,7 +66,7 @@ test('parses explicit global declarations', () => {
 test('rejects every DSL keyword documented as unavailable for identifiers', () => {
   const reserved = [
     'scene', 'asset', 'character', 'struct', 'pose', 'include',
-    'int', 'str', 'dict', 'none', 'global', 'set', 'unset',
+    'int', 'float', 'str', 'dict', 'none', 'global', 'set', 'unset',
     'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'image', 'clear', 'play', 'effect', 'wait',
     'if', 'elif', 'else', 'and', 'or', 'not', 'choice', 'for', 'from', 'to', 'step', 'while',
     'fn', 'return', 'goto', 'async', 'blocking', 'voice', 'video', 'const', 'let',
@@ -139,7 +139,36 @@ test('rejects duplicate or excessive character pixel offsets', () => {
   const character = 'character ayase { name = "Ayase"\npose smile = "asset/ayase.png" }\n';
   assert.throws(() => checkTypes(parse(character + 'show ayase.smile left x+1 x-2')), /x \/ y をそれぞれ1回/);
   assert.throws(() => checkTypes(parse(character + 'show ayase.smile left y+1000001')), /±1000000 px/);
-  assert.throws(() => parse(character + 'show ayase.smile left x+'), /px 整数/);
+  assert.throws(() => parse(character + 'show ayase.smile left x+'), /x\+30 \/ x\+\(式\)/);
+});
+
+test('parses and validates relative character and background move commands', () => {
+  const script = parse(`asset bg room = "asset/room.png"
+character hero { name = "Hero"\npose normal = "asset/hero.png" }
+bg room
+show hero.normal center
+move character hero by x+5 y-8 over 300
+move bg by x-12 y+4`);
+  checkTypes(script);
+  const moves = script.globals.filter(statement => statement.kind === 'command' && statement.name === 'move');
+  assert.deepEqual(moves.map(statement => statement.args.map(argument => argument.value)), [
+    ['character', 'hero', 'by', 'x+5', 'y-8', 'over', 300],
+    ['bg', 'by', 'x-12', 'y+4'],
+  ]);
+  assert.throws(() => checkTypes(parse('character hero { name = "Hero"\npose normal = "asset/hero.png" }\nmove character hero by x+1 x-2')), /x \/ y をそれぞれ1回/);
+  assert.throws(() => checkTypes(parse('move bg by x+1000001')), /±1000000 px/);
+  assert.throws(() => checkTypes(parse('move bg by x+1 over -1')), /2147483647/);
+  assert.throws(() => checkTypes(parse('character ghost { name = "Ghost"\npose normal = "asset/ghost.png" }\nmove character absent by y+1')), /未定義のキャラクター/);
+});
+
+test('warns when a move target is not statically established', () => {
+  const prefix = 'asset bg room = "asset/room.png"\ncharacter hero { name = "Hero"\npose normal = "asset/hero.png" }\n';
+  const diagnostics = analyzeScript(parse(prefix + 'move character hero by x+1\nmove bg by y-1'));
+  assert.deepEqual(diagnostics.filter(item => item.code.startsWith('move-')).map(item => item.code), [
+    'move-unshown-character', 'move-unset-background',
+  ]);
+  const valid = analyzeScript(parse(prefix + 'bg room\nshow hero.normal center\nmove character hero by x+1\nmove bg by y-1'));
+  assert.equal(valid.some(item => item.code.startsWith('move-')), false);
 });
 
 test('character declarations require a string name and constant primitive fields', () => {
@@ -828,6 +857,15 @@ test('requires external goto paths to be quoted while preserving local scene nam
   assert.throws(() => parse('scene start { goto "con.tds" }'), /Invalid scene path/);
   assert.throws(() => parse('scene start { goto "chapter/next." }'), /Invalid scene path/);
   assert.throws(() => parse('include chapter / route.tds'), /Include path cannot contain spaces/);
+});
+
+test('parses aliased module imports and qualified function calls', () => {
+  const script = parse('include "math/numtd.tds" as nt\nscene main { int answer = nt.add(1, 2)\nnt.log(answer) }');
+  assert.deepEqual(script.includes.map(({ path, alias }) => ({ path, alias })), [{ path: 'math/numtd.tds', alias: 'nt' }]);
+  assert.equal(script.scenes[0].body[0].initial.name, 'nt.add');
+  assert.equal(script.scenes[0].body[1].name, 'nt.log');
+  assert.throws(() => parse('include "math.tds"'), /Expected 'as'/);
+  assert.throws(() => parse('include a.tds as math\ninclude b.tds as math'), /already used/);
 });
 
 test('rejects non-canonical asset path components', () => {

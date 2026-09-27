@@ -1,4 +1,4 @@
-include common.tds
+include common.tds as common
 
 scene main {
   bg conservation_lab
