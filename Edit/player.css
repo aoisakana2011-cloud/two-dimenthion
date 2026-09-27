@@ -14,3 +14,10 @@ html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#111;color:
 #next:focus-visible,.choice:focus-visible{outline:3px solid #72d6ff;outline-offset:2px}
 .choice{position:relative;display:block;flex:none;width:100%;padding:0;border:0;border-radius:0;background-position:center;background-repeat:no-repeat;text-align:left;cursor:pointer}
 #bgm{display:none}
+#screen-overlay{position:absolute;z-index:100;inset:0;overflow:hidden;background-position:center;background-size:cover;color:#fff}
+#screen-overlay[hidden]{display:none}
+.game-screen-title{position:absolute;left:5%;top:7%;max-width:90%;color:#fff;font-size:36px;line-height:1.2;text-shadow:0 2px 8px #000b}
+.game-screen-description{position:absolute;max-width:calc(90% - 64px);color:#f0eee8;line-height:1.8;white-space:pre-wrap;text-shadow:0 1px 5px #000;pointer-events:none}
+.game-screen-button{position:absolute;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:4px 12px;border:1px solid #c8d6de88;border-radius:2px;color:#fff;background-color:#111820bd;background-position:center;background-size:100% 100%;font:500 22px/1.2 "Yu Gothic UI",Meiryo,sans-serif;text-shadow:0 1px 4px #000;cursor:pointer}
+.game-screen-button:hover,.game-screen-button:focus-visible{border-color:#fff;background-color:#263b4cdd;outline:1px solid #fff;outline-offset:1px}
+.game-screen-error{position:absolute;left:5%;right:5%;bottom:5%;padding:10px 14px;background:#301c1cdd;color:#ffdede;font-size:18px}

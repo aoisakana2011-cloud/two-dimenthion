@@ -9,6 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { readRecentProjects, rememberProject } = require('./recent-projects');
 const { ProjectChangeTracker } = require('./project-changes');
+const { defaultGameScreens, validateGameScreens } = require('./game-screens');
 
 const EDIT_ROOT = __dirname;
 const REPO_ROOT = path.resolve(EDIT_ROOT, '..');
@@ -108,6 +109,24 @@ async function updatePlayerUiTheme(theme) {
     return { ok: true, theme };
   }
   throw Error('再生機UIテーマは現行のscreen/dialog/choices形式で指定してください');
+}
+
+const GAME_SCREENS_PATH = 'ui/game-screens.json';
+async function gameScreens() {
+  try {
+    const file = await safeAssetPath(GAME_SCREENS_PATH);
+    const value = JSON.parse(await fs.readFile(file, 'utf8'));
+    return { path: GAME_SCREENS_PATH, configured: true, screens: validateGameScreens(value) };
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return { path: GAME_SCREENS_PATH, configured: false, screens: defaultGameScreens() };
+  }
+}
+async function updateGameScreens(value) {
+  validateGameScreens(value);
+  const file = await safeAssetPath(GAME_SCREENS_PATH, { createParents: true });
+  await fs.writeFile(file, JSON.stringify(value, null, 2) + '\n', 'utf8');
+  return { ok: true, path: GAME_SCREENS_PATH, screens: value };
 }
 
 async function updateProjectSettings(values) {
@@ -1275,6 +1294,14 @@ async function handleApi(request, response, url) {
   }
   if (request.method === 'PUT' && url.pathname === '/api/player-ui') {
     try { return json(response, 200, await updatePlayerUiTheme((await readJson(request)).theme)); }
+    catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
+  }
+  if (request.method === 'GET' && url.pathname === '/api/game-screens') {
+    try { return json(response, 200, await gameScreens()); }
+    catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
+  }
+  if (request.method === 'PUT' && url.pathname === '/api/game-screens') {
+    try { return json(response, 200, await updateGameScreens((await readJson(request)).screens)); }
     catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
   }
   if (request.method === 'GET' && url.pathname === '/api/browse') {

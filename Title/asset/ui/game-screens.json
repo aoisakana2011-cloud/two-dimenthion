@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "canvas": {
+    "width": 1280,
+    "height": 720
+  },
+  "initial": "title",
+  "screens": {
+    "title": {
+      "title": "二十面相は恋を盗む",
+      "description": "現代の東京。美術館を狙う怪盗と、真実を追う二人の探偵。\n今夜、予告状に記された『青い星図』が消える。",
+      "background": "bg/museum-night.png",
+      "items": [
+        {
+          "id": "begin",
+          "type": "button",
+          "label": "物語をはじめる",
+          "action": "start",
+          "x": 72,
+          "y": 430,
+          "width": 360,
+          "height": 62
+        },
+        {
+          "id": "about",
+          "type": "button",
+          "label": "作品紹介",
+          "action": "open-screen",
+          "target": "about",
+          "x": 72,
+          "y": 508,
+          "width": 360,
+          "height": 54
+        },
+        {
+          "id": "quit",
+          "type": "button",
+          "label": "ゲームを閉じる",
+          "action": "quit",
+          "x": 72,
+          "y": 576,
+          "width": 360,
+          "height": 54
+        }
+      ]
+    },
+    "pause": {
+      "title": "MENU",
+      "description": "物語を一時停止しています。続きから再開するか、作品情報を確認できます。",
+      "background": "",
+      "items": [
+        {
+          "id": "resume",
+          "type": "button",
+          "label": "物語に戻る",
+          "action": "resume",
+          "x": 886,
+          "y": 188,
+          "width": 310,
+          "height": 60
+        },
+        {
+          "id": "about",
+          "type": "button",
+          "label": "作品紹介",
+          "action": "open-screen",
+          "target": "about",
+          "x": 886,
+          "y": 266,
+          "width": 310,
+          "height": 54
+        },
+        {
+          "id": "controls",
+          "type": "button",
+          "label": "操作ガイド",
+          "action": "open-screen",
+          "target": "guide",
+          "x": 886,
+          "y": 336,
+          "width": 310,
+          "height": 54
+        }
+      ]
+    },
+    "about": {
+      "title": "二十面相は恋を盗む",
+      "description": "怪盗二十面相の予告状が届いた夜、探偵助手のあなたは二人の少女と出会う。\n美術館に隠された手がかりを追い、誰が何のために盗むのかを解き明かそう。",
+      "background": "bg/museum-night.png",
+      "items": [
+        {
+          "id": "back",
+          "type": "button",
+          "label": "戻る",
+          "action": "back",
+          "x": 72,
+          "y": 610,
+          "width": 240,
+          "height": 54
+        }
+      ]
+    },
+    "guide": {
+      "title": "操作ガイド",
+      "description": "クリック / Enter：文章を進める・選択を決定\nEsc：ゲーム中メニューを開く\n\nこの画面・メニュー画面は現在の仮デザインです。",
+      "background": "",
+      "items": [
+        {
+          "id": "back",
+          "type": "button",
+          "label": "メニューに戻る",
+          "action": "back",
+          "x": 886,
+          "y": 610,
+          "width": 310,
+          "height": 54
+        }
+      ]
+    }
+  }
+}

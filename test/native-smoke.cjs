@@ -50,7 +50,7 @@ clear image gif
 show image first left
 show image second right
 show hero.normal left fade 10
-show friend.normal right
+show friend.normal right x-12 y+34 fade 10
 show hero.normal center
 clear image first
 hide friend

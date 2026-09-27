@@ -344,6 +344,28 @@ test('scene state tracks blocking transition time and leaves instant actions com
   assert.equal(rt.sceneState.audio.se[0].startedAt, 15);
 });
 
+test('character show offsets update SceneState and preserve fade timing', async () => {
+  const shown = [];
+  const rt = await run(`
+    character hero {
+      name = "Hero"
+      pose normal = "asset/hero.png"
+    }
+    show hero.normal left y+50
+    show hero.normal left y-20
+    show hero.normal center x+30
+    show hero.normal right x-10 y+40 fade 300
+  `, { sceneState: (state, operation) => {
+    if (operation.name === 'show') shown.push({ ...state.characters.hero, transitionIndex: operation.transitionIndex });
+  } });
+  assert.deepEqual(shown.map(({ slot, offsetX, offsetY }) => [slot, offsetX, offsetY]), [
+    ['left', 0, 50], ['left', 0, -20], ['center', 30, 0], ['right', -10, 40],
+  ]);
+  assert.equal(shown[3].transitionIndex, 4);
+  assert.equal(rt.sceneState.logicalTimeMs, 300);
+  assert.equal(rt.sceneState.characters.hero.transition.durationMs, 300);
+});
+
 test('scene state registers timed effects as blocking actions', async () => {
   const rt = await run('effect fade black 10');
   const action = Object.values(rt.sceneState.actions).find((item) => item.kind === 'effect');

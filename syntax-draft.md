@@ -93,7 +93,7 @@ say narrator "# と // は文字列内では本文"
 
 シナリオファイルの拡張子は `.tds`。
 
-作品フォルダーの直下には必ず `setting.txt` を置く。`scenario_dir`、`asset_dir`、`start_file` は必須項目です。
+作品フォルダーの直下には必ず `setting.txt` を置く。`scenario_dir`、`asset_dir`、`start_file` は必須項目。
 
 ```text
 # すべて作品フォルダーからの相対パス。/ を使用する。
@@ -599,11 +599,15 @@ clear bgm
 ```tds
 show ayase.normal center
 show ayase.smile left fade 300
+show ayase.smile left y+50
+show ayase.smile center x+30
+show ayase.smile right x-10 y+40 fade 300
 hide ayase
 hide ayase fade 300
 ```
 
 - `show <character>.<pose> <position>` はキャラクターを表示する。
+- `x+30` / `x-20` / `y+50` / `y-10` でslotの基準位置からpx単位でずらす。x+は右、y+は下。x/y各1回、±1,000,000 pxまで。
 - 既に表示中なら、同じ命令で位置とポーズを更新する。
 - `fade <int>` を付けるとフェードインする。
 - `hide` は必要ならフェードアウトしてから表示を解除する。
@@ -844,7 +848,7 @@ scene chapter1 {
 | 更新 | `unset <dict>[<str-expr>]` | 辞書要素だけ |
 | 会話 | `say [<speaker>] <str-expr>` | speaker はキャラクター、`narrator`、`none` |
 | 背景 | `bg <bg-id>` / `bgm <bgm-id>` | 種別が一致するアセットID |
-| 表示 | `show <character>.<pose> <far_left\|left\|center\|right\|far_right> [fade <ms>]` | 5スロットの立ち絵表示 |
+| 表示 | `show <character>.<pose> <far_left\|left\|center\|right\|far_right> [x±<px>] [y±<px>] [fade <ms>]` | 5スロットの立ち絵表示。x+は右、y+は下 |
 | 表示 | `hide <character> [fade <ms>]` | キャラクターを非表示 |
 | 表示 | `show image <image-id> <far_left\|left\|center\|right\|far_right>` / `clear image <image-id>` | 一般画像。fade不可 |
 | 再生 | `play <se\|voice\|bgm> <id>` | 種別が一致するアセットID。voiceは `[blocking\|async]` を追加可能 |

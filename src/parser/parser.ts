@@ -418,6 +418,12 @@ export class Parser {
         this.expect('.');
         const pose = this.expectIdentifier('Expected character pose');
         args.push({ kind: 'literal', value: `${token.value}.${pose}`, line: token.line, column: token.column });
+      } else if (command === 'show' && args.length >= 2 && token.type === 'word' && ['x', 'y'].includes(token.value) && ['+', '-'].includes(this.peekToken().value)) {
+        const axis = this.take();
+        const sign = this.take();
+        if (this.current.type !== 'number') throw this.error('show の位置ずらしは x+30 / y-20 の形式で px 整数を指定してください');
+        const amount = this.take();
+        args.push({ kind: 'literal', value: `${axis.value}${sign.value}${amount.value}`, line: axis.line, column: axis.column });
       } else if (token.type === 'word' && ['bg', 'bgm', 'show', 'hide', 'clear', 'play', 'effect'].includes(command)) {
         this.take();
         args.push({ kind: 'literal', value: token.value, line: token.line, column: token.column });

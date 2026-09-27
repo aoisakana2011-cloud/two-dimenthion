@@ -3151,6 +3151,154 @@ function showLanguageGuide() {
   document.body.append(dialog); close.focus();
 }
 
+async function showGameScreenSettings() {
+  document.querySelector('.game-screen-settings')?.remove();
+  const [project, assetData, loaded] = await Promise.all([
+    request('/api/project'), request('/api/assets'), request('/api/game-screens'),
+  ]);
+  const config = loaded.screens;
+  const dialog = document.createElement('section');
+  dialog.className = 'editor-dialog game-screen-settings';
+  dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true');
+  const heading = document.createElement('strong'); heading.textContent = 'タイトル・メニュー画面';
+  const close = document.createElement('button'); close.type = 'button'; close.className = 'project-settings-close'; close.textContent = '×'; close.setAttribute('aria-label', '閉じる'); close.onclick = () => dialog.remove();
+  const toolbar = document.createElement('div'); toolbar.className = 'game-screen-toolbar';
+  const screenSelect = document.createElement('select'); screenSelect.setAttribute('aria-label', '編集する画面');
+  const addScreen = document.createElement('button'); addScreen.type = 'button'; addScreen.textContent = '画面を追加';
+  const addButton = document.createElement('button'); addButton.type = 'button'; addButton.textContent = 'ボタンを追加';
+  toolbar.append(screenSelect, addScreen, addButton);
+  const workspace = document.createElement('div'); workspace.className = 'game-screen-workspace';
+  const preview = document.createElement('div'); preview.className = 'game-screen-preview'; preview.setAttribute('aria-label', '画面プレビュー');
+  const inspector = document.createElement('div'); inspector.className = 'game-screen-inspector';
+  const status = document.createElement('div'); status.className = 'game-screen-status'; status.setAttribute('role', 'status');
+  const save = document.createElement('button'); save.type = 'button'; save.className = 'project-settings-save'; save.textContent = '画面設定を保存';
+  const footer = document.createElement('footer'); footer.append(status, save);
+  workspace.append(preview, inspector); dialog.append(heading, close, toolbar, workspace, footer); document.body.append(dialog);
+
+  const assetDirectory = String(project.settings?.asset_dir || 'asset').replaceAll('\\', '/').replace(/\/$/, '');
+  const imageAssets = (assetData.assets || []).filter(item => ['bg', 'image'].includes(item.type));
+  const assetRelative = value => {
+    let rel = String(value || '').replaceAll('\\', '/').replace(/^asset\//i, '');
+    if (rel.startsWith(assetDirectory + '/')) rel = rel.slice(assetDirectory.length + 1);
+    return rel;
+  };
+  const assetUrl = value => {
+    const rel = assetRelative(value);
+    return rel ? '/asset/' + rel.split('/').map(encodeURIComponent).join('/') : '';
+  };
+  let selectedItem = null;
+  const selectedScreen = () => config.screens[screenSelect.value];
+  const refreshScreenOptions = () => {
+    screenSelect.replaceChildren();
+    for (const id of Object.keys(config.screens)) {
+      const option = document.createElement('option'); option.value = id; option.textContent = id === config.initial ? `${id}（開始）` : id; screenSelect.append(option);
+    }
+    screenSelect.value = config.initial;
+  };
+  const field = (labelText, key, value, type = 'text') => {
+    const label = document.createElement('label'); label.textContent = labelText;
+    const input = key === 'description' ? document.createElement('textarea') : document.createElement('input');
+    if (input instanceof HTMLInputElement) input.type = type;
+    input.value = value ?? '';
+    if (type === 'number') { input.min = '0'; input.max = key === 'x' || key === 'y' ? '4096' : '2048'; input.step = '1'; }
+    input.addEventListener('input', () => {
+      const target = selectedItem || selectedScreen();
+      if (!target) return;
+      target[key] = type === 'number' ? Number(input.value) : input.value;
+      render();
+    });
+    label.append(input); inspector.append(label); return input;
+  };
+  const selectField = (labelText, value, options, onChange) => {
+    const label = document.createElement('label'); label.textContent = labelText;
+    const select = document.createElement('select');
+    for (const [optionValue, text] of options) { const option = document.createElement('option'); option.value = optionValue; option.textContent = text; select.append(option); }
+    select.value = value ?? ''; select.addEventListener('change', () => onChange(select.value)); label.append(select); inspector.append(label); return select;
+  };
+  function render() {
+    const screen = selectedScreen(); if (!screen) return;
+    const width = config.canvas.width, height = config.canvas.height;
+    preview.style.aspectRatio = `${width} / ${height}`;
+    const scale = Math.min(preview.clientWidth / width, preview.clientHeight / height);
+    preview.style.backgroundImage = screen.background ? `linear-gradient(#0002,#0002),url("${assetUrl(screen.background)}")` : 'none';
+    preview.replaceChildren();
+    if (screen.title) {
+      const screenTitle = document.createElement('div'); screenTitle.className = 'game-screen-preview-title'; screenTitle.textContent = screen.title;
+      Object.assign(screenTitle.style, { left: `${64 * scale}px`, top: `${42 * scale}px`, fontSize: `${34 * scale}px` }); preview.append(screenTitle);
+    }
+    if (screen.description) {
+      const description = document.createElement('div'); description.className = 'game-screen-preview-description'; description.textContent = screen.description;
+      Object.assign(description.style, { left: `${64 * scale}px`, top: `${112 * scale}px`, width: `${Math.min(560, width - 128) * scale}px`, fontSize: `${18 * scale}px` }); preview.append(description);
+    }
+    for (const item of screen.items) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'game-screen-preview-button';
+      button.textContent = item.label;
+      Object.assign(button.style, { left: `${item.x * scale}px`, top: `${item.y * scale}px`, width: `${item.width * scale}px`, height: `${item.height * scale}px`, fontSize: `${Math.max(9, 18 * scale)}px` });
+      if (item.image) button.style.backgroundImage = `url("${assetUrl(item.image)}")`;
+      if (selectedItem === item) button.classList.add('selected');
+      button.addEventListener('pointerdown', event => {
+        event.preventDefault(); selectedItem = item; renderInspector(); render();
+        const origin = { x: item.x, y: item.y, px: event.clientX, py: event.clientY };
+        const move = pointer => {
+        const currentScale = preview.clientWidth / width;
+          item.x = Math.max(0, Math.min(width - item.width, Math.round(origin.x + (pointer.clientX - origin.px) / currentScale)));
+          item.y = Math.max(0, Math.min(height - item.height, Math.round(origin.y + (pointer.clientY - origin.py) / currentScale)));
+          renderInspector(); render();
+        };
+        const stop = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop); };
+        window.addEventListener('pointermove', move); window.addEventListener('pointerup', stop, { once: true });
+      });
+      preview.append(button);
+    }
+  }
+  function renderInspector() {
+    inspector.replaceChildren();
+    const screen = selectedScreen();
+    const title = document.createElement('h2'); title.textContent = selectedItem ? '選択中のボタン' : '画面'; inspector.append(title);
+    if (!selectedItem) {
+      field('画面タイトル', 'title', screen.title);
+      field('説明文', 'description', screen.description || '');
+      selectField('背景画像', screen.background, [['', 'なし'], ...imageAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { screen.background = value; render(); });
+      const makeInitial = document.createElement('button'); makeInitial.type = 'button'; makeInitial.textContent = 'この画面を開始画面にする'; makeInitial.disabled = config.initial === screenSelect.value;
+      makeInitial.onclick = () => { config.initial = screenSelect.value; refreshScreenOptions(); renderInspector(); };
+      inspector.append(makeInitial);
+      if (screenSelect.value !== 'title' && screenSelect.value !== 'pause') {
+        const removeScreen = document.createElement('button'); removeScreen.type = 'button'; removeScreen.textContent = 'この画面を削除';
+        removeScreen.onclick = () => { if (config.initial === screenSelect.value) return; delete config.screens[screenSelect.value]; for (const candidate of Object.values(config.screens)) for (const item of candidate.items) if (item.action === 'open-screen' && item.target === screenSelect.value) { item.action = 'back'; delete item.target; } refreshScreenOptions(); renderInspector(); render(); };
+        inspector.append(removeScreen);
+      }
+      return;
+    }
+    field('ボタン文字', 'label', selectedItem.label);
+    for (const key of ['x', 'y', 'width', 'height']) field({ x: 'X', y: 'Y', width: '幅', height: '高さ' }[key], key, selectedItem[key], 'number');
+    selectField('動作', selectedItem.action, [['start', 'ゲーム開始'], ['resume', 'ゲームに戻る'], ['open-screen', '別画面を開く'], ['back', '前の画面に戻る'], ['quit', '終了']], value => { selectedItem.action = value; if (value !== 'open-screen') delete selectedItem.target; renderInspector(); });
+    if (selectedItem.action === 'open-screen') selectField('移動先', selectedItem.target, Object.keys(config.screens).filter(id => id !== screenSelect.value).map(id => [id, id]), value => { selectedItem.target = value; });
+    selectField('ボタン画像', selectedItem.image, [['', 'テーマ標準'], ...imageAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { selectedItem.image = value; render(); });
+    const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'ボタンを削除'; remove.onclick = () => { screen.items = screen.items.filter(item => item !== selectedItem); selectedItem = null; renderInspector(); render(); }; inspector.append(remove);
+  }
+  refreshScreenOptions();
+  screenSelect.addEventListener('change', () => { selectedItem = null; renderInspector(); render(); });
+  addButton.addEventListener('click', () => {
+    const screen = selectedScreen();
+    const item = { id: `button_${Date.now().toString(36)}`, type: 'button', label: '新しいボタン', action: screenSelect.value === 'pause' ? 'resume' : 'start', x: 64, y: 150 + screen.items.length * 68, width: 300, height: 56 };
+    screen.items.push(item); selectedItem = item; renderInspector(); render();
+  });
+  addScreen.addEventListener('click', () => {
+    let id = prompt('画面ID（英数字、_、-）', 'screen'); if (!id) return;
+    id = id.trim(); if (!/^[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(id) || config.screens[id]) { status.textContent = '画面IDが不正か、すでに使われています。'; return; }
+    config.screens[id] = { title: id, background: '', items: [{ id: 'back', type: 'button', label: '戻る', action: 'back', x: 64, y: 150, width: 300, height: 56 }] };
+    refreshScreenOptions(); screenSelect.value = id; selectedItem = null; renderInspector(); render();
+  });
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try { await request('/api/game-screens', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ screens: config }) }); status.textContent = '画面設定を保存しました。'; }
+    catch (error) { status.textContent = error.message; }
+    finally { save.disabled = false; }
+  });
+  renderInspector(); requestAnimationFrame(render);
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(render).observe(preview);
+}
+
 function selectCurrentLine() {
   const start = editor.value.lastIndexOf('\n', Math.max(0, editor.selectionStart - 1)) + 1;
   const next = editor.value.indexOf('\n', editor.selectionEnd);
@@ -4220,6 +4368,7 @@ document.querySelector('[data-activity="search"]')?.addEventListener('click', ac
 document.querySelector('[data-activity="flow"]')?.addEventListener('click', showSceneFlowView);
 document.querySelector('[data-activity="presentation"]')?.addEventListener('click', activatePresentationView);
 document.querySelector('[data-presentation-action="player-ui"]')?.addEventListener('click', () => showProjectSettings().catch(showError));
+document.querySelector('[data-presentation-action="game-screens"]')?.addEventListener('click', () => showGameScreenSettings().catch(showError));
 document.querySelector('[data-presentation-action="project-settings"]')?.addEventListener('click', () => showProjectSettings().catch(showError));
 document.querySelector('.flow-link')?.addEventListener('click', (event) => { event.preventDefault(); showSceneFlowView(); });
 document.querySelector('#search-close')?.addEventListener('click', activateExplorerView);

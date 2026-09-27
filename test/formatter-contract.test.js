@@ -39,6 +39,13 @@ test('shared formatter preserves compiler CST semantics for valid corpus', () =>
   }
 });
 
+test('shared formatter preserves signed pixel offsets on character display commands', () => {
+  const source = 'show hero.smile right x-10 y+40 fade 300';
+  const formatted = format(source);
+  assert.deepEqual(parse(formatted).globals[0].args.slice(2).map(argument => argument.value), ['x-10', 'y+40', 'fade', 300]);
+  assert.equal(format(formatted), formatted);
+});
+
 test('shared tolerant lexer keeps strings/comments and structural symbols distinct', () => {
   const tokens = lex('say narrator "{not a block}" # }\nscene main {');
   assert.deepEqual(tokens.map(({ kind, value }) => [kind, value]), [

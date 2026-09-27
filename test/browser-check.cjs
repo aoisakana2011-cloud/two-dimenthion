@@ -42,14 +42,14 @@ show image first left
  show image second right
  play voice greeting blocking
 show hero.normal left fade 10
-show friend.normal right
+show friend.normal right x-12 y+34
 clear image first
 hide hero
 choice "choose" {
 "continue" { say hero result + ":" + str(answer()) }
 }`;
     await page.route('**/api/scene?*', route => route.fulfill({ json: { name: '__audit.tds', source } }));
-    await page.goto(base + '/player.html?source=__audit.tds');
+    await page.goto(base + '/player.html?source=__audit.tds&debug=offset-smoke');
     await page.locator('.choice').waitFor().catch(async (error) => {
       throw new Error(`choice was not shown: ${await page.locator('#speaker').textContent()} / ${await page.locator('#text').textContent()} (${errors.join('; ') || error.message})`);
     });
@@ -58,6 +58,8 @@ choice "choose" {
     assert.equal(await page.locator('#image-second').count(), 1);
     assert.equal(await page.locator('#char-hero').count(), 0);
     assert.equal(await page.locator('#char-friend').count(), 1);
+    assert.equal(await page.locator('#char-friend').evaluate(element => element.style.transform), 'translateX(calc(-50% - 12px))');
+    assert.equal(await page.locator('#char-friend').evaluate(element => element.style.bottom), '-34px');
     await page.locator('.choice').click();
     await page.waitForFunction(() => document.querySelector('#text').textContent === '9007199254740993:7');
     assert.equal(await page.locator('#speaker').textContent(), 'Hero');
@@ -106,7 +108,7 @@ show hero.normal far_left`;
     await page.waitForFunction(() => document.querySelector('#speaker').textContent === 'PLAYER ERROR');
     assert.match(await page.locator('#text').textContent(), /除算/);
     assert.deepEqual(errors, []);
-    console.log('PASS browser: API BigInt round trip, image/character clear, fade, choice click, function call, error propagation, audit runtime cases and const diagnostics');
+    console.log('PASS browser: API BigInt round trip, character pixel offsets, image clear, fade, choice click, function call, error propagation, audit runtime cases and const diagnostics');
   } finally {
     await browser?.close(); await new Promise(resolve => server.close(resolve));
     // dir was created with mkdtemp directly below the resolved assets root.

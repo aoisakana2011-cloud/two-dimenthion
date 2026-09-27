@@ -539,6 +539,26 @@ html.electron-desktop .menu-bar, html.electron-desktop .menu-popup, html.electro
 .project-settings footer { display:flex; justify-content:flex-end; padding-top:12px; border-top:1px solid #3c3c3c; }
 .project-settings-save { margin:0; padding:6px 12px; border:1px solid #0e639c; border-radius:2px; color:#fff; background:#0e639c; font-size:11px; }
 .project-settings-save:hover { background:#1177bb; }
+.game-screen-settings { width:min(1120px,94vw); max-height:90vh; display:flex; flex-direction:column; padding:14px 16px; }
+.game-screen-settings > strong { flex:none; }
+.game-screen-toolbar { display:flex; gap:6px; padding:9px 0; border-bottom:1px solid #3c3c3c; }
+.game-screen-toolbar select { min-width:150px; margin-right:auto; }
+.game-screen-toolbar button,.game-screen-inspector button { min-height:27px; padding:4px 8px; border:1px solid #454545; border-radius:2px; color:#ccc; background:#252526; font-size:11px; }
+.game-screen-toolbar button:hover,.game-screen-inspector button:hover { color:#fff; background:#333; }
+.game-screen-workspace { display:grid; grid-template-columns:minmax(0,1fr) 260px; gap:14px; min-height:0; padding:12px 0; }
+.game-screen-preview { position:relative; width:100%; aspect-ratio:16/9; max-height:calc(90vh - 150px); align-self:center; overflow:hidden; border:1px solid #454545; background-color:#101214; background-position:center; background-size:100% 100%; }
+.game-screen-preview-title { position:absolute; max-width:90%; color:#fff; line-height:1.2; text-shadow:0 2px 8px #000b; pointer-events:none; }
+.game-screen-preview-description { position:absolute; max-width:calc(90% - 64px); color:#eee; line-height:1.7; white-space:pre-wrap; text-shadow:0 1px 5px #000; pointer-events:none; }
+.game-screen-preview-button { position:absolute; overflow:hidden; padding:2px 8px; border:1px solid #737b80; border-radius:2px; color:#f0f0ed; background-color:#111820cf; background-position:center; background-size:100% 100%; text-align:left; cursor:move; }
+.game-screen-preview-button:hover,.game-screen-preview-button.selected { border-color:#9db7c6; background-color:#29343bdc; }
+.game-screen-inspector { display:flex; flex-direction:column; gap:7px; max-height:calc(90vh - 145px); overflow:auto; }
+.game-screen-inspector h2 { margin:0 0 3px; color:#ccc; font-size:12px; font-weight:600; }
+.game-screen-inspector label { display:grid; grid-template-columns:68px minmax(0,1fr); align-items:center; gap:7px; color:#aaa; font-size:10px; }
+.game-screen-inspector input,.game-screen-inspector select,.game-screen-inspector textarea,.game-screen-toolbar select { box-sizing:border-box; width:100%; min-width:0; height:26px; padding:3px 6px; border:1px solid #454545; border-radius:2px; color:#ddd; background:#1f1f1f; font:11px "Segoe UI","Yu Gothic UI",sans-serif; }
+.game-screen-inspector textarea { height:72px; resize:vertical; }
+.game-screen-settings footer { flex:none; align-items:center; gap:12px; }
+.game-screen-status { flex:1; color:#9d9d9d; font-size:10px; }
+@media(max-width:760px) { .game-screen-workspace { grid-template-columns:minmax(0,1fr); overflow:auto; } .game-screen-preview { max-height:none; } .game-screen-inspector { max-height:220px; } }
 .player-ui-preview { position:relative; width:100%; margin-top:12px; overflow:hidden; border:1px solid #3c3c3c; background:linear-gradient(#243447,#10151d); user-select:none; }
 .player-ui-preview-dialog { position:absolute; box-sizing:border-box; border:1px dashed #75beff; background-repeat:no-repeat; background-size:100% 100%; cursor:move; }
 .player-ui-preview-message { position:absolute; overflow:hidden; white-space:pre-wrap; pointer-events:none; }

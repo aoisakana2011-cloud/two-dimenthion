@@ -6,6 +6,7 @@ const { parse } = require('../dist');
 const { inferValueType } = require('../dist/checker/type-checker');
 const { projectLayout, projectOption, layoutForInput, entryFile, positionalArguments, assertProjectDirectory, ensureProjectDirectory } = require('./project-layout');
 const { readStaticVariables } = require('./static-variables');
+const { validateGameScreens } = require('../Edit/game-screens');
 
 async function projectGlobalVariables(scenesRoot, dataRoot) {
   const table = new Map();
@@ -181,6 +182,37 @@ async function pack(input, output, roots = {}) {
       await ensureOutputDirectory(path.dirname(target));
       await assertOutputFile(target);
       if (path.resolve(source) !== target) await fs.copyFile(source, target);
+    }
+  }
+  if (layout) {
+    const screensPath = 'ui/game-screens.json';
+    const screensCandidate = path.resolve(assetsRoot, screensPath);
+    let hasScreens = true;
+    try {
+      await fs.access(screensCandidate);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      hasScreens = false;
+    }
+    if (hasScreens) {
+      const screensSource = await inside(assetsRoot, screensPath);
+      const screens = validateGameScreens(JSON.parse(await fs.readFile(screensSource, 'utf8')));
+      const target = path.resolve(path.dirname(destination), 'asset', screensPath);
+      await ensureOutputDirectory(path.dirname(target));
+      await assertOutputFile(target);
+      if (path.resolve(screensSource) !== target) await fs.copyFile(screensSource, target);
+      nativeUi.game_screens = screensPath;
+      for (const screen of Object.values(screens.screens)) {
+        const imageNames = [screen.background, ...screen.items.map(item => item.image || '')].filter(Boolean);
+        for (const imageName of imageNames) {
+          const relative = imageName.replace(/^asset[\\/]/i, '').replaceAll('\\', '/');
+          const imageSource = await inside(assetsRoot, relative);
+          const imageTarget = path.resolve(path.dirname(destination), 'asset', relative);
+          await ensureOutputDirectory(path.dirname(imageTarget));
+          await assertOutputFile(imageTarget);
+          if (path.resolve(imageSource) !== imageTarget) await fs.copyFile(imageSource, imageTarget);
+        }
+      }
     }
   }
   const data = { format: 'novel-script-package', version: 1, source: entry, program, files, native_ui: nativeUi };

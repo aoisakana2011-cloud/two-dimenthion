@@ -115,6 +115,33 @@ test('character fields are typed runtime state with dotted interpolation', () =>
   assert.throws(() => checkTypes(parse('character ayase {\nname = "A"\npose normal = "asset/a.png"\n}\nshow ayase.missing center')), /ポーズ/);
 });
 
+test('parses pixel offsets on character show commands before an optional fade', () => {
+  const source = `character ayase {
+    name = "Ayase"
+    pose smile = "asset/ayase.png"
+  }
+  show ayase.smile left y+50
+  show ayase.smile center x+30
+  show ayase.smile right x-10 y+40 fade 300`;
+  const script = parse(source);
+  checkTypes(script);
+  const showStatements = script.globals.filter(statement => statement.kind === 'command' && statement.name === 'show');
+  assert.deepEqual(showStatements.map(statement => statement.args.slice(2).map(argument => argument.value)), [
+    ['y+50'], ['x+30'], ['x-10', 'y+40', 'fade', 300],
+  ]);
+  const compiled = compile(script);
+  assert.deepEqual(compiled.globals.filter(statement => statement.op === 'command').map(statement => statement.args.slice(2).map(argument => argument.value)), [
+    ['y+50'], ['x+30'], ['x-10', 'y+40', 'fade', '300'],
+  ]);
+});
+
+test('rejects duplicate or excessive character pixel offsets', () => {
+  const character = 'character ayase { name = "Ayase"\npose smile = "asset/ayase.png" }\n';
+  assert.throws(() => checkTypes(parse(character + 'show ayase.smile left x+1 x-2')), /x \/ y をそれぞれ1回/);
+  assert.throws(() => checkTypes(parse(character + 'show ayase.smile left y+1000001')), /±1000000 px/);
+  assert.throws(() => parse(character + 'show ayase.smile left x+'), /px 整数/);
+});
+
 test('character declarations require a string name and constant primitive fields', () => {
   assert.throws(() => checkTypes(parse('character ayase { pose normal = "asset/a.png" }')), /name/);
   assert.throws(() => checkTypes(parse('character ayase { name = 1 }')), /str.*name/);

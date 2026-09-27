@@ -1,6 +1,10 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let playerTheme = null;
+let gameScreenConfig = null;
+let activeGameScreen = null;
+let gameStarted = false;
+let gameStartHandler = null;
 function uiAsset(themePath, image) {
   if (!image) return '';
   const directory = themePath.replaceAll('\\', '/').split('/').slice(0, -1);
@@ -90,6 +94,55 @@ function makeChoice(label, index) {
   button.addEventListener('blur', () => setActive(false));
   return button;
 }
+function screenAsset(value) {
+  const relative = String(value || '').replaceAll('\\', '/').replace(/^asset\//i, '');
+  if (!relative || relative.split('/').some(part => !part || part === '.' || part === '..')) return '';
+  return '/asset/' + relative.split('/').map(encodeURIComponent).join('/');
+}
+function showGameScreen(id, { push = true } = {}) {
+  const screen = gameScreenConfig?.screens?.[id];
+  if (!screen) throw Error(`画面 '${id}' が定義されていません。`);
+  if (push && activeGameScreen && activeGameScreen !== id) screenHistory.push(activeGameScreen);
+  activeGameScreen = id;
+  const overlay = $('screen-overlay');
+  const scaleX = playerTheme.screen.width / gameScreenConfig.canvas.width;
+  const scaleY = playerTheme.screen.height / gameScreenConfig.canvas.height;
+  overlay.replaceChildren(); overlay.hidden = false;
+  overlay.style.backgroundImage = screen.background ? `url("${screenAsset(screen.background)}")` : 'linear-gradient(110deg,#101820e8,#10182066)';
+  if (screen.title) {
+    const title = document.createElement('div'); title.className = 'game-screen-title'; title.textContent = screen.title;
+    title.style.fontSize = `${36 * scaleY}px`; overlay.append(title);
+  }
+  if (screen.description) {
+    const description = document.createElement('div'); description.className = 'game-screen-description'; description.textContent = screen.description;
+    Object.assign(description.style, { left: `${64 * scaleX}px`, top: `${112 * scaleY}px`, width: `${Math.min(560, gameScreenConfig.canvas.width - 128) * scaleX}px`, fontSize: `${21 * scaleY}px` }); overlay.append(description);
+  }
+  for (const item of screen.items || []) {
+    if (item.type !== 'button') continue;
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'game-screen-button'; button.textContent = item.label;
+    Object.assign(button.style, { left: `${item.x * scaleX}px`, top: `${item.y * scaleY}px`, width: `${item.width * scaleX}px`, height: `${item.height * scaleY}px`, fontSize: `${22 * scaleY}px` });
+    if (item.image) button.style.backgroundImage = `url("${screenAsset(item.image)}")`;
+    button.addEventListener('click', async () => {
+      if (item.action === 'start') {
+        overlay.hidden = true; activeGameScreen = null; screenHistory.length = 0;
+        try { await gameStartHandler?.(); } catch (error) { $('speaker-text').textContent = 'PLAYER ERROR'; $('text').textContent = error.message; }
+      } else if (item.action === 'resume') {
+        overlay.hidden = true; activeGameScreen = null; screenHistory.length = 0;
+      } else if (item.action === 'open-screen') showGameScreen(item.target);
+      else if (item.action === 'back') {
+        const previous = screenHistory.pop();
+        if (previous) showGameScreen(previous, { push: false });
+        else if (gameStarted) { overlay.hidden = true; activeGameScreen = null; }
+      } else if (item.action === 'quit') {
+        overlay.replaceChildren();
+        const message = document.createElement('div'); message.className = 'game-screen-error'; message.textContent = 'この再生画面はブラウザーから自動終了できません。ウィンドウを閉じてください。'; overlay.append(message);
+      }
+    });
+    overlay.append(button);
+  }
+  overlay.querySelector('button')?.focus();
+}
+const screenHistory = [];
 function url(type, name, pose) {
   let a = runtime.program?.assets?.find((x) => x.name === name && x.type === type);
   if (type === 'char') {
@@ -188,7 +241,14 @@ async function command(c) {
     const charName = poseReference[1];
     const pos = slotClass(a[1]);
     const pose = poseReference[2];
-    const fadeOffset = 2;
+    const transitionIndex = c.operation?.transitionIndex ?? 2;
+    let offsetX = 0, offsetY = 0;
+    for (let index = 2; index < transitionIndex; index++) {
+      const match = /^([xy])([+-])(\d+)$/.exec(a[index]);
+      if (!match) continue;
+      const amount = Number(match[3]) * (match[2] === '+' ? 1 : -1);
+      if (match[1] === 'x') offsetX = amount; else offsetY = amount;
+    }
     document.querySelectorAll(`#characters .actor[data-slot="${CSS.escape(pos)}"]`).forEach(actor => {
       if (actor.id !== `char-${charName}`) actor.remove();
     });
@@ -196,11 +256,13 @@ async function command(c) {
     const e = existing || Object.assign(document.createElement('img'), { id: `char-${charName}` });
     e.className = `actor ${pos}`;
     e.dataset.slot = pos;
+    e.style.transform = `translateX(calc(-50% + ${offsetX}px))`;
+    e.style.bottom = `${-offsetY}px`;
     e.src = url('char', charName, pose);
     await e.decode();
     sizeSpriteLikeNative(e);
     if (!e.parentNode) $('characters').append(e);
-    if (showChar && a[fadeOffset] === 'fade') await fade(e, 0, 1, a[fadeOffset + 1]);
+    if (a[transitionIndex] === 'fade') await fade(e, 0, 1, a[transitionIndex + 1]);
   } else if (n === 'hide') {
     const charName = a[0];
     const fadeOffset = 1;
@@ -239,6 +301,10 @@ async function command(c) {
 $('dialogue').addEventListener('click', (event) => {
   if (event.target.closest('#choices, .choice, #next')) return;
   $('next').click();
+});
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || !gameStarted || !gameScreenConfig?.screens?.pause || activeGameScreen) return;
+  event.preventDefault(); showGameScreen('pause', { push: false });
 });
 
 async function loadScene(name) {
@@ -308,12 +374,22 @@ const runtime = new NovelRuntime.Runtime({
     }));
   }
 });
+let launchName = '';
+let launchVariables = Object.create(null);
+let launchDebug = null;
+async function launchGame() {
+  if (gameStarted) return;
+  gameStarted = true;
+  await runtime.run(await loadScene(launchName), launchDebug);
+  gameStarted = false;
+  reportDebug('novel-debug:done');
+}
 (async () => {
   const ui = await (await fetch('/api/player-ui')).json();
   applyPlayerUi(ui.path, ui.theme);
   const settings = await (await fetch('/api/scene-config')).json();
-  const name = debugParams.get('source') || settings.start_file;
-  const variables = Object.create(null);
+  launchName = debugParams.get('source') || settings.start_file;
+  const variables = launchVariables;
   if (debugSession) {
     const supplied = JSON.parse(debugParams.get('variables') || '{}');
     for (const [key, entry] of Object.entries(supplied)) {
@@ -342,6 +418,11 @@ const runtime = new NovelRuntime.Runtime({
     }
   }
   const line = Number(debugParams.get('line'));
-  await runtime.run(await loadScene(name), debugSession ? { scene: debugParams.get('scene') || undefined, line: Number.isSafeInteger(line) && line > 0 ? line : undefined, variables } : null);
-  reportDebug('novel-debug:done');
+  launchDebug = debugSession ? { scene: debugParams.get('scene') || undefined, line: Number.isSafeInteger(line) && line > 0 ? line : undefined, variables } : null;
+  const menu = await (await fetch('/api/game-screens')).json();
+  if (!debugSession && menu.configured) {
+    gameScreenConfig = menu.screens;
+    gameStartHandler = launchGame;
+    showGameScreen(gameScreenConfig.initial, { push: false });
+  } else await launchGame();
 })().catch(error => { $('speaker-text').textContent = 'PLAYER ERROR'; $('text').textContent = error.message; $('choices').replaceChildren(); reportDebug('novel-debug:error', { error: error.message }); });

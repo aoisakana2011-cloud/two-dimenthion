@@ -236,6 +236,8 @@ clear bgm
 ~~~tds
 show hero.normal center
 show hero.smile left fade 250
+show hero.smile left y+50
+show hero.smile right x-10 y+40 fade 300
 show hero.sad far_right
 hide hero
 hide hero fade 250
@@ -243,7 +245,7 @@ show image logo right
 clear image logo
 ~~~
 
-位置は far_left、left、center、right、far_right。同じslotへのshowは置き換えです。
+位置は far_left、left、center、right、far_right。同じslotへのshowは置き換えです。`x+30` / `x-20` は基準位置から左右へ、`y+50` / `y-10` は上下へpx単位でずらします（x+は右、y+は下）。x/yは各1回、±1,000,000 pxまで指定でき、`fade <ms>` と併用できます。
 
 音声・動画:
 

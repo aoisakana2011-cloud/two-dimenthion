@@ -60,6 +60,22 @@
     if (args[offset] === undefined) return { type: 'instant', durationMs: 0 };
     throw Error(`Unknown transition '${args[offset]}'`);
   }
+  function characterShowOptions(args, start = 2) {
+    const offsets = { x: 0, y: 0 };
+    const axes = new Set();
+    let index = start;
+    while (typeof args[index] === 'string') {
+      const match = /^([xy])([+-])(\d+)$/.exec(args[index]);
+      if (!match) break;
+      if (axes.has(match[1])) throw Error(`show の位置ずらしは ${match[1]} を一度だけ指定できます`);
+      const amount = Number(match[3]);
+      if (!Number.isSafeInteger(amount) || amount > 1_000_000) throw Error('show の位置ずらしは ±1000000 px 以内で指定してください');
+      axes.add(match[1]);
+      offsets[match[1]] = match[2] === '+' ? amount : -amount;
+      index++;
+    }
+    return { ...offsets, transitionIndex: index };
+  }
   function beginTransition(state, transition) {
     const startedAt = state.logicalTimeMs;
     const durationMs = transition.durationMs;
@@ -181,6 +197,8 @@
       } else {
         const match = /^([^\.]+)\.([^\.]+)$/.exec(args[0] || '');
         if (match) {
+          const showOptions = characterShowOptions(args);
+          op.transitionIndex = showOptions.transitionIndex;
           const slot = normalizeSlot(args[1]);
           const previous = state.slots[slot];
           if (previous && previous !== match[1]) {
@@ -190,14 +208,14 @@
           const old = state.characters[match[1]];
           if (old && old.slot !== slot && state.slots[old.slot] === match[1]) state.slots[old.slot] = null;
           state.slots[slot] = match[1];
-          const transition = transitionFrom(args, 2);
+          const transition = transitionFrom(args, showOptions.transitionIndex);
           const actionId = transition.type === 'instant' ? undefined : `show:${++state.revision}`;
           if (actionId) {
             op.actionId = actionId;
             op.blocking = true;
             registerAction(state, { id: actionId, kind: 'show', target: match[1], slot, durationMs: transition.durationMs, startedAt: state.logicalTimeMs, blocking: true });
           }
-          state.characters[match[1]] = { id: match[1], pose: match[2], slot, visible: true, opacity: 1, zIndex: 0, transition: beginTransition(state, transition), ...(actionId ? { actionId } : {}) };
+          state.characters[match[1]] = { id: match[1], pose: match[2], slot, offsetX: showOptions.x, offsetY: showOptions.y, visible: true, opacity: 1, zIndex: 0, transition: beginTransition(state, transition), ...(actionId ? { actionId } : {}) };
         }
       }
     } else if (name === 'hide') {
@@ -372,7 +390,7 @@
           await this.host.command(c.name, args, this, operation);
           if (c.name === 'wait') advanceSceneTime(this.sceneState, args[0]);
           else if (c.name === 'effect') advanceSceneTime(this.sceneState, operation.args[2] === undefined ? 500 : operation.args[2]);
-          else if (c.name === 'show' && operation.args[0] !== 'image' && operation.args[2] === 'fade') advanceSceneTime(this.sceneState, operation.args[3]);
+          else if (c.name === 'show' && operation.args[0] !== 'image' && operation.args[operation.transitionIndex] === 'fade') advanceSceneTime(this.sceneState, operation.args[operation.transitionIndex + 1]);
           else if (c.name === 'hide' && operation.args[1] === 'fade') advanceSceneTime(this.sceneState, operation.args[2]);
           if (operation.blocking) {
             finishAction(this.sceneState, operation.actionId);

@@ -5,6 +5,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 #include <SDL3_mixer/SDL_mixer.h>
 #include <cmath>
+#include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -27,11 +28,17 @@ struct Engine {
     MIX_Track* bgm = nullptr;
     std::vector<MIX_Audio*> audio;
     std::map<std::string, SDL_Texture*> textures;
-    struct Sprite { SDL_Texture* texture; std::string position; float alpha = 1; };
+    struct Sprite { SDL_Texture* texture; std::string position; float alpha = 1; float offsetX = 0; float offsetY = 0; };
     std::map<std::string, Sprite> characters, images;
     SDL_Texture *background = nullptr, *dialog = nullptr, *speakerSkin = nullptr, *choiceSkin = nullptr, *choiceActiveSkin = nullptr;
     std::unique_ptr<Video> video;
     std::map<std::string, std::string> config;
+    json gameScreens = json::object();
+    std::string activeScreen;
+    std::vector<std::string> screenHistory;
+    int screenHover = 0;
+    bool titleStarted = false;
+    bool storyActive = false;
     std::string speaker, text;
     std::vector<std::string> options;
     int selection = -1;
@@ -93,6 +100,16 @@ struct Engine {
         json theme; file >> theme;
         if (theme.value("version", 0) != 1) throw std::runtime_error("Unsupported native UI theme version");
         return theme;
+    }
+    json readGameScreens(const json& nativeUi) {
+        if (!nativeUi.contains("game_screens")) return json::object();
+        const auto relative = nativeUi.at("game_screens").get<std::string>();
+        if (relative.empty() || fs::path(relative).is_absolute() || relative.find("..") != std::string::npos) throw std::runtime_error("Invalid game screen configuration path");
+        std::ifstream file(root / "asset" / fs::u8path(relative));
+        if (!file) throw std::runtime_error("Cannot open game screen configuration: " + relative);
+        json value; file >> value;
+        if (value.value("version", 0) != 1 || !value.contains("canvas") || !value.contains("screens") || !value.contains("initial") || !value["screens"].contains(value["initial"].get<std::string>())) throw std::runtime_error("Invalid game screen configuration");
+        return value;
     }
     void applyUiTheme(const json& nativeUi, const json& theme, bool loadImages) {
         if (theme.empty()) return;
@@ -179,6 +196,7 @@ struct Engine {
             config[trim(line.substr(0,equals))] = trim(line.substr(equals+1));
         }
         const auto nativeUi = packageData.value("native_ui", json::object());
+        gameScreens = readGameScreens(nativeUi);
         const auto theme = readUiTheme(nativeUi);
         applyUiTheme(nativeUi, theme, false);
         width = number("window.width",960); height = number("window.height",680);
@@ -191,6 +209,14 @@ struct Engine {
         font = TTF_OpenFont(utf8Path(fontPath).c_str(), number("font.size",24));
         if (!font) throw std::runtime_error(SDL_GetError());
         applyUiTheme(nativeUi, theme, true);
+        if (gameScreens.contains("screens")) for (const auto& [id, screen] : gameScreens.at("screens").items()) {
+            const auto backgroundName = screen.value("background", std::string{});
+            if (!backgroundName.empty()) skinImage(backgroundName);
+            for (const auto& item : screen.at("items")) {
+                const auto imageName = item.value("image", std::string{});
+                if (!imageName.empty()) skinImage(imageName);
+            }
+        }
         mixer = MIX_CreateMixerDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,nullptr);
         if (!mixer) throw std::runtime_error(SDL_GetError());
     }
@@ -291,15 +317,57 @@ struct Engine {
         float scale = std::min(float(height)/h, float(width)/w); w *= scale; h *= scale;
         const auto slot = s.position.c_str();
         const float center = slot == std::string("far_left") ? 0.08f : slot == std::string("left") ? 0.26f : slot == std::string("right") ? 0.74f : slot == std::string("far_right") ? 0.92f : 0.50f;
-        float x = width * center - w / 2.0f;
-        SDL_FRect rect{x,height-h,w,h}; SDL_SetTextureAlphaModFloat(s.texture,s.alpha);
+        const float scaleX = float(width) / float(number("screen.width", 1280));
+        const float scaleY = float(height) / float(number("screen.height", 720));
+        float x = width * center - w / 2.0f + s.offsetX * scaleX;
+        SDL_FRect rect{x,height-h + s.offsetY * scaleY,w,h}; SDL_SetTextureAlphaModFloat(s.texture,s.alpha);
         SDL_RenderTexture(renderer,s.texture,nullptr,&rect); SDL_SetTextureAlphaModFloat(s.texture,1);
+    }
+    const json& currentScreen() const { return gameScreens.at("screens").at(activeScreen); }
+    SDL_FRect screenItemRect(const json& item) const {
+        const float sx = float(width) / float(gameScreens.at("canvas").at("width").get<int>());
+        const float sy = float(height) / float(gameScreens.at("canvas").at("height").get<int>());
+        return { item.at("x").get<float>() * sx, item.at("y").get<float>() * sy, item.at("width").get<float>() * sx, item.at("height").get<float>() * sy };
+    }
+    void activateScreenItem(const json& item) {
+        const auto action = item.value("action", std::string{});
+        if (action == "start") { activeScreen.clear(); titleStarted = true; storyActive = true; screenHistory.clear(); }
+        else if (action == "resume") { activeScreen.clear(); screenHistory.clear(); }
+        else if (action == "open-screen") {
+            const auto target = item.value("target", std::string{});
+            if (!gameScreens.at("screens").contains(target)) throw std::runtime_error("Missing game screen: " + target);
+            screenHistory.push_back(activeScreen); activeScreen = target; screenHover = 0;
+        } else if (action == "back") {
+            if (!screenHistory.empty()) { activeScreen = screenHistory.back(); screenHistory.pop_back(); screenHover = 0; }
+            else if (storyActive) activeScreen.clear();
+        } else if (action == "quit") throw Quit{};
+    }
+    void runTitleScreen() {
+        if (gameScreens.empty()) { titleStarted = true; return; }
+        activeScreen = gameScreens.at("initial").get<std::string>();
+        while (!titleStarted) pump();
     }
     void pump() {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_EVENT_QUIT) throw Quit{};
-            if (e.type == SDL_EVENT_KEY_DOWN) {
+            if (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_ESCAPE) {
+                if (!activeScreen.empty() && activeScreen == "pause") activeScreen.clear();
+                else if (activeScreen.empty() && storyActive && gameScreens.contains("screens") && gameScreens["screens"].contains("pause")) { activeScreen = "pause"; screenHover = 0; }
+                else if (!activeScreen.empty() && !screenHistory.empty()) { activeScreen = screenHistory.back(); screenHistory.pop_back(); screenHover = 0; }
+            } else if (!activeScreen.empty() && e.type == SDL_EVENT_KEY_DOWN) {
+                const auto& items = currentScreen().at("items");
+                if (!items.empty() && (e.key.scancode == SDL_SCANCODE_DOWN || e.key.scancode == SDL_SCANCODE_UP)) {
+                    const int delta = e.key.scancode == SDL_SCANCODE_DOWN ? 1 : -1;
+                    screenHover = (screenHover + delta + int(items.size())) % int(items.size());
+                } else if (!items.empty() && (e.key.scancode == SDL_SCANCODE_RETURN || e.key.scancode == SDL_SCANCODE_SPACE)) activateScreenItem(items.at(size_t(std::clamp(screenHover, 0, int(items.size()) - 1))));
+            } else if (!activeScreen.empty() && e.type == SDL_EVENT_MOUSE_MOTION) {
+                const auto& items = currentScreen().at("items"); screenHover = -1;
+                for (size_t i = 0; i < items.size(); ++i) { const auto r = screenItemRect(items[i]); if (e.motion.x >= r.x && e.motion.x <= r.x + r.w && e.motion.y >= r.y && e.motion.y <= r.y + r.h) screenHover = int(i); }
+            } else if (!activeScreen.empty() && e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+                const auto& items = currentScreen().at("items");
+                for (size_t i = 0; i < items.size(); ++i) { const auto r = screenItemRect(items[i]); if (e.button.x >= r.x && e.button.x <= r.x + r.w && e.button.y >= r.y && e.button.y <= r.y + r.h) { screenHover = int(i); activateScreenItem(items[i]); break; } }
+            } else if (e.type == SDL_EVENT_KEY_DOWN) {
                 if (options.empty()) next = true;
                 else if (e.key.scancode == SDL_SCANCODE_DOWN) { hovered = (hovered + 1 + int(options.size())) % int(options.size()); const auto box = choiceRect(size_t(hovered)); const auto view = choiceViewport(); if (box.y + box.h > view.y + view.h) choiceScroll += box.y + box.h - (view.y + view.h); clampChoiceScroll(); }
                 else if (e.key.scancode == SDL_SCANCODE_UP) { hovered = (hovered - 1 + int(options.size())) % int(options.size()); const auto box = choiceRect(size_t(hovered)); const auto view = choiceViewport(); if (box.y < view.y) choiceScroll -= view.y - box.y; clampChoiceScroll(); }
@@ -319,6 +387,32 @@ struct Engine {
         }
         if (video) { video->update(); if (video->finished) video.reset(); }
         SDL_SetRenderDrawColor(renderer,12,15,22,255); SDL_RenderClear(renderer);
+        if (!activeScreen.empty()) {
+            const auto& screen = currentScreen();
+            if (background) SDL_RenderTexture(renderer, background, nullptr, nullptr);
+            for (const auto& [id,s] : characters) sprite(s);
+            for (const auto& [id,s] : images) sprite(s);
+            const auto bgName = screen.value("background", std::string{});
+            if (!bgName.empty()) { auto* bg = skinImage(bgName); SDL_RenderTexture(renderer, bg, nullptr, nullptr); }
+            else { SDL_SetRenderDrawColor(renderer, 8, 12, 18, 175); SDL_RenderFillRect(renderer, nullptr); }
+            const float sx = float(width) / float(gameScreens.at("canvas").at("width").get<int>());
+            const float sy = float(height) / float(gameScreens.at("canvas").at("height").get<int>());
+            const auto title = screen.value("title", std::string{});
+            if (!title.empty()) label(title, 64 * sx, 42 * sy, int(34 * sy), {245,247,248,255}, float(width) - 128 * sx);
+            const auto description = screen.value("description", std::string{});
+            if (!description.empty()) label(description, 64 * sx, 112 * sy, int(21 * sy), {240,238,232,255}, std::min(560.0f, float(gameScreens.at("canvas").at("width").get<int>() - 128)) * sx, float(gameScreens.at("canvas").at("height").get<int>() - 150) * sy);
+            const auto& items = screen.at("items");
+            for (size_t i = 0; i < items.size(); ++i) {
+                const auto& item = items[i]; const auto rect = screenItemRect(item); const bool active = int(i) == screenHover;
+                const auto imageName = item.value("image", std::string{});
+                if (!imageName.empty()) SDL_RenderTexture(renderer, skinImage(imageName), nullptr, &rect);
+                else outlinedPanel(rect, active ? SDL_Color{44,61,73,240} : SDL_Color{17,24,31,215}, active ? SDL_Color{205,221,230,255} : SDL_Color{135,151,160,210}, active ? SDL_Color{197,219,230,255} : SDL_Color{100,119,130,220});
+                label(item.value("label", std::string{}), rect.x + 12 * sx, rect.y + (rect.h - 28 * sy) / 2, int(22 * sy), {245,247,248,255}, rect.w - 24 * sx, rect.h);
+            }
+            SDL_RenderPresent(renderer); SDL_Delay(8);
+            if (automated) { activeScreen.clear(); titleStarted = true; }
+            return;
+        }
         if (background) SDL_RenderTexture(renderer,background,nullptr,nullptr);
         for (const auto& [id,s] : characters) sprite(s);
         for (const auto& [id,s] : images) sprite(s);
@@ -392,8 +486,20 @@ struct Engine {
                 for(auto it=characters.begin();it!=characters.end();) {
                     if(it->first!=id && it->second.position==position) it=characters.erase(it); else ++it;
                 }
-                characters[id]={image(asset("char",id,pose)),position};
-                if(args.size()>2 && s(2)=="fade")delay(args.at(3).get<int64_t>(),[&](float t){characters.at(id).alpha=t;});
+                int offsetX=0,offsetY=0;
+                size_t transitionIndex=2;
+                for(;transitionIndex<args.size();++transitionIndex) {
+                    if(!args.at(transitionIndex).is_string()) break;
+                    const auto option=args.at(transitionIndex).get<std::string>();
+                    if(option.size()<3 || (option[0]!='x' && option[0]!='y') || (option[1]!='+' && option[1]!='-')) break;
+                    int value=0;
+                    const auto parsed=std::from_chars(option.data()+2,option.data()+option.size(),value);
+                    if(parsed.ec!=std::errc{} || parsed.ptr!=option.data()+option.size() || value<0 || value>1000000) throw std::runtime_error("Invalid show pixel offset");
+                    if(option[1]=='-') value=-value;
+                    if(option[0]=='x') offsetX=value; else offsetY=value;
+                }
+                characters[id]={image(asset("char",id,pose)),position,1.0f,float(offsetX),float(offsetY)};
+                if(transitionIndex<args.size() && s(transitionIndex)=="fade")delay(args.at(transitionIndex+1).get<int64_t>(),[&](float t){characters.at(id).alpha=t;});
             }
         } else if(name=="hide") {
             const auto id=s(0);
@@ -443,7 +549,8 @@ int run(const fs::path& packagePath, const std::string& mode) {
             runtime.run(package.at("program"));std::cout<<json{{"globals",runtime.globals},{"commands",transcript}}.dump()<<"\n";
         }else{
             Engine engine(runtime,fs::absolute(packagePath), package);
-            engine.automated = mode=="--smoke";
+            engine.automated = mode=="--smoke" || mode=="--screen-smoke";
+            if (!engine.automated || mode=="--screen-smoke") engine.runTitleScreen();
             runtime.command=[&](const std::string& n,const json& a){engine.command(n,a);};
             runtime.choice=[&](const std::string& p,const std::vector<std::string>& labels){engine.text=p;engine.options=labels;engine.choiceScroll=0;engine.hovered=labels.empty()?-1:0;engine.selection=engine.automated?0:-1;engine.pump();while(engine.selection<0)engine.pump();auto selected=engine.selection;engine.options.clear();engine.hovered=-1;return size_t(selected);};
             try { runtime.run(package.at("program")); while(engine.video)engine.pump(); }

@@ -293,6 +293,25 @@ function checkFade(args: Expr[], variables: Map<string, ValueType>, ctx: TypeCon
   if (args.length !== 2 || args[0].kind !== 'literal' || args[0].value !== 'fade' || expressionType(args[1], variables, ctx) !== 'int') throw new TypeCheckError(`${loc}: 演出は fade <int> で指定してください`);
 }
 
+const MAX_CHARACTER_OFFSET_PX = 1_000_000n;
+
+function characterOffsetEnd(args: Expr[], start: number, loc: string): number {
+  const axes = new Set<string>();
+  let index = start;
+  while (index < args.length) {
+    const arg = args[index];
+    const value = arg.kind === 'literal' && typeof arg.value === 'string' ? arg.value : '';
+    const match = /^([xy])([+-])(\d+)$/.exec(value);
+    if (!match) break;
+    if (axes.has(match[1])) throw new TypeCheckError(`${loc}: 位置ずらしは x / y をそれぞれ1回だけ指定できます`);
+    axes.add(match[1]);
+    const amount = BigInt(match[3]);
+    if (amount > MAX_CHARACTER_OFFSET_PX) throw new TypeCheckError(`${loc}: 位置ずらしは ±${MAX_CHARACTER_OFFSET_PX} px 以内で指定してください`);
+    index++;
+  }
+  return index;
+}
+
 function checkAudioTransition(args: Expr[], variables: Map<string, ValueType>, ctx: TypeContext, loc: string): void {
   if (!args.length) return;
   if (args.length === 2 && args[0].kind === 'literal' && args[0].value === 'crossfade' && expressionType(args[1], variables, ctx) === 'int') {
@@ -358,7 +377,8 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
         const charDef = ctx.characters.get(charName);
         if (!charDef) throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
         if (!charDef.has(pose)) throw new TypeCheckError(`${locStr}: キャラクター '${charName}' にポーズ '${pose}' はありません`);
-        checkFade(args.slice(2), variables, ctx, locStr);
+        const transitionStart = characterOffsetEnd(args, 2, locStr);
+        checkFade(args.slice(transitionStart), variables, ctx, locStr);
         break;
       }
       if (args.length < 2) throw new TypeCheckError(`${locStr}: コマンド 'show' の引数が不足しています`);

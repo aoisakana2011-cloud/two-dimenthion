@@ -278,6 +278,26 @@ function checkFade(args, variables, ctx, loc) {
     if (args.length !== 2 || args[0].kind !== 'literal' || args[0].value !== 'fade' || expressionType(args[1], variables, ctx) !== 'int')
         throw new TypeCheckError(`${loc}: 演出は fade <int> で指定してください`);
 }
+const MAX_CHARACTER_OFFSET_PX = 1000000n;
+function characterOffsetEnd(args, start, loc) {
+    const axes = new Set();
+    let index = start;
+    while (index < args.length) {
+        const arg = args[index];
+        const value = arg.kind === 'literal' && typeof arg.value === 'string' ? arg.value : '';
+        const match = /^([xy])([+-])(\d+)$/.exec(value);
+        if (!match)
+            break;
+        if (axes.has(match[1]))
+            throw new TypeCheckError(`${loc}: 位置ずらしは x / y をそれぞれ1回だけ指定できます`);
+        axes.add(match[1]);
+        const amount = BigInt(match[3]);
+        if (amount > MAX_CHARACTER_OFFSET_PX)
+            throw new TypeCheckError(`${loc}: 位置ずらしは ±${MAX_CHARACTER_OFFSET_PX} px 以内で指定してください`);
+        index++;
+    }
+    return index;
+}
 function checkAudioTransition(args, variables, ctx, loc) {
     if (!args.length)
         return;
@@ -357,7 +377,8 @@ function checkCommand(name, args, variables, ctx, locStr) {
                     throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
                 if (!charDef.has(pose))
                     throw new TypeCheckError(`${locStr}: キャラクター '${charName}' にポーズ '${pose}' はありません`);
-                checkFade(args.slice(2), variables, ctx, locStr);
+                const transitionStart = characterOffsetEnd(args, 2, locStr);
+                checkFade(args.slice(transitionStart), variables, ctx, locStr);
                 break;
             }
             if (args.length < 2)
