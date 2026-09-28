@@ -115,6 +115,7 @@ function variableTypeLabel(type) {
     return type.name.startsWith('character:') ? `character ${type.name.slice('character:'.length)}` : `struct ${type.name}`;
   }
   if (type.kind === 'dict') return `dict<${type.value || 'unknown'}>`;
+  if (type.kind === 'list') return `list<${type.value || 'unknown'}>`;
   return 'unknown';
 }
 function selectNode(file) {
@@ -606,8 +607,38 @@ function confirmedFlowDomain(name) {
 const validFloatInput = (value) => (typeof value === 'number' || typeof value === 'string')
   && /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(String(value))
   && Number.isFinite(Number(value));
+function debugPrimitiveMatches(type, value) {
+  if (type === 'int') return Number.isSafeInteger(value) || typeof value === 'string' && /^[+-]?\d+$/.test(value);
+  if (type === 'float') return validFloatInput(value);
+  if (type === 'str') return typeof value === 'string';
+  if (type === 'bool') return typeof value === 'boolean';
+  return false;
+}
+function debugValueMatches(type, valueText, fields) {
+  if (fields) {
+    let value;
+    try { value = JSON.parse(valueText); } catch { return false; }
+    return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === Object.keys(fields).length
+      && Object.entries(fields).every(([name, fieldType]) => Object.hasOwn(value, name) && debugPrimitiveMatches(fieldType, value[name]));
+  }
+  if (type.startsWith('list<') || type.startsWith('dict<')) {
+    let value;
+    try { value = JSON.parse(valueText); } catch { return false; }
+    const collectionType = type.slice(type.indexOf('<') + 1, -1);
+    return type.startsWith('list<')
+      ? Array.isArray(value) && value.every((item) => debugPrimitiveMatches(collectionType, item))
+      : value && typeof value === 'object' && !Array.isArray(value)
+        && Object.values(value).every((item) => debugPrimitiveMatches(collectionType, item));
+  }
+  if (type === 'bool') return ['true', 'false'].includes(valueText);
+  if (type === 'str') return true;
+  return debugPrimitiveMatches(type, valueText);
+}
 function displayFlowDomainValue(variable, value) {
   if (variable.type === 'str') return JSON.stringify(value);
+  if (variable.type.startsWith('list<')) {
+    try { const items = JSON.parse(value); if (Array.isArray(items)) return JSON.stringify(items); } catch {}
+  }
   if (variable.fields) {
     try {
       const object = JSON.parse(value);
@@ -761,7 +792,7 @@ function updateFlowTestPanel() {
     const type = variableTypeLabel(variable.type);
     const structure = variable.type?.kind === 'struct' && (node.structTypes?.find((item) => item.name === variable.type.name)
       || node.characterTypes?.find((item) => item.name === variable.type.name));
-    if (!['int', 'float', 'str', 'dict<int>', 'dict<float>', 'dict<str>'].includes(type) && !structure) return false;
+    if (!['int', 'float', 'str', 'bool', 'dict<int>', 'dict<float>', 'dict<str>', 'dict<bool>', 'list<int>', 'list<float>', 'list<str>', 'list<bool>'].includes(type) && !structure) return false;
     if (!variable.mutable) return false;
     if (variable.scope !== 'global' && !(variable.definitions || []).some((definition) => (definition.file || node.id) === node.id && Number(definition.line || 0) < cutoff)) return false;
     return (variable.references || []).some((reference) => (reference.file || node.id) === node.id && Number(reference.line || 0) >= cutoff);
@@ -826,22 +857,14 @@ document.querySelector('#flow-test-run').addEventListener('click', () => {
     const input = exact ? null : flowTestVars.querySelector(`.flow-test-uncertain-group input[data-name="${CSS.escape(definition.name)}"]`);
     const valueText = exact ? exact.values[0] : input?.value ? input.value : null;
     if (valueText === null) continue;
-    if (definition.type === 'int' && !/^[+-]?\d+$/.test(valueText)) { message.textContent = `${definition.name} は整数で入力してください`; input?.focus(); return; }
-    if (definition.type === 'float' && !validFloatInput(valueText)) { message.textContent = `${definition.name} は有限の小数で入力してください`; input?.focus(); return; }
-    if (definition.type.startsWith('dict<')) {
-      let value;
-      try { value = JSON.parse(valueText); } catch { message.textContent = `${definition.name} はJSON辞書で入力してください`; input?.focus(); return; }
-      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.values(value).some((entry) => definition.type === 'dict<int>' ? !(Number.isSafeInteger(entry) || (typeof entry === 'string' && /^[+-]?\d+$/.test(entry))) : definition.type === 'dict<float>' ? !validFloatInput(entry) : typeof entry !== 'string')) { message.textContent = `${definition.name} の値の型が正しくありません`; input?.focus(); return; }
-    }
-    if (definition.fields) {
-      let value;
-      try { value = JSON.parse(valueText); } catch { message.textContent = `${definition.name} はJSON構造体で入力してください`; input?.focus(); return; }
-      const fields = definition.fields;
-      const matches = value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === Object.keys(fields).length
-        && Object.entries(fields).every(([name, type]) => type === 'float' ? validFloatInput(value[name]) : type === 'int'
-          ? Number.isSafeInteger(value[name]) || (typeof value[name] === 'string' && /^[+-]?\d+$/.test(value[name]))
-          : typeof value[name] === 'string');
-      if (!matches) { message.textContent = `${definition.name} のフィールドが型と一致しません`; input?.focus(); return; }
+    if (!debugValueMatches(definition.type, valueText, definition.fields)) {
+      const messageByType = definition.fields ? 'JSON構造体のフィールドが型と一致しません'
+        : definition.type.startsWith('list<') ? 'JSON配列の要素が型と一致しません'
+          : definition.type.startsWith('dict<') ? 'JSON辞書の値が型と一致しません'
+            : definition.type === 'bool' ? 'true または false を入力してください'
+              : definition.type === 'int' ? '整数で入力してください'
+                : definition.type === 'float' ? '有限の小数で入力してください' : '値の型が正しくありません';
+      message.textContent = `${definition.name} は${messageByType}`; input?.focus(); return;
     }
     variables[definition.name] = { type: definition.fields ? 'struct' : definition.type, value: valueText, ...(definition.fields ? { fields: definition.fields } : {}) };
   }

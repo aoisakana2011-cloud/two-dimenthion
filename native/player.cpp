@@ -937,20 +937,35 @@ struct Engine {
     }
 };
 namespace native_player {
+static json debugPrimitiveValue(const std::string& type, const json& value) {
+    if (type == "int" && (value.is_number_integer() || value.is_string())) return novel::integer(novel::text(value));
+    if (type == "float" && (value.is_number() || value.is_string())) return novel::floating(novel::text(value));
+    if (type == "str" && value.is_string()) return value;
+    if (type == "bool" && value.is_boolean()) return value;
+    throw std::runtime_error("Invalid debug value for type: " + type);
+}
 static json debugValue(const json& entry) {
     const auto type = entry.at("type").get<std::string>();
     if (type == "str") return entry.at("value").get<std::string>();
     if (type == "int") return novel::integer(entry.at("value").get<std::string>());
     if (type == "float") return novel::floating(entry.at("value").get<std::string>());
+    if (type == "bool") {
+        const auto& value = entry.at("value");
+        if (value.is_boolean()) return value;
+        if (value.is_string() && (value == "true" || value == "false")) return value == "true";
+        throw std::runtime_error("Invalid debug bool value");
+    }
     auto value = json::parse(entry.at("value").get<std::string>());
+    if (type.starts_with("list<") && type.ends_with(">")) {
+        const auto itemType = type.substr(5, type.size() - 6);
+        if (!value.is_array()) throw std::runtime_error("Debug list value must be an array");
+        for (auto& item : value) item = debugPrimitiveValue(itemType, item);
+        return value;
+    }
     if (type.starts_with("dict<") && type.ends_with(">")) {
         const auto itemType = type.substr(5, type.size() - 6);
         if (!value.is_object()) throw std::runtime_error("Debug dictionary value must be an object");
-        for (auto it = value.begin(); it != value.end(); ++it) {
-            if (itemType == "int") it.value() = novel::integer(novel::text(it.value()));
-            else if (itemType == "float") it.value() = novel::floating(novel::text(it.value()));
-            else if (itemType != "str" || !it.value().is_string()) throw std::runtime_error("Invalid debug dictionary element type");
-        }
+        for (auto it = value.begin(); it != value.end(); ++it) it.value() = debugPrimitiveValue(itemType, it.value());
         return value;
     }
     if (type == "struct") {
@@ -959,9 +974,8 @@ static json debugValue(const json& entry) {
             if (!value.contains(field.key())) throw std::runtime_error("Missing debug structure field: " + field.key());
             auto& current = value[field.key()];
             const auto fieldType = field.value().get<std::string>();
-            if (fieldType == "int") current = novel::integer(novel::text(current));
-            else if (fieldType == "float") current = novel::floating(novel::text(current));
-            else if (fieldType != "str" || !current.is_string()) throw std::runtime_error("Invalid debug structure field: " + field.key());
+            try { current = debugPrimitiveValue(fieldType, current); }
+            catch (const std::exception&) { throw std::runtime_error("Invalid debug structure field: " + field.key()); }
         }
         return value;
     }

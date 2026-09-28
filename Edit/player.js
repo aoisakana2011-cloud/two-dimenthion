@@ -933,13 +933,27 @@ async function launchGame() {
       if (entry?.type === 'int' && typeof entry.value === 'string') variables[key] = NovelRuntime.integer(entry.value);
       else if (entry?.type === 'float' && typeof entry.value === 'string') variables[key] = NovelRuntime.floating(entry.value);
       else if (entry?.type === 'str' && typeof entry.value === 'string') variables[key] = entry.value;
-      else if (entry?.type === 'dict<int>' || entry?.type === 'dict<float>' || entry?.type === 'dict<str>') {
+      else if (entry?.type === 'bool' && ['true', 'false'].includes(entry.value)) variables[key] = entry.value === 'true';
+      else if (/^list<(int|float|str|bool)>$/.test(entry?.type || '')) {
+        const source = JSON.parse(entry.value);
+        if (!Array.isArray(source)) throw Error(`Invalid debug list: ${key}`);
+        const elementType = entry.type.slice(5, -1);
+        variables[key] = source.map((value) => {
+          if (elementType === 'int' && (Number.isSafeInteger(value) || typeof value === 'string' && /^[+-]?\d+$/.test(value))) return NovelRuntime.integer(value);
+          if (elementType === 'float' && (typeof value === 'number' || typeof value === 'string')) return NovelRuntime.floating(value);
+          if (elementType === 'str' && typeof value === 'string') return value;
+          if (elementType === 'bool' && typeof value === 'boolean') return value;
+          throw Error(`Invalid debug list element type: ${key}`);
+        });
+      }
+      else if (entry?.type === 'dict<int>' || entry?.type === 'dict<float>' || entry?.type === 'dict<str>' || entry?.type === 'dict<bool>') {
         const source = JSON.parse(entry.value);
         if (!source || typeof source !== 'object' || Array.isArray(source)) throw Error(`Invalid debug dictionary: ${key}`);
         const dictionary = Object.create(null);
         for (const [field, value] of Object.entries(source)) {
           if (entry.type === 'dict<int>') dictionary[field] = NovelRuntime.integer(value);
           else if (entry.type === 'dict<float>') dictionary[field] = NovelRuntime.floating(value);
+          else if (entry.type === 'dict<bool>' && typeof value === 'boolean') dictionary[field] = value;
           else if (typeof value === 'string') dictionary[field] = value;
           else throw Error(`Invalid debug dictionary element type: ${key}.${field}`);
         }
@@ -954,6 +968,7 @@ async function launchGame() {
           if (type === 'int') structure[field] = NovelRuntime.integer(source[field]);
           else if (type === 'float') structure[field] = NovelRuntime.floating(source[field]);
           else if (type === 'str' && typeof source[field] === 'string') structure[field] = source[field];
+          else if (type === 'bool' && typeof source[field] === 'boolean') structure[field] = source[field];
           else throw Error(`Invalid debug structure field: ${field}`);
         }
         variables[key] = structure;

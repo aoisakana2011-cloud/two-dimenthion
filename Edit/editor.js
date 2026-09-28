@@ -82,7 +82,7 @@ let restoringHistory = false;
 const openTabs = [];
 const splitTabs = [];
 const fileLabel = (name) => String(name || '').replace(/[\\/]$/, '').split(/[\\/]/).pop();
-const valueTypeLabel = (type) => typeof type === 'string' ? type : type?.kind === 'struct' ? type.name || 'struct' : type?.kind === 'dict' ? `dict[${type.value}]` : type?.kind || '不明';
+const valueTypeLabel = (type) => typeof type === 'string' ? type : type?.kind === 'struct' ? type.name || 'struct' : type?.kind === 'dict' || type?.kind === 'list' ? `${type.kind}[${type.value}]` : type?.kind || '不明';
 function scenarioRelativePath(name) {
   const root = String(scenarioDirectory || '').replaceAll('\\', '/').replace(/\/+$/, '');
   const normalized = String(name || '').replaceAll('\\', '/').replace(/\/+$/, '');
@@ -133,6 +133,11 @@ fileContextMenu.className = 'file-context-menu';
 fileContextMenu.hidden = true;
 fileContextMenu.setAttribute('role', 'menu');
 document.body.append(fileContextMenu);
+const editorContextMenu = document.createElement('div');
+editorContextMenu.className = 'editor-context-menu';
+editorContextMenu.hidden = true;
+editorContextMenu.setAttribute('role', 'menu');
+document.body.append(editorContextMenu);
 function updateDirtyState(value) { isDirty = value; document.querySelector('.dirty-mark')?.classList.toggle('visible', value); document.querySelectorAll('#file-tree .scene-file').forEach((item) => item.classList.toggle('file-dirty', value && item.textContent.includes(sceneName.value.split('/').pop()))); }
 function editorSnapshot() { return { value: editor.value, start: editor.selectionStart, end: editor.selectionEnd }; }
 function rememberUndo() {
@@ -583,6 +588,9 @@ function closeFileContextMenu() {
 }
 
 function showFileContextMenu(event, filePath) {
+  closeEditorContextMenu();
+  variableTooltipRequestId++;
+  hideVariableTooltip();
   const isScene = scenarioRelativePath(filePath) !== null && /\.(tds|txt)$/i.test(filePath);
   const isAsset = filePath.startsWith('asset/');
   const addAction = (label, action, className = '') => {
@@ -612,9 +620,13 @@ function showFileContextMenu(event, filePath) {
     await refreshFiles();
     await refreshScenes();
   }, 'danger');
-  fileContextMenu.style.left = `${Math.max(8, Math.min(event.clientX, window.innerWidth - 235))}px`;
-  fileContextMenu.style.top = `${Math.max(8, Math.min(event.clientY, window.innerHeight - 250))}px`;
+  fileContextMenu.style.left = '0px';
+  fileContextMenu.style.top = '0px';
   fileContextMenu.hidden = false;
+  const bounds = fileContextMenu.getBoundingClientRect();
+  fileContextMenu.style.left = `${Math.max(6, Math.min(event.clientX, window.innerWidth - bounds.width - 6))}px`;
+  fileContextMenu.style.top = `${Math.max(6, Math.min(event.clientY, window.innerHeight - bounds.height - 6))}px`;
+  fileContextMenu.querySelector('button')?.focus();
 }
 
 function renderFileInfo() {
@@ -912,14 +924,15 @@ function completionVariableDeclarations(context) {
     .sort((left, right) => right.open - left.open)[0] || null;
   const declarations = new Map();
   const add = (name, type = '') => { if (name) declarations.set(name, { name, type }); };
-  const declarationPattern = /\b(?:global\s+)?(int|float|str|bool|character)\s+([A-Za-z_][A-Za-z0-9_]*)\b|\blet\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*(int|float|str|bool|character))?/g;
+  const declaredType = '(?:int|float|str|bool|character|dict\\[(?:int|float|str|bool)\\]|list\\[(?:int|float|str|bool)\\])';
+  const declarationPattern = new RegExp(`\\b(?:global\\s+)?(${declaredType})\\s+([A-Za-z_][A-Za-z0-9_]*)\\b|\\blet\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(?::\\s*(${declaredType}))?`, 'g');
   for (const match of before.matchAll(declarationPattern)) {
     const owner = scopes.filter(scope => match.index > scope.open && match.index < scope.close).sort((left, right) => right.open - left.open)[0] || null;
     if (owner && owner !== active) continue;
     add(match[2] || match[3], match[1] || match[4] || '');
   }
   if (active?.kind === 'fn') {
-    for (const parameter of active.params.matchAll(/(?:^|,)\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(int|float|str|bool|character)\b/g)) add(parameter[1], parameter[2]);
+    for (const parameter of active.params.matchAll(new RegExp(`(?:^|,)\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*:\\s*(${declaredType})\\b`, 'g'))) add(parameter[1], parameter[2]);
   }
   const activeContainer = active ? `${active.kind === 'fn' ? 'function' : 'scene'} (${active.name})` : 'global';
   for (const variable of knownVariables) {
@@ -1021,7 +1034,14 @@ function candidatesFor(context) {
   if (command === 'set' && args.length === 0) return visibleVariables.map((variable) => variable.name);
   if (args.length && args.at(-1).includes('.')) {
     const namespace = args.at(-1).slice(0, args.at(-1).lastIndexOf('.') + 1);
-    const members = includedFunctionNames.filter(name => name.startsWith(namespace)).map(name => name.slice(namespace.length));
+    const builtinMembers = {
+      'list.': ['append()', 'contains()', 'length()'],
+      'text.': ['normalize_space()', 'replace()', 'split()', 'trim()'],
+    }[namespace] || [];
+    const members = [
+      ...includedFunctionNames.filter(name => name.startsWith(namespace)).map(name => name.slice(namespace.length)),
+      ...builtinMembers,
+    ];
     if (members.length) return members;
   }
   if (['wait', 'set', 'if', 'return'].includes(command)) {
@@ -1392,6 +1412,7 @@ function editorTypeName(type) {
   if (typeof type === 'string') return type;
   if (type?.kind === 'struct') return type.name;
   if (type?.kind === 'dict') return `dict[${type.value}]`;
+  if (type?.kind === 'list') return `list[${type.value}]`;
   return type?.kind || '不明';
 }
 
@@ -1404,6 +1425,7 @@ function expressionPreview(expression) {
   if (expression.kind === 'binary') return `${expressionPreview(expression.left)} ${expression.operator} ${expressionPreview(expression.right)}`;
   if (expression.kind === 'unary') return `${expression.operator}${expressionPreview(expression.value)}`;
   if (expression.kind === 'dict') return `{ ${expression.entries.map(entry => `${JSON.stringify(entry.key)}: ${expressionPreview(entry.value)}`).join(', ')} }`;
+  if (expression.kind === 'list') return `[${expression.items.map(expressionPreview).join(', ')}]`;
   return '式';
 }
 
@@ -1780,12 +1802,18 @@ async function jumpToLocation(location, symbol = '') {
     await openScene(file);
   }
   const line = Math.max(1, Number(location.line) || 1);
-  const column = Math.max(0, Number(location.column) - 1 || 0);
+  let column = Math.max(0, Number(location.column) - 1 || 0);
   const lineStart = editor.value.split(/\r?\n/).slice(0, line - 1).reduce((total, value) => total + value.length + 1, 0);
+  const lineText = editor.value.split(/\r?\n/)[line - 1] || '';
+  const candidates = [...new Set([symbol, String(symbol).split('.').at(-1)].filter(Boolean))];
+  let selected = 0;
+  if (symbol && lineText.slice(column, column + symbol.length) === symbol) selected = symbol.length;
+  else {
+    const found = candidates.map(candidate => ({ candidate, index: lineText.indexOf(candidate, column) })).find(item => item.index >= 0);
+    if (found) { column = found.index; selected = found.candidate.length; }
+  }
   const caret = Math.min(editor.value.length, lineStart + column);
   editor.focus();
-  const lineText = editor.value.split(/\r?\n/)[line - 1] || '';
-  const selected = symbol && lineText.slice(column, column + symbol.length) === symbol ? symbol.length : 0;
   editor.setSelectionRange(caret, caret + selected);
   editor.scrollTop = Math.max(0, (line - 1) * editorLineHeight() - 70);
   hideVariableTooltip();
@@ -2360,6 +2388,183 @@ function showGotoMenu(event) {
   variableTooltip.hidden = false;
   return true;
 }
+
+function closeEditorContextMenu() {
+  editorContextMenu.hidden = true;
+  editorContextMenu.replaceChildren();
+}
+
+function editorDefinitionLocation(location, symbol) {
+  if (!location) return null;
+  return { file: location.file || sceneName.value, line: location.line, column: location.column, symbol };
+}
+
+async function definitionLocationAtToken(token) {
+  const file = sceneName.value;
+  const source = editor.value;
+  const symbols = await editorSymbolsForCurrentSource(file, source);
+  const name = qualifiedTokenName(token);
+  const groups = [symbols.functions, symbols.structs, symbols.characters, symbols.assets, symbols.scenes, symbols.includes];
+  for (const items of groups) {
+    const exact = (items || []).find(item => item.name === name && item.file === file && Number(item.line) === token.line);
+    if (exact) return editorDefinitionLocation(exact, name.split('.').at(-1));
+  }
+  const named = groups.flat().filter(item => item && item.name === name);
+  if (named.length === 1) return editorDefinitionLocation(named[0], name.split('.').at(-1));
+
+  const fields = (symbols.structs || []).flatMap(item => (item.fields || []).map(field => ({ ...field, file: item.file || file, structName: item.name })));
+  const field = fields.find(item => item.name === token.name && item.file === file
+    && Number(item.line) === token.line && Number(item.column) === token.column + 1);
+  if (field) return editorDefinitionLocation(field, field.name);
+
+  const declaration = (symbols.variables || []).find(item => item.name === token.name && item.file === file
+    && Number(item.line) === token.line && Number(item.column) === token.column + 1);
+  if (declaration) return editorDefinitionLocation(declaration, token.name);
+
+  const variables = await compiledVariablesForCurrentSource(file, source);
+  const atToken = location => (location.file || file) === file && Number(location.line) === token.line && Number(location.column) === token.column + 1;
+  const exactVariables = variables.filter(item => item.name === token.name
+    && [...(item.definitions || []), ...(item.references || [])].some(atToken));
+  const lineVariables = exactVariables.length ? exactVariables : variables.filter(item => item.name === token.name
+    && [...(item.definitions || []), ...(item.references || [])].some(location => (location.file || file) === file && Number(location.line) === token.line));
+  if (lineVariables.length === 1 && lineVariables[0].definitions?.length) {
+    return editorDefinitionLocation(lineVariables[0].definitions[0], token.name);
+  }
+  return null;
+}
+
+async function jumpToTokenDefinition(token) {
+  const location = await definitionLocationAtToken(token);
+  if (!location) {
+    setStatus('この位置の定義は見つかりません', 'warning');
+    return;
+  }
+  await jumpToLocation(location, location.symbol);
+}
+
+async function showEditorSymbolInfo(event, token) {
+  const requestId = ++variableTooltipRequestId;
+  hideVariableTooltip();
+  if (showGotoMenu(event)) return;
+  if (token && syntaxHints[token.name]) {
+    showSyntaxTooltip(event);
+    return;
+  }
+  try {
+    const shown = await showVariableTooltip(event, requestId);
+    if (requestId !== variableTooltipRequestId || shown) return;
+    const declared = await showDeclarationTooltip(event, requestId, token);
+    if (requestId === variableTooltipRequestId && !declared) showSyntaxTooltip(event);
+  } catch {
+    if (requestId !== variableTooltipRequestId) return;
+    try {
+      const declared = await showDeclarationTooltip(event, requestId, token);
+      if (requestId === variableTooltipRequestId && !declared) showSyntaxTooltip(event);
+    } catch {
+      if (requestId === variableTooltipRequestId) showSyntaxTooltip(event);
+    }
+  }
+}
+
+async function pasteEditorClipboard() {
+  if (editor.readOnly) return;
+  if (!navigator.clipboard?.readText) throw new Error('クリップボードの読み取りを利用できません');
+  const text = await navigator.clipboard.readText();
+  insertFormattedExternalText(text);
+}
+
+function showEditorContextMenu(event) {
+  closeFileContextMenu();
+  variableTooltipRequestId++;
+  hideVariableTooltip();
+  const token = sourceTokenAtEvent(event);
+  const gotoTarget = gotoAtEvent(event);
+  const selectionExists = editor.selectionStart !== editor.selectionEnd;
+  editorContextMenu.replaceChildren();
+
+  const addItem = (label, shortcut, action, disabled = false) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'editor-context-item';
+    button.setAttribute('role', 'menuitem');
+    button.disabled = disabled;
+    const title = document.createElement('span');
+    title.className = 'editor-context-label';
+    title.textContent = label;
+    button.append(title);
+    if (shortcut) {
+      const key = document.createElement('span');
+      key.className = 'editor-context-shortcut';
+      key.textContent = shortcut;
+      button.append(key);
+    }
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      if (button.disabled) return;
+      closeEditorContextMenu();
+      Promise.resolve().then(action).catch(showError);
+    });
+    editorContextMenu.append(button);
+  };
+  const addSeparator = () => editorContextMenu.append(Object.assign(document.createElement('span'), { className: 'editor-context-separator', role: 'separator' }));
+
+  let hasNavigation = false;
+  if (gotoTarget) {
+    addItem('移動先を開く', '', () => openScene(gotoTarget).catch(showError));
+    hasNavigation = true;
+  }
+  if (token) {
+    addItem('定義へ移動', 'F12', () => jumpToTokenDefinition(token).catch(showError));
+    addItem('シンボル情報を表示', '', () => showEditorSymbolInfo(event, token));
+    hasNavigation = true;
+  }
+  if (hasNavigation) addSeparator();
+  addItem('貼り付け', 'Ctrl+V', () => pasteEditorClipboard().catch(error => setStatus(error.message, 'warning')), editor.readOnly);
+  addSeparator();
+  addItem('すべて選択', 'Ctrl+A', () => { editor.focus(); editor.select(); });
+
+  editorContextMenu.style.left = '0px';
+  editorContextMenu.style.top = '0px';
+  editorContextMenu.hidden = false;
+  const bounds = editorContextMenu.getBoundingClientRect();
+  editorContextMenu.style.left = `${Math.max(6, Math.min(event.clientX, window.innerWidth - bounds.width - 6))}px`;
+  editorContextMenu.style.top = `${Math.max(6, Math.min(event.clientY, window.innerHeight - bounds.height - 6))}px`;
+  editorContextMenu.querySelector('button:not(:disabled)')?.focus();
+}
+
+editorContextMenu.addEventListener('keydown', event => {
+  const items = [...editorContextMenu.querySelectorAll('button:not(:disabled)')];
+  if (!items.length) return;
+  const current = items.indexOf(document.activeElement);
+  let next = null;
+  if (event.key === 'ArrowDown') next = (current + 1 + items.length) % items.length;
+  else if (event.key === 'ArrowUp') next = (current - 1 + items.length) % items.length;
+  else if (event.key === 'Home') next = 0;
+  else if (event.key === 'End') next = items.length - 1;
+  else if (event.key === 'Escape') {
+    event.preventDefault();
+    closeEditorContextMenu();
+    editor.focus();
+    return;
+  }
+  if (next !== null) {
+    event.preventDefault();
+    items[next].focus();
+  }
+});
+fileContextMenu.addEventListener('keydown', event => {
+  const items = [...fileContextMenu.querySelectorAll('button:not(:disabled)')];
+  if (!items.length) return;
+  const current = items.indexOf(document.activeElement);
+  let next = null;
+  if (event.key === 'ArrowDown') next = (current + 1 + items.length) % items.length;
+  else if (event.key === 'ArrowUp') next = (current - 1 + items.length) % items.length;
+  else if (event.key === 'Home') next = 0;
+  else if (event.key === 'End') next = items.length - 1;
+  else if (event.key === 'Escape') { event.preventDefault(); closeFileContextMenu(); return; }
+  if (next !== null) { event.preventDefault(); items[next].focus(); }
+});
+
 function clearLeftEditor() {
   activeSettingDocument = '';
   activeStandardLibraryDocument = '';
@@ -2629,29 +2834,12 @@ editor.addEventListener('beforeinput', (event) => {
 });
 editor.addEventListener('contextmenu', (event) => {
   event.preventDefault();
-  const requestId = ++variableTooltipRequestId;
-  hideVariableTooltip();
-  if (showGotoMenu(event)) return;
-  const hoveredToken = sourceTokenAtEvent(event);
-  if (hoveredToken && syntaxHints[hoveredToken.name]) { showSyntaxTooltip(event); return; }
-  // 変数の定義・参照メニューを最優先する。構文説明は変数として
-  // 解決できなかった語だけに表示し、変数の右クリックを奪わない。
-  if (showGotoMenu(event)) return;
-  showVariableTooltip(event, requestId).then((shown) => {
-    if (requestId !== variableTooltipRequestId || shown) return;
-    showDeclarationTooltip(event, requestId, hoveredToken).then((declared) => {
-      if (requestId === variableTooltipRequestId && !declared) showSyntaxTooltip(event);
-    }).catch(() => { if (requestId === variableTooltipRequestId) showSyntaxTooltip(event); });
-  }).catch(() => {
-    if (requestId !== variableTooltipRequestId) return;
-    showDeclarationTooltip(event, requestId, hoveredToken).then((declared) => {
-      if (requestId === variableTooltipRequestId && !declared) showSyntaxTooltip(event);
-    }).catch(() => { if (requestId === variableTooltipRequestId) showSyntaxTooltip(event); });
-  });
+  showEditorContextMenu(event);
 });
 document.addEventListener('click', (event) => {
-  if (!variableTooltip.contains(event.target)) hideVariableTooltip();
+  if (!variableTooltip.contains(event.target) && !editorContextMenu.contains(event.target)) hideVariableTooltip();
   if (!fileContextMenu.contains(event.target)) closeFileContextMenu();
+  if (!editorContextMenu.contains(event.target)) closeEditorContextMenu();
 });
 document.addEventListener('keydown', (event) => {
   const formatKey = event.code === 'KeyF' || event.key?.toLowerCase() === 'f';
@@ -2856,6 +3044,13 @@ minimap?.addEventListener('wheel', (event) => {
 }, { passive: false });
 editor.addEventListener('keydown', (event) => {
   if (event.isComposing || event.key === 'Process') return;
+  if (event.key === 'F12' && !event.shiftKey && !event.ctrlKey && !event.altKey) {
+    event.preventDefault();
+    const offset = editor.selectionStart;
+    const token = tokenAtSourceOffset(offset) || (offset > 0 ? tokenAtSourceOffset(offset - 1) : null);
+    if (token) jumpToTokenDefinition(token).catch(showError);
+    return;
+  }
   if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'z') {
     event.preventDefault();
     restoreEditorHistory(event.shiftKey ? redoStack : undoStack, event.shiftKey ? undoStack : redoStack);

@@ -243,3 +243,58 @@ scene main { wait 1 }
     await fs.rm(projectRoot, { recursive: true, force: true });
   }
 });
+
+test('std text and collection helpers are implemented in TDS and work in both runtimes', async (t) => {
+  const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-stdlib-data-'));
+  t.after(() => fs.rm(projectRoot, { recursive: true, force: true }));
+  seedEmptyProject(projectRoot);
+  const layout = projectLayout(projectRoot);
+  const source = `include "std/text.tds" as strings
+include "std/collections.tds" as collections
+global list[str] words = strings.split_words("  rain　 and   roses  ")
+global str joined = strings.join_words(words, "/")
+global int and_index = collections.index_of_str(words, "and")
+global list[str] existing_word = collections.append_unique_str(words, "and")
+global list[str] appended_word = collections.append_unique_str(words, "violet")
+global list[str] removed_words = collections.remove_all_str(["rain", "rose", "rain"], "rain")
+global list[str] no_words = strings.split_words(" 　   ")
+global str no_words_joined = strings.join_words(no_words, ",")
+scene main {
+  say narrator joined + ":" + str(and_index)
+}`;
+  const sourceFile = path.join(layout.scenesRoot, 'main.tds');
+  const packageFile = path.join(layout.buildRoot, 'text-collections.nsp.json');
+  await fs.writeFile(sourceFile, source, 'utf8');
+  const resolved = await resolveProjectScript(source, layout.scenesRoot, new Set(), 'main.tds');
+  assert.ok(resolved.functions.some(fn => fn.name === 'strings.split_words'));
+  assert.ok(resolved.functions.some(fn => fn.name === 'collections.remove_all_str'));
+  assert.deepEqual((await listStandardLibrary()).find(module => module.path === 'std/text.tds')?.functions.sort(), ['join_words', 'split_words']);
+  assert.deepEqual((await listStandardLibrary()).find(module => module.path === 'std/collections.tds')?.functions.sort(), ['append_unique_str', 'index_of_str', 'remove_all_str']);
+
+  const packaged = await pack(sourceFile, packageFile, { projectRoot });
+  const dialogue = [];
+  const browser = new Runtime({ command: async (name, args) => { if (name === 'say') dialogue.push(args[1]); } });
+  await browser.run(packaged.program);
+  assert.deepEqual(dialogue, ['rain/and/roses:1']);
+  assert.deepEqual(browser.get('words'), ['rain', 'and', 'roses']);
+  assert.deepEqual(browser.get('existing_word'), ['rain', 'and', 'roses']);
+  assert.deepEqual(browser.get('appended_word'), ['rain', 'and', 'roses', 'violet']);
+  assert.deepEqual(browser.get('removed_words'), ['rose']);
+  assert.deepEqual(browser.get('no_words'), []);
+  assert.equal(browser.get('no_words_joined'), '');
+
+  const native = process.env.NOVEL_NATIVE_EXE || path.resolve(__dirname, '../native/build/Release/novel_player.exe');
+  try {
+    await fs.access(native);
+    const result = spawnSync(native, [packageFile, '--headless'], { encoding: 'utf8', timeout: 15000 });
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+    const globals = JSON.parse(result.stdout).globals;
+    assert.deepEqual(globals.words, browser.get('words'));
+    assert.deepEqual(globals.appended_word, browser.get('appended_word'));
+    assert.deepEqual(globals.removed_words, browser.get('removed_words'));
+    assert.deepEqual(globals.no_words, []);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    t.diagnostic('Native parity skipped because the Native player has not been built');
+  }
+});

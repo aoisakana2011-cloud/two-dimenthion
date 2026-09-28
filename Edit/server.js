@@ -1315,6 +1315,46 @@ async function editorSymbols(source, name = '') {
   const sourceName = sceneName(name) || 'current';
   const script = await resolveProjectScript(source, SCENES_ROOT, new Set(), sourceName);
   const variables = [];
+  const declaredLists = new Map();
+  const indexListDeclarations = (statements = []) => {
+    for (const statement of statements) {
+      if (statement.kind === 'declare' && statement.type?.kind === 'list') {
+        if (!declaredLists.has(statement.name)) declaredLists.set(statement.name, new Set());
+        declaredLists.get(statement.name).add(statement.type.value);
+      }
+      if (statement.kind === 'if') { indexListDeclarations(statement.body); statement.elseIf.forEach((branch) => indexListDeclarations(branch.body)); indexListDeclarations(statement.otherwise); }
+      else if (statement.kind === 'choice') statement.options.forEach((option) => indexListDeclarations(option.body));
+      else if (statement.kind === 'for' || statement.kind === 'forEach' || statement.kind === 'while') indexListDeclarations(statement.body);
+    }
+  };
+  indexListDeclarations(script.globals);
+  for (const fn of script.functions) {
+    for (const parameter of fn.params || []) if (parameter.type?.kind === 'list') {
+      if (!declaredLists.has(parameter.name)) declaredLists.set(parameter.name, new Set());
+      declaredLists.get(parameter.name).add(parameter.type.value);
+    }
+    indexListDeclarations(fn.body);
+  }
+  for (const scene of script.scenes) indexListDeclarations(scene.body);
+  const loopElementType = (expression) => {
+    if (!expression) return 'unknown';
+    if (expression.kind === 'list') {
+      const item = expression.items[0];
+      return !item ? 'unknown' : item.kind === 'float' ? 'float' : item.kind === 'literal'
+        ? typeof item.value === 'string' ? 'str' : typeof item.value === 'boolean' ? 'bool' : 'int' : 'unknown';
+    }
+    if (expression.kind === 'call') {
+      if (expression.name === 'text.split') return 'str';
+      if (expression.name === 'list.append') return loopElementType(expression.args[0]);
+      const fn = script.functions.find((item) => item.name === expression.name);
+      if (fn?.returnType?.kind === 'list') return fn.returnType.value;
+    }
+    if (expression.kind === 'variable') {
+      const types = declaredLists.get(expression.name);
+      if (types?.size === 1) return [...types][0];
+    }
+    return 'unknown';
+  };
   const visit = (statements, scope, container) => {
     for (const statement of statements || []) {
       if (statement.kind === 'declare') variables.push({
@@ -1324,6 +1364,9 @@ async function editorSymbols(source, name = '') {
       });
       else if (statement.kind === 'for') {
         variables.push({ name: statement.name, type: 'int', constant: true, scope: 'loop', container, line: statement.nameLine || statement.line, column: statement.nameColumn || statement.column, file: statement.file || sourceName });
+        visit(statement.body, scope, container);
+      } else if (statement.kind === 'forEach') {
+        variables.push({ name: statement.name, type: loopElementType(statement.iterable), constant: true, scope: 'loop', container, line: statement.nameLine || statement.line, column: statement.nameColumn || statement.column, file: statement.file || sourceName });
         visit(statement.body, scope, container);
       } else if (statement.kind === 'if') {
         visit(statement.body, scope, container);

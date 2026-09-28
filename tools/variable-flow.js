@@ -1,11 +1,16 @@
 'use strict';
 const { sceneFile } = require('./project');
+const { isPureBuiltin } = require('../dist/language/builtins');
 
 function constant(expr, constants = new Map()) {
   if (!expr) return undefined;
   if (expr.kind === 'integer') return BigInt(expr.value);
   if (expr.kind === 'literal') return typeof expr.value === 'number' ? BigInt(expr.value) : expr.value;
   if (expr.kind === 'load') return constants.get(expr.name);
+  if (expr.kind === 'list') {
+    const items = expr.items.map((item) => constant(item, constants));
+    return items.every((value) => value !== undefined) ? items : undefined;
+  }
   if (expr.kind === 'call') {
     const argument = expr.args.length === 1 ? constant(expr.args[0], constants) : undefined;
     if (expr.name === 'str' && typeof argument === 'bigint') return String(argument);
@@ -85,6 +90,11 @@ function nestedStringValues(expr, state, callResults = new Map(), dictionaryResu
     for (const entry of expr.entries) for (const value of nestedStringValues(entry.value, state, callResults, dictionaryResults)) values.add(value);
     return values;
   }
+  if (expr.kind === 'list') {
+    const values = new Set();
+    for (const item of expr.items) for (const value of nestedStringValues(item, state, callResults, dictionaryResults)) values.add(value);
+    return values;
+  }
   if (expr.kind === 'binary' && expr.operator === '+') return possibleStringValues(expr, state, callResults);
   if (expr.kind === 'call') {
     const values = new Set();
@@ -145,6 +155,43 @@ function dictionaryClosedForExpression(expr, state, closedResults = new Map()) {
   return undefined;
 }
 
+function builtinResult(name, facts) {
+  const values = (index) => [...(facts[index]?.strings || [])];
+  const product = (arrays, visit) => {
+    if (arrays.some((items) => !items.length)) return;
+    const walk = (index, current) => {
+      if (index === arrays.length) { visit(current); return; }
+      for (const item of arrays[index]) walk(index + 1, [...current, item]);
+    };
+    walk(0, []);
+  };
+  const result = { strings: [], dictionaries: [], aliases: [], dictionaryKeys: undefined, dictionaryClosed: undefined };
+  if (name === 'text.trim' || name === 'text.normalize_space') {
+    product([values(0)], ([value]) => {
+      const trimmed = name === 'text.trim'
+        ? value.replace(/^[ \t\n\r\f\v\u00a0\u3000]+|[ \t\n\r\f\v\u00a0\u3000]+$/gu, '')
+        : value.replace(/[ \t\n\r\f\v\u00a0\u3000]+/gu, ' ').replace(/^ | $/g, '');
+      result.strings.push(trimmed);
+    });
+  } else if (name === 'text.split') {
+    product([values(0), values(1)], ([value, separator]) => {
+      if (separator) result.dictionaries.push(...value.split(separator));
+    });
+  } else if (name === 'text.replace') {
+    product([values(0), values(1), values(2)], ([value, search, replacement]) => {
+      if (search) result.strings.push(value.split(search).join(replacement));
+    });
+  } else if (name === 'list.append') {
+    result.dictionaries.push(...(facts[0]?.dictionaries || []), ...(facts[1]?.strings || []));
+  } else if (name === 'str' && facts[0]?.constant !== undefined) {
+    const value = facts[0].constant;
+    if (typeof value === 'string' || typeof value === 'bigint' || typeof value === 'number' || typeof value === 'boolean') result.strings.push(String(value));
+  }
+  result.strings = [...new Set(result.strings)];
+  result.dictionaries = [...new Set(result.dictionaries)];
+  return result;
+}
+
 // Follow executable instructions, preserving the definitions at each transfer.
 // Declarations after a goto/return must never initialize its destination.
 function validateVariableFlow(files, entry) {
@@ -176,7 +223,7 @@ function validateVariableFlow(files, entry) {
   ];
   while (pending.length) {
     const current = pending.pop();
-    const key = JSON.stringify([current.file, current.scene, stateKey(current)]);
+    const key = JSON.stringify([current.file, current.scene, stateKey(current)], (_name, value) => typeof value === 'bigint' ? `#int:${value}` : value);
     if (visited.has(key)) continue;
     visited.add(key);
     const program = files[current.file];
@@ -335,6 +382,7 @@ function validateVariableFlow(files, entry) {
         if (!((expr.operator === 'and' && left === false) || (expr.operator === 'or' && left === true))) append(expression(expr.right, state, callResults, dictionaryResults, aliasResults, true, keyResults, closedResults));
       }
       if (expr.kind === 'unary') append(expression(expr.value, state, callResults, dictionaryResults, aliasResults, true, keyResults, closedResults));
+      if (expr.kind === 'list') expr.items.forEach(item => append(expression(item, state, callResults, dictionaryResults, aliasResults, true, keyResults, closedResults)));
       if (expr.kind === 'index') {
         append(expression(expr.target, state, callResults, dictionaryResults, aliasResults, true, keyResults, closedResults));
         append(expression(expr.key, state, callResults, dictionaryResults, aliasResults, true, keyResults, closedResults));
@@ -358,7 +406,7 @@ function validateVariableFlow(files, entry) {
             dictionaryClosed: dictionaryClosedForExpression(arg, state, closedResults),
           });
         }
-        const result = invoke(expr.name, state, argumentFacts);
+        const result = isPureBuiltin(expr.name) ? builtinResult(expr.name, argumentFacts) : invoke(expr.name, state, argumentFacts);
         callResults.set(expr, result.strings);
         dictionaryResults.set(expr, result.dictionaries);
         aliasResults.set(expr, result.aliases);
@@ -469,6 +517,32 @@ function validateVariableFlow(files, entry) {
                 next.push({ defined: result.defined, locals: new Set(state.locals), constants: new Map(state.constants), strings, possibleStrings, possibleDictionaries, dictionaryAliases, dictionaryKeys, dictionaryClosed, writes: new Map(result.writes) });
               }
             }
+            continue;
+          } else if (c.op === 'forEach') {
+            const callResults = new Map(), dictionaryResults = new Map(), aliasResults = new Map(), keyResults = new Map(), closedResults = new Map();
+            expression(c.iterable, state, callResults, dictionaryResults, aliasResults, true, keyResults, closedResults);
+            const bodyState = clone(state);
+            bodyState.locals.add(c.name);
+            const itemStrings = nestedStringValues(c.iterable, state, callResults, dictionaryResults);
+            if (itemStrings.size) bodyState.possibleStrings.set(c.name, itemStrings);
+            else bodyState.possibleStrings.delete(c.name);
+            if (itemStrings.size === 1) bodyState.strings.set(c.name, [...itemStrings][0]);
+            else bodyState.strings.delete(c.name);
+            for (const result of walk(c.body, [bodyState], globalScope, returned, terminals, returnedDictionaries, returnedAliases, returnedDictionaryKeys, returnedDictionaryClosed)) {
+              const restore = (target, source) => {
+                for (const mapName of ['constants', 'strings', 'possibleStrings', 'possibleDictionaries', 'dictionaryAliases', 'dictionaryKeys', 'dictionaryClosed', 'writes']) {
+                  const map = result[mapName], prior = state[mapName];
+                  if (prior.has(c.name)) {
+                    const value = prior.get(c.name);
+                    map.set(c.name, value instanceof Set ? new Set(value) : value instanceof Map ? new Map(value) : value);
+                  } else map.delete(c.name);
+                }
+                if (state.locals.has(c.name)) result.locals.add(c.name); else result.locals.delete(c.name);
+              };
+              restore(result, state);
+              next.push(result);
+            }
+            next.push(state); // A list can be empty, so preserve the zero-iteration path.
             continue;
           } else if (c.op === 'for' || c.op === 'while') {
             expression(c.condition, state); expression(c.start, state); expression(c.stop, state); expression(c.step, state);

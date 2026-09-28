@@ -792,3 +792,45 @@ global int score = maybe(1)
 scene main { say narrator "target {score}" }`;
   assert.equal(at(source).score.kind, 'exact');
 });
+
+test('test-start value domains evaluate typed-list and text intrinsics', () => {
+  const source = `global list[int] values = [2, 4]
+global list[int] extended = list.append(values, 6)
+global int size = list.length(extended)
+global bool hasFour = list.contains(extended, 4)
+global list[str] fields = text.split(",a,,b,", ",")
+global str normalized = text.normalize_space("  a\t\u00a0b　 ")
+scene main { say narrator "target" }`;
+  const actual = analyzeStartDomains(parse(source), 'main', 1, ['extended', 'size', 'hasFour', 'fields', 'normalized']);
+  assert.deepEqual(actual.extended, { kind: 'exact', values: ['["2","4","6"]'] });
+  assert.deepEqual(actual.size, { kind: 'exact', values: ['3'] });
+  assert.deepEqual(actual.hasFour, { kind: 'exact', values: ['true'] });
+  assert.deepEqual(actual.fields, { kind: 'exact', values: ['["","a","","b",""]'] });
+  assert.deepEqual(actual.normalized, { kind: 'exact', values: ['a b'] });
+});
+
+test('for-in binds exact item values and preceding iterations at a selected line', () => {
+  const source = `global list[int] scores = [1, 2]
+global int total = 0
+scene main {
+  for score in scores {
+    set total = total + score
+    say narrator "target {score}"
+  }
+}`;
+  const actual = at(source, 'target', ['score', 'total']);
+  assert.deepEqual(actual.score, { kind: 'finite', values: ['1', '2'] });
+  assert.deepEqual(actual.total, { kind: 'finite', values: ['1', '3'] });
+});
+
+test('for-in inside a function computes exact list reductions without leaking locals', () => {
+  const source = `global list[int] scores = [1, 2, 3]
+fn sum(values: list[int]) -> int {
+  int result = 0
+  for item in values { set result = result + item }
+  return result
+}
+global int total = sum(scores)
+scene main { say narrator "target {total}" }`;
+  assert.deepEqual(at(source, 'target', ['total']).total, { kind: 'exact', values: ['6'] });
+});

@@ -2,7 +2,7 @@ import { Lexer, Token } from './lexer';
 import { Asset, AssetKind, Character, Condition, Expr, FunctionDef, Include, NodeLocation, PrimitiveType, Scene, Script, Statement, StructDef, ValueType } from './ast';
 
 const ASSET_TYPES = new Set<AssetKind>(['bg', 'char', 'bgm', 'se', 'voice', 'video', 'image']);
-const TYPES = new Set(['int', 'float', 'str', 'none']);
+const TYPES = new Set(['int', 'float', 'str', 'bool', 'none']);
 const PRECEDENCE: Record<string, number> = {
   or: 10,
   and: 20,
@@ -12,7 +12,7 @@ const PRECEDENCE: Record<string, number> = {
 };
 
 const KEYWORDS = new Set([
-  'scene', 'asset', 'character', 'struct', 'pose', 'include', 'int', 'float', 'str', 'dict', 'none', 'global', 'const', 'let',
+  'scene', 'asset', 'character', 'struct', 'pose', 'include', 'int', 'float', 'str', 'bool', 'list', 'dict', 'none', 'global', 'const', 'let', 'true', 'false',
   'set', 'unset', 'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'image', 'clear', 'play', 'se', 'effect', 'wait',
   'if', 'elif', 'else', 'and', 'or', 'not', 'choice', 'for', 'from', 'to', 'step', 'while',
   'fn', 'return', 'goto', 'async', 'blocking', 'voice', 'video',
@@ -175,7 +175,7 @@ export class Parser {
       const fieldToken = this.current;
       const field = this.expectIdentifier('Expected field name'); this.expect(':');
       const type = this.expectWord('Expected field type') as PrimitiveType;
-      if (type !== 'int' && type !== 'float' && type !== 'str') throw this.error('Struct fields must be int, float or str');
+      if (type !== 'int' && type !== 'float' && type !== 'str' && type !== 'bool') throw this.error('Struct fields must be int, float, str or bool');
       if (fields[field]) throw this.error(`Duplicate struct field '${field}'`);
       fields[field] = type; fieldLocations[field] = { line: fieldToken.line, column: fieldToken.column }; this.endLine(); this.skipLines();
     }
@@ -214,12 +214,12 @@ export class Parser {
 
   private parseType(allowNone: boolean): ValueType {
     const word = this.expectWord('Expected type');
-    if (word === 'dict') {
+    if (word === 'dict' || word === 'list') {
       this.expect('[');
-      const value = this.expectWord('Expected dictionary value type') as PrimitiveType;
-      if (value !== 'int' && value !== 'float' && value !== 'str') throw this.error('Dictionary value type must be int, float or str');
+      const value = this.expectWord(`Expected ${word} element type`) as PrimitiveType;
+      if (!['int', 'float', 'str', 'bool'].includes(value)) throw this.error(`${word} element type must be int, float, str or bool`);
       this.expect(']');
-      return { kind: 'dict', value };
+      return { kind: word, value };
     }
     if (TYPES.has(word) && (allowNone || word !== 'none')) return word as ValueType;
     if (this.declaredStructs.has(word)) return { kind: 'struct', name: word };
@@ -241,7 +241,9 @@ export class Parser {
     return hasQualifier && this.peekToken(offset).value === '(';
   }
   private parseQualifiedCallName(): string {
-    const parts = [this.expectIdentifier('Expected function name')];
+    const first = this.expect('word', 'Expected function name');
+    if (KEYWORDS.has(first.value) && first.value !== 'list') throw new ParseError(`予約語 '${first.value}' は関数名として使用できません`, first);
+    const parts = [first.value];
     while (this.optional('.')) parts.push(this.expectIdentifier('Expected qualified function name'));
     return parts.join('.');
   }
@@ -270,18 +272,15 @@ export class Parser {
         if (declaration.kind !== 'declare') throw this.error('global の後には変数宣言が必要です');
         return { ...declaration, global: true, line: token.line, column: token.column };
       }
-      case 'const': case 'int': case 'float': case 'str': case 'dict': {
-        this.take();
+      case 'const': case 'int': case 'float': case 'str': case 'bool': case 'dict': case 'list': {
         let type: ValueType | 'infer';
         if (command === 'const') {
+          this.take();
           type = this.parseType(false);
-        } else if (command === 'dict') {
-          this.expect('[');
-          const value = this.expectWord('Expected dictionary value type') as PrimitiveType;
-          if (value !== 'int' && value !== 'float' && value !== 'str') throw this.error('Dictionary value type must be int, float or str');
-          this.expect(']');
-          type = { kind: 'dict', value };
+        } else if (command === 'dict' || command === 'list') {
+          type = this.parseType(false);
         } else {
+          this.take();
           type = command as PrimitiveType;
         }
         const nameToken = this.current;
@@ -328,6 +327,12 @@ export class Parser {
         this.take();
         const nameToken = this.current;
         const name = this.expectIdentifier('Expected loop variable');
+        if (this.atWord('in')) {
+          this.take();
+          const iterable = this.parseExpression();
+          const body = this.parseBraced();
+          return { kind: 'forEach', name, nameLine: nameToken.line, nameColumn: nameToken.column, iterable, body, line: token.line, column: token.column, endLine: this.lastBlockEndLine, endColumn: this.lastBlockEndColumn };
+        }
         this.expectWordValue('from');
         const start = this.parseExpression();
         this.expectWordValue('to');
@@ -529,7 +534,22 @@ export class Parser {
 
     let expr: Expr;
     const token = this.current;
-    if (token.type === 'number') {
+    if (this.atWord('true') || this.atWord('false')) {
+      this.take();
+      expr = { kind: 'literal', value: token.value === 'true', line: token.line, column: token.column };
+    } else if (this.atValue('[')) {
+      this.take();
+      const items: Expr[] = [];
+      if (!this.atValue(']')) {
+        items.push(this.parseExpression());
+        while (this.optional(',')) {
+          if (this.atValue(']')) break;
+          items.push(this.parseExpression());
+        }
+      }
+      this.expect(']');
+      expr = { kind: 'list', items, line: token.line, column: token.column };
+    } else if (token.type === 'number') {
       this.take();
       if (/[.eE]/.test(token.value)) {
         if (!Number.isFinite(Number(token.value))) throw new ParseError('float literal must be finite', token);
@@ -635,7 +655,7 @@ export class Parser {
   }
 
   private isBlockStatement(stmt: Statement): boolean {
-    return stmt.kind === 'if' || stmt.kind === 'for' || stmt.kind === 'while' || stmt.kind === 'choice';
+    return stmt.kind === 'if' || stmt.kind === 'for' || stmt.kind === 'forEach' || stmt.kind === 'while' || stmt.kind === 'choice';
   }
 
   private endStatement(stmt: Statement): void {
@@ -717,7 +737,7 @@ export class Parser {
   }
 }
 
-const literal = (value: number | string | bigint): Expr => ({ kind: 'literal', value });
+const literal = (value: number | string | bigint | boolean): Expr => ({ kind: 'literal', value });
 export function parse(source: string, knownStructs: Iterable<string> = []): Script {
   return new Parser(source, knownStructs).parse();
 }

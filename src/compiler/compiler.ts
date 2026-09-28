@@ -1,16 +1,19 @@
 import { Asset, Character, Expr, ExternalCharacter, FunctionDef, Script, Statement, ValueType } from '../parser';
 import { assertAnalyzed } from '../checker/analyzer';
+import { inferValueType } from '../checker/type-checker';
+import { isPureBuiltin } from '../language/builtins';
 
 export type CompiledExpr =
   | { kind: 'integer'; value: string }
   | { kind: 'float'; value: string }
-  | { kind: 'literal'; value: number | string | bigint }
+  | { kind: 'literal'; value: number | string | bigint | boolean }
   | { kind: 'load'; name: string }
   | { kind: 'index'; target: CompiledExpr; key: CompiledExpr }
   | { kind: 'binary'; operator: string; left: CompiledExpr; right: CompiledExpr }
   | { kind: 'unary'; operator: string; value: CompiledExpr }
   | { kind: 'call'; name: string; args: CompiledExpr[] }
-  | { kind: 'dict'; entries: Array<{ key: string; value: CompiledExpr }> };
+  | { kind: 'dict'; entries: Array<{ key: string; value: CompiledExpr }> }
+  | { kind: 'list'; items: CompiledExpr[] };
 
 export type Instruction = (
   | { op: 'declare'; type: ValueType; name: string; initial?: CompiledExpr; constant?: boolean }
@@ -19,6 +22,7 @@ export type Instruction = (
   | { op: 'command'; name: string; args: CompiledExpr[] }
   | { op: 'if'; condition: CompiledExpr; body: Instruction[]; elseIf: Array<{ condition: CompiledExpr; body: Instruction[] }>; otherwise: Instruction[] }
   | { op: 'for'; name: string; start: CompiledExpr; stop: CompiledExpr; step: CompiledExpr; body: Instruction[] }
+  | { op: 'forEach'; name: string; iterable: CompiledExpr; body: Instruction[] }
   | { op: 'while'; condition: CompiledExpr; body: Instruction[] }
   | { op: 'choice'; prompt?: CompiledExpr; options: Array<{ label: CompiledExpr; body: Instruction[] }> }
   | { op: 'function'; name: string; returnType: ValueType; params: Array<{ type: ValueType; name: string }>; body: Instruction[] }
@@ -476,11 +480,12 @@ function compiledForConstraints(
 function hasImpureCall(expression: CompiledExpr | undefined): boolean {
   if (!expression) return false;
   if (expression.kind === 'literal') return typeof expression.value === 'string' && hasInterpolation(expression.value);
-  if (expression.kind === 'call') return !['str', 'int', 'float'].includes(expression.name) || expression.args.some(hasImpureCall);
+  if (expression.kind === 'call') return !isPureBuiltin(expression.name) || expression.args.some(hasImpureCall);
   if (expression.kind === 'binary') return hasImpureCall(expression.left) || hasImpureCall(expression.right);
   if (expression.kind === 'unary') return hasImpureCall(expression.value);
   if (expression.kind === 'index') return hasImpureCall(expression.target) || hasImpureCall(expression.key);
   if (expression.kind === 'dict') return expression.entries.some((entry) => hasImpureCall(entry.value));
+  if (expression.kind === 'list') return expression.items.some(hasImpureCall);
   return false;
 }
 
@@ -504,6 +509,8 @@ function foldExpression(expression: CompiledExpr | undefined, constants: Map<str
         ? { ...expression, target: foldExpression(expression.target, environment)!, key: foldExpression(expression.key, environment)! }
         : expression.kind === 'dict'
           ? { ...expression, entries: expression.entries.map((entry) => ({ ...entry, value: foldExpression(entry.value, environment)! })) }
+          : expression.kind === 'list'
+            ? { ...expression, items: expression.items.map((item) => foldExpression(item, environment)!) }
           : expression.kind === 'call'
             ? { ...expression, args: expression.args.map((argument) => foldExpression(argument, environment)!) }
             : expression;
@@ -559,7 +566,7 @@ function declarationsInScope(instructions: Instruction[], result = new Set<strin
       instruction.elseIf.forEach((branch) => declarationsInScope(branch.body, result));
       declarationsInScope(instruction.otherwise, result);
     }
-    if (instruction.op === 'for' || instruction.op === 'while') declarationsInScope(instruction.body, result);
+    if (instruction.op === 'for' || instruction.op === 'forEach' || instruction.op === 'while') declarationsInScope(instruction.body, result);
     // A nested choice pushes another runtime frame, so its declarations do
     // not belong to the surrounding choice option's scope.
   }
@@ -602,6 +609,7 @@ function visitExpressionCalls(expression: CompiledExpr | undefined, visit: (name
   if (expression.kind === 'unary') visitExpressionCalls(expression.value, visit);
   if (expression.kind === 'index') { visitExpressionCalls(expression.target, visit); visitExpressionCalls(expression.key, visit); }
   if (expression.kind === 'dict') expression.entries.forEach((entry) => visitExpressionCalls(entry.value, visit));
+  if (expression.kind === 'list') expression.items.forEach((item) => visitExpressionCalls(item, visit));
 }
 
 function visitExpressionCallsInExecution(
@@ -638,6 +646,7 @@ function visitExpressionCallsInExecution(
     visitExpressionCallsInExecution(expression.key, constants, constraints, locals, visit);
   }
   if (expression.kind === 'dict') expression.entries.forEach((entry) => visitExpressionCallsInExecution(entry.value, constants, constraints, locals, visit));
+  if (expression.kind === 'list') expression.items.forEach((item) => visitExpressionCallsInExecution(item, constants, constraints, locals, visit));
 }
 
 function writtenVariables(instructions: Instruction[], effects: Map<string, Set<string>>, result = new Set<string>()): Set<string> {
@@ -676,6 +685,11 @@ function writtenVariables(instructions: Instruction[], effects: Map<string, Set<
       visitCalls(instruction.start); visitCalls(instruction.stop); visitCalls(instruction.step);
       writtenVariables(instruction.body, effects, result);
     }
+    if (instruction.op === 'forEach') {
+      result.add(instruction.name);
+      visitCalls(instruction.iterable);
+      writtenVariables(instruction.body, effects, result);
+    }
     if (instruction.op === 'while') {
       visitCalls(instruction.condition);
       writtenVariables(instruction.body, effects, result);
@@ -691,7 +705,7 @@ function writtenVariables(instructions: Instruction[], effects: Map<string, Set<
 function functionWrites(functions: Instruction[], globalNames: Set<string>): Map<string, Set<string>> {
   const direct = new Map<string, Set<string>>(), calls = new Map<string, Set<string>>();
   const walk = (instructions: Instruction[], writes: Set<string>, invoked: Set<string>, locals = new Set<string>()): void => {
-    const recordCall = (name: string) => { if (name === '*') globalNames.forEach((variable) => writes.add(variable)); else invoked.add(name); };
+    const recordCall = (name: string) => { if (name === '*') globalNames.forEach((variable) => writes.add(variable)); else if (!isPureBuiltin(name)) invoked.add(name); };
     for (const instruction of instructions) {
       if (instruction.op === 'declare') {
         visitExpressionCalls(instruction.initial, recordCall);
@@ -710,6 +724,7 @@ function functionWrites(functions: Instruction[], globalNames: Set<string>): Map
         walk(instruction.otherwise, writes, invoked, new Set(locals));
       }
       if (instruction.op === 'for') { visitExpressionCalls(instruction.start, recordCall); visitExpressionCalls(instruction.stop, recordCall); visitExpressionCalls(instruction.step, recordCall); const bodyLocals = new Set(locals); bodyLocals.add(instruction.name); walk(instruction.body, writes, invoked, bodyLocals); }
+      if (instruction.op === 'forEach') { visitExpressionCalls(instruction.iterable, recordCall); const bodyLocals = new Set(locals); bodyLocals.add(instruction.name); walk(instruction.body, writes, invoked, bodyLocals); }
       if (instruction.op === 'while') { visitExpressionCalls(instruction.condition, recordCall); walk(instruction.body, writes, invoked, new Set(locals)); }
       if (instruction.op === 'choice') { visitExpressionCalls(instruction.prompt, recordCall); instruction.options.forEach((option) => { visitExpressionCalls(option.label, recordCall); walk(option.body, writes, invoked, new Set(locals)); }); }
     }
@@ -776,6 +791,7 @@ function optimizeInstructions(
       if (item.op === 'return') invalidateExpression(item.value);
       if (item.op === 'if') { invalidateExpression(item.condition); invalidateAssigned(item.body); item.elseIf.forEach((branch) => { invalidateExpression(branch.condition); invalidateAssigned(branch.body); }); invalidateAssigned(item.otherwise); }
       if (item.op === 'for') { invalidateExpression(item.start); invalidateExpression(item.stop); invalidateExpression(item.step); invalidateAssigned(item.body); }
+      if (item.op === 'forEach') { invalidateExpression(item.iterable); invalidateAssigned(item.body); }
       if (item.op === 'while') { invalidateExpression(item.condition); invalidateAssigned(item.body); }
       if (item.op === 'choice') { invalidateExpression(item.prompt); item.options.forEach((option) => { invalidateExpression(option.label); invalidateAssigned(option.body); }); }
     }
@@ -919,7 +935,7 @@ function optimizeInstructions(
       invalidateConstraintsFor([instruction]);
       continue;
     }
-    if (instruction.op === 'for' || instruction.op === 'while') {
+    if (instruction.op === 'for' || instruction.op === 'forEach' || instruction.op === 'while') {
       if (instruction.op === 'for') {
         const [start, stop, step] = foldArguments([instruction.start, instruction.stop, instruction.step], constants);
         invalidateExpression(start); invalidateExpression(stop); invalidateExpression(step);
@@ -934,6 +950,17 @@ function optimizeInstructions(
         const optimized: Instruction = { ...instruction, start, stop, step, body: optimizeInstructions(instruction.body, effects, loopConstants, options, constraintLocals, loopConstraints) };
         output.push(optimized);
         if (definitelyTerminates(optimized, constants)) break;
+        continue;
+      }
+      if (instruction.op === 'forEach') {
+        const iterable = foldExpression(instruction.iterable, constants)!;
+        invalidateExpression(iterable);
+        invalidateAssigned(instruction.body);
+        const loopConstants = new Map(constants);
+        loopConstants.delete(instruction.name);
+        const loopLocals = new Set(locals || []);
+        loopLocals.add(instruction.name);
+        output.push({ ...instruction, iterable, body: optimizeInstructions(instruction.body, effects, loopConstants, options, loopLocals, undefined) });
         continue;
       }
       const condition = foldExpression(instruction.condition, constants)!;
@@ -1077,6 +1104,7 @@ class Compiler {
       if (e.kind === 'unary') ref(e.value, bindings, loc);
       if (e.kind === 'index') { ref(e.target, bindings, loc); ref(e.key, bindings, loc); }
       if (e.kind === 'dict') e.entries.forEach(x => ref(x.value, bindings, loc));
+      if (e.kind === 'list') e.items.forEach(x => ref(x, bindings, loc));
       if (e.kind === 'call') e.args.forEach(x => ref(x, bindings, loc));
     };
       const mergeBranchBindings = (bindings: Bindings, paths: Bindings[]): void => {
@@ -1164,6 +1192,14 @@ class Compiler {
             for (const [name, entry] of child) if (name !== s.name) bindings.set(name, entry);
           }
         }
+        if (s.kind === 'forEach') {
+          ref(s.iterable, bindings, loc);
+          const child = new Map(bindings), at: VariableLocation = { scope: 'local', container: `${loc.container}:forEach${++scopeId}`, line: s.nameLine, column: s.nameColumn, kind: 'definition' };
+          const visibleTypes = new Map([...bindings].map(([name, entry]) => [name, entry.type]));
+          const iterableType = inferValueType(s.iterable, visibleTypes, script.functions);
+          if (typeof iterableType === 'string' || iterableType.kind !== 'list') throw new CompileError('for-in iterable lost its checked list type');
+          declare(s.name, iterableType.value, child, at); walk(s.body, child, at, child, declarationLoc);
+        }
         if (s.kind === 'choice') {
           if (s.prompt) ref(s.prompt, bindings, loc);
           s.options.forEach(o => { ref(o.label, bindings, loc); walk(o.body, new Map(bindings), { scope: 'local', container: `${loc.container}:choice${++scopeId}` }); });
@@ -1218,6 +1254,7 @@ class Compiler {
         step: this.expr(statement.step),
         body: this.statements(statement.body),
       };
+      case 'forEach': return { op: 'forEach', name: statement.name, iterable: this.expr(statement.iterable), body: this.statements(statement.body) };
       case 'while': return { op: 'while', condition: this.expr(statement.condition.expression), body: this.statements(statement.body) };
       case 'choice': return {
         op: 'choice',
@@ -1244,6 +1281,7 @@ class Compiler {
       case 'unary': return { kind: 'unary', operator: expression.operator, value: this.expr(expression.value) };
       case 'call': return { kind: 'call', name: expression.name, args: expression.args.map((v) => this.expr(v)) };
       case 'dict': return { kind: 'dict', entries: expression.entries.map((entry) => ({ key: entry.key, value: this.expr(entry.value) })) };
+      case 'list': return { kind: 'list', items: expression.items.map(item => this.expr(item)) };
     }
   }
 }

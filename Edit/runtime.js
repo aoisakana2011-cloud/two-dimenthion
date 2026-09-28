@@ -4,7 +4,7 @@
   const own = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
   function copy(value) {
     if (!value || typeof value !== 'object') return value;
-    const result = Object.create(null);
+    const result = Array.isArray(value) ? [] : Object.create(null);
     for (const key of Object.keys(value)) result[key] = copy(value[key]);
     return result;
   }
@@ -42,8 +42,20 @@
     if (type === 'int') return typeof value === 'bigint';
     if (type === 'float') return typeof value === 'number' && Number.isFinite(value);
     if (type === 'str') return typeof value === 'string';
-    if (type && type.kind === 'struct') return value && typeof value === 'object';
-    return value && typeof value === 'object' && typeof type === 'object' && Object.values(value).every(v => matches(v, type.value));
+    if (type === 'bool') return typeof value === 'boolean';
+    if (type && type.kind === 'struct') return value && typeof value === 'object' && !Array.isArray(value);
+    if (type && type.kind === 'list') return Array.isArray(value) && value.every(v => matches(v, type.value));
+    return value && typeof value === 'object' && !Array.isArray(value) && typeof type === 'object' && type.kind === 'dict' && Object.values(value).every(v => matches(v, type.value));
+  }
+  function trimDataSpace(value) { return value.replace(/^[ \t\n\r\f\v\u00a0\u3000]+|[ \t\n\r\f\v\u00a0\u3000]+$/gu, ''); }
+  function normalizeDataSpace(value) { return trimDataSpace(value.replace(/[ \t\n\r\f\v\u00a0\u3000]+/gu, ' ')); }
+  function splitText(value, separator) {
+    if (!separator.length) throw Error('text.split separator must not be empty');
+    return value.split(separator);
+  }
+  function replaceText(value, search, replacement) {
+    if (!search.length) throw Error('text.replace search must not be empty');
+    return value.split(search).join(replacement);
   }
   const DEFAULT_SLOTS = ['far_left', 'left', 'center', 'right', 'far_right'];
   const MAX_TIME_MS = 2147483647;
@@ -255,11 +267,11 @@
       const bodies = instruction.op === 'if'
         ? [instruction.body, ...instruction.elseIf.map((branch) => branch.body), instruction.otherwise]
         : instruction.op === 'choice' ? instruction.options.map((option) => option.body)
-          : instruction.op === 'for' || instruction.op === 'while' ? [instruction.body] : [];
+          : instruction.op === 'for' || instruction.op === 'forEach' || instruction.op === 'while' ? [instruction.body] : [];
       for (const body of bodies) {
         const suffix = instructionsFromLine(body, file, line);
         if (suffix) {
-          if (instruction.op === 'for' || instruction.op === 'while') return [{ ...cloneSceneValue(instruction), debugBody: suffix }, ...instructions.slice(index + 1)];
+          if (instruction.op === 'for' || instruction.op === 'forEach' || instruction.op === 'while') return [{ ...cloneSceneValue(instruction), debugBody: suffix }, ...instructions.slice(index + 1)];
           return [...suffix, ...instructions.slice(index + 1)];
         }
       }
@@ -573,15 +585,24 @@
       if (!x) return null;
       if (x.kind === 'integer') return integer(x.value);
       if (x.kind === 'float') return floating(x.value);
-      if (x.kind === 'literal') return typeof x.value === 'string' ? x.value : integer(x.value);
+      if (x.kind === 'literal') return typeof x.value === 'string' || typeof x.value === 'boolean' ? x.value : integer(x.value);
       if (x.kind === 'load') return copy(this.get(x.name));
       if (x.kind === 'dict') {
         const d = Object.create(null);
         for (const e of x.entries) d[e.key] = await this.value(e.value);
         return d;
       }
+      if (x.kind === 'list') {
+        const values = [];
+        for (const item of x.items) values.push(await this.value(item));
+        return values;
+      }
       if (x.kind === 'index') {
         const target = await this.value(x.target), key = await this.value(x.key);
+        if (Array.isArray(target)) {
+          if (typeof key !== 'bigint' || key < 0n || key >= BigInt(target.length)) throw Error(`List index out of range: ${key}`);
+          return target[Number(key)];
+        }
         if (!target || typeof target !== 'object' || !own(target, key)) throw Error(`存在しない辞書キー '${key}' です`);
         return target[key];
       }
@@ -630,6 +651,13 @@
         if (x.name === 'str') return String(args[0]);
         if (x.name === 'int') return integer(args[0]);
         if (x.name === 'float') return floating(args[0]);
+        if (x.name === 'list.length') return BigInt(args[0].length);
+        if (x.name === 'list.append') return [...args[0], args[1]];
+        if (x.name === 'list.contains') return args[0].some(value => equal(value, args[1]));
+        if (x.name === 'text.trim') return trimDataSpace(args[0]);
+        if (x.name === 'text.normalize_space') return normalizeDataSpace(args[0]);
+        if (x.name === 'text.split') return splitText(args[0], args[1]);
+        if (x.name === 'text.replace') return replaceText(args[0], args[1], args[2]);
         return this.call(x.name, args);
       }
       throw Error(`未知の式 '${x.kind}' です`);
@@ -653,13 +681,20 @@
           const frame = this.frames.findLast(f => !this.loopFrames.has(f));
           if (preserveGlobals && frame === this.globals && own(frame, c.name)) {
             if (!matches(frame[c.name], c.type)) throw Error(`ファイル間で変数 '${c.name}' の型が一致しません`);
-          } else frame[c.name] = c.initial ? await this.value(c.initial) : c.type === 'int' ? 0n : c.type === 'float' ? 0 : c.type === 'str' ? '' : Object.create(null);
+          } else frame[c.name] = c.initial ? await this.value(c.initial) : c.type === 'int' ? 0n : c.type === 'float' ? 0 : c.type === 'str' ? '' : c.type === 'bool' ? false : c.type?.kind === 'list' ? [] : Object.create(null);
           if (c.constant) { const names = this.readonlyFrames.get(frame) || new Set(); names.add(c.name); this.readonlyFrames.set(frame, names); }
         } else if (c.op === 'set') {
           const val = await this.value(c.value);
           this.assertMutable(c.target);
           if (c.target.kind === 'load') this.set(c.target.name, val);
-          else { const key = await this.value(c.target.key); const d = copy(this.get(c.target.target.name)); d[key] = val; this.set(c.target.target.name, d); }
+          else {
+            const key = await this.value(c.target.key), d = copy(this.get(c.target.target.name));
+            if (Array.isArray(d)) {
+              if (typeof key !== 'bigint' || key < 0n || key >= BigInt(d.length)) throw Error(`List index out of range: ${key}`);
+              d[Number(key)] = val;
+            } else d[key] = val;
+            this.set(c.target.target.name, d);
+          }
         } else if (c.op === 'unset') {
           if (c.target.kind === 'load') throw Error('unset は辞書要素を指定してください');
           this.assertMutable(c.target);
@@ -759,6 +794,18 @@
               const result = await this.exec(count === 1 && c.debugBody ? c.debugBody : c.body); if (result) return result;
             }
           } finally { this.frames.pop(); }
+        } else if (c.op === 'forEach') {
+          const values = await this.value(c.iterable);
+          if (!Array.isArray(values)) throw Error('for-in requires a list');
+          const loopFrame = Object.create(null); this.loopFrames.add(loopFrame); this.frames.push(loopFrame);
+          try {
+            let count = 0;
+            for (const item of values) {
+              if (++count > 100000) throw Error('Loop limit exceeded');
+              loopFrame[c.name] = item;
+              const result = await this.exec(count === 1 && c.debugBody ? c.debugBody : c.body); if (result) return result;
+            }
+          } finally { this.frames.pop(); }
         } else if (c.op === 'while') {
           let count = 0;
           while (await this.value(c.condition)) {
@@ -836,7 +883,8 @@
   }
   function equal(a, b) {
     if (a === b) return true;
-    return a && b && typeof a === 'object' && typeof b === 'object' && Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(k => own(b, k) && equal(a[k], b[k]));
+    if (!a || !b || typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) !== Array.isArray(b)) return false;
+    return Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(k => own(b, k) && equal(a[k], b[k]));
   }
   if (typeof module !== 'undefined') module.exports = { Runtime, integer, floating, createSceneState, sceneStateCommand, advanceSceneTime };
   else root.NovelRuntime = { Runtime, integer, floating, createSceneState, sceneStateCommand, advanceSceneTime };

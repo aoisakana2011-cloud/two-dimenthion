@@ -1,0 +1,21 @@
+fn split_words(value: str) -> list[str] {
+  str normalized = text.normalize_space(value)
+  if normalized == "" {
+    return []
+  }
+  return text.split(normalized, " ")
+}
+
+fn join_words(items: list[str], separator: str) -> str {
+  str result = ""
+  bool first = true
+  for item in items {
+    if first {
+      set first = false
+    } else {
+      set result = result + separator
+    }
+    set result = result + item
+  }
+  return result
+}

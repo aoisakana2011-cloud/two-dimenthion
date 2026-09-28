@@ -174,7 +174,6 @@ const assert = require('node:assert/strict');
     await rightClickToken(5, 'scale');
     await page.locator('.variable-tooltip').waitFor({ state: 'visible' });
     assert.match(await page.locator('.variable-tooltip').textContent(), /scale\(point: Vec2, factor: float\) -> float/);
-    assert.match(await page.locator('.variable-tooltip').textContent(), /戻り値: float/);
     await rightClickToken(1, 'Vec2');
     await page.locator('.variable-tooltip').waitFor({ state: 'visible' });
     assert.match(await page.locator('.variable-tooltip').textContent(), /struct Vec2/);

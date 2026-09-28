@@ -2,6 +2,53 @@
 
 `std/` はエディタに同梱される読み取り専用モジュールです。シナリオから通常の `include` と別名で読み込みます。
 
+## 組み込みのリスト・文字列関数
+
+次の名前空間関数はコンパイラとBrowser/Nativeランタイムに組み込まれているため、`include` は不要です。標準TDSファイルの関数とは異なり、シナリオから直接 `list.length(items)`、`text.split(value, ",")` の形で呼び出します。
+
+| 関数 | 型 | 意味 |
+|---|---|---|
+| `list.length(items)` | `list[T] -> int` | 要素数 |
+| `list.append(items, item)` | `list[T], T -> list[T]` | 元listを変えず、末尾へ追加したコピーを返す |
+| `list.contains(items, item)` | `list[T], T -> bool` | 同じ値の要素があるか |
+| `text.trim(value)` | `str -> str` | 端の空白だけを除去 |
+| `text.normalize_space(value)` | `str -> str` | 対応空白の連続をASCIIスペース1つにまとめ、端も除去 |
+| `text.split(value, separator)` | `str, str -> list[str]` | 区切りで分割し、空要素を保持 |
+| `text.replace(value, search, replacement)` | `str, str, str -> str` | 全ての一致箇所をリテラル置換 |
+
+分割文字と検索文字には空文字を指定できません。`list[T]` の `T` は `int`、`float`、`str`、`bool` のいずれかです。リスト添字は0始まりで、範囲外参照は実行時エラーになります。
+
+## TDSで書かれたデータ処理ヘルパー
+
+低水準の `text.*` / `list.*` は組み込みAPIです。繰り返し使う高水準処理は、通常のTDS関数として同梱しています。
+
+### `std/text.tds`
+
+`include "std/text.tds" as strings` で読み込みます。
+
+- `strings.split_words(value)` — 空白を正規化して単語リストにする。空白だけの入力は空リスト。
+- `strings.join_words(items, separator)` — 文字列リストを区切り文字で結合する。
+
+### `std/collections.tds`
+
+`include "std/collections.tds" as collections` で読み込みます。
+
+- `collections.index_of_str(items, target)` — 最初に一致した0始まり位置。見つからない場合は `-1`。
+- `collections.append_unique_str(items, item)` — 既存要素を重複させず追加したリストを返す。
+- `collections.remove_all_str(items, item)` — 一致する要素をすべて除いたリストを返す。
+
+これらは組み込みのリストAPIと `for item in items` を使ったTDS実装です。元のリストを変更せず、新しい値を返します。
+
+```tds
+include "std/text.tds" as strings
+include "std/collections.tds" as collections
+
+list[str] names = strings.split_words("  rain　 and   roses  ")
+int choice_index = collections.index_of_str(names, "and")
+list[str] tags = collections.append_unique_str(names, "mystery")
+str heading = strings.join_words(tags, " / ")
+```
+
 ```tds
 include "std/math.tds" as math
 

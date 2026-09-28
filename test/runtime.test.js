@@ -52,6 +52,46 @@ async function run(source, host = {}) {
   await rt.run(program(source)); return rt;
 }
 
+test('bool, typed lists, for-in, indexing, and text intrinsics share precise value semantics', async () => {
+  const source = `
+global bool active = true
+global list[int] values = [1, 2, 3]
+global list[str] pieces = text.split(",a,,b,", ",")
+global str normalized = text.normalize_space("  a\t\u00a0b　 ")
+global str trimmed = text.trim("  keep\t spacing　 ")
+global str replaced = text.replace("red red", "red", "blue")
+global list[int] empty = []
+global int total = 0
+fn sum(items: list[int]) -> int {
+  int result = 0
+  for item in items { set result = result + item }
+  return result
+}
+scene main {
+  set values[1] = 4
+  set values = list.append(values, 7)
+  for value in values { set total = total + value }
+  set active = not active
+  set empty = list.append(empty, 9)
+  say narrator str(sum(values))
+}`;
+  let dialogue;
+  const runtime = await run(source, { command: async (name, args) => { if (name === 'say') dialogue = args[1]; } });
+  assert.equal(runtime.get('active'), false);
+  assert.deepEqual(runtime.get('values'), [1n, 4n, 3n, 7n]);
+  assert.deepEqual(runtime.get('pieces'), ['', 'a', '', 'b', '']);
+  assert.deepEqual(runtime.get('empty'), [9n]);
+  assert.equal(runtime.get('normalized'), 'a b');
+  assert.equal(runtime.get('trimmed'), 'keep\t spacing');
+  assert.equal(runtime.get('replaced'), 'blue blue');
+  assert.equal(runtime.get('total'), 15n);
+  assert.equal(dialogue, '15');
+  assert.throws(() => program('global list[int] values = []\nscene main { set values = list.append(values, "bad") }'), /list\.append|type/i);
+  assert.throws(() => program('global list[str] values = text.split("x", "")'), /separator must not be empty/);
+  assert.throws(() => program('global str value = text.replace("x", "", "y")'), /search must not be empty/);
+  await assert.rejects(run('global list[int] values = [1]\nscene main { say narrator str(values[1]) }'), /out of range/);
+});
+
 test('float expressions remain distinct from exact int and drive pixel offsets', async () => {
   const seen = [];
   const source = `
@@ -1474,6 +1514,22 @@ test('package flow keeps the zero-iteration path of a dynamic for loop', () => {
   assert.throws(() => validateVariableFlow(files, 'main.tds'), /初期化前のグローバル変数.*value/);
 });
 
+test('package flow visits for-in bodies and follows strings produced by text.split', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-for-in-package-flow-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const scenesRoot = path.join(dir, 'scenes'), assetsRoot = path.join(dir, 'assets');
+  await fs.mkdir(scenesRoot); await fs.mkdir(assetsRoot);
+  const source = `global list[str] parts = text.split("{notDefined},ready", ",")
+scene main {
+  for part in parts {
+    say narrator part
+  }
+}`;
+  const file = path.join(scenesRoot, 'main.tds');
+  await fs.writeFile(file, source, 'utf8');
+  await assert.rejects(pack(file, path.join(dir, 'out/game.nsp.json'), { scenesRoot, assetsRoot }), /notDefined/);
+});
+
 test('package flow follows interpolated function calls', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-interpolation-flow-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
@@ -2360,6 +2416,100 @@ test('native and browser runtimes agree on functions, loops, choice and scene tr
   assert.equal(JSON.parse(exact.stdout).globals.minimum, '-9223372036854775808');
   await fs.writeFile(file, JSON.stringify({ format: 'novel-script-package', version: 99, program: numeric }));
   assert.equal(spawnSync(exe, [file, '--headless'], { timeout: 10000 }).status, 1);
+});
+
+test('native and browser runtimes agree on bool, typed lists, list loops, and text intrinsics', async t => {
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-native-list-parity-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const scenesRoot = path.join(dir, 'scenes'), assetsRoot = path.join(dir, 'assets');
+  await fs.mkdir(scenesRoot); await fs.mkdir(assetsRoot);
+  const source = `global bool active = true
+global bool containsFour = false
+global list[int] values = [2, 4]
+global list[bool] flags = [true, false]
+global list[str] parts = text.split(",red,,blue,", ",")
+global str normalized = text.normalize_space("  a\t\u00a0b　 ")
+global int total = 0
+fn sum(items: list[int]) -> int {
+  int result = 0
+  for item in items { set result = result + item }
+  return result
+}
+scene main {
+  set active = not active
+  set values = list.append(values, 6)
+  set containsFour = list.contains(values, 4)
+  for flag in flags { if flag { set total = total + 1 } }
+  for part in parts { say narrator part }
+  if active { say narrator "active" } else { say narrator "inactive" }
+  say narrator str(list.length(values)) + ":" + normalized + ":" + str(sum(values))
+}`;
+  const sourceFile = path.join(scenesRoot, 'main.tds'), packageFile = path.join(dir, 'lists.nsp.json');
+  await fs.writeFile(sourceFile, source, 'utf8');
+  const packaged = await pack(sourceFile, packageFile, { scenesRoot, assetsRoot });
+  const browserLines = [];
+  const browser = new Runtime({ command: async (name, args, runtime) => { if (name === 'say') browserLines.push(await runtime.textAsync(args[1])); } });
+  await browser.run(packaged.program);
+  const native = spawnSync(exe, [packageFile, '--headless'], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(native.status, 0, native.stderr || native.error?.message);
+  const transcript = JSON.parse(native.stdout);
+  assert.deepEqual(transcript.commands.filter((command) => command.name === 'say').map((command) => command.args[1]), browserLines);
+  assert.deepEqual(browserLines, ['', 'red', '', 'blue', '', 'inactive', '3:a b:12']);
+  assert.equal(transcript.globals.active, browser.get('active'));
+  assert.equal(transcript.globals.containsFour, browser.get('containsFour'));
+  assert.equal(transcript.globals.total, Number(browser.get('total')));
+  assert.deepEqual(transcript.globals.values, browser.get('values').map(Number));
+  assert.deepEqual(transcript.globals.flags, browser.get('flags'));
+  assert.equal(transcript.globals.normalized, browser.get('normalized'));
+});
+
+test('Browser and Native debug-start accept bool, list, dictionary, and struct overrides with matching types', async t => {
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-native-debug-collections-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const scenesRoot = path.join(dir, 'scenes'), assetsRoot = path.join(dir, 'assets');
+  await fs.mkdir(scenesRoot); await fs.mkdir(assetsRoot);
+  const source = `global bool enabled = false
+global list[bool] choices = [false]
+global dict[bool] routeFlags = {"common": false}
+struct Flags {
+  active: bool
+  label: str
+}
+global Flags state = {"active": false, "label": "base"}
+scene main {
+  if enabled and choices[0] and routeFlags["common"] and state.active { say narrator state.label }
+}`;
+  const sourceFile = path.join(scenesRoot, 'main.tds'), packageFile = path.join(dir, 'debug-collections.nsp.json');
+  await fs.writeFile(sourceFile, source, 'utf8');
+  const packaged = await pack(sourceFile, packageFile, { scenesRoot, assetsRoot, debug: true });
+  const line = source.split('\n').findIndex(value => value.trimStart().startsWith('say narrator')) + 1;
+  const overrides = {
+    enabled: { type: 'bool', value: 'true' },
+    choices: { type: 'list<bool>', value: '[true,false]' },
+    routeFlags: { type: 'dict<bool>', value: '{"common":true}' },
+    state: { type: 'struct', fields: { active: 'bool', label: 'str' }, value: '{"active":true,"label":"debug"}' },
+  };
+  const browserLines = [];
+  const browser = new Runtime({ command: async (name, args, runtime) => { if (name === 'say') browserLines.push(await runtime.textAsync(args[1])); } });
+  await browser.run(packaged.program, {
+    file: 'main.tds', scene: 'main', line,
+    variables: {
+      enabled: true, choices: [true, false],
+      routeFlags: Object.assign(Object.create(null), { common: true }),
+      state: Object.assign(Object.create(null), { active: true, label: 'debug' }),
+    },
+  });
+  const native = spawnSync(exe, [packageFile, '--headless', '--debug-start', 'main.tds', 'main', String(line), JSON.stringify(overrides)], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(native.status, 0, native.stderr || native.error?.message);
+  const transcript = JSON.parse(native.stdout);
+  assert.deepEqual(browserLines, ['debug']);
+  assert.deepEqual(transcript.commands.filter(command => command.name === 'say').map(command => command.args[1]), browserLines);
+  const invalid = spawnSync(exe, [packageFile, '--headless', '--debug-start', 'main.tds', 'main', String(line), JSON.stringify({ choices: { type: 'list<bool>', value: '["true"]' } })], { encoding: 'utf8', timeout: 10000 });
+  assert.notEqual(invalid.status, 0, 'Native must reject debug list items that do not match the declared element type');
 });
 
 test('native and browser runtimes agree on nested interpolation side effects', async t => {

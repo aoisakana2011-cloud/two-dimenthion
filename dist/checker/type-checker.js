@@ -31,12 +31,16 @@ function validAssetPath(path) {
 function typeName(type) {
     if (typeof type === 'string')
         return type;
-    return type.kind === 'dict' ? `dict[${type.value}]` : type.name;
+    return type.kind === 'dict' || type.kind === 'list' ? `${type.kind}[${type.value}]` : type.name;
 }
 function sameType(left, right) {
     if (typeof left === 'string' || typeof right === 'string')
         return left === right;
-    return left.kind === right.kind && (left.kind === 'dict' ? left.value === right.value : left.name === right.name);
+    if (left.kind !== right.kind)
+        return false;
+    return left.kind === 'dict' || left.kind === 'list'
+        ? left.value === right.value
+        : left.name === right.name;
 }
 const characterTypeName = (name) => `character:${name}`;
 const characterInfo = (value) => value instanceof Set ? { poses: value, fields: {} } : value;
@@ -44,7 +48,7 @@ function characterPropertyType(expression) {
     if (expression.kind === 'float')
         return 'float';
     if (expression.kind === 'literal')
-        return typeof expression.value === 'string' ? 'str' : (typeof expression.value === 'number' || typeof expression.value === 'bigint') ? 'int' : undefined;
+        return typeof expression.value === 'string' ? 'str' : typeof expression.value === 'boolean' ? 'bool' : (typeof expression.value === 'number' || typeof expression.value === 'bigint') ? 'int' : undefined;
     if (expression.kind === 'unary' && (expression.operator === '+' || expression.operator === '-'))
         return characterPropertyType(expression.value);
     return undefined;
@@ -89,6 +93,8 @@ function expressionType(expression, variables, ctx, expected) {
     if (expression.kind === 'float')
         return 'float';
     if (expression.kind === 'literal') {
+        if (typeof expression.value === 'boolean')
+            return 'bool';
         if (typeof expression.value === 'string') {
             for (const path of interpolationNames(expression.value)) {
                 if (path.endsWith('()')) {
@@ -195,6 +201,11 @@ function expressionType(expression, variables, ctx, expected) {
                 throw new TypeCheckError(`${loc}: struct '${targetType.name}' にフィールド '${expression.key.value}' はありません`);
             return field;
         }
+        if (typeof targetType !== 'string' && targetType.kind === 'list') {
+            if (keyType !== 'int')
+                throw new TypeCheckError(`${loc}: list の添字は int で指定してください`);
+            return targetType.value;
+        }
         if (typeof targetType === 'string' || targetType.kind !== 'dict') {
             throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): インデックス参照の対象は辞書型でなければなりません`);
         }
@@ -214,18 +225,74 @@ function expressionType(expression, variables, ctx, expected) {
         if (expected && typeof expected !== 'string') {
             if (expected.kind === 'struct')
                 return { kind: 'dict', value: 'int' }; // Fields are checked against the struct declaration below.
+            if (expected.kind !== 'dict')
+                throw new TypeCheckError(`${loc}: dict の値を ${typeName(expected)} に代入できません`);
             if (types.some((type) => type !== expected.value))
                 throw new TypeCheckError(`${loc}: 辞書の値の型は ${expected.value} に統一してください`);
             return expected;
         }
         if (!types.length)
             return { kind: 'dict', value: 'int' };
-        if (types.some((t) => typeof t !== 'string' || (t !== 'int' && t !== 'float' && t !== 'str') || t !== types[0])) {
+        if (types.some((t) => typeof t !== 'string' || !['int', 'float', 'str', 'bool'].includes(t) || t !== types[0])) {
             throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 辞書の値の型は統一してください`);
         }
         return { kind: 'dict', value: types[0] };
     }
+    if (expression.kind === 'list') {
+        const expectedList = expected && typeof expected !== 'string' && expected.kind === 'list' ? expected : undefined;
+        if (!expression.items.length) {
+            if (expectedList)
+                return expectedList;
+            throw new TypeCheckError(`${loc}: 空のlistは要素型を推論できません。list[str] などで型を指定してください`);
+        }
+        const types = expression.items.map(item => expressionType(item, variables, ctx, expectedList?.value));
+        if (types.some(type => typeof type !== 'string' || !['int', 'float', 'str', 'bool'].includes(type) || type !== types[0])) {
+            throw new TypeCheckError(`${loc}: list の要素型はすべて同じにしてください`);
+        }
+        const inferred = types[0];
+        if (expectedList && expectedList.value !== inferred)
+            throw new TypeCheckError(`${loc}: list[${inferred}] は list[${expectedList.value}] に代入できません`);
+        return expectedList || { kind: 'list', value: inferred };
+    }
     if (expression.kind === 'call') {
+        if (expression.name === 'list.length') {
+            if (expression.args.length !== 1)
+                throw new TypeCheckError(`${loc}: list.length は引数を1つ取ります`);
+            const type = expressionType(expression.args[0], variables, ctx);
+            if (typeof type === 'string' || type.kind !== 'list')
+                throw new TypeCheckError(`${loc}: list.length の引数はlist型である必要があります`);
+            return 'int';
+        }
+        if (expression.name === 'list.append' || expression.name === 'list.contains') {
+            if (expression.args.length !== 2)
+                throw new TypeCheckError(`${loc}: ${expression.name} は2引数を取ります`);
+            const itemType = expressionType(expression.args[1], variables, ctx);
+            if (itemType !== 'int' && itemType !== 'float' && itemType !== 'str' && itemType !== 'bool')
+                throw new TypeCheckError(`${loc}: ${expression.name} requires a primitive list element`);
+            const listType = expressionType(expression.args[0], variables, ctx, { kind: 'list', value: itemType });
+            if (typeof listType === 'string' || listType.kind !== 'list' || itemType !== listType.value)
+                throw new TypeCheckError(`${loc}: ${expression.name} のlistと要素の型が一致しません`);
+            return expression.name === 'list.contains' ? 'bool' : listType;
+        }
+        if (expression.name === 'text.trim' || expression.name === 'text.normalize_space') {
+            if (expression.args.length !== 1 || expressionType(expression.args[0], variables, ctx) !== 'str')
+                throw new TypeCheckError(`${loc}: ${expression.name} はstr型の引数を1つ取ります`);
+            return 'str';
+        }
+        if (expression.name === 'text.split') {
+            if (expression.args.length !== 2 || expression.args.some(argument => expressionType(argument, variables, ctx) !== 'str'))
+                throw new TypeCheckError(`${loc}: text.split はstr型の引数を2つ取ります`);
+            if (knownStringValue(expression.args[1], ctx.knownStrings) === '')
+                throw new TypeCheckError(`${loc}: text.split separator must not be empty`);
+            return { kind: 'list', value: 'str' };
+        }
+        if (expression.name === 'text.replace') {
+            if (expression.args.length !== 3 || expression.args.some(argument => expressionType(argument, variables, ctx) !== 'str'))
+                throw new TypeCheckError(`${loc}: text.replace はstr型の引数を3つ取ります`);
+            if (knownStringValue(expression.args[1], ctx.knownStrings) === '')
+                throw new TypeCheckError(`${loc}: text.replace search must not be empty`);
+            return 'str';
+        }
         if (expression.name === 'str') {
             if (expression.args.length !== 1 || !['int', 'float'].includes(String(expressionType(expression.args[0], variables, ctx)))) {
                 throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): str() は数値型の引数を1つ取ります`);
@@ -265,10 +332,12 @@ function inferValueType(expression, variables = new Map(), functions = []) {
     const inferred = expressionType(expression, variables, {
         file: 'current', globals: variables, functions: new Map(functions.map((fn) => [fn.name, fn])), scenes: new Set(), characters: new Map(), assets: new Map(), structs: new Map(),
     });
-    if (inferred === 'bool')
-        throw new TypeCheckError(`${getLocStr(expression)}: 真偽値は変数型として保存できません`);
+    if (inferred === 'none')
+        throw new TypeCheckError(`${getLocStr(expression)}: none は変数型として使用できません`);
     if (expression.kind === 'dict' && expression.entries.length === 0)
         throw new TypeCheckError(`${getLocStr(expression)}: 空の辞書は型を推論できません`);
+    if (expression.kind === 'list' && expression.items.length === 0)
+        throw new TypeCheckError(`${getLocStr(expression)}: empty list needs an explicit list[T] type`);
     return inferred;
 }
 function checkCondition(expression, variables, ctx) {
@@ -531,7 +600,7 @@ function staticValue(expression, knownNumbers) {
         return Number.isFinite(value) ? value : undefined;
     }
     if (expression.kind === 'literal')
-        return typeof expression.value === 'string' ? expression.value : BigInt(expression.value);
+        return typeof expression.value === 'string' || typeof expression.value === 'boolean' ? expression.value : BigInt(expression.value);
     if (expression.kind === 'call') {
         const argument = expression.args.length === 1 ? staticValue(expression.args[0], knownNumbers) : undefined;
         if (expression.name === 'str' && typeof argument === 'bigint')
@@ -676,7 +745,7 @@ function checkStatements(statements, variables, ctx, options) {
                                 throw new TypeCheckError(`${locStr}: struct '${statement.type.name}' にフィールド '${key}' はありません`);
                     }
                     if (statement.type === 'infer') {
-                        if (actual === 'bool' || actual === 'none') {
+                        if (actual === 'none') {
                             throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): let '${statement.name}' の型を ${typeName(actual)} から推論できません`);
                         }
                         if (statement.initial.kind === 'dict' && statement.initial.entries.length === 0) {
@@ -684,7 +753,7 @@ function checkStatements(statements, variables, ctx, options) {
                         }
                         statement.type = actual;
                     }
-                    if ((typeof statement.type === 'string' || statement.type.kind === 'dict') && !sameType(statement.type, actual)) {
+                    if ((typeof statement.type === 'string' || statement.type.kind === 'dict' || statement.type.kind === 'list') && !sameType(statement.type, actual)) {
                         throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): ${statement.name} は ${typeName(statement.type)} ですが、${typeName(actual)} が代入されています`);
                     }
                 }
@@ -755,6 +824,10 @@ function checkStatements(statements, variables, ctx, options) {
                             throw new TypeCheckError(`${locStr}: struct フィールドが存在しません`);
                         if (keyType !== 'str' || !sameType(fieldType, exprType))
                             throw new TypeCheckError(`${locStr}: struct フィールドの型が一致しません`);
+                    }
+                    else if (typeof targetType !== 'string' && targetType.kind === 'list') {
+                        if (keyType !== 'int' || !sameType(targetType.value, exprType))
+                            throw new TypeCheckError(`${locStr}: list assignment requires an integer index and matching element type`);
                     }
                     else {
                         if (typeof targetType === 'string' || targetType.kind !== 'dict') {
@@ -1016,6 +1089,25 @@ function checkStatements(statements, variables, ctx, options) {
                         }
                 }
             }
+            if (statement.kind === 'forEach') {
+                const iterableType = expressionType(statement.iterable, variables, ctx);
+                if (typeof iterableType === 'string' || iterableType.kind !== 'list')
+                    throw new TypeCheckError(`${locStr}: for name in values の values はlist型である必要があります`);
+                const loopVars = new Map(variables);
+                loopVars.set(statement.name, iterableType.value);
+                const loopReadonly = new Set(ctx.readonly);
+                loopReadonly.delete(statement.name);
+                const loopLocals = new Set(ctx.locals || variables.keys());
+                loopLocals.add(statement.name);
+                const loopDeclaredLocals = ctx.declaredLocals ? new Set(ctx.declaredLocals) : undefined;
+                const loopAmbiguous = ctx.ambiguous ? new Set(ctx.ambiguous) : undefined;
+                checkStatements(statement.body, loopVars, { ...ctx, locals: loopLocals, declaredLocals: loopDeclaredLocals, readonly: loopReadonly, knownStrings: new Map(ctx.knownStrings), knownNumbers: new Map(ctx.knownNumbers), ambiguous: loopAmbiguous }, options);
+                if (ctx.declaredLocals)
+                    loopDeclaredLocals?.forEach(name => ctx.declaredLocals.add(name));
+                ctx.knownStrings?.clear();
+                ctx.knownNumbers?.clear();
+                continue;
+            }
             if (statement.kind === 'while') {
                 checkCondition(statement.condition.expression, variables, ctx);
                 const loopVars = new Map(variables);
@@ -1124,7 +1216,7 @@ function staticGlobalStrings(statements) {
                 known.delete(statement.target.name);
         }
         else if (statement.kind === 'call' || statement.kind === 'command' || statement.kind === 'goto'
-            || statement.kind === 'if' || statement.kind === 'for' || statement.kind === 'while' || statement.kind === 'choice') {
+            || statement.kind === 'if' || statement.kind === 'for' || statement.kind === 'forEach' || statement.kind === 'while' || statement.kind === 'choice') {
             // A control-flow transfer or call can change a global string before the
             // function runs. Keep recursion analysis sound by discarding stale facts.
             known.clear();
@@ -1169,6 +1261,8 @@ function checkRecursion(functions, initialStrings = new Map()) {
             }
             if (e.kind === 'dict')
                 e.entries.forEach((ent) => visitExpr(ent.value, knownStrings));
+            if (e.kind === 'list')
+                e.items.forEach((item) => visitExpr(item, knownStrings));
         };
         const visitBlock = (statements, knownStrings) => {
             statements.forEach((statement) => visitStmt(statement, knownStrings));
@@ -1227,6 +1321,11 @@ function checkRecursion(functions, initialStrings = new Map()) {
                 visitExpr(s.start, knownStrings);
                 visitExpr(s.stop, knownStrings);
                 visitExpr(s.step, knownStrings);
+                visitBlock(s.body, new Map(knownStrings));
+                knownStrings.clear();
+            }
+            if (s.kind === 'forEach') {
+                visitExpr(s.iterable, knownStrings);
                 visitBlock(s.body, new Map(knownStrings));
                 knownStrings.clear();
             }
@@ -1310,7 +1409,7 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
                 throw new TypeCheckError(`${getLocStr(struct)}: struct '${struct.name}' が重複しています`);
             declaredStructs.add(struct.name);
             for (const [field, fieldType] of Object.entries(struct.fields)) {
-                if (fieldType !== 'int' && fieldType !== 'float' && fieldType !== 'str')
+                if (fieldType !== 'int' && fieldType !== 'float' && fieldType !== 'str' && fieldType !== 'bool')
                     throw new TypeCheckError(`${getLocStr(struct)}: struct フィールド '${field}' の型が不正です`);
             }
         });
@@ -1346,7 +1445,7 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
                 if (properties.has(property.name))
                     throw new TypeCheckError(`${getLocStr(property)}: キャラクター '${char.name}' のフィールド '${property.name}' が重複しています`);
                 if (!characterPropertyType(property.value))
-                    throw new TypeCheckError(`${getLocStr(property)}: キャラクターフィールド '${property.name}' は int、float または str の定数で指定してください`);
+                    throw new TypeCheckError(`${getLocStr(property)}: キャラクターフィールド '${property.name}' は int、float、str または bool の定数で指定してください`);
                 properties.add(property.name);
             }
             const displayName = char.properties.find((property) => property.name === 'name');

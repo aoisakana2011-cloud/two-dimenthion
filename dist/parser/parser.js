@@ -4,7 +4,7 @@ exports.Parser = exports.ParseError = void 0;
 exports.parse = parse;
 const lexer_1 = require("./lexer");
 const ASSET_TYPES = new Set(['bg', 'char', 'bgm', 'se', 'voice', 'video', 'image']);
-const TYPES = new Set(['int', 'float', 'str', 'none']);
+const TYPES = new Set(['int', 'float', 'str', 'bool', 'none']);
 const PRECEDENCE = {
     or: 10,
     and: 20,
@@ -13,7 +13,7 @@ const PRECEDENCE = {
     '*': 60, '/': 60, '%': 60,
 };
 const KEYWORDS = new Set([
-    'scene', 'asset', 'character', 'struct', 'pose', 'include', 'int', 'float', 'str', 'dict', 'none', 'global', 'const', 'let',
+    'scene', 'asset', 'character', 'struct', 'pose', 'include', 'int', 'float', 'str', 'bool', 'list', 'dict', 'none', 'global', 'const', 'let', 'true', 'false',
     'set', 'unset', 'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'image', 'clear', 'play', 'se', 'effect', 'wait',
     'if', 'elif', 'else', 'and', 'or', 'not', 'choice', 'for', 'from', 'to', 'step', 'while',
     'fn', 'return', 'goto', 'async', 'blocking', 'voice', 'video',
@@ -192,8 +192,8 @@ class Parser {
             const field = this.expectIdentifier('Expected field name');
             this.expect(':');
             const type = this.expectWord('Expected field type');
-            if (type !== 'int' && type !== 'float' && type !== 'str')
-                throw this.error('Struct fields must be int, float or str');
+            if (type !== 'int' && type !== 'float' && type !== 'str' && type !== 'bool')
+                throw this.error('Struct fields must be int, float, str or bool');
             if (fields[field])
                 throw this.error(`Duplicate struct field '${field}'`);
             fields[field] = type;
@@ -235,13 +235,13 @@ class Parser {
     }
     parseType(allowNone) {
         const word = this.expectWord('Expected type');
-        if (word === 'dict') {
+        if (word === 'dict' || word === 'list') {
             this.expect('[');
-            const value = this.expectWord('Expected dictionary value type');
-            if (value !== 'int' && value !== 'float' && value !== 'str')
-                throw this.error('Dictionary value type must be int, float or str');
+            const value = this.expectWord(`Expected ${word} element type`);
+            if (!['int', 'float', 'str', 'bool'].includes(value))
+                throw this.error(`${word} element type must be int, float, str or bool`);
             this.expect(']');
-            return { kind: 'dict', value };
+            return { kind: word, value };
         }
         if (TYPES.has(word) && (allowNone || word !== 'none'))
             return word;
@@ -267,7 +267,10 @@ class Parser {
         return hasQualifier && this.peekToken(offset).value === '(';
     }
     parseQualifiedCallName() {
-        const parts = [this.expectIdentifier('Expected function name')];
+        const first = this.expect('word', 'Expected function name');
+        if (KEYWORDS.has(first.value) && first.value !== 'list')
+            throw new ParseError(`予約語 '${first.value}' は関数名として使用できません`, first);
+        const parts = [first.value];
         while (this.optional('.'))
             parts.push(this.expectIdentifier('Expected qualified function name'));
         return parts.join('.');
@@ -303,21 +306,19 @@ class Parser {
             case 'int':
             case 'float':
             case 'str':
-            case 'dict': {
-                this.take();
+            case 'bool':
+            case 'dict':
+            case 'list': {
                 let type;
                 if (command === 'const') {
+                    this.take();
                     type = this.parseType(false);
                 }
-                else if (command === 'dict') {
-                    this.expect('[');
-                    const value = this.expectWord('Expected dictionary value type');
-                    if (value !== 'int' && value !== 'float' && value !== 'str')
-                        throw this.error('Dictionary value type must be int, float or str');
-                    this.expect(']');
-                    type = { kind: 'dict', value };
+                else if (command === 'dict' || command === 'list') {
+                    type = this.parseType(false);
                 }
                 else {
+                    this.take();
                     type = command;
                 }
                 const nameToken = this.current;
@@ -365,6 +366,12 @@ class Parser {
                 this.take();
                 const nameToken = this.current;
                 const name = this.expectIdentifier('Expected loop variable');
+                if (this.atWord('in')) {
+                    this.take();
+                    const iterable = this.parseExpression();
+                    const body = this.parseBraced();
+                    return { kind: 'forEach', name, nameLine: nameToken.line, nameColumn: nameToken.column, iterable, body, line: token.line, column: token.column, endLine: this.lastBlockEndLine, endColumn: this.lastBlockEndColumn };
+                }
                 this.expectWordValue('from');
                 const start = this.parseExpression();
                 this.expectWordValue('to');
@@ -574,7 +581,25 @@ class Parser {
         }
         let expr;
         const token = this.current;
-        if (token.type === 'number') {
+        if (this.atWord('true') || this.atWord('false')) {
+            this.take();
+            expr = { kind: 'literal', value: token.value === 'true', line: token.line, column: token.column };
+        }
+        else if (this.atValue('[')) {
+            this.take();
+            const items = [];
+            if (!this.atValue(']')) {
+                items.push(this.parseExpression());
+                while (this.optional(',')) {
+                    if (this.atValue(']'))
+                        break;
+                    items.push(this.parseExpression());
+                }
+            }
+            this.expect(']');
+            expr = { kind: 'list', items, line: token.line, column: token.column };
+        }
+        else if (token.type === 'number') {
             this.take();
             if (/[.eE]/.test(token.value)) {
                 if (!Number.isFinite(Number(token.value)))
@@ -687,7 +712,7 @@ class Parser {
             throw new ParseError(`Expected '${value}'`, token);
     }
     isBlockStatement(stmt) {
-        return stmt.kind === 'if' || stmt.kind === 'for' || stmt.kind === 'while' || stmt.kind === 'choice';
+        return stmt.kind === 'if' || stmt.kind === 'for' || stmt.kind === 'forEach' || stmt.kind === 'while' || stmt.kind === 'choice';
     }
     endStatement(stmt) {
         if (this.isBlockStatement(stmt)) {

@@ -45,6 +45,36 @@ test('parses and compiles assets, globals, characters, functions and scenes', ()
   ]);
 });
 
+test('parses bool values, primitive lists, list indexing, and typed for-in variables', () => {
+  const script = parse(`
+    struct Status {
+      ready: bool
+      title: str
+    }
+    global bool active = true
+    global list[int] scores = [2, 3, 5]
+    fn sum(values: list[int]) -> int {
+      int total = 0
+      for value in values { set total = total + value }
+      return total
+    }
+    scene main {
+      set scores[1] = 4
+      set active = false
+      say narrator str(sum(scores))
+    }
+  `);
+  assert.equal(script.globals[0].type, 'bool');
+  assert.deepEqual(script.globals[1].type, { kind: 'list', value: 'int' });
+  assert.deepEqual(script.globals[1].initial.items.map(item => item.value), [2, 3, 5]);
+  assert.equal(script.functions[0].body[1].kind, 'forEach');
+  const compiled = compile(script);
+  assert.deepEqual(compiled.variables.find(item => item.name === 'value').type, 'int');
+  assert.deepEqual(compiled.functions[0].body[1].iterable, { kind: 'load', name: 'values' });
+  assert.throws(() => compile(parse('global list[int] values = [1]\nscene main { set values[0] = "wrong" }')), /蝙弓|type/i);
+  assert.throws(() => compile(parse('scene main { for value in 5 { wait value } }')), /list|蝙弓/i);
+});
+
 test('supports typed const declarations and rejects reassignment', () => {
   const script = parse('const int answer = 1\nconst str label = "ok"');
   assert.equal(script.globals[0].constant, true);

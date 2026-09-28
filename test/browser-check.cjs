@@ -1041,6 +1041,25 @@ scene main { say narrator label + ":" + str(weights["key"]) + ":" + words["key"]
     }));
     await page.goto(`${base}/player.html?source=__audit.tds&debug=valid-debug-values&variables=${validDebugVariables}`);
     await page.waitForFunction(() => document.querySelector('#text').textContent === 'debug:3.75:edited');
+    source = `global bool enabled = false
+global list[bool] flags = [false]
+global dict[bool] routes = {"common": false}
+struct DebugStatus {
+  active: bool
+  label: str
+}
+global DebugStatus status = {"active": false, "label": "base"}
+scene main {
+  if enabled and flags[0] and routes["common"] and status.active { say narrator status.label }
+}`;
+    const debugCollections = encodeURIComponent(JSON.stringify({
+      enabled: { type: 'bool', value: 'true' },
+      flags: { type: 'list<bool>', value: '[true]' },
+      routes: { type: 'dict<bool>', value: '{"common":true}' },
+      status: { type: 'struct', fields: { active: 'bool', label: 'str' }, value: '{"active":true,"label":"debug collections"}' },
+    }));
+    await page.goto(`${base}/player.html?source=__audit.tds&debug=valid-debug-collections&variables=${debugCollections}`);
+    await page.waitForFunction(() => document.querySelector('#text').textContent === 'debug collections');
     assert.deepEqual(errors, []);
     console.log('PASS browser: presentation parity, transactional image/video/audio replacement, SceneState rollback, audit runtime cases and const diagnostics');
   } finally {

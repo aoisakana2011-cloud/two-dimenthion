@@ -79,12 +79,65 @@ inline std::string text(const json& v) {
     if (v.is_number_float()) return floatText(v.get<double>());
     return v.dump();
 }
+inline bool dataSpace(const std::string& value, size_t offset, size_t& length) {
+    const unsigned char c = static_cast<unsigned char>(value[offset]);
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v') { length = 1; return true; }
+    if (offset + 1 < value.size() && c == 0xC2 && static_cast<unsigned char>(value[offset + 1]) == 0xA0) { length = 2; return true; }
+    if (offset + 2 < value.size() && c == 0xE3 && static_cast<unsigned char>(value[offset + 1]) == 0x80 && static_cast<unsigned char>(value[offset + 2]) == 0x80) { length = 3; return true; }
+    return false;
+}
+inline std::string normalizeDataSpace(const std::string& value, bool collapse) {
+    std::string result, pending;
+    for (size_t offset = 0; offset < value.size();) {
+        size_t length = 1;
+        if (dataSpace(value, offset, length)) {
+            if (!result.empty()) { if (collapse) pending = " "; else pending += value.substr(offset, length); }
+            offset += length;
+            continue;
+        }
+        if (!pending.empty()) { result += pending; pending.clear(); }
+        const unsigned char c = static_cast<unsigned char>(value[offset]);
+        length = c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 1;
+        if (offset + length > value.size()) length = 1;
+        result.append(value, offset, length);
+        offset += length;
+    }
+    return result;
+}
+inline json splitText(const std::string& value, const std::string& separator) {
+    if (separator.empty()) throw std::runtime_error("text.split separator must not be empty");
+    json result = json::array();
+    size_t start = 0;
+    for (;;) {
+        const size_t found = value.find(separator, start);
+        if (found == std::string::npos) { result.push_back(value.substr(start)); break; }
+        result.push_back(value.substr(start, found - start));
+        start = found + separator.size();
+    }
+    return result;
+}
+inline std::string replaceText(const std::string& value, const std::string& search, const std::string& replacement) {
+    if (search.empty()) throw std::runtime_error("text.replace search must not be empty");
+    std::string result;
+    size_t start = 0;
+    for (;;) {
+        const size_t found = value.find(search, start);
+        if (found == std::string::npos) { result += value.substr(start); break; }
+        result += value.substr(start, found - start);
+        result += replacement;
+        start = found + search.size();
+    }
+    return result;
+}
 inline bool matches(const json& v, const json& type) {
     if (type == "int") return v.is_number_integer();
     if (type == "float") return v.is_number_float() && std::isfinite(v.get<double>());
     if (type == "str") return v.is_string();
-    if (type.is_object() && type.value("kind", "") == "struct") return v.is_object();
-    if (!v.is_object() || !type.is_object()) return false;
+    if (type == "bool") return v.is_boolean();
+    if (!type.is_object()) return false;
+    if (type.value("kind", "") == "struct") return v.is_object();
+    if (type.value("kind", "") == "list") return v.is_array() && std::all_of(v.begin(), v.end(), [&](const json& value) { return matches(value, type.at("value")); });
+    if (type.value("kind", "") != "dict" || !v.is_object()) return false;
     for (const auto& value : v) if (!matches(value, type.at("value"))) return false;
     return true;
 }
@@ -161,10 +214,19 @@ public:
         }
         if (kind == "load") return get(e.at("name"));
         if (kind == "dict") { json d = json::object(); for (const auto& item : e.at("entries")) d[item.at("key").get<std::string>()] = value(item.at("value")); return d; }
+        if (kind == "list") { json values = json::array(); for (const auto& item : e.at("items")) values.push_back(value(item)); return values; }
         if (kind == "index") {
-            auto d = value(e.at("target")); auto k = value(e.at("key")).get<std::string>();
-            if (!d.is_object() || !d.contains(k)) throw std::runtime_error("Missing dictionary key: " + k);
-            return d.at(k);
+            auto d = value(e.at("target")); auto keyValue = value(e.at("key"));
+            if (d.is_array()) {
+                if (!keyValue.is_number_integer()) throw std::runtime_error("List index must be an integer");
+                const Int index = keyValue.get<Int>();
+                if (index < 0 || uint64_t(index) >= d.size()) throw std::runtime_error("List index out of range: " + std::to_string(index));
+                return d.at(size_t(index));
+            }
+            if (!keyValue.is_string()) throw std::runtime_error("Dictionary key must be a string");
+            auto key = keyValue.get<std::string>();
+            if (!d.is_object() || !d.contains(key)) throw std::runtime_error("Missing dictionary key: " + key);
+            return d.at(key);
         }
         if (kind == "unary") {
             auto op = e.at("operator").get<std::string>();
@@ -226,6 +288,13 @@ public:
                 if (argument.is_number_float()) return finite(argument.get<double>());
                 throw std::runtime_error("Invalid float conversion");
             }
+            if (name == "list.length") return Int(args.at(0).size());
+            if (name == "list.append") { auto result = args.at(0); result.push_back(args.at(1)); return result; }
+            if (name == "list.contains") { const auto& values = args.at(0); return std::find(values.begin(), values.end(), args.at(1)) != values.end(); }
+            if (name == "text.trim") return normalizeDataSpace(args.at(0).get<std::string>(), false);
+            if (name == "text.normalize_space") return normalizeDataSpace(args.at(0).get<std::string>(), true);
+            if (name == "text.split") return splitText(args.at(0).get<std::string>(), args.at(1).get<std::string>());
+            if (name == "text.replace") return replaceText(args.at(0).get<std::string>(), args.at(1).get<std::string>(), args.at(2).get<std::string>());
             return call(name, args);
         }
         throw std::runtime_error("Unknown expression: " + kind);
@@ -255,7 +324,7 @@ public:
                     if (c.value("constant", false)) readonlyGlobals.insert(name);
                     continue;
                 }
-                auto v = c.contains("initial") ? value(c.at("initial")) : c.at("type") == "int" ? json(0) : c.at("type") == "float" ? json(0.0) : c.at("type") == "str" ? json("") : json::object();
+                auto v = c.contains("initial") ? value(c.at("initial")) : c.at("type") == "int" ? json(0) : c.at("type") == "float" ? json(0.0) : c.at("type") == "str" ? json("") : c.at("type") == "bool" ? json(false) : c.at("type").is_object() && c.at("type").value("kind", "") == "list" ? json::array() : json::object();
                 auto frameIndex = locals.size();
                 for (size_t n = locals.size(); n > 0; --n) if (!loopScopes.contains(n - 1)) { frameIndex = n - 1; break; }
                 declarationFrame()[name] = v;
@@ -271,9 +340,19 @@ public:
                     auto name = t.at("target").at("name").get<std::string>();
                     auto assigned = op == "set" ? value(c.at("value")) : json();
                     assertMutable(t);
-                    auto key = value(t.at("key")).get<std::string>(); auto d = get(name);
-                    if (op == "set") d[key] = assigned;
-                    else { if (!d.contains(key)) throw std::runtime_error("Missing dictionary key: " + key); d.erase(key); }
+                    auto keyValue = value(t.at("key")); auto d = get(name);
+                    if (d.is_array()) {
+                        if (op == "unset") throw std::runtime_error("unset requires a dictionary element");
+                        if (!keyValue.is_number_integer()) throw std::runtime_error("List index must be an integer");
+                        const Int index = keyValue.get<Int>();
+                        if (index < 0 || uint64_t(index) >= d.size()) throw std::runtime_error("List index out of range: " + std::to_string(index));
+                        d.at(size_t(index)) = assigned;
+                    } else {
+                        if (!keyValue.is_string()) throw std::runtime_error("Dictionary key must be a string");
+                        const auto key = keyValue.get<std::string>();
+                        if (op == "set") d[key] = assigned;
+                        else { if (!d.contains(key)) throw std::runtime_error("Missing dictionary key: " + key); d.erase(key); }
+                    }
                     set(name, d);
                 }
             } else if (op == "command") {
@@ -312,6 +391,20 @@ public:
                     }
                     popLocal();
                 } catch (...) { popLocal(); throw; }
+            } else if (op == "forEach") {
+                auto values = value(c.at("iterable"));
+                if (!values.is_array()) throw std::runtime_error("for-in requires a list");
+                locals.push_back(json::object()); readonlyLocals.emplace_back(); loopScopes.insert(locals.size()-1);
+                try {
+                    size_t count = 0;
+                    for (const auto& item : values) {
+                        if (++count > 100000) throw std::runtime_error("Loop limit exceeded");
+                        locals.back()[c.at("name").get<std::string>()] = item;
+                        auto r = exec(count == 1 && c.contains("debugBody") ? c.at("debugBody") : c.at("body"));
+                        if (r.kind != Signal::Next) { popLocal(); return r; }
+                    }
+                    popLocal();
+                } catch (...) { popLocal(); throw; }
             } else throw std::runtime_error("Unknown instruction: " + op);
         }
         return {};
@@ -334,11 +427,11 @@ public:
                 bodies.push_back(instruction.value("otherwise", json::array()));
             } else if (op == "choice") {
                 for (const auto& option : instruction.value("options", json::array())) bodies.push_back(option.value("body", json::array()));
-            } else if (op == "for" || op == "while") bodies.push_back(instruction.value("body", json::array()));
+            } else if (op == "for" || op == "forEach" || op == "while") bodies.push_back(instruction.value("body", json::array()));
             for (const auto& body : bodies) {
                 auto suffix = instructionsFromLine(body, file, line);
                 if (!suffix.is_null()) {
-                    if (op == "for" || op == "while") {
+                    if (op == "for" || op == "forEach" || op == "while") {
                         json resumed = instruction;
                         resumed["debugBody"] = std::move(suffix);
                         json result = json::array({std::move(resumed)});

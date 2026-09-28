@@ -104,7 +104,7 @@ scene main {
 
 include は `include "functions.tds" as funcs` の形式で、必ず別名を指定します。関数は `funcs.add(1)` のように別名経由で呼び出します。引用符は省略できます。拡張子省略時は .tds が補われ、循環includeは禁止です。include先は宣言モジュールであり、シーンや実行命令は置けません。シナリオファイルへの移動には `goto "chapter/next.tds"` を使います。
 
-`std/` は同梱標準ライブラリの予約パスです。`include "std/math.tds" as math`、`include "std/motion/walk.tds" as walk` のように読み込み、`math.sin(...)`、`walk.walk_bob(...)` と別名経由で呼び出します。関数一覧と引数の意味は [標準ライブラリガイド](../std/README.md) を参照してください。
+`std/` は同梱標準ライブラリの予約パスです。`include "std/math.tds" as math`、`include "std/motion/walk.tds" as walk`、`include "std/text.tds" as strings`、`include "std/collections.tds" as collections` のように読み込み、別名経由で関数を呼び出します。関数一覧と引数の意味は [標準ライブラリガイド](../std/README.md) を参照してください。
 
 ## 素材
 
@@ -132,7 +132,7 @@ character hero {
 }
 ~~~
 
-name は表示名です。その他のフィールドは `int`、`float`、`str` の初期値、pose は立ち絵宣言です。
+name は表示名です。その他のフィールドは `int`、`float`、`str`、`bool` の初期値、pose は立ち絵宣言です。
 
 ## 型と変数
 
@@ -144,11 +144,18 @@ global int shared_score = 0
 global const str title = "Novel"
 ~~~
 
-変数の基本型は `int`、`float`、`str`、辞書型は `dict[int]`、`dict[float]`、`dict[str]`、ほかに宣言済みstructを使えます。`none` は関数の戻り値型専用です。変数は初期値必須で、constは変更不可です。`int` と `float` の間に暗黙変換はありません。main.tds のトップレベル変数は暗黙に共有され、それ以外のファイルから共有するには global を付けます。
+変数の基本型は `int`、`float`、`str`、`bool`。複合型に `dict[T]`、`list[T]`（`T` は基本型）、宣言済みstructを使えます。`none` は関数の戻り値型専用です。変数は初期値必須で、constは変更不可です。`int` と `float` の間に暗黙変換はありません。main.tds のトップレベル変数は暗黙に共有され、それ以外のファイルから共有するには global を付けます。
 
 ~~~tds
 dict[int] status = { "hp": 100, "affection": 0 }
 dict[float] offsets = { "x": 0.0, "y": 0.0 }
+bool route_open = false
+list[str] names = ["綾瀬", "美緒"]
+list[int] scores = [2, 4, 6]
+for score in scores { say narrator "{score}" }
+set scores = list.append(scores, 8)
+list[str] fragments = text.split("a,,b", ",")
+str normalized = text.normalize_space("  雨　 の  日  ")
 set status["hp"] = status["hp"] - 10
 unset status["affection"]
 
@@ -157,7 +164,7 @@ if score >= 10 and route == "common" {
 }
 ~~~
 
-演算子は not、単項+/-、*/%、+-、比較、and、or の順に強く結合します。floatでは `+`、`-`、`*`、`/` と数値比較を同じ型同士で使えます。`%` はint同士のみです。true/false/null リテラルはありません。
+演算子は not、単項+/-、*/%、+-、比較、and、or の順に強く結合します。floatでは `+`、`-`、`*`、`/` と数値比較を同じ型同士で使えます。`%` はint同士のみです。`true` / `false` はboolリテラルで、`null` はありません。listは同じ基本型の要素だけを保持し、添字は0始まり、`for item in list { ... }` で順に走査します。`text.split` は空要素も保持し、`text.normalize_space` は連続する対応空白をASCIIスペース1つにします。
 
 ## struct
 
@@ -172,7 +179,7 @@ set player.coins = player.coins + 1
 say narrator "{player.name}: {player.coins}"
 ~~~
 
-フィールド型は `int`、`float`、`str`。structの入れ子、動的フィールド追加、フィールドのunsetはできません。
+フィールド型は `int`、`float`、`str`、`bool`。structの入れ子、動的フィールド追加、フィールドのunsetはできません。
 
 ## 関数
 

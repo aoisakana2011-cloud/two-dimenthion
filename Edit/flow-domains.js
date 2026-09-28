@@ -11,6 +11,7 @@ const domain = (values) => values === null || values.length > LIMIT ? null : uni
 const union = (left, right) => left === null || right === null ? null : domain([...left, ...right]);
 const single = (value) => [value];
 const copy = (state) => new Map(state);
+const { isPureBuiltin } = require('../dist/language/builtins');
 const get = (state, name) => state.has(name) ? state.get(name) : null;
 const put = (state, name, value) => { const next = copy(state); next.set(name, value); return next; };
 const LOCAL_PREFIX = '\0local:';
@@ -41,6 +42,44 @@ function combine(left, right, operation) {
   return domain(values);
 }
 
+function intrinsic(name, args) {
+  if (!isPureBuiltin(name) || args.some((values) => values === null)
+    || args.reduce((size, values) => size * values.length, 1) > LIMIT) return null;
+  const whitespace = /[ \t\n\r\f\v\u00a0\u3000]+/gu;
+  const trim = (value) => value.replace(/^[ \t\n\r\f\v\u00a0\u3000]+|[ \t\n\r\f\v\u00a0\u3000]+$/gu, '');
+  const results = [];
+  const visit = (index, values) => {
+    if (index < args.length) { for (const value of args[index]) visit(index + 1, [...values, value]); return; }
+    const [first, second, third] = values;
+    try {
+      switch (name) {
+        case 'str': results.push(String(first)); break;
+        case 'int': results.push(convertPrimitive('int', first)); break;
+        case 'float': results.push(convertPrimitive('float', first)); break;
+        case 'list.length': results.push(BigInt(first.length)); break;
+        case 'list.append': results.push([...first, second]); break;
+        case 'list.contains': results.push(first.some((item) => key(item) === key(second))); break;
+        case 'text.trim': results.push(trim(first)); break;
+        case 'text.normalize_space': results.push(trim(first.replace(whitespace, ' '))); break;
+        case 'text.split': if (!second.length) return; else results.push(first.split(second)); break;
+        case 'text.replace': if (!second.length) return; else results.push(first.split(second).join(third)); break;
+        default: return;
+      }
+    } catch { return; }
+  };
+  visit(0, []);
+  return domain(results);
+}
+
+function indexedValue(object, index) {
+  if (Array.isArray(object)) {
+    if (typeof index !== 'bigint' || index < 0n || index >= BigInt(object.length)) throw Error('unknown list index');
+    return object[Number(index)];
+  }
+  if (!object || typeof object !== 'object' || !Object.hasOwn(object, index)) throw Error('unknown index');
+  return object[index];
+}
+
 function updateObject(state, target, value, remove = false, context = null) {
   let root = target;
   while (root?.kind === 'index') root = root.target;
@@ -56,7 +95,14 @@ function updateObjectKeys(state, target, objects, keys, value, remove = false) {
   if (objects === null || keys === null || value === null || objects.length * keys.length * value.length > LIMIT) return null;
   const results = [];
   for (const object of objects) for (const field of keys) for (const item of value) {
-    if (!object || typeof object !== 'object' || Array.isArray(object)) return null;
+    if (Array.isArray(object)) {
+      if (remove || typeof field !== 'bigint' || field < 0n || field >= BigInt(object.length)) return null;
+      const next = [...object];
+      next[Number(field)] = item;
+      results.push(next);
+      continue;
+    }
+    if (!object || typeof object !== 'object') return null;
     const next = { ...object };
     if (remove) {
       if (!Object.hasOwn(next, field)) return null;
@@ -72,6 +118,15 @@ function evaluate(expr, state, context = null) {
   if (expr.kind === 'float') return Number.isFinite(Number(expr.value)) ? single(Number(expr.value)) : null;
   if (expr.kind === 'literal') return single(typeof expr.value === 'number' ? BigInt(expr.value) : expr.value);
   if (expr.kind === 'variable') return readBinding(state, expr.name);
+  if (expr.kind === 'list') {
+    let values = [[]];
+    for (const item of expr.items) {
+      const candidates = evaluate(item, state, context);
+      if (candidates === null || values.length * candidates.length > LIMIT) return null;
+      values = values.flatMap((list) => candidates.map((value) => [...list, value]));
+    }
+    return domain(values);
+  }
   if (expr.kind === 'dict') {
     let values = [{}];
     for (const entry of expr.entries) {
@@ -81,11 +136,9 @@ function evaluate(expr, state, context = null) {
     }
     return domain(values);
   }
-  if (expr.kind === 'index') return combine(evaluate(expr.target, state, context), evaluate(expr.key, state, context), (object, name) => {
-    if (!object || typeof object !== 'object' || !Object.hasOwn(object, name)) throw Error('unknown index');
-    return object[name];
-  });
+  if (expr.kind === 'index') return combine(evaluate(expr.target, state, context), evaluate(expr.key, state, context), indexedValue);
   if (expr.kind === 'call') {
+    if (isPureBuiltin(expr.name)) return intrinsic(expr.name, expr.args.map((argument) => evaluate(argument, state, context)));
     if (['str', 'int', 'float'].includes(expr.name) && expr.args.length === 1) {
       const args = evaluate(expr.args[0], state, context);
       if (args === null) return null;
@@ -153,11 +206,26 @@ function evaluateArguments(expressions, state, context) {
 function evaluateWithEffects(expr, state, context = null) {
   if (!expr) return [{ state, values: null }];
   if (expr.kind === 'literal' || expr.kind === 'float' || expr.kind === 'variable') return [{ state, values: evaluate(expr, state, context) }];
+  if (expr.kind === 'list') {
+    let paths = [{ state, values: [[]] }];
+    for (const item of expr.items) {
+      const next = [];
+      for (const path of paths) for (const value of evaluateWithEffects(item, path.state, context)) {
+        if (path.values === null || value.values === null || path.values.length * value.values.length > LIMIT) next.push({ state: value.state, values: null });
+        else next.push({ state: value.state, values: path.values.flatMap((list) => value.values.map((entry) => [...list, entry])) });
+      }
+      paths = mergeEvaluations(next);
+    }
+    return paths;
+  }
   if (expr.kind === 'call') {
     const args = evaluateArguments(expr.args, state, context);
     const result = [];
     for (const path of args) {
-      if (['str', 'int', 'float'].includes(expr.name) && path.args.length === 1) {
+      if (isPureBuiltin(expr.name)) {
+        result.push({ state: path.state, values: intrinsic(expr.name, path.args) });
+        continue;
+      } else if (['str', 'int', 'float'].includes(expr.name) && path.args.length === 1) {
         const input = path.args[0];
         if (input === null) result.push({ state: path.state, values: null });
         else {
@@ -195,10 +263,7 @@ function evaluateWithEffects(expr, state, context = null) {
   if (expr.kind === 'index') {
     const result = [];
     for (const object of evaluateWithEffects(expr.target, state, context)) for (const name of evaluateWithEffects(expr.key, object.state, context)) {
-      result.push({ state: name.state, values: combine(object.values, name.values, (item, keyName) => {
-        if (!item || typeof item !== 'object' || !Object.hasOwn(item, keyName)) throw Error('unknown index');
-        return item[keyName];
-      }) });
+      result.push({ state: name.state, values: combine(object.values, name.values, indexedValue) });
     }
     return mergeEvaluations(result);
   }
@@ -420,18 +485,18 @@ function writes(statements, out = new Set()) {
       while (target?.kind === 'index') target = target.target;
       if (target?.kind === 'variable') out.add(target.name);
     }
-    if (statement.kind === 'declare' || statement.kind === 'for') out.add(statement.name);
+    if (statement.kind === 'declare' || statement.kind === 'for' || statement.kind === 'forEach') out.add(statement.name);
     if (statement.kind === 'if') {
       writes(statement.body, out); statement.elseIf.forEach((branch) => writes(branch.body, out)); writes(statement.otherwise, out);
     } else if (statement.kind === 'choice') statement.options.forEach((option) => writes(option.body, out));
-    else if (statement.kind === 'for' || statement.kind === 'while') writes(statement.body, out);
+    else if (statement.kind === 'for' || statement.kind === 'forEach' || statement.kind === 'while') writes(statement.body, out);
   }
   return out;
 }
 
 function hasUserCall(expr) {
   if (!expr || typeof expr !== 'object') return false;
-  if (expr.kind === 'call' && !['str', 'int', 'float'].includes(expr.name)) return true;
+  if (expr.kind === 'call' && !isPureBuiltin(expr.name)) return true;
   return Object.values(expr).some((value) => Array.isArray(value) ? value.some(hasUserCall) : value && typeof value === 'object' && hasUserCall(value));
 }
 
@@ -439,13 +504,13 @@ function functionWriteEffects(script) {
   const functions = new Map((script.functions || []).map((fn) => [fn.name, fn]));
   const effects = new Map();
   for (const fn of functions.values()) {
-    const locals = new Set(fn.params.map((param) => param.name));
+    const locals = functionLocalNames(fn);
     const writes = new Set();
     const calls = new Set();
     let unknown = false;
     const visitExpr = (expr) => {
       if (!expr || typeof expr !== 'object') return;
-      if (expr.kind === 'call' && !['str', 'int', 'float'].includes(expr.name)) calls.add(expr.name);
+      if (expr.kind === 'call' && !isPureBuiltin(expr.name)) calls.add(expr.name);
       if (expr.kind === 'literal' && typeof expr.value === 'string') {
         for (const match of expr.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\(\)\}/g)) calls.add(match[1]);
       }
@@ -461,14 +526,14 @@ function functionWriteEffects(script) {
           while (target?.kind === 'index') target = target.target;
           if (target?.kind === 'variable') writes.add(target.name);
         }
-        if (statement.kind === 'call') calls.add(statement.name);
+        if (statement.kind === 'call' && !isPureBuiltin(statement.name)) calls.add(statement.name);
         if (statement.kind === 'command' && statement.name === 'say'
           && (statement.args[1]?.kind !== 'literal' || typeof statement.args[1].value !== 'string'
             || /\{[A-Za-z_][A-Za-z0-9_]*\(\)\}/.test(statement.args[1].value))) unknown = true;
         if (statement.kind === 'choice' && [statement.prompt, ...statement.options.map((option) => option.label)]
           .some((expr) => expr && (expr.kind !== 'literal' || typeof expr.value !== 'string' || /\{[A-Za-z_][A-Za-z0-9_]*\(\)\}/.test(expr.value)))) unknown = true;
         for (const expression of [statement.condition?.expression, statement.prompt, statement.initial, statement.value,
-          statement.target, statement.start, statement.stop, statement.step, ...(statement.args || []),
+          statement.target, statement.start, statement.stop, statement.step, statement.iterable, ...(statement.args || []),
           ...(statement.options || []).flatMap((option) => [option.label, ...[]]),
           ...(statement.elseIf || []).map((branch) => branch.condition?.expression)]) visitExpr(expression);
         if (statement.kind === 'if') {
@@ -476,7 +541,7 @@ function functionWriteEffects(script) {
           statement.elseIf.forEach((branch) => visitBlock(branch.body));
           visitBlock(statement.otherwise);
         } else if (statement.kind === 'choice') statement.options.forEach((option) => visitBlock(option.body));
-        else if (statement.kind === 'for' || statement.kind === 'while') visitBlock(statement.body);
+        else if (statement.kind === 'for' || statement.kind === 'forEach' || statement.kind === 'while') visitBlock(statement.body);
       }
     };
     visitBlock(fn.body);
@@ -524,6 +589,7 @@ function taintCalls(statement, states, mutableNames, functionEffects, context) {
         : statement.kind === 'declare' ? [statement.initial]
           : statement.kind === 'for' ? [statement.start, statement.stop, statement.step]
             : statement.kind === 'while' ? [statement.condition]
+              : statement.kind === 'forEach' ? [statement.iterable]
               : statement.kind === 'command' || statement.kind === 'call' ? statement.args
                 : statement.kind === 'return' ? [statement.value] : [];
   const direct = expressions.some(hasUserCall);
@@ -571,6 +637,7 @@ function functionLocalNames(fn, out = new Set(fn.params.map((param) => param.nam
       if (statement.kind === 'if') {
         visit(statement.body); statement.elseIf.forEach((branch) => visit(branch.body)); visit(statement.otherwise);
       } else if (statement.kind === 'choice') statement.options.forEach((option) => visit(option.body));
+      else if (statement.kind === 'forEach') { out.add(statement.name); visit(statement.body); }
       else if (statement.kind === 'for' || statement.kind === 'while') visit(statement.body);
     }
   };
@@ -691,15 +758,42 @@ function runFunctionFor(statement, state, bounds, mutableNames, context) {
   return mergeFunctionOutcomes(result);
 }
 
+function runFunctionEach(statement, state, iterables, mutableNames, context) {
+  const normal = (next) => ({ state: next, returned: false, transfer: false, value: null });
+  const frameKey = localKey(statement.name), hadLocal = state.has(frameKey), oldValue = state.get(frameKey);
+  const restore = (outcome) => ({ ...outcome, state: hadLocal ? putLocal(outcome.state, statement.name, oldValue) : (() => { const next = copy(outcome.state); next.delete(frameKey); return next; })() });
+  if (iterables === null) {
+    const unknownState = putLocal(state, statement.name, null);
+    const body = runFunctionBlock(statement.body, [normal(unknownState)], mutableNames, context)
+      .map((outcome) => ({ ...outcome, state: taintWritten(outcome.state, statement.body, context, mutableNames) }));
+    return mergeFunctionOutcomes([normal(state), ...body].map(restore));
+  }
+  const result = [];
+  for (const iterable of iterables) {
+    if (!Array.isArray(iterable)) return [normal(taintWritten(state, statement.body, context, mutableNames))];
+    let paths = [normal(state)], count = 0;
+    for (const item of iterable) {
+      if (++count > MAX_FUNCTION_STEPS) {
+        paths = paths.map((path) => ({ ...path, state: taintWritten(path.state, statement.body, context, mutableNames) }));
+        break;
+      }
+      paths = paths.flatMap((path) => path.returned || path.transfer ? [path]
+        : runFunctionBlock(statement.body, [normal(putLocal(path.state, statement.name, single(item)))], mutableNames, context));
+    }
+    result.push(...paths.map(restore));
+  }
+  return mergeFunctionOutcomes(result);
+}
+
 function runFunctionStatement(statement, input, mutableNames, context) {
-  const stateful = ['declare', 'set', 'unset', 'call', 'return', 'command', 'choice', 'if', 'for', 'while'].includes(statement.kind);
+  const stateful = ['declare', 'set', 'unset', 'call', 'return', 'command', 'choice', 'if', 'for', 'forEach', 'while'].includes(statement.kind);
   const states = stateful ? [input] : taintCalls(statement, [input], mutableNames, context.effects, context);
   const result = [];
   for (const state of states) {
     const normal = (next) => ({ state: next, returned: false, transfer: false, value: null });
     if (statement.kind === 'declare') {
       const initial = statement.initial ? evaluateWithEffects(statement.initial, state, context)
-        : [{ state, values: single(statement.type === 'int' ? 0n : statement.type === 'float' ? 0 : statement.type === 'str' ? '' : {}) }];
+        : [{ state, values: single(statement.type === 'int' ? 0n : statement.type === 'float' ? 0 : statement.type === 'str' ? '' : statement.type === 'bool' ? false : statement.type?.kind === 'list' ? [] : {}) }];
       result.push(...initial.map((path) => normal(putLocal(path.state, statement.name, path.values))));
     } else if (statement.kind === 'set' || statement.kind === 'unset') {
       let target = statement.target;
@@ -730,6 +824,9 @@ function runFunctionStatement(statement, input, mutableNames, context) {
     } else if (statement.kind === 'for') {
       for (const bounds of evaluateArguments([statement.start, statement.stop, statement.step], state, context))
         result.push(...runFunctionFor(statement, bounds.state, bounds.args, mutableNames, context));
+    } else if (statement.kind === 'forEach') {
+      for (const iterable of evaluateWithEffects(statement.iterable, state, context))
+        result.push(...runFunctionEach(statement, iterable.state, iterable.values, mutableNames, context));
     } else if (statement.kind === 'while') {
       result.push(...runFunctionWhile(statement, [state], mutableNames, context));
     } else if (statement.kind === 'return') {
@@ -849,6 +946,34 @@ function atForLine(statement, states, line, mutableNames, effects, context) {
   return mergeStates(result);
 }
 
+function atEachLine(statement, states, line, mutableNames, effects, context) {
+  const result = [];
+  const contains = (block) => (block || []).some((item) => line >= Number(item.line || 0) && line <= Number(item.endLine || item.line || 0));
+  if (!contains(statement.body)) return states;
+  for (const state of states) for (const path of evaluateWithEffects(statement.iterable, state, context)) {
+    if (path.values === null) {
+      const widened = taintWritten(path.state, statement.body, context, mutableNames);
+      result.push(...atLine(statement.body, [putLocal(widened, statement.name, null)], line, mutableNames, effects, context));
+      continue;
+    }
+    for (const iterable of path.values) {
+      if (!Array.isArray(iterable)) continue;
+      let paths = [path.state], count = 0;
+      for (const item of iterable) {
+        if (++count > MAX_FUNCTION_STEPS) {
+          const widened = taintWritten(path.state, statement.body, context, mutableNames);
+          result.push(...atLine(statement.body, [putLocal(widened, statement.name, null)], line, mutableNames, effects, context));
+          break;
+        }
+        const iteration = paths.map((current) => putLocal(current, statement.name, single(item)));
+        result.push(...atLine(statement.body, iteration, line, mutableNames, effects, context));
+        paths = runBlock(statement.body, iteration, mutableNames, effects, context);
+      }
+    }
+  }
+  return mergeStates(result);
+}
+
 function atWhileLine(statement, states, line, mutableNames, effects, context) {
   let active = states.map((state) => ({ state, seen: new Set() }));
   const entries = [];
@@ -913,14 +1038,39 @@ function executeFor(statement, state, bounds, mutableNames, effects, context) {
   return result;
 }
 
+function executeEach(statement, state, iterables, mutableNames, effects, context) {
+  const frameKey = localKey(statement.name), hadLocal = state.has(frameKey), previous = state.get(frameKey);
+  const restore = (path) => {
+    const next = copy(path);
+    if (hadLocal) next.set(frameKey, previous); else next.delete(frameKey);
+    return next;
+  };
+  if (iterables === null) {
+    const body = runBlock(statement.body, [putLocal(state, statement.name, null)], mutableNames, effects, context)
+      .map((path) => restore(taintWritten(path, statement.body, context, mutableNames)));
+    return mergeStates([state, ...body]);
+  }
+  const result = [];
+  for (const iterable of iterables) {
+    if (!Array.isArray(iterable)) return [taintWritten(state, statement.body, context, mutableNames)];
+    let paths = [state], count = 0;
+    for (const item of iterable) {
+      if (++count > MAX_FUNCTION_STEPS) { paths = paths.map((path) => taintWritten(path, statement.body, context, mutableNames)); break; }
+      paths = runBlock(statement.body, paths.map((path) => putLocal(path, statement.name, single(item))), mutableNames, effects, context);
+    }
+    result.push(...paths.map(restore));
+  }
+  return mergeStates(result);
+}
+
 function execute(statement, states, mutableNames, effects, context) {
-  states = ['declare', 'set', 'unset', 'call', 'command', 'choice', 'if', 'for', 'while'].includes(statement.kind)
+  states = ['declare', 'set', 'unset', 'call', 'command', 'choice', 'if', 'for', 'forEach', 'while'].includes(statement.kind)
     ? states : taintCalls(statement, states, mutableNames, effects, context);
   const result = [];
   for (const state of states) {
     if (statement.kind === 'declare') {
       const initial = statement.initial ? evaluateWithEffects(statement.initial, state, context)
-        : [{ state, values: single(statement.type === 'int' ? 0n : statement.type === 'float' ? 0 : statement.type === 'str' ? '' : {}) }];
+        : [{ state, values: single(statement.type === 'int' ? 0n : statement.type === 'float' ? 0 : statement.type === 'str' ? '' : statement.type === 'bool' ? false : statement.type?.kind === 'list' ? [] : {}) }];
       result.push(...initial.map((path) => put(path.state, statement.name, path.values)));
     } else if (statement.kind === 'set' || statement.kind === 'unset') {
       let target = statement.target;
@@ -948,6 +1098,9 @@ function execute(statement, states, mutableNames, effects, context) {
     } else if (statement.kind === 'for') {
       for (const bounds of evaluateArguments([statement.start, statement.stop, statement.step], state, context))
         result.push(...executeFor(statement, bounds.state, bounds.args, mutableNames, effects, context));
+    } else if (statement.kind === 'forEach') {
+      for (const iterable of evaluateWithEffects(statement.iterable, state, context))
+        result.push(...executeEach(statement, iterable.state, iterable.values, mutableNames, effects, context));
     } else if (statement.kind === 'while') {
       result.push(...runWhile(statement, [state], mutableNames, effects, context));
     } else if (statement.kind === 'command') {
@@ -994,6 +1147,7 @@ function atLine(block, states, line, mutableNames, effects, context) {
         const choiceStates = states.flatMap((state) => executeChoiceEffects(statement, state, context));
         return option ? atLine(option.body, choiceStates, line, mutableNames, effects, context) : choiceStates;
       }
+      if (statement.kind === 'forEach') return atEachLine(statement, states, line, mutableNames, effects, context);
       if (statement.kind === 'for' || statement.kind === 'while') {
         return statement.kind === 'for'
           ? atForLine(statement, states, line, mutableNames, effects, context)
@@ -1027,9 +1181,10 @@ function configuredDomain(constraint) {
 }
 
 function templateTypeTag(type) {
-  if (type === 'int' || type === 'float' || type === 'str') return type;
+  if (type === 'int' || type === 'float' || type === 'str' || type === 'bool') return type;
   if (!type || type === 'infer' || type === 'none') return null;
   if (type.kind === 'dict') return `dict:${type.value}`;
+  if (type.kind === 'list') return `list:${type.value}`;
   if (type.kind === 'struct') return `struct:${type.name}`;
   if (typeof type === 'string') return `struct:${type}`;
   return null;
@@ -1049,6 +1204,17 @@ function collectTemplateTypes(script, staticDeclarations, externalCharacters, ex
       if (statement.kind === 'declare') addVariable(statement.name, statement.type);
       else if (statement.kind === 'for') {
         addVariable(statement.name, 'int');
+        visit(statement.body);
+      } else if (statement.kind === 'forEach') {
+        const iterable = statement.iterable;
+        let elementType = null;
+        if (iterable?.kind === 'call' && iterable.name === 'text.split') elementType = 'str';
+        else if (iterable?.kind === 'list' && iterable.items.length) {
+          const item = iterable.items[0];
+          elementType = item.kind === 'float' ? 'float' : item.kind === 'literal'
+            ? typeof item.value === 'string' ? 'str' : typeof item.value === 'boolean' ? 'bool' : 'int' : null;
+        }
+        addVariable(statement.name, elementType);
         visit(statement.body);
       } else if (statement.kind === 'if') {
         visit(statement.body);
@@ -1091,7 +1257,7 @@ function sceneGlobalNames(scenes = []) {
       if (statement.kind === 'declare') names.add(statement.name);
       else if (statement.kind === 'if') {
         visit(statement.body); statement.elseIf.forEach((branch) => visit(branch.body)); visit(statement.otherwise);
-      } else if (statement.kind === 'for' || statement.kind === 'while') visit(statement.body);
+      } else if (statement.kind === 'for' || statement.kind === 'forEach' || statement.kind === 'while') visit(statement.body);
       // Choice bodies run in a temporary runtime frame, invisible to functions.
     }
   };
@@ -1140,7 +1306,7 @@ function analyzeStartDomains(script, sceneName, line, names, staticDeclarations 
   const result = {};
   for (const name of names) {
     let values = [];
-    for (const state of states) { values = union(values, get(state, name)); if (values === null) break; }
+    for (const state of states) { values = union(values, readBinding(state, name)); if (values === null) break; }
     if (values === null) values = configuredDomain(constraints.get(name));
     result[name] = values === null || !states.length ? { kind: 'unknown', values: [] } : {
       kind: values.length === 1 ? 'exact' : 'finite',

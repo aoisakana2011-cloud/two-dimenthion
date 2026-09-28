@@ -3,6 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CompileError = void 0;
 exports.compile = compile;
 const analyzer_1 = require("../checker/analyzer");
+const type_checker_1 = require("../checker/type-checker");
+const builtins_1 = require("../language/builtins");
 class CompileError extends Error {
 }
 exports.CompileError = CompileError;
@@ -595,7 +597,7 @@ function hasImpureCall(expression) {
     if (expression.kind === 'literal')
         return typeof expression.value === 'string' && hasInterpolation(expression.value);
     if (expression.kind === 'call')
-        return !['str', 'int', 'float'].includes(expression.name) || expression.args.some(hasImpureCall);
+        return !(0, builtins_1.isPureBuiltin)(expression.name) || expression.args.some(hasImpureCall);
     if (expression.kind === 'binary')
         return hasImpureCall(expression.left) || hasImpureCall(expression.right);
     if (expression.kind === 'unary')
@@ -604,6 +606,8 @@ function hasImpureCall(expression) {
         return hasImpureCall(expression.target) || hasImpureCall(expression.key);
     if (expression.kind === 'dict')
         return expression.entries.some((entry) => hasImpureCall(entry.value));
+    if (expression.kind === 'list')
+        return expression.items.some(hasImpureCall);
     return false;
 }
 function literalForConstant(value) {
@@ -629,9 +633,11 @@ function foldExpression(expression, constants) {
                 ? { ...expression, target: foldExpression(expression.target, environment), key: foldExpression(expression.key, environment) }
                 : expression.kind === 'dict'
                     ? { ...expression, entries: expression.entries.map((entry) => ({ ...entry, value: foldExpression(entry.value, environment) })) }
-                    : expression.kind === 'call'
-                        ? { ...expression, args: expression.args.map((argument) => foldExpression(argument, environment)) }
-                        : expression;
+                    : expression.kind === 'list'
+                        ? { ...expression, items: expression.items.map((item) => foldExpression(item, environment)) }
+                        : expression.kind === 'call'
+                            ? { ...expression, args: expression.args.map((argument) => foldExpression(argument, environment)) }
+                            : expression;
     // Keep loads in place when the enclosing expression is not itself folded.
     // In particular, replacing the x in `x < 3` with its entry value would freeze
     // a loop condition even though x is changed by the loop body.
@@ -687,7 +693,7 @@ function declarationsInScope(instructions, result = new Set()) {
             instruction.elseIf.forEach((branch) => declarationsInScope(branch.body, result));
             declarationsInScope(instruction.otherwise, result);
         }
-        if (instruction.op === 'for' || instruction.op === 'while')
+        if (instruction.op === 'for' || instruction.op === 'forEach' || instruction.op === 'while')
             declarationsInScope(instruction.body, result);
         // A nested choice pushes another runtime frame, so its declarations do
         // not belong to the surrounding choice option's scope.
@@ -743,6 +749,8 @@ function visitExpressionCalls(expression, visit) {
     }
     if (expression.kind === 'dict')
         expression.entries.forEach((entry) => visitExpressionCalls(entry.value, visit));
+    if (expression.kind === 'list')
+        expression.items.forEach((item) => visitExpressionCalls(item, visit));
 }
 function visitExpressionCallsInExecution(expression, constants, constraints, locals, visit) {
     if (!expression)
@@ -778,6 +786,8 @@ function visitExpressionCallsInExecution(expression, constants, constraints, loc
     }
     if (expression.kind === 'dict')
         expression.entries.forEach((entry) => visitExpressionCallsInExecution(entry.value, constants, constraints, locals, visit));
+    if (expression.kind === 'list')
+        expression.items.forEach((item) => visitExpressionCallsInExecution(item, constants, constraints, locals, visit));
 }
 function writtenVariables(instructions, effects, result = new Set()) {
     const visitCalls = (expression) => visitExpressionCalls(expression, (name) => {
@@ -826,6 +836,11 @@ function writtenVariables(instructions, effects, result = new Set()) {
             visitCalls(instruction.step);
             writtenVariables(instruction.body, effects, result);
         }
+        if (instruction.op === 'forEach') {
+            result.add(instruction.name);
+            visitCalls(instruction.iterable);
+            writtenVariables(instruction.body, effects, result);
+        }
         if (instruction.op === 'while') {
             visitCalls(instruction.condition);
             writtenVariables(instruction.body, effects, result);
@@ -842,7 +857,7 @@ function functionWrites(functions, globalNames) {
     const walk = (instructions, writes, invoked, locals = new Set()) => {
         const recordCall = (name) => { if (name === '*')
             globalNames.forEach((variable) => writes.add(variable));
-        else
+        else if (!(0, builtins_1.isPureBuiltin)(name))
             invoked.add(name); };
         for (const instruction of instructions) {
             if (instruction.op === 'declare') {
@@ -875,6 +890,12 @@ function functionWrites(functions, globalNames) {
                 visitExpressionCalls(instruction.start, recordCall);
                 visitExpressionCalls(instruction.stop, recordCall);
                 visitExpressionCalls(instruction.step, recordCall);
+                const bodyLocals = new Set(locals);
+                bodyLocals.add(instruction.name);
+                walk(instruction.body, writes, invoked, bodyLocals);
+            }
+            if (instruction.op === 'forEach') {
+                visitExpressionCalls(instruction.iterable, recordCall);
                 const bodyLocals = new Set(locals);
                 bodyLocals.add(instruction.name);
                 walk(instruction.body, writes, invoked, bodyLocals);
@@ -978,6 +999,10 @@ function optimizeInstructions(instructions, effects, constants = new Map(), opti
                 invalidateExpression(item.start);
                 invalidateExpression(item.stop);
                 invalidateExpression(item.step);
+                invalidateAssigned(item.body);
+            }
+            if (item.op === 'forEach') {
+                invalidateExpression(item.iterable);
                 invalidateAssigned(item.body);
             }
             if (item.op === 'while') {
@@ -1162,7 +1187,7 @@ function optimizeInstructions(instructions, effects, constants = new Map(), opti
             invalidateConstraintsFor([instruction]);
             continue;
         }
-        if (instruction.op === 'for' || instruction.op === 'while') {
+        if (instruction.op === 'for' || instruction.op === 'forEach' || instruction.op === 'while') {
             if (instruction.op === 'for') {
                 const [start, stop, step] = foldArguments([instruction.start, instruction.stop, instruction.step], constants);
                 invalidateExpression(start);
@@ -1180,6 +1205,17 @@ function optimizeInstructions(instructions, effects, constants = new Map(), opti
                 output.push(optimized);
                 if (definitelyTerminates(optimized, constants))
                     break;
+                continue;
+            }
+            if (instruction.op === 'forEach') {
+                const iterable = foldExpression(instruction.iterable, constants);
+                invalidateExpression(iterable);
+                invalidateAssigned(instruction.body);
+                const loopConstants = new Map(constants);
+                loopConstants.delete(instruction.name);
+                const loopLocals = new Set(locals || []);
+                loopLocals.add(instruction.name);
+                output.push({ ...instruction, iterable, body: optimizeInstructions(instruction.body, effects, loopConstants, options, loopLocals, undefined) });
                 continue;
             }
             const condition = foldExpression(instruction.condition, constants);
@@ -1344,6 +1380,8 @@ class Compiler {
             }
             if (e.kind === 'dict')
                 e.entries.forEach(x => ref(x.value, bindings, loc));
+            if (e.kind === 'list')
+                e.items.forEach(x => ref(x, bindings, loc));
             if (e.kind === 'call')
                 e.args.forEach(x => ref(x, bindings, loc));
         };
@@ -1465,6 +1503,16 @@ class Compiler {
                                 bindings.set(name, entry);
                     }
                 }
+                if (s.kind === 'forEach') {
+                    ref(s.iterable, bindings, loc);
+                    const child = new Map(bindings), at = { scope: 'local', container: `${loc.container}:forEach${++scopeId}`, line: s.nameLine, column: s.nameColumn, kind: 'definition' };
+                    const visibleTypes = new Map([...bindings].map(([name, entry]) => [name, entry.type]));
+                    const iterableType = (0, type_checker_1.inferValueType)(s.iterable, visibleTypes, script.functions);
+                    if (typeof iterableType === 'string' || iterableType.kind !== 'list')
+                        throw new CompileError('for-in iterable lost its checked list type');
+                    declare(s.name, iterableType.value, child, at);
+                    walk(s.body, child, at, child, declarationLoc);
+                }
                 if (s.kind === 'choice') {
                     if (s.prompt)
                         ref(s.prompt, bindings, loc);
@@ -1519,6 +1567,7 @@ class Compiler {
                 step: this.expr(statement.step),
                 body: this.statements(statement.body),
             };
+            case 'forEach': return { op: 'forEach', name: statement.name, iterable: this.expr(statement.iterable), body: this.statements(statement.body) };
             case 'while': return { op: 'while', condition: this.expr(statement.condition.expression), body: this.statements(statement.body) };
             case 'choice': return {
                 op: 'choice',
@@ -1543,6 +1592,7 @@ class Compiler {
             case 'unary': return { kind: 'unary', operator: expression.operator, value: this.expr(expression.value) };
             case 'call': return { kind: 'call', name: expression.name, args: expression.args.map((v) => this.expr(v)) };
             case 'dict': return { kind: 'dict', entries: expression.entries.map((entry) => ({ key: entry.key, value: this.expr(entry.value) })) };
+            case 'list': return { kind: 'list', items: expression.items.map(item => this.expr(item)) };
         }
     }
 }

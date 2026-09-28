@@ -121,6 +121,50 @@ scene main { wait 1 }`;
     assert.ok((await editor.inputValue()).includes('wait helpers.smooth()'), 'functions from aliased project includes are suggested');
     assert.equal(await caret(), importedCaret + 4, 'included function completion keeps the caret inside parentheses after expanding its prefix');
 
+    const standardTextSource = 'include "std/text.tds" as strings\nscene main {\n  wait strings.split_wor\n}';
+    await editor.fill(standardTextSource);
+    const standardTextCaret = standardTextSource.indexOf('strings.split_wor') + 'strings.split_wor'.length;
+    await editor.evaluate((element, position) => {
+      element.setSelectionRange(position, position);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }, standardTextCaret);
+    await page.waitForFunction(() => [...document.querySelectorAll('#suggestions .suggestion')].some(item => item.textContent.trim().endsWith('split_words()')));
+    await editor.press('Enter');
+    assert.ok((await editor.inputValue()).includes('strings.split_words()'), 'functions from the TDS-written standard data modules are suggested');
+
+    const listBuiltinSource = 'scene main {\n  wait list.len\n}';
+    await editor.fill(listBuiltinSource);
+    const listBuiltinCaret = listBuiltinSource.indexOf('list.len') + 'list.len'.length;
+    await editor.evaluate((element, position) => {
+      element.setSelectionRange(position, position);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }, listBuiltinCaret);
+    await page.waitForFunction(() => [...document.querySelectorAll('#suggestions .suggestion')].some(item => item.textContent.trim().endsWith('length()')));
+    await editor.press('Enter');
+    assert.ok((await editor.inputValue()).includes('list.length()'), 'list intrinsic members are completed in their namespace');
+    assert.equal(await caret(), listBuiltinCaret + 'th()'.length, 'intrinsic completion places the caret inside call parentheses');
+
+    const textBuiltinSource = 'scene main {\n  wait text.norma\n}';
+    await editor.fill(textBuiltinSource);
+    const textBuiltinCaret = textBuiltinSource.indexOf('text.norma') + 'text.norma'.length;
+    await editor.evaluate((element, position) => {
+      element.setSelectionRange(position, position);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }, textBuiltinCaret);
+    await page.waitForFunction(() => [...document.querySelectorAll('#suggestions .suggestion')].some(item => item.textContent.trim().endsWith('normalize_space()')));
+    await editor.press('Enter');
+    assert.ok((await editor.inputValue()).includes('text.normalize_space()'), 'text intrinsic members are completed in their namespace');
+    assert.equal(await caret(), textBuiltinCaret + 'lize_space('.length, 'text intrinsic completion leaves the caret inside the call');
+
+    const loopSymbolResponse = await page.evaluate(async () => {
+      const response = await fetch('/api/editor-symbols', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'global list[int] scores = [2, 4]\nscene main { for score in scores { wait score } }', name: 'main.tds' }),
+      });
+      return response.json();
+    });
+    assert.equal(loopSymbolResponse.symbols.variables.find(symbol => symbol.name === 'score')?.type, 'int', 'for-in loop symbols retain their iterable element type');
+
     async function select(source, start, end = start) {
       await editor.fill(source);
       await editor.evaluate((element, range) => element.setSelectionRange(range.start, range.end), { start, end });

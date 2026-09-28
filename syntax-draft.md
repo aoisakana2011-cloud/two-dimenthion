@@ -53,9 +53,9 @@ scene main {
 - 空行は無視される。
 - 改行は通常、命令の終端になる。辞書リテラル内では改行できる。
 - 整数は符号付き64 bitで扱う。
-- 基本型は `int`、`float`、`str`。複合型として `dict[int]`、`dict[float]`、`dict[str]`、名前付き `struct`、キャラクターオブジェクトがある。`none` は関数の戻り値型に使えるが、値や変数の型には使えない。
-- 内部的な真偽値は条件式にだけ存在し、`bool` 型の変数は宣言できない。
-- `true`、`false`、`null` のリテラルはない。真偽値は比較・論理演算の結果としてのみ存在する。
+- 基本型は `int`、`float`、`str`、`bool`。複合型として `dict[T]`、`list[T]`（`T` は基本型）、名前付き `struct`、キャラクターオブジェクトがある。`none` は関数の戻り値型に使えるが、値や変数の型には使えない。
+- `true` と `false` は `bool` リテラル。`bool` の既定値は `false`。
+- list は同じ基本型の値だけを保持する値型で、代入・引数・戻り値ではコピーされる。添字は0始まり。
 
 ## 2. コメント、文字列、識別子
 
@@ -169,9 +169,9 @@ include "std/motion/walk.tds" as walk
 - include先は再利用宣言用モジュールで、シーンや実行命令は書けない。関数名は別名で修飾される。アセット、キャラクター、struct、global宣言は互換性のためプロジェクト共通カタログに統合される。
 - モジュールのglobal宣言は依存先から初期化される。シナリオファイルへの遷移は `goto` のみで行う。
 - include先の `struct` はプロジェクト統合時に型宣言として取り込まれ、include元のグローバル宣言・関数シグネチャ・関数本体から参照できる。循環includeや同名structはエラーになる。
-- `std/` はエディター同梱の読み取り専用標準ライブラリ用予約パスで、作品内の `scenario_dir/std/` より優先される。`std/math.tds`、`std/motion/walk.tds`、`std/motion/effects.tds` をincludeできる。
+- `std/` はエディター同梱の読み取り専用標準ライブラリ用予約パスで、作品内の `scenario_dir/std/` より優先される。`std/math.tds`、`std/motion/walk.tds`、`std/motion/effects.tds`、`std/text.tds`、`std/collections.tds` をincludeできる。
 
-例: `include "std/math.tds" as math` の後に `math.sin(angle)`、`include "std/motion/walk.tds" as walk` の後に `walk.walk_bob(6.0, progress)` と書く。`std/motion/effects.tds` は `shake`、`breathe`、`hop`、`drift` を提供する。引数と単位の詳細は [`std/README.md`](std/README.md) を参照。
+例: `include "std/math.tds" as math` の後に `math.sin(angle)`、`include "std/motion/walk.tds" as walk` の後に `walk.walk_bob(6.0, progress)` と書く。`std/motion/effects.tds` は `shake`、`breathe`、`hop`、`drift`、`std/text.tds` は単語分割と結合、`std/collections.tds` は文字列リストの検索・重複除去・要素除去を提供する。引数と単位の詳細は [`std/README.md`](std/README.md) を参照。
 
 別ファイルへの遷移は `goto` で行う。
 
@@ -273,6 +273,8 @@ int <name> = <int-expression>
 str <name> = <str-expression>
 dict[int] <name> = <dictionary-expression>
 dict[str] <name> = <dictionary-expression>
+bool <name> = true | false
+list[int|float|str|bool] <name> = <list-expression>
 const <type> <name> = <expression>
 global <type> <name> = <expression>
 global const <type> <name> = <expression>
@@ -320,6 +322,25 @@ unset stats["hp"]
 - 参照・更新・削除時のキーは `str` でなければならない。
 - 存在しないキーの参照と削除は実行時エラーになる。
 - `set` は新しい辞書キーの追加にも使用できる。
+
+### 型付きリスト
+
+list は要素型を固定した順序付きの値型。要素には `int`、`float`、`str`、`bool` を使える。型を推論できない空リストは、`list[int] values = []` のように宣言側で要素型を指定する。
+
+```tds
+list[str] names = ["綾瀬", "美緒"]
+global list[int] scores = [2, 4, 6]
+set scores[0] = 3
+for score in scores {
+  say narrator "score={score}"
+}
+```
+
+添字は0始まりで、範囲外の参照・更新は実行時エラー。`for name in names { ... }` は反復開始時のリスト値を順番に走査し、ループ変数は本体内だけで有効。listの代入・引数・戻り値はコピーであり、参照共有しない。
+
+組み込み関数は `list.length(items) -> int`、`list.append(items, item) -> list[T]`、`list.contains(items, item) -> bool`。`append` は元のlistを変更せず、新しいlistを返す。
+
+文字列処理は `text.trim(value) -> str`、`text.normalize_space(value) -> str`、`text.split(value, separator) -> list[str]`、`text.replace(value, search, replacement) -> str`。`split` は先頭・末尾・連続区切りの空要素を保持する。空の区切り文字と空の検索文字列はコンパイルエラー。
 
 ### 8.2 struct
 
@@ -446,11 +467,11 @@ say narrator "{copy.volume}"      # 20
 | `Player copy = player` | 宣言時のstruct初期化エラー | `{ ... }` で初期化してから `set copy = player` |
 | `set p.rank = 1` | 未定義フィールドでエラー | フィールド追加は不可 |
 | `unset p.name` | エラー | `unset` は辞書要素専用 |
-| `struct Party { leader: Player }` | 構文エラー | フィールド型は `int`、`float` または `str` のみ |
-| `dict[Player] members = ...` | 型として使用不可 | 辞書の値型は `int`、`float`、`str` のいずれか |
+| `struct Party { leader: Player }` | 構文エラー | フィールド型は `int`、`float`、`str`、`bool` のみ |
+| `dict[Player] members = ...` | 型として使用不可 | 辞書の値型は基本型のいずれか |
 | `Player p = ...` を `struct Player` より前に書く | 同一ファイル内またはinclude依存先にstructがあれば有効 | structはトップレベルで宣言する |
 
-structの入れ子、structフィールドへの辞書、辞書の値としてのstruct、`bool` フィールドは現在のDSLでは対応していない。複雑な状態が必要なら、複数のstruct変数に分けるか、`dict[int]` / `dict[float]` / `dict[str]` を別変数として持つ。
+structの入れ子、structフィールドへの辞書、辞書の値としてのstructは使用できない。structフィールド、辞書値、リスト要素には `bool` を含む基本型を使える。
 
 ### 8.8 複数ファイルで使うstruct
 
@@ -720,6 +741,11 @@ for i from 0 to 10 {
 for i from 10 to 0 step -1 {
   say narrator "{i}"
 }
+
+list[str] names = ["A", "B"]
+for name in names {
+  say narrator name
+}
 ```
 
 - 開始値、終了値、`step` は `int`。
@@ -727,6 +753,7 @@ for i from 10 to 0 step -1 {
 - `step` 省略時は `1`。
 - `step == 0`、または終了値へ進めない符号の `step` は実行時エラー。
 - 反復上限は100,000回。
+- `for item in list { ... }` はlist要素型のループ変数で反復する。listが空なら本体は実行されない。
 
 ### 16.2 while
 
@@ -756,7 +783,7 @@ int result = calculate(3, 4)
 - 引数は `<name>: <type>` の順。
 - 戻り値型は `-> <type>` で指定する。
 - 戻り値型には `none` も指定できる。
-- 引数と戻り値には `int`、`str`、辞書型、名前付きstruct型を使用できる。
+- 引数と戻り値には `int`、`float`、`str`、`bool`、`dict[T]`、`list[T]`、名前付きstruct型を使用できる。`T` は `int`、`float`、`str`、`bool` のいずれか。`none` は戻り値に限り使用できる。
 - 関数呼び出しは式にも単独文にもできる。
 - 引数の個数と型は静的検査される。
 - `none` 関数は値を返せない。
@@ -859,8 +886,8 @@ scene chapter1 {
 
 | 分類 | 構文 | 制約 |
 |---|---|---|
-| 宣言 | `int\|float\|str <name> = <expr>` | 初期値は必須、型は一致させる |
-| 宣言 | `dict[int\|float\|str] <name> = <dict>` | キーは常に `str` |
+| 宣言 | `int\|float\|str\|bool <name> = <expr>` | 初期値は必須、型は一致させる |
+| 宣言 | `dict[T] <name> = <dict>` / `list[T] <name> = <list>` | `T` は基本型。辞書キーは常に `str` |
 | 宣言 | `const <type> <name> = <expr>` | 以後の `set` / `unset` は不可 |
 | 宣言 | `global <declaration>` | ファイルのトップレベルだけ |
 | 更新 | `set <target> = <expr>` | target は変数、辞書要素、struct／キャラクターフィールド |
@@ -877,6 +904,7 @@ scene chapter1 {
 | 分岐 | `if <condition> { ... } [elif <condition> { ... }] [else { ... }]` | condition は `bool` 式 |
 | 選択 | `choice [<str-expr>] { <str-expr> { ... } ... }` | 1選択肢以上。関数内では不可 |
 | 反復 | `for <name> from <int-expr> to <int-expr> [step <int-expr>] { ... }` | 両端を含む |
+| 反復 | `for <name> in <list-expr> { ... }` | list要素型のループ変数。空listでは0回 |
 | 反復 | `while <condition> { ... }` | 上限100,000反復 |
 | 関数 | `fn <name>([<name>: <type>, ...]) -> <type> { ... }` | 再帰不可 |
 | 遷移 | `goto <scene-name>` / `goto "<relative-file-path>"`（外部パスは必ず引用符で囲む） | 関数内では不可 |

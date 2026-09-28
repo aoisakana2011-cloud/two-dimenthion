@@ -4,6 +4,7 @@ exports.sceneReachability = sceneReachability;
 exports.analyzeScript = analyzeScript;
 exports.assertAnalyzed = assertAnalyzed;
 const type_checker_1 = require("./type-checker");
+const builtins_1 = require("../language/builtins");
 const INT_MIN = -(1n << 63n);
 const INT_MAX = (1n << 63n) - 1n;
 const MAX_STATIC_NUMERIC_VALUES = 64;
@@ -33,6 +34,8 @@ function errorDiagnostic(error, file) {
 function integer(value) {
     if (typeof value === 'bigint')
         return value;
+    if (typeof value === 'boolean')
+        return undefined;
     return Number.isSafeInteger(value) ? BigInt(value) : undefined;
 }
 function constant(expr, constants = new Map()) {
@@ -202,6 +205,8 @@ function expressionKey(expr) {
         return `${expressionKey(expr.target)}[${expressionKey(expr.key)}]`;
     if (expr.kind === 'call')
         return `${expr.name}(${expr.args.map(expressionKey).join(',')})`;
+    if (expr.kind === 'list')
+        return `[${expr.items.map(expressionKey).join(',')}]`;
     return `{${expr.entries.map((entry) => `${entry.key}:${expressionKey(entry.value)}`).join(',')}}`;
 }
 function inverseExpressionKey(expr) {
@@ -715,6 +720,8 @@ function isPureExpression(expr) {
         return isPureExpression(expr.target) && isPureExpression(expr.key);
     if (expr.kind === 'dict')
         return expr.entries.every((entry) => isPureExpression(entry.value));
+    if (expr.kind === 'list')
+        return expr.items.every(isPureExpression);
     return true;
 }
 function visitExpressions(expr, visit) {
@@ -733,6 +740,8 @@ function visitExpressions(expr, visit) {
         expr.args.forEach((arg) => visitExpressions(arg, visit));
     if (expr.kind === 'dict')
         expr.entries.forEach((entry) => visitExpressions(entry.value, visit));
+    if (expr.kind === 'list')
+        expr.items.forEach((item) => visitExpressions(item, visit));
 }
 function statementExpressions(statement) {
     if (statement.kind === 'declare')
@@ -747,6 +756,8 @@ function statementExpressions(statement) {
         return [statement.condition.expression];
     if (statement.kind === 'for')
         return [statement.start, statement.stop, statement.step];
+    if (statement.kind === 'forEach')
+        return [statement.iterable];
     if (statement.kind === 'choice')
         return [...(statement.prompt ? [statement.prompt] : []), ...statement.options.map((option) => option.label)];
     if (statement.kind === 'return')
@@ -756,7 +767,7 @@ function statementExpressions(statement) {
 function nested(statement) {
     if (statement.kind === 'if')
         return [statement.body, ...statement.elseIf.map((branch) => branch.body), statement.otherwise];
-    if (statement.kind === 'for' || statement.kind === 'while')
+    if (statement.kind === 'for' || statement.kind === 'forEach' || statement.kind === 'while')
         return [statement.body];
     if (statement.kind === 'choice')
         return statement.options.map((option) => option.body);
@@ -1282,6 +1293,8 @@ function referencesVariable(expression, name) {
         return expression.args.some((argument) => referencesVariable(argument, name));
     if (expression.kind === 'dict')
         return expression.entries.some((entry) => referencesVariable(entry.value, name));
+    if (expression.kind === 'list')
+        return expression.items.some((item) => referencesVariable(item, name));
     return false;
 }
 function loopUpdate(statement, name) {
@@ -1660,7 +1673,7 @@ let activeFunctionDefinitions = new Map();
 let activeGlobalNames = new Set();
 const activeFunctionCallStack = new Set();
 function callChangesState(name) {
-    if (name === 'int' || name === 'float' || name === 'str')
+    if ((0, builtins_1.isPureBuiltin)(name))
         return false;
     const effects = activeFunctionEffects.get(name);
     return !effects || effects.has('*') || effects.size > 0;
@@ -1715,6 +1728,8 @@ function invalidateConstraintCallsInExecution(expression, constants, facts, cons
     }
     if (expression.kind === 'dict')
         invalidateConstraintCallsInExecutionForArguments(expression.entries.map((entry) => entry.value), constants, facts, constraints);
+    if (expression.kind === 'list')
+        invalidateConstraintCallsInExecutionForArguments(expression.items, constants, facts, constraints);
 }
 function invalidateConstraintCallsInExecutionForArguments(expressions, constants, facts, constraints) {
     expressions.forEach((expression) => invalidateConstraintCallsInExecution(expression, constants, facts, constraints));
@@ -1766,6 +1781,8 @@ function invalidateConstantCalls(expr, constants, facts) {
         return invalidateConstantCalls(expr.key, constants, facts) || invalidateConstantCalls(expr.target, constants, facts);
     if (expr.kind === 'dict')
         return expr.entries.reduce((changed, entry) => invalidateConstantCalls(entry.value, constants, facts) || changed, false);
+    if (expr.kind === 'list')
+        return expr.items.reduce((changed, item) => invalidateConstantCalls(item, constants, facts) || changed, false);
     if (expr.kind === 'call') {
         const argumentsChanged = expr.args.reduce((changed, argument) => invalidateConstantCalls(argument, constants, facts) || changed, false);
         return invalidateConstantCall(expr.name, constants) || argumentsChanged;
@@ -1800,10 +1817,10 @@ function functionEffects(functions, globals) {
                     if (target.kind === 'variable' && !locals.has(target.name) && globals.has(target.name))
                         writes.add(target.name);
                 }
-                if (statement.kind === 'call' && statement.name !== 'int' && statement.name !== 'float' && statement.name !== 'str')
+                if (statement.kind === 'call' && !(0, builtins_1.isPureBuiltin)(statement.name))
                     invoked.add(statement.name);
                 for (const expression of statementExpressions(statement))
-                    expressionCalls(expression).forEach((name) => { if (name !== 'int' && name !== 'float' && name !== 'str')
+                    expressionCalls(expression).forEach((name) => { if (!(0, builtins_1.isPureBuiltin)(name))
                         invoked.add(name); });
                 for (const body of nested(statement))
                     walk(body, new Set(locals));
@@ -1838,7 +1855,7 @@ function loopConstants(statement, constants) {
         stable.clear();
     for (const name of writtenVariables(statement))
         stable.delete(name);
-    if (statement.kind === 'for')
+    if (statement.kind === 'for' || statement.kind === 'forEach')
         stable.delete(statement.name);
     return stable;
 }
@@ -1861,7 +1878,7 @@ function updateKnownConstants(statement, constants) {
             constants.set(statement.target.name, value);
         return;
     }
-    if (statement.kind === 'if' || statement.kind === 'while' || statement.kind === 'for' || statement.kind === 'choice') {
+    if (statement.kind === 'if' || statement.kind === 'while' || statement.kind === 'for' || statement.kind === 'forEach' || statement.kind === 'choice') {
         for (const name of writtenVariables(statement))
             constants.delete(name);
     }
@@ -1947,6 +1964,9 @@ function reachableGotoTargets(statements, targets = new Set(), constants = new M
         else if (statement.kind === 'for') {
             if (forExecution(statement, known) !== 'invalid')
                 reachableGotoTargets(statement.body, targets, known, knownFacts, constraints);
+        }
+        else if (statement.kind === 'forEach') {
+            reachableGotoTargets(statement.body, targets, known, knownFacts, constraints);
         }
         if (definitelyTerminates(statement, known, knownFacts, constraints))
             break;
@@ -2121,7 +2141,7 @@ function reachableTransfers(statements, constants = new Map(), facts = new Map()
         }
         // Preserve transfer discovery for loops and other nested flow constructs.
         // Their post-loop values are widened by updateKnownConstants below.
-        if (statement.kind === 'while' || statement.kind === 'for') {
+        if (statement.kind === 'while' || statement.kind === 'for' || statement.kind === 'forEach') {
             if (statement.kind === 'while' && conditionValue(statement.condition.expression, known, knownFacts, constraints) === false)
                 continue;
             const loopState = loopConstants(statement, known);
@@ -2252,6 +2272,8 @@ function analyzeExpression(expr, file, out, constants = new Map()) {
             current.args.forEach((arg) => walk(arg, current));
         if (current.kind === 'dict')
             current.entries.forEach((entry) => walk(entry.value, current));
+        if (current.kind === 'list')
+            current.items.forEach((item) => walk(item, current));
     };
     walk(expr);
 }
@@ -2467,7 +2489,7 @@ function analyzeCharacterPlacements(statements, file, out, initial = new Map(), 
                     for (const option of statement.options)
                         next.push(...analyze(option.body, new Map(state)));
                 }
-                else if (statement.kind === 'while' || statement.kind === 'for') {
+                else if (statement.kind === 'while' || statement.kind === 'for' || statement.kind === 'forEach') {
                     // A loop may execute zero times. Keep the incoming state and also
                     // inspect one body execution for conflicts inside the loop.
                     next.push(state, ...analyze(statement.body, new Map(state)));
@@ -2543,7 +2565,7 @@ function analyzeImageLayers(statements, file, out, initial = new Map(), emitted 
                     for (const option of statement.options)
                         next.push(...analyze(option.body, new Map(state)));
                 }
-                else if (statement.kind === 'while' || statement.kind === 'for') {
+                else if (statement.kind === 'while' || statement.kind === 'for' || statement.kind === 'forEach') {
                     next.push(state, ...analyze(statement.body, new Map(state)));
                 }
                 else if (statement.kind !== 'goto' && statement.kind !== 'return') {
@@ -2611,7 +2633,7 @@ function analyzeAssetReplacements(statements, file, out, kind, code, label, emit
                     for (const option of statement.options)
                         next.push(...analyze(option.body, current));
                 }
-                else if (statement.kind === 'while' || statement.kind === 'for') {
+                else if (statement.kind === 'while' || statement.kind === 'for' || statement.kind === 'forEach') {
                     next.push(current, ...analyze(statement.body, current));
                 }
                 else {
@@ -2664,7 +2686,7 @@ function analyzeVideoLayerReplacements(statements, file, out, emitted = new Set(
                     for (const option of statement.options)
                         next.push(...analyze(option.body, current));
                 }
-                else if (statement.kind === 'while' || statement.kind === 'for') {
+                else if (statement.kind === 'while' || statement.kind === 'for' || statement.kind === 'forEach') {
                     next.push(current, ...analyze(statement.body, current));
                 }
                 else if (statement.kind !== 'goto' && statement.kind !== 'return') {
@@ -2721,7 +2743,7 @@ function analyzeBgmClearDivergence(statements, file, out, emitted = new Set()) {
                     for (const option of statement.options)
                         next.push(...analyze(option.body, current));
                 }
-                else if (statement.kind === 'while' || statement.kind === 'for') {
+                else if (statement.kind === 'while' || statement.kind === 'for' || statement.kind === 'forEach') {
                     next.push(current, ...analyze(statement.body, current));
                 }
                 else if (statement.kind !== 'goto' && statement.kind !== 'return') {
@@ -2777,7 +2799,7 @@ function analyzeBackgroundClearDivergence(statements, file, out, emitted = new S
                     for (const option of statement.options)
                         next.push(...analyze(option.body, current));
                 }
-                else if (statement.kind === 'while' || statement.kind === 'for') {
+                else if (statement.kind === 'while' || statement.kind === 'for' || statement.kind === 'forEach') {
                     next.push(current, ...analyze(statement.body, current));
                 }
                 else if (statement.kind !== 'goto' && statement.kind !== 'return') {

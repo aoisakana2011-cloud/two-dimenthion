@@ -37,10 +37,11 @@ const { seedEmptyProject } = require('../tools/project-layout');
     const page = await browser.newPage();
     await page.goto(`http://127.0.0.1:${server.address().port}/index.html`);
     const editor = page.locator('#editor');
+    const contextMenu = page.locator('.editor-context-menu');
     await page.waitForFunction(() => document.querySelector('#scene-name')?.value === 'main.tds');
     const source = 'struct Vec2 {\n  x: float\n  y: float\n}\nglobal int score = 1\nfn scale(point: Vec2, factor: float) -> float {\n  return point.x * factor\n}\nscene main {\n  if score == 1 and score > 0 {\n    wait 1\n  }\n}\n';
     await editor.fill(source);
-    const rightClickToken = async (line, name) => editor.evaluate((element, target) => {
+    const dispatchRightClickToken = async (line, name) => editor.evaluate((element, target) => {
       const lines = element.value.split(/\r?\n/);
       const index = lines[target.line - 1].indexOf(target.name);
       if (index < 0) throw Error(`missing ${target.name}`);
@@ -59,11 +60,31 @@ const { seedEmptyProject } = require('../tools/project-layout');
       }
       throw Error(`could not locate ${target.name}`);
     }, { line, name });
+    const rightClickToken = async (line, name) => {
+      await dispatchRightClickToken(line, name);
+      await contextMenu.waitFor({ state: 'visible' });
+      await contextMenu.getByRole('menuitem', { name: 'シンボル情報を表示' }).click();
+    };
     const tooltip = page.locator('.variable-tooltip');
-    await rightClickToken(6, 'scale');
+    await dispatchRightClickToken(6, 'scale');
+    await contextMenu.waitFor({ state: 'visible' });
+    const menuText = await contextMenu.textContent();
+    assert.match(menuText, /定義へ移動[\s\S]*シンボル情報を表示[\s\S]*貼り付け[\s\S]*すべて選択/);
+    assert.doesNotMatch(menuText, /切り取り|コピー/);
+    assert.equal(await contextMenu.evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(37, 37, 38)');
+    await contextMenu.getByRole('menuitem', { name: 'シンボル情報を表示' }).click();
     await tooltip.waitFor({ state: 'visible' });
     assert.match(await tooltip.textContent(), /scale\(point: Vec2, factor: float\) -> float/);
     assert.doesNotMatch(await tooltip.textContent(), /引数は宣言順|引数:|戻り値:/, 'the signature already contains parameter order, names, types, and return type');
+    await dispatchRightClickToken(7, 'point');
+    await contextMenu.getByRole('menuitem', { name: '定義へ移動' }).click();
+    await page.waitForFunction(() => document.querySelector('#editor').value.slice(document.querySelector('#editor').selectionStart, document.querySelector('#editor').selectionEnd) === 'point');
+    assert.equal(await editor.evaluate(element => element.value.slice(0, element.selectionStart).split('\n').length), 6, 'Go to Definition jumps to the parameter declaration');
+    const factorUse = source.indexOf('factor', source.indexOf('return point'));
+    await editor.evaluate((element, offset) => { element.focus(); element.setSelectionRange(offset, offset); }, factorUse);
+    await editor.press('F12');
+    await page.waitForFunction(() => document.querySelector('#editor').value.slice(document.querySelector('#editor').selectionStart, document.querySelector('#editor').selectionEnd) === 'factor');
+    assert.equal(await editor.evaluate(element => element.value.slice(0, element.selectionStart).split('\n').length), 6, 'F12 uses the same definition resolver as the context menu');
     await rightClickToken(1, 'Vec2');
     await tooltip.waitFor({ state: 'visible' });
     assert.match(await tooltip.textContent(), /struct Vec2/);
@@ -135,6 +156,13 @@ const { seedEmptyProject } = require('../tools/project-layout');
     assert.ok(openTabs.includes('math.tds'), 'the standard-library definition opens in a separate editor tab');
     assert.match(await editor.inputValue(), /fn lerp\(a: float/);
     assert.equal(await editor.isEditable(), false, 'standard-library definitions are read-only');
+    await editor.evaluate(element => element.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 50, clientY: 50 })));
+    await contextMenu.waitFor({ state: 'visible' });
+    assert.equal(await contextMenu.getByRole('menuitem', { name: '切り取り' }).count(), 0, 'the context menu omits cut');
+    assert.equal(await contextMenu.getByRole('menuitem', { name: 'コピー' }).count(), 0, 'the context menu omits copy');
+    assert.equal(await contextMenu.getByRole('menuitem', { name: '貼り付け' }).isDisabled(), true, 'read-only source cannot be pasted into');
+    await page.keyboard.press('Escape');
+    await contextMenu.waitFor({ state: 'hidden' });
     await page.locator('#editor-tabs .editor-tab-name').filter({ hasText: 'main.tds' }).click();
     await page.waitForFunction(() => document.querySelector('#scene-name')?.value === 'main.tds');
     await editor.fill('include "std/motion/walk.tds" as walk\nscene main {\n  wait walk.walk_x(1.0, 1.0)\n}\n');
@@ -152,7 +180,19 @@ const { seedEmptyProject } = require('../tools/project-layout');
     await page.waitForFunction(() => document.querySelector('#scene-name')?.value === 'main.tds');
     assert.match(await editor.inputValue(), /walk\.walk_x\(1\.0, 1\.0\)/, 'the caller tab remains independently selectable');
     assert.equal(await editor.isEditable(), true, 'returning to the project tab restores normal editing');
-    console.log('PASS editor symbol help: function signatures, imported functions, struct fields, configured value domains, variable declaration facts, and operator grammar');
+    await editor.evaluate(element => element.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, clientX: window.innerWidth - 1, clientY: window.innerHeight - 1,
+    })));
+    await contextMenu.waitFor({ state: 'visible' });
+    const menuBounds = await contextMenu.evaluate(element => {
+      const { right, bottom } = element.getBoundingClientRect();
+      return { right, bottom };
+    });
+    assert.ok(menuBounds.right <= await page.evaluate(() => window.innerWidth), 'the context menu stays inside the right viewport edge');
+    assert.ok(menuBounds.bottom <= await page.evaluate(() => window.innerHeight), 'the context menu stays inside the bottom viewport edge');
+    await page.keyboard.press('Escape');
+    await contextMenu.waitFor({ state: 'hidden' });
+    console.log('PASS VS Code-style context menu: symbol help, definition navigation, F12, viewport clamping, and escape dismissal');
   } finally {
     await browser?.close();
     await new Promise(resolve => server.close(resolve));
