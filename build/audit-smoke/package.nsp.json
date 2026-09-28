@@ -12,7 +12,7 @@
         "path": "asset/pixel.png",
         "line": 1,
         "column": 1,
-        "file": "current"
+        "file": "main.tds"
       },
       {
         "kind": "asset",
@@ -21,7 +21,7 @@
         "path": "asset/pixel.png",
         "line": 2,
         "column": 1,
-        "file": "current"
+        "file": "main.tds"
       },
       {
         "kind": "asset",
@@ -30,7 +30,7 @@
         "path": "asset/pixel.png",
         "line": 3,
         "column": 1,
-        "file": "current"
+        "file": "main.tds"
       },
       {
         "kind": "asset",
@@ -39,7 +39,7 @@
         "path": "asset/pixel.jpg",
         "line": 4,
         "column": 1,
-        "file": "current"
+        "file": "main.tds"
       },
       {
         "kind": "asset",
@@ -48,7 +48,7 @@
         "path": "asset/pixel.webp",
         "line": 5,
         "column": 1,
-        "file": "current"
+        "file": "main.tds"
       },
       {
         "kind": "asset",
@@ -57,7 +57,7 @@
         "path": "asset/pixel.gif",
         "line": 6,
         "column": 1,
-        "file": "current"
+        "file": "main.tds"
       },
       {
         "kind": "asset",
@@ -66,61 +66,88 @@
         "path": "asset/tone.wav",
         "line": 7,
         "column": 1,
-        "file": "current"
+        "file": "main.tds"
+      },
+      {
+        "kind": "asset",
+        "type": "bgm",
+        "name": "music_alt",
+        "path": "asset/tone.wav",
+        "line": 8,
+        "column": 1,
+        "file": "main.tds"
+      },
+      {
+        "kind": "asset",
+        "type": "bgm",
+        "name": "broken_bgm",
+        "path": "asset/broken.wav",
+        "line": 9,
+        "column": 1,
+        "file": "main.tds"
       },
       {
         "kind": "asset",
         "type": "se",
         "name": "sound",
         "path": "asset/tone.wav",
-        "line": 8,
+        "line": 10,
         "column": 1,
-        "file": "current"
+        "file": "main.tds"
       },
       {
         "kind": "asset",
         "type": "voice",
         "name": "narrator_voice",
         "path": "asset/tone.wav",
-        "line": 9,
+        "line": 11,
         "column": 1,
-        "file": "current"
+        "file": "main.tds"
       },
       {
         "kind": "asset",
         "type": "se",
         "name": "flac",
         "path": "asset/tone.flac",
-        "line": 10,
+        "line": 12,
         "column": 1,
-        "file": "current"
+        "file": "main.tds"
       },
       {
         "kind": "asset",
         "type": "se",
         "name": "vorbis",
         "path": "asset/tone.ogg",
-        "line": 11,
+        "line": 13,
         "column": 1,
-        "file": "current"
+        "file": "main.tds"
       },
       {
         "kind": "asset",
         "type": "se",
         "name": "mpthree",
         "path": "asset/tone.mp3",
-        "line": 12,
+        "line": 14,
         "column": 1,
-        "file": "current"
+        "file": "main.tds"
       },
       {
         "kind": "asset",
         "type": "video",
         "name": "clip",
         "path": "asset/clip.mp4",
-        "line": 13,
+        "line": 15,
         "column": 1,
-        "file": "current"
+        "file": "main.tds"
+      },
+      {
+        "kind": "asset",
+        "type": "video",
+        "name": "broken_video",
+        "path": "asset/broken.mp4",
+        "line": 16,
+        "column": 1,
+        "file": "main.tds"
       }
     ],
     "characters": [
@@ -131,16 +158,16 @@
           {
             "name": "normal",
             "path": "asset/pixel.png",
-            "line": 16,
+            "line": 20,
             "column": 3,
-            "file": "current"
+            "file": "main.tds"
           }
         ],
-        "line": 14,
+        "line": 18,
         "column": 1,
-        "endLine": 17,
+        "endLine": 21,
         "endColumn": 1,
-        "file": "current"
+        "file": "main.tds"
       },
       {
         "kind": "character",
@@ -149,16 +176,34 @@
           {
             "name": "normal",
             "path": "asset/pixel.png",
-            "line": 20,
+            "line": 24,
             "column": 3,
-            "file": "current"
+            "file": "main.tds"
           }
         ],
-        "line": 18,
+        "line": 22,
         "column": 1,
-        "endLine": 21,
+        "endLine": 25,
         "endColumn": 1,
-        "file": "current"
+        "file": "main.tds"
+      },
+      {
+        "kind": "character",
+        "name": "ghost",
+        "poses": [
+          {
+            "name": "normal",
+            "path": "asset/broken.png",
+            "line": 28,
+            "column": 3,
+            "file": "main.tds"
+          }
+        ],
+        "line": 26,
+        "column": 1,
+        "endLine": 29,
+        "endColumn": 1,
+        "file": "main.tds"
       }
     ],
     "globals": [
@@ -181,7 +226,7 @@
             }
           ]
         },
-        "line": 14
+        "line": 18
       },
       {
         "op": "declare",
@@ -202,7 +247,28 @@
             }
           ]
         },
-        "line": 18
+        "line": 22
+      },
+      {
+        "op": "declare",
+        "type": {
+          "kind": "struct",
+          "name": "character:ghost"
+        },
+        "name": "ghost",
+        "initial": {
+          "kind": "dict",
+          "entries": [
+            {
+              "key": "name",
+              "value": {
+                "kind": "literal",
+                "value": "Ghost"
+              }
+            }
+          ]
+        },
+        "line": 26
       },
       {
         "op": "declare",
@@ -213,8 +279,8 @@
           "kind": "integer",
           "value": "9007199254740993"
         },
-        "file": "current",
-        "line": 22
+        "file": "main.tds",
+        "line": 30
       },
       {
         "op": "declare",
@@ -225,8 +291,8 @@
           "kind": "float",
           "value": "0.5"
         },
-        "file": "current",
-        "line": 23
+        "file": "main.tds",
+        "line": 31
       },
       {
         "op": "command",
@@ -237,8 +303,8 @@
             "value": "room"
           }
         ],
-        "file": "current",
-        "line": 24
+        "file": "main.tds",
+        "line": 32
       },
       {
         "op": "command",
@@ -249,8 +315,32 @@
             "value": "music"
           }
         ],
-        "file": "current",
-        "line": 25
+        "file": "main.tds",
+        "line": 33
+      },
+      {
+        "op": "command",
+        "name": "play",
+        "args": [
+          {
+            "kind": "literal",
+            "value": "bgm"
+          },
+          {
+            "kind": "literal",
+            "value": "music_alt"
+          },
+          {
+            "kind": "literal",
+            "value": "crossfade"
+          },
+          {
+            "kind": "integer",
+            "value": "900"
+          }
+        ],
+        "file": "main.tds",
+        "line": 34
       },
       {
         "op": "command",
@@ -265,8 +355,44 @@
             "value": "sound"
           }
         ],
-        "file": "current",
-        "line": 26
+        "file": "main.tds",
+        "line": 35
+      },
+      {
+        "op": "for",
+        "name": "sound_index",
+        "start": {
+          "kind": "integer",
+          "value": "1"
+        },
+        "stop": {
+          "kind": "integer",
+          "value": "12"
+        },
+        "step": {
+          "kind": "integer",
+          "value": "1"
+        },
+        "body": [
+          {
+            "op": "command",
+            "name": "play",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "se"
+              },
+              {
+                "kind": "literal",
+                "value": "sound"
+              }
+            ],
+            "file": "main.tds",
+            "line": 36
+          }
+        ],
+        "file": "main.tds",
+        "line": 36
       },
       {
         "op": "command",
@@ -285,8 +411,8 @@
             "value": "blocking"
           }
         ],
-        "file": "current",
-        "line": 27
+        "file": "main.tds",
+        "line": 37
       },
       {
         "op": "command",
@@ -301,8 +427,8 @@
             "value": "flac"
           }
         ],
-        "file": "current",
-        "line": 28
+        "file": "main.tds",
+        "line": 38
       },
       {
         "op": "command",
@@ -317,8 +443,8 @@
             "value": "vorbis"
           }
         ],
-        "file": "current",
-        "line": 29
+        "file": "main.tds",
+        "line": 39
       },
       {
         "op": "command",
@@ -333,8 +459,8 @@
             "value": "mpthree"
           }
         ],
-        "file": "current",
-        "line": 30
+        "file": "main.tds",
+        "line": 40
       },
       {
         "op": "command",
@@ -353,8 +479,8 @@
             "value": "center"
           }
         ],
-        "file": "current",
-        "line": 31
+        "file": "main.tds",
+        "line": 41
       },
       {
         "op": "command",
@@ -373,8 +499,8 @@
             "value": "center"
           }
         ],
-        "file": "current",
-        "line": 32
+        "file": "main.tds",
+        "line": 42
       },
       {
         "op": "command",
@@ -393,8 +519,8 @@
             "value": "center"
           }
         ],
-        "file": "current",
-        "line": 33
+        "file": "main.tds",
+        "line": 43
       },
       {
         "op": "command",
@@ -409,8 +535,8 @@
             "value": "jpeg"
           }
         ],
-        "file": "current",
-        "line": 34
+        "file": "main.tds",
+        "line": 44
       },
       {
         "op": "command",
@@ -425,8 +551,8 @@
             "value": "webp"
           }
         ],
-        "file": "current",
-        "line": 35
+        "file": "main.tds",
+        "line": 45
       },
       {
         "op": "command",
@@ -441,8 +567,8 @@
             "value": "gif"
           }
         ],
-        "file": "current",
-        "line": 36
+        "file": "main.tds",
+        "line": 46
       },
       {
         "op": "command",
@@ -461,8 +587,8 @@
             "value": "left"
           }
         ],
-        "file": "current",
-        "line": 37
+        "file": "main.tds",
+        "line": 47
       },
       {
         "op": "command",
@@ -481,8 +607,28 @@
             "value": "right"
           }
         ],
-        "file": "current",
-        "line": 38
+        "file": "main.tds",
+        "line": 48
+      },
+      {
+        "op": "command",
+        "name": "show",
+        "args": [
+          {
+            "kind": "literal",
+            "value": "image"
+          },
+          {
+            "kind": "literal",
+            "value": "first"
+          },
+          {
+            "kind": "literal",
+            "value": "center"
+          }
+        ],
+        "file": "main.tds",
+        "line": 49
       },
       {
         "op": "command",
@@ -505,8 +651,98 @@
             "value": "10"
           }
         ],
-        "file": "current",
-        "line": 39
+        "file": "main.tds",
+        "line": 50
+      },
+      {
+        "op": "choice",
+        "prompt": {
+          "kind": "literal",
+          "value": "sprite replacement"
+        },
+        "options": [
+          {
+            "label": {
+              "kind": "literal",
+              "value": "test failure"
+            },
+            "body": [
+              {
+                "op": "command",
+                "name": "show",
+                "args": [
+                  {
+                    "kind": "literal",
+                    "value": "ghost.normal"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "left"
+                  }
+                ],
+                "file": "main.tds",
+                "line": 51
+              }
+            ]
+          },
+          {
+            "label": {
+              "kind": "literal",
+              "value": "continue"
+            },
+            "body": [
+              {
+                "op": "command",
+                "name": "wait",
+                "args": [
+                  {
+                    "kind": "integer",
+                    "value": "1"
+                  }
+                ],
+                "file": "main.tds",
+                "line": 51
+              }
+            ]
+          }
+        ],
+        "file": "main.tds",
+        "line": 51
+      },
+      {
+        "op": "choice",
+        "prompt": {
+          "kind": "literal",
+          "value": "successful sprite replacement"
+        },
+        "options": [
+          {
+            "label": {
+              "kind": "literal",
+              "value": "replace slot"
+            },
+            "body": [
+              {
+                "op": "command",
+                "name": "show",
+                "args": [
+                  {
+                    "kind": "literal",
+                    "value": "friend.normal"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "left"
+                  }
+                ],
+                "file": "main.tds",
+                "line": 52
+              }
+            ]
+          }
+        ],
+        "file": "main.tds",
+        "line": 52
       },
       {
         "op": "command",
@@ -533,7 +769,7 @@
             },
             "right": {
               "kind": "float",
-              "value": "23.0"
+              "value": "23"
             }
           },
           {
@@ -549,7 +785,7 @@
             },
             "right": {
               "kind": "float",
-              "value": "69.0"
+              "value": "69"
             }
           },
           {
@@ -561,8 +797,8 @@
             "value": "10"
           }
         ],
-        "file": "current",
-        "line": 40
+        "file": "main.tds",
+        "line": 53
       },
       {
         "op": "command",
@@ -605,8 +841,8 @@
             "value": "10"
           }
         ],
-        "file": "current",
-        "line": 41
+        "file": "main.tds",
+        "line": 54
       },
       {
         "op": "command",
@@ -637,8 +873,8 @@
             "value": "3.25"
           }
         ],
-        "file": "current",
-        "line": 42
+        "file": "main.tds",
+        "line": 55
       },
       {
         "op": "command",
@@ -653,8 +889,8 @@
             "value": "center"
           }
         ],
-        "file": "current",
-        "line": 43
+        "file": "main.tds",
+        "line": 56
       },
       {
         "op": "command",
@@ -669,8 +905,8 @@
             "value": "first"
           }
         ],
-        "file": "current",
-        "line": 44
+        "file": "main.tds",
+        "line": 57
       },
       {
         "op": "command",
@@ -681,8 +917,8 @@
             "value": "friend"
           }
         ],
-        "file": "current",
-        "line": 45
+        "file": "main.tds",
+        "line": 58
       },
       {
         "op": "command",
@@ -701,8 +937,8 @@
             "value": "10"
           }
         ],
-        "file": "current",
-        "line": 46
+        "file": "main.tds",
+        "line": 59
       },
       {
         "op": "command",
@@ -721,8 +957,8 @@
             "value": "10"
           }
         ],
-        "file": "current",
-        "line": 47
+        "file": "main.tds",
+        "line": 60
       },
       {
         "op": "command",
@@ -741,8 +977,8 @@
             "value": "blocking"
           }
         ],
-        "file": "current",
-        "line": 48
+        "file": "main.tds",
+        "line": 61
       },
       {
         "op": "command",
@@ -761,8 +997,186 @@
             "value": "async"
           }
         ],
-        "file": "current",
-        "line": 49
+        "file": "main.tds",
+        "line": 62
+      },
+      {
+        "op": "choice",
+        "prompt": {
+          "kind": "literal",
+          "value": "transition"
+        },
+        "options": [
+          {
+            "label": {
+              "kind": "literal",
+              "value": "crossfade"
+            },
+            "body": [
+              {
+                "op": "command",
+                "name": "play",
+                "args": [
+                  {
+                    "kind": "literal",
+                    "value": "bgm"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "music_alt"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "crossfade"
+                  },
+                  {
+                    "kind": "call",
+                    "name": "audio.transition_duration",
+                    "args": []
+                  }
+                ],
+                "file": "main.tds",
+                "line": 63
+              },
+              {
+                "op": "command",
+                "name": "play",
+                "args": [
+                  {
+                    "kind": "literal",
+                    "value": "bgm"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "music"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "crossfade"
+                  },
+                  {
+                    "kind": "call",
+                    "name": "audio.transition_duration",
+                    "args": []
+                  }
+                ],
+                "file": "main.tds",
+                "line": 64
+              },
+              {
+                "op": "command",
+                "name": "wait",
+                "args": [
+                  {
+                    "kind": "integer",
+                    "value": "60"
+                  }
+                ],
+                "file": "main.tds",
+                "line": 65
+              },
+              {
+                "op": "command",
+                "name": "play",
+                "args": [
+                  {
+                    "kind": "literal",
+                    "value": "bgm"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "broken_bgm"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "crossfade"
+                  },
+                  {
+                    "kind": "call",
+                    "name": "audio.transition_duration",
+                    "args": []
+                  }
+                ],
+                "file": "main.tds",
+                "line": 66
+              },
+              {
+                "op": "command",
+                "name": "bgm",
+                "args": [
+                  {
+                    "kind": "literal",
+                    "value": "broken_bgm"
+                  }
+                ],
+                "file": "main.tds",
+                "line": 67
+              },
+              {
+                "op": "command",
+                "name": "play",
+                "args": [
+                  {
+                    "kind": "literal",
+                    "value": "video"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "clip"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "async"
+                  }
+                ],
+                "file": "main.tds",
+                "line": 68
+              },
+              {
+                "op": "command",
+                "name": "play",
+                "args": [
+                  {
+                    "kind": "literal",
+                    "value": "video"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "broken_video"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "async"
+                  }
+                ],
+                "file": "main.tds",
+                "line": 69
+              }
+            ]
+          },
+          {
+            "label": {
+              "kind": "literal",
+              "value": "keep"
+            },
+            "body": [
+              {
+                "op": "command",
+                "name": "wait",
+                "args": [
+                  {
+                    "kind": "integer",
+                    "value": "1"
+                  }
+                ],
+                "file": "main.tds",
+                "line": 69
+              }
+            ]
+          }
+        ],
+        "file": "main.tds",
+        "line": 63
       },
       {
         "op": "command",
@@ -770,11 +1184,11 @@
         "args": [
           {
             "kind": "integer",
-            "value": "500"
+            "value": "1050"
           }
         ],
-        "file": "current",
-        "line": 50
+        "file": "main.tds",
+        "line": 70
       },
       {
         "op": "command",
@@ -785,8 +1199,8 @@
             "value": "bgm"
           }
         ],
-        "file": "current",
-        "line": 51
+        "file": "main.tds",
+        "line": 71
       },
       {
         "op": "command",
@@ -797,54 +1211,128 @@
             "value": "bg"
           }
         ],
-        "file": "current",
-        "line": 52
+        "file": "main.tds",
+        "line": 72
       },
       {
-        "op": "choice",
-        "prompt": {
-          "kind": "literal",
-          "value": "test"
-        },
-        "options": [
+        "op": "command",
+        "name": "say",
+        "args": [
           {
-            "label": {
-              "kind": "literal",
-              "value": "continue"
-            },
-            "body": [
+            "kind": "literal",
+            "value": "none"
+          },
+          {
+            "kind": "call",
+            "name": "str",
+            "args": [
               {
-                "op": "command",
-                "name": "say",
-                "args": [
-                  {
-                    "kind": "literal",
-                    "value": "none"
-                  },
-                  {
-                    "kind": "call",
-                    "name": "str",
-                    "args": [
-                      {
-                        "kind": "load",
-                        "name": "x"
-                      }
-                    ]
-                  }
-                ],
-                "file": "current",
-                "line": 53
+                "kind": "load",
+                "name": "x"
               }
             ]
           }
         ],
-        "file": "current",
-        "line": 53
+        "file": "main.tds",
+        "line": 73
       }
     ],
-    "functions": [],
+    "functions": [
+      {
+        "op": "function",
+        "name": "audio.transition_duration",
+        "returnType": "int",
+        "params": [],
+        "body": [
+          {
+            "op": "return",
+            "value": {
+              "kind": "integer",
+              "value": "1000"
+            },
+            "file": "audio.tds",
+            "line": 1
+          }
+        ]
+      }
+    ],
     "scenes": [],
     "variables": [
+      {
+        "name": "total",
+        "type": "int",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [],
+        "references": [],
+        "mutable": true
+      },
+      {
+        "name": "outer",
+        "type": "int",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [],
+        "references": [],
+        "mutable": true
+      },
+      {
+        "name": "inner",
+        "type": "int",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [],
+        "references": [],
+        "mutable": true
+      },
+      {
+        "name": "score",
+        "type": "int",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [],
+        "references": [],
+        "mutable": true
+      },
+      {
+        "name": "ratio",
+        "type": "float",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [],
+        "references": [],
+        "mutable": true
+      },
+      {
+        "name": "label",
+        "type": "str",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [],
+        "references": [],
+        "mutable": true
+      },
+      {
+        "name": "counts",
+        "type": {
+          "kind": "dict",
+          "value": "int"
+        },
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [],
+        "references": [],
+        "mutable": true
+      },
+      {
+        "name": "duration",
+        "type": "int",
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [],
+        "references": [],
+        "mutable": true
+      },
       {
         "name": "hero",
         "type": {
@@ -857,7 +1345,7 @@
           {
             "scope": "global",
             "container": "global",
-            "line": 14,
+            "line": 18,
             "column": 1,
             "kind": "definition"
           }
@@ -866,21 +1354,21 @@
           {
             "scope": "global",
             "container": "global",
-            "line": 39,
+            "line": 50,
             "column": 6,
             "kind": "expression"
           },
           {
             "scope": "global",
             "container": "global",
-            "line": 43,
+            "line": 56,
             "column": 6,
             "kind": "expression"
           },
           {
             "scope": "global",
             "container": "global",
-            "line": 46,
+            "line": 59,
             "column": 6,
             "kind": "expression"
           }
@@ -899,24 +1387,59 @@
           {
             "scope": "global",
             "container": "global",
-            "line": 18,
+            "line": 22,
             "column": 1,
             "kind": "definition"
           }
         ],
         "references": [
           {
+            "scope": "local",
+            "container": "global:choice4",
+            "line": 52,
+            "column": 64,
+            "kind": "expression"
+          },
+          {
             "scope": "global",
             "container": "global",
-            "line": 40,
+            "line": 53,
             "column": 6,
             "kind": "expression"
           },
           {
             "scope": "global",
             "container": "global",
-            "line": 45,
+            "line": 58,
             "column": 6,
+            "kind": "expression"
+          }
+        ],
+        "mutable": true
+      },
+      {
+        "name": "ghost",
+        "type": {
+          "kind": "struct",
+          "name": "character:ghost"
+        },
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [
+          {
+            "scope": "global",
+            "container": "global",
+            "line": 26,
+            "column": 1,
+            "kind": "definition"
+          }
+        ],
+        "references": [
+          {
+            "scope": "local",
+            "container": "global:choice2",
+            "line": 51,
+            "column": 53,
             "kind": "expression"
           }
         ],
@@ -931,17 +1454,17 @@
           {
             "scope": "global",
             "container": "global",
-            "line": 22,
+            "line": 30,
             "column": 5,
             "kind": "definition"
           }
         ],
         "references": [
           {
-            "scope": "local",
-            "container": "global:choice1",
-            "line": 53,
-            "column": 43,
+            "scope": "global",
+            "container": "global",
+            "line": 73,
+            "column": 14,
             "kind": "expression"
           }
         ],
@@ -956,7 +1479,7 @@
           {
             "scope": "global",
             "container": "global",
-            "line": 23,
+            "line": 31,
             "column": 7,
             "kind": "definition"
           }
@@ -965,144 +1488,43 @@
           {
             "scope": "global",
             "container": "global",
-            "line": 40,
+            "line": 53,
             "column": 29,
             "kind": "expression"
           },
           {
             "scope": "global",
             "container": "global",
-            "line": 40,
+            "line": 53,
             "column": 46,
             "kind": "expression"
           }
         ],
         "mutable": true
+      },
+      {
+        "name": "sound_index",
+        "type": "int",
+        "scope": "local",
+        "definedIn": "global:for1",
+        "definitions": [
+          {
+            "scope": "local",
+            "container": "global:for1",
+            "line": 36,
+            "column": 5,
+            "kind": "definition"
+          }
+        ],
+        "references": [],
+        "mutable": true
       }
     ]
   },
   "files": {
-    "main.tds": {
+    "timed-main.tds": {
       "version": 2,
-      "assets": [
-        {
-          "kind": "asset",
-          "type": "bg",
-          "name": "room",
-          "path": "asset/pixel.png",
-          "line": 1,
-          "column": 1,
-          "file": "current"
-        },
-        {
-          "kind": "asset",
-          "type": "image",
-          "name": "first",
-          "path": "asset/pixel.png",
-          "line": 2,
-          "column": 1,
-          "file": "current"
-        },
-        {
-          "kind": "asset",
-          "type": "image",
-          "name": "second",
-          "path": "asset/pixel.png",
-          "line": 3,
-          "column": 1,
-          "file": "current"
-        },
-        {
-          "kind": "asset",
-          "type": "image",
-          "name": "jpeg",
-          "path": "asset/pixel.jpg",
-          "line": 4,
-          "column": 1,
-          "file": "current"
-        },
-        {
-          "kind": "asset",
-          "type": "image",
-          "name": "webp",
-          "path": "asset/pixel.webp",
-          "line": 5,
-          "column": 1,
-          "file": "current"
-        },
-        {
-          "kind": "asset",
-          "type": "image",
-          "name": "gif",
-          "path": "asset/pixel.gif",
-          "line": 6,
-          "column": 1,
-          "file": "current"
-        },
-        {
-          "kind": "asset",
-          "type": "bgm",
-          "name": "music",
-          "path": "asset/tone.wav",
-          "line": 7,
-          "column": 1,
-          "file": "current"
-        },
-        {
-          "kind": "asset",
-          "type": "se",
-          "name": "sound",
-          "path": "asset/tone.wav",
-          "line": 8,
-          "column": 1,
-          "file": "current"
-        },
-        {
-          "kind": "asset",
-          "type": "voice",
-          "name": "narrator_voice",
-          "path": "asset/tone.wav",
-          "line": 9,
-          "column": 1,
-          "file": "current"
-        },
-        {
-          "kind": "asset",
-          "type": "se",
-          "name": "flac",
-          "path": "asset/tone.flac",
-          "line": 10,
-          "column": 1,
-          "file": "current"
-        },
-        {
-          "kind": "asset",
-          "type": "se",
-          "name": "vorbis",
-          "path": "asset/tone.ogg",
-          "line": 11,
-          "column": 1,
-          "file": "current"
-        },
-        {
-          "kind": "asset",
-          "type": "se",
-          "name": "mpthree",
-          "path": "asset/tone.mp3",
-          "line": 12,
-          "column": 1,
-          "file": "current"
-        },
-        {
-          "kind": "asset",
-          "type": "video",
-          "name": "clip",
-          "path": "asset/clip.mp4",
-          "line": 13,
-          "column": 1,
-          "file": "current"
-        }
-      ],
+      "assets": [],
       "characters": [
         {
           "kind": "character",
@@ -1111,16 +1533,15 @@
             {
               "name": "normal",
               "path": "asset/pixel.png",
-              "line": 16,
-              "column": 3,
-              "file": "current"
+              "line": 20,
+              "column": 3
             }
           ],
-          "line": 14,
+          "line": 18,
           "column": 1,
-          "endLine": 17,
+          "endLine": 21,
           "endColumn": 1,
-          "file": "current"
+          "external": true
         },
         {
           "kind": "character",
@@ -1129,16 +1550,32 @@
             {
               "name": "normal",
               "path": "asset/pixel.png",
-              "line": 20,
-              "column": 3,
-              "file": "current"
+              "line": 24,
+              "column": 3
             }
           ],
-          "line": 18,
+          "line": 22,
           "column": 1,
-          "endLine": 21,
+          "endLine": 25,
           "endColumn": 1,
-          "file": "current"
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "ghost",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/broken.png",
+              "line": 28,
+              "column": 3
+            }
+          ],
+          "line": 26,
+          "column": 1,
+          "endLine": 29,
+          "endColumn": 1,
+          "external": true
         }
       ],
       "globals": [
@@ -1161,7 +1598,7 @@
               }
             ]
           },
-          "line": 14
+          "line": 18
         },
         {
           "op": "declare",
@@ -1182,7 +1619,915 @@
               }
             ]
           },
+          "line": 22
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:ghost"
+          },
+          "name": "ghost",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Ghost"
+                }
+              }
+            ]
+          },
+          "line": 26
+        },
+        {
+          "op": "declare",
+          "type": "int",
+          "name": "duration",
+          "constant": false,
+          "initial": {
+            "kind": "integer",
+            "value": "45"
+          },
+          "file": "timed-main.tds",
+          "line": 2
+        }
+      ],
+      "functions": [
+        {
+          "op": "function",
+          "name": "timed.fade_for",
+          "returnType": "none",
+          "params": [
+            {
+              "name": "duration",
+              "type": "int",
+              "line": 1,
+              "column": 13,
+              "file": "timed-helper.tds"
+            }
+          ],
+          "body": [
+            {
+              "op": "command",
+              "name": "effect",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "fade"
+                },
+                {
+                  "kind": "literal",
+                  "value": "black"
+                },
+                {
+                  "kind": "load",
+                  "name": "duration"
+                }
+              ],
+              "file": "timed-helper.tds",
+              "line": 1
+            }
+          ]
+        }
+      ],
+      "scenes": [
+        {
+          "name": "main",
+          "file": "timed-main.tds",
+          "line": 3,
+          "instructions": [
+            {
+              "op": "choice",
+              "prompt": {
+                "kind": "literal",
+                "value": "run timed transition?"
+              },
+              "options": [
+                {
+                  "label": {
+                    "kind": "literal",
+                    "value": "run"
+                  },
+                  "body": [
+                    {
+                      "op": "call",
+                      "name": "timed.fade_for",
+                      "args": [
+                        {
+                          "kind": "load",
+                          "name": "duration"
+                        }
+                      ],
+                      "file": "timed-main.tds",
+                      "line": 5
+                    }
+                  ]
+                },
+                {
+                  "label": {
+                    "kind": "literal",
+                    "value": "skip"
+                  },
+                  "body": [
+                    {
+                      "op": "command",
+                      "name": "wait",
+                      "args": [
+                        {
+                          "kind": "integer",
+                          "value": "1"
+                        }
+                      ],
+                      "file": "timed-main.tds",
+                      "line": 6
+                    }
+                  ]
+                }
+              ],
+              "file": "timed-main.tds",
+              "line": 4
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "continued after the blocking effect"
+                }
+              ],
+              "file": "timed-main.tds",
+              "line": 8
+            }
+          ]
+        }
+      ],
+      "variables": [
+        {
+          "name": "total",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "outer",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "inner",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "score",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ratio",
+          "type": "float",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "label",
+          "type": "str",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "counts",
+          "type": {
+            "kind": "dict",
+            "value": "int"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "shift",
+          "type": "float",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "hero",
+          "type": {
+            "kind": "struct",
+            "name": "character:hero"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "friend",
+          "type": {
+            "kind": "struct",
+            "name": "character:friend"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ghost",
+          "type": {
+            "kind": "struct",
+            "name": "character:ghost"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "duration",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 2,
+              "column": 12,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "local",
+              "container": "main:choice1",
+              "line": 5,
+              "column": 28,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "duration",
+          "type": "int",
+          "scope": "function",
+          "definedIn": "timed.fade_for",
+          "definitions": [
+            {
+              "scope": "function",
+              "container": "timed.fade_for",
+              "line": 1,
+              "column": 13,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "function",
+              "container": "timed.fade_for",
+              "line": 1,
+              "column": 56,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "timed-helper.tds": {
+      "version": 2,
+      "assets": [],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "hero",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/pixel.png",
+              "line": 20,
+              "column": 3
+            }
+          ],
+          "line": 18,
+          "column": 1,
+          "endLine": 21,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "friend",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/pixel.png",
+              "line": 24,
+              "column": 3
+            }
+          ],
+          "line": 22,
+          "column": 1,
+          "endLine": 25,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "ghost",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/broken.png",
+              "line": 28,
+              "column": 3
+            }
+          ],
+          "line": 26,
+          "column": 1,
+          "endLine": 29,
+          "endColumn": 1,
+          "external": true
+        }
+      ],
+      "globals": [
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:hero"
+          },
+          "name": "hero",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Hero"
+                }
+              }
+            ]
+          },
           "line": 18
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:friend"
+          },
+          "name": "friend",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Friend"
+                }
+              }
+            ]
+          },
+          "line": 22
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:ghost"
+          },
+          "name": "ghost",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Ghost"
+                }
+              }
+            ]
+          },
+          "line": 26
+        }
+      ],
+      "functions": [
+        {
+          "op": "function",
+          "name": "fade_for",
+          "returnType": "none",
+          "params": [
+            {
+              "name": "duration",
+              "type": "int",
+              "line": 1,
+              "column": 13,
+              "file": "timed-helper.tds"
+            }
+          ],
+          "body": [
+            {
+              "op": "command",
+              "name": "effect",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "fade"
+                },
+                {
+                  "kind": "literal",
+                  "value": "black"
+                },
+                {
+                  "kind": "load",
+                  "name": "duration"
+                }
+              ],
+              "file": "timed-helper.tds",
+              "line": 1
+            }
+          ]
+        }
+      ],
+      "scenes": [],
+      "variables": [
+        {
+          "name": "total",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "outer",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "inner",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "score",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ratio",
+          "type": "float",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "label",
+          "type": "str",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "counts",
+          "type": {
+            "kind": "dict",
+            "value": "int"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "shift",
+          "type": "float",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "duration",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "hero",
+          "type": {
+            "kind": "struct",
+            "name": "character:hero"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "friend",
+          "type": {
+            "kind": "struct",
+            "name": "character:friend"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ghost",
+          "type": {
+            "kind": "struct",
+            "name": "character:ghost"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "duration",
+          "type": "int",
+          "scope": "function",
+          "definedIn": "fade_for",
+          "definitions": [
+            {
+              "scope": "function",
+              "container": "fade_for",
+              "line": 1,
+              "column": 13,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "function",
+              "container": "fade_for",
+              "line": 1,
+              "column": 56,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "main.tds": {
+      "version": 2,
+      "assets": [
+        {
+          "kind": "asset",
+          "type": "bg",
+          "name": "room",
+          "path": "asset/pixel.png",
+          "line": 1,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "image",
+          "name": "first",
+          "path": "asset/pixel.png",
+          "line": 2,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "image",
+          "name": "second",
+          "path": "asset/pixel.png",
+          "line": 3,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "image",
+          "name": "jpeg",
+          "path": "asset/pixel.jpg",
+          "line": 4,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "image",
+          "name": "webp",
+          "path": "asset/pixel.webp",
+          "line": 5,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "image",
+          "name": "gif",
+          "path": "asset/pixel.gif",
+          "line": 6,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "bgm",
+          "name": "music",
+          "path": "asset/tone.wav",
+          "line": 7,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "bgm",
+          "name": "music_alt",
+          "path": "asset/tone.wav",
+          "line": 8,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "bgm",
+          "name": "broken_bgm",
+          "path": "asset/broken.wav",
+          "line": 9,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "se",
+          "name": "sound",
+          "path": "asset/tone.wav",
+          "line": 10,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "voice",
+          "name": "narrator_voice",
+          "path": "asset/tone.wav",
+          "line": 11,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "se",
+          "name": "flac",
+          "path": "asset/tone.flac",
+          "line": 12,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "se",
+          "name": "vorbis",
+          "path": "asset/tone.ogg",
+          "line": 13,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "se",
+          "name": "mpthree",
+          "path": "asset/tone.mp3",
+          "line": 14,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "video",
+          "name": "clip",
+          "path": "asset/clip.mp4",
+          "line": 15,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "video",
+          "name": "broken_video",
+          "path": "asset/broken.mp4",
+          "line": 16,
+          "column": 1,
+          "file": "main.tds"
+        }
+      ],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "hero",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/pixel.png",
+              "line": 20,
+              "column": 3,
+              "file": "main.tds"
+            }
+          ],
+          "line": 18,
+          "column": 1,
+          "endLine": 21,
+          "endColumn": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "character",
+          "name": "friend",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/pixel.png",
+              "line": 24,
+              "column": 3,
+              "file": "main.tds"
+            }
+          ],
+          "line": 22,
+          "column": 1,
+          "endLine": 25,
+          "endColumn": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "character",
+          "name": "ghost",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/broken.png",
+              "line": 28,
+              "column": 3,
+              "file": "main.tds"
+            }
+          ],
+          "line": 26,
+          "column": 1,
+          "endLine": 29,
+          "endColumn": 1,
+          "file": "main.tds"
+        }
+      ],
+      "globals": [
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:hero"
+          },
+          "name": "hero",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Hero"
+                }
+              }
+            ]
+          },
+          "line": 18
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:friend"
+          },
+          "name": "friend",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Friend"
+                }
+              }
+            ]
+          },
+          "line": 22
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:ghost"
+          },
+          "name": "ghost",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Ghost"
+                }
+              }
+            ]
+          },
+          "line": 26
         },
         {
           "op": "declare",
@@ -1193,8 +2538,8 @@
             "kind": "integer",
             "value": "9007199254740993"
           },
-          "file": "current",
-          "line": 22
+          "file": "main.tds",
+          "line": 30
         },
         {
           "op": "declare",
@@ -1205,8 +2550,8 @@
             "kind": "float",
             "value": "0.5"
           },
-          "file": "current",
-          "line": 23
+          "file": "main.tds",
+          "line": 31
         },
         {
           "op": "command",
@@ -1217,8 +2562,8 @@
               "value": "room"
             }
           ],
-          "file": "current",
-          "line": 24
+          "file": "main.tds",
+          "line": 32
         },
         {
           "op": "command",
@@ -1229,8 +2574,32 @@
               "value": "music"
             }
           ],
-          "file": "current",
-          "line": 25
+          "file": "main.tds",
+          "line": 33
+        },
+        {
+          "op": "command",
+          "name": "play",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "bgm"
+            },
+            {
+              "kind": "literal",
+              "value": "music_alt"
+            },
+            {
+              "kind": "literal",
+              "value": "crossfade"
+            },
+            {
+              "kind": "integer",
+              "value": "900"
+            }
+          ],
+          "file": "main.tds",
+          "line": 34
         },
         {
           "op": "command",
@@ -1245,8 +2614,44 @@
               "value": "sound"
             }
           ],
-          "file": "current",
-          "line": 26
+          "file": "main.tds",
+          "line": 35
+        },
+        {
+          "op": "for",
+          "name": "sound_index",
+          "start": {
+            "kind": "integer",
+            "value": "1"
+          },
+          "stop": {
+            "kind": "integer",
+            "value": "12"
+          },
+          "step": {
+            "kind": "integer",
+            "value": "1"
+          },
+          "body": [
+            {
+              "op": "command",
+              "name": "play",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "se"
+                },
+                {
+                  "kind": "literal",
+                  "value": "sound"
+                }
+              ],
+              "file": "main.tds",
+              "line": 36
+            }
+          ],
+          "file": "main.tds",
+          "line": 36
         },
         {
           "op": "command",
@@ -1265,8 +2670,8 @@
               "value": "blocking"
             }
           ],
-          "file": "current",
-          "line": 27
+          "file": "main.tds",
+          "line": 37
         },
         {
           "op": "command",
@@ -1281,8 +2686,8 @@
               "value": "flac"
             }
           ],
-          "file": "current",
-          "line": 28
+          "file": "main.tds",
+          "line": 38
         },
         {
           "op": "command",
@@ -1297,8 +2702,8 @@
               "value": "vorbis"
             }
           ],
-          "file": "current",
-          "line": 29
+          "file": "main.tds",
+          "line": 39
         },
         {
           "op": "command",
@@ -1313,8 +2718,8 @@
               "value": "mpthree"
             }
           ],
-          "file": "current",
-          "line": 30
+          "file": "main.tds",
+          "line": 40
         },
         {
           "op": "command",
@@ -1333,8 +2738,8 @@
               "value": "center"
             }
           ],
-          "file": "current",
-          "line": 31
+          "file": "main.tds",
+          "line": 41
         },
         {
           "op": "command",
@@ -1353,8 +2758,8 @@
               "value": "center"
             }
           ],
-          "file": "current",
-          "line": 32
+          "file": "main.tds",
+          "line": 42
         },
         {
           "op": "command",
@@ -1373,8 +2778,8 @@
               "value": "center"
             }
           ],
-          "file": "current",
-          "line": 33
+          "file": "main.tds",
+          "line": 43
         },
         {
           "op": "command",
@@ -1389,8 +2794,8 @@
               "value": "jpeg"
             }
           ],
-          "file": "current",
-          "line": 34
+          "file": "main.tds",
+          "line": 44
         },
         {
           "op": "command",
@@ -1405,8 +2810,8 @@
               "value": "webp"
             }
           ],
-          "file": "current",
-          "line": 35
+          "file": "main.tds",
+          "line": 45
         },
         {
           "op": "command",
@@ -1421,8 +2826,8 @@
               "value": "gif"
             }
           ],
-          "file": "current",
-          "line": 36
+          "file": "main.tds",
+          "line": 46
         },
         {
           "op": "command",
@@ -1441,8 +2846,8 @@
               "value": "left"
             }
           ],
-          "file": "current",
-          "line": 37
+          "file": "main.tds",
+          "line": 47
         },
         {
           "op": "command",
@@ -1461,8 +2866,28 @@
               "value": "right"
             }
           ],
-          "file": "current",
-          "line": 38
+          "file": "main.tds",
+          "line": 48
+        },
+        {
+          "op": "command",
+          "name": "show",
+          "args": [
+            {
+              "kind": "literal",
+              "value": "image"
+            },
+            {
+              "kind": "literal",
+              "value": "first"
+            },
+            {
+              "kind": "literal",
+              "value": "center"
+            }
+          ],
+          "file": "main.tds",
+          "line": 49
         },
         {
           "op": "command",
@@ -1485,8 +2910,98 @@
               "value": "10"
             }
           ],
-          "file": "current",
-          "line": 39
+          "file": "main.tds",
+          "line": 50
+        },
+        {
+          "op": "choice",
+          "prompt": {
+            "kind": "literal",
+            "value": "sprite replacement"
+          },
+          "options": [
+            {
+              "label": {
+                "kind": "literal",
+                "value": "test failure"
+              },
+              "body": [
+                {
+                  "op": "command",
+                  "name": "show",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "ghost.normal"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "left"
+                    }
+                  ],
+                  "file": "main.tds",
+                  "line": 51
+                }
+              ]
+            },
+            {
+              "label": {
+                "kind": "literal",
+                "value": "continue"
+              },
+              "body": [
+                {
+                  "op": "command",
+                  "name": "wait",
+                  "args": [
+                    {
+                      "kind": "integer",
+                      "value": "1"
+                    }
+                  ],
+                  "file": "main.tds",
+                  "line": 51
+                }
+              ]
+            }
+          ],
+          "file": "main.tds",
+          "line": 51
+        },
+        {
+          "op": "choice",
+          "prompt": {
+            "kind": "literal",
+            "value": "successful sprite replacement"
+          },
+          "options": [
+            {
+              "label": {
+                "kind": "literal",
+                "value": "replace slot"
+              },
+              "body": [
+                {
+                  "op": "command",
+                  "name": "show",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "friend.normal"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "left"
+                    }
+                  ],
+                  "file": "main.tds",
+                  "line": 52
+                }
+              ]
+            }
+          ],
+          "file": "main.tds",
+          "line": 52
         },
         {
           "op": "command",
@@ -1513,7 +3028,7 @@
               },
               "right": {
                 "kind": "float",
-                "value": "23.0"
+                "value": "23"
               }
             },
             {
@@ -1529,7 +3044,7 @@
               },
               "right": {
                 "kind": "float",
-                "value": "69.0"
+                "value": "69"
               }
             },
             {
@@ -1541,8 +3056,8 @@
               "value": "10"
             }
           ],
-          "file": "current",
-          "line": 40
+          "file": "main.tds",
+          "line": 53
         },
         {
           "op": "command",
@@ -1585,8 +3100,8 @@
               "value": "10"
             }
           ],
-          "file": "current",
-          "line": 41
+          "file": "main.tds",
+          "line": 54
         },
         {
           "op": "command",
@@ -1617,8 +3132,8 @@
               "value": "3.25"
             }
           ],
-          "file": "current",
-          "line": 42
+          "file": "main.tds",
+          "line": 55
         },
         {
           "op": "command",
@@ -1633,8 +3148,8 @@
               "value": "center"
             }
           ],
-          "file": "current",
-          "line": 43
+          "file": "main.tds",
+          "line": 56
         },
         {
           "op": "command",
@@ -1649,8 +3164,8 @@
               "value": "first"
             }
           ],
-          "file": "current",
-          "line": 44
+          "file": "main.tds",
+          "line": 57
         },
         {
           "op": "command",
@@ -1661,8 +3176,8 @@
               "value": "friend"
             }
           ],
-          "file": "current",
-          "line": 45
+          "file": "main.tds",
+          "line": 58
         },
         {
           "op": "command",
@@ -1681,8 +3196,8 @@
               "value": "10"
             }
           ],
-          "file": "current",
-          "line": 46
+          "file": "main.tds",
+          "line": 59
         },
         {
           "op": "command",
@@ -1701,8 +3216,8 @@
               "value": "10"
             }
           ],
-          "file": "current",
-          "line": 47
+          "file": "main.tds",
+          "line": 60
         },
         {
           "op": "command",
@@ -1721,8 +3236,8 @@
               "value": "blocking"
             }
           ],
-          "file": "current",
-          "line": 48
+          "file": "main.tds",
+          "line": 61
         },
         {
           "op": "command",
@@ -1741,8 +3256,186 @@
               "value": "async"
             }
           ],
-          "file": "current",
-          "line": 49
+          "file": "main.tds",
+          "line": 62
+        },
+        {
+          "op": "choice",
+          "prompt": {
+            "kind": "literal",
+            "value": "transition"
+          },
+          "options": [
+            {
+              "label": {
+                "kind": "literal",
+                "value": "crossfade"
+              },
+              "body": [
+                {
+                  "op": "command",
+                  "name": "play",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "bgm"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "music_alt"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "crossfade"
+                    },
+                    {
+                      "kind": "call",
+                      "name": "audio.transition_duration",
+                      "args": []
+                    }
+                  ],
+                  "file": "main.tds",
+                  "line": 63
+                },
+                {
+                  "op": "command",
+                  "name": "play",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "bgm"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "music"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "crossfade"
+                    },
+                    {
+                      "kind": "call",
+                      "name": "audio.transition_duration",
+                      "args": []
+                    }
+                  ],
+                  "file": "main.tds",
+                  "line": 64
+                },
+                {
+                  "op": "command",
+                  "name": "wait",
+                  "args": [
+                    {
+                      "kind": "integer",
+                      "value": "60"
+                    }
+                  ],
+                  "file": "main.tds",
+                  "line": 65
+                },
+                {
+                  "op": "command",
+                  "name": "play",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "bgm"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "broken_bgm"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "crossfade"
+                    },
+                    {
+                      "kind": "call",
+                      "name": "audio.transition_duration",
+                      "args": []
+                    }
+                  ],
+                  "file": "main.tds",
+                  "line": 66
+                },
+                {
+                  "op": "command",
+                  "name": "bgm",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "broken_bgm"
+                    }
+                  ],
+                  "file": "main.tds",
+                  "line": 67
+                },
+                {
+                  "op": "command",
+                  "name": "play",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "video"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "clip"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "async"
+                    }
+                  ],
+                  "file": "main.tds",
+                  "line": 68
+                },
+                {
+                  "op": "command",
+                  "name": "play",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "video"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "broken_video"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "async"
+                    }
+                  ],
+                  "file": "main.tds",
+                  "line": 69
+                }
+              ]
+            },
+            {
+              "label": {
+                "kind": "literal",
+                "value": "keep"
+              },
+              "body": [
+                {
+                  "op": "command",
+                  "name": "wait",
+                  "args": [
+                    {
+                      "kind": "integer",
+                      "value": "1"
+                    }
+                  ],
+                  "file": "main.tds",
+                  "line": 69
+                }
+              ]
+            }
+          ],
+          "file": "main.tds",
+          "line": 63
         },
         {
           "op": "command",
@@ -1750,11 +3443,11 @@
           "args": [
             {
               "kind": "integer",
-              "value": "500"
+              "value": "1050"
             }
           ],
-          "file": "current",
-          "line": 50
+          "file": "main.tds",
+          "line": 70
         },
         {
           "op": "command",
@@ -1765,8 +3458,8 @@
               "value": "bgm"
             }
           ],
-          "file": "current",
-          "line": 51
+          "file": "main.tds",
+          "line": 71
         },
         {
           "op": "command",
@@ -1777,54 +3470,128 @@
               "value": "bg"
             }
           ],
-          "file": "current",
-          "line": 52
+          "file": "main.tds",
+          "line": 72
         },
         {
-          "op": "choice",
-          "prompt": {
-            "kind": "literal",
-            "value": "test"
-          },
-          "options": [
+          "op": "command",
+          "name": "say",
+          "args": [
             {
-              "label": {
-                "kind": "literal",
-                "value": "continue"
-              },
-              "body": [
+              "kind": "literal",
+              "value": "none"
+            },
+            {
+              "kind": "call",
+              "name": "str",
+              "args": [
                 {
-                  "op": "command",
-                  "name": "say",
-                  "args": [
-                    {
-                      "kind": "literal",
-                      "value": "none"
-                    },
-                    {
-                      "kind": "call",
-                      "name": "str",
-                      "args": [
-                        {
-                          "kind": "load",
-                          "name": "x"
-                        }
-                      ]
-                    }
-                  ],
-                  "file": "current",
-                  "line": 53
+                  "kind": "load",
+                  "name": "x"
                 }
               ]
             }
           ],
-          "file": "current",
-          "line": 53
+          "file": "main.tds",
+          "line": 73
         }
       ],
-      "functions": [],
+      "functions": [
+        {
+          "op": "function",
+          "name": "audio.transition_duration",
+          "returnType": "int",
+          "params": [],
+          "body": [
+            {
+              "op": "return",
+              "value": {
+                "kind": "integer",
+                "value": "1000"
+              },
+              "file": "audio.tds",
+              "line": 1
+            }
+          ]
+        }
+      ],
       "scenes": [],
       "variables": [
+        {
+          "name": "total",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "outer",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "inner",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "score",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ratio",
+          "type": "float",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "label",
+          "type": "str",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "counts",
+          "type": {
+            "kind": "dict",
+            "value": "int"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "duration",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
         {
           "name": "hero",
           "type": {
@@ -1837,7 +3604,7 @@
             {
               "scope": "global",
               "container": "global",
-              "line": 14,
+              "line": 18,
               "column": 1,
               "kind": "definition"
             }
@@ -1846,21 +3613,21 @@
             {
               "scope": "global",
               "container": "global",
-              "line": 39,
+              "line": 50,
               "column": 6,
               "kind": "expression"
             },
             {
               "scope": "global",
               "container": "global",
-              "line": 43,
+              "line": 56,
               "column": 6,
               "kind": "expression"
             },
             {
               "scope": "global",
               "container": "global",
-              "line": 46,
+              "line": 59,
               "column": 6,
               "kind": "expression"
             }
@@ -1879,24 +3646,59 @@
             {
               "scope": "global",
               "container": "global",
-              "line": 18,
+              "line": 22,
               "column": 1,
               "kind": "definition"
             }
           ],
           "references": [
             {
+              "scope": "local",
+              "container": "global:choice4",
+              "line": 52,
+              "column": 64,
+              "kind": "expression"
+            },
+            {
               "scope": "global",
               "container": "global",
-              "line": 40,
+              "line": 53,
               "column": 6,
               "kind": "expression"
             },
             {
               "scope": "global",
               "container": "global",
-              "line": 45,
+              "line": 58,
               "column": 6,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "ghost",
+          "type": {
+            "kind": "struct",
+            "name": "character:ghost"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 26,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "local",
+              "container": "global:choice2",
+              "line": 51,
+              "column": 53,
               "kind": "expression"
             }
           ],
@@ -1911,17 +3713,17 @@
             {
               "scope": "global",
               "container": "global",
-              "line": 22,
+              "line": 30,
               "column": 5,
               "kind": "definition"
             }
           ],
           "references": [
             {
-              "scope": "local",
-              "container": "global:choice1",
-              "line": 53,
-              "column": 43,
+              "scope": "global",
+              "container": "global",
+              "line": 73,
+              "column": 14,
               "kind": "expression"
             }
           ],
@@ -1936,7 +3738,7 @@
             {
               "scope": "global",
               "container": "global",
-              "line": 23,
+              "line": 31,
               "column": 7,
               "kind": "definition"
             }
@@ -1945,18 +3747,2071 @@
             {
               "scope": "global",
               "container": "global",
-              "line": 40,
+              "line": 53,
               "column": 29,
               "kind": "expression"
             },
             {
               "scope": "global",
               "container": "global",
-              "line": 40,
+              "line": 53,
               "column": 46,
               "kind": "expression"
             }
           ],
+          "mutable": true
+        },
+        {
+          "name": "sound_index",
+          "type": "int",
+          "scope": "local",
+          "definedIn": "global:for1",
+          "definitions": [
+            {
+              "scope": "local",
+              "container": "global:for1",
+              "line": 36,
+              "column": 5,
+              "kind": "definition"
+            }
+          ],
+          "references": [],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "debug-main.tds": {
+      "version": 2,
+      "assets": [],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "hero",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/pixel.png",
+              "line": 20,
+              "column": 3
+            }
+          ],
+          "line": 18,
+          "column": 1,
+          "endLine": 21,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "friend",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/pixel.png",
+              "line": 24,
+              "column": 3
+            }
+          ],
+          "line": 22,
+          "column": 1,
+          "endLine": 25,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "ghost",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/broken.png",
+              "line": 28,
+              "column": 3
+            }
+          ],
+          "line": 26,
+          "column": 1,
+          "endLine": 29,
+          "endColumn": 1,
+          "external": true
+        }
+      ],
+      "globals": [
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:hero"
+          },
+          "name": "hero",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Hero"
+                }
+              }
+            ]
+          },
+          "line": 18
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:friend"
+          },
+          "name": "friend",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Friend"
+                }
+              }
+            ]
+          },
+          "line": 22
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:ghost"
+          },
+          "name": "ghost",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Ghost"
+                }
+              }
+            ]
+          },
+          "line": 26
+        },
+        {
+          "op": "declare",
+          "type": "int",
+          "name": "score",
+          "constant": false,
+          "initial": {
+            "kind": "integer",
+            "value": "1"
+          },
+          "file": "debug-main.tds",
+          "line": 1
+        },
+        {
+          "op": "declare",
+          "type": "float",
+          "name": "ratio",
+          "constant": false,
+          "initial": {
+            "kind": "float",
+            "value": "0.5"
+          },
+          "file": "debug-main.tds",
+          "line": 2
+        },
+        {
+          "op": "declare",
+          "type": "str",
+          "name": "label",
+          "constant": false,
+          "initial": {
+            "kind": "literal",
+            "value": "base"
+          },
+          "file": "debug-main.tds",
+          "line": 3
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "dict",
+            "value": "int"
+          },
+          "name": "counts",
+          "constant": false,
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "key",
+                "value": {
+                  "kind": "integer",
+                  "value": "1"
+                }
+              }
+            ]
+          },
+          "file": "debug-main.tds",
+          "line": 4
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "Pair"
+          },
+          "name": "pair",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "left",
+                "value": {
+                  "kind": "integer",
+                  "value": "1"
+                }
+              },
+              {
+                "key": "right",
+                "value": {
+                  "kind": "float",
+                  "value": "0.5"
+                }
+              }
+            ]
+          },
+          "file": "debug-main.tds",
+          "line": 9
+        }
+      ],
+      "functions": [
+        {
+          "op": "function",
+          "name": "helper.increment",
+          "returnType": "int",
+          "params": [
+            {
+              "name": "value",
+              "type": "int",
+              "line": 1,
+              "column": 14,
+              "file": "debug-helper.tds"
+            }
+          ],
+          "body": [
+            {
+              "op": "return",
+              "value": {
+                "kind": "binary",
+                "operator": "+",
+                "left": {
+                  "kind": "load",
+                  "name": "value"
+                },
+                "right": {
+                  "kind": "integer",
+                  "value": "1"
+                }
+              },
+              "file": "debug-helper.tds",
+              "line": 1
+            }
+          ]
+        }
+      ],
+      "scenes": [
+        {
+          "name": "intro",
+          "file": "debug-main.tds",
+          "line": 11,
+          "instructions": [
+            {
+              "op": "if",
+              "condition": {
+                "kind": "binary",
+                "operator": ">=",
+                "left": {
+                  "kind": "load",
+                  "name": "score"
+                },
+                "right": {
+                  "kind": "integer",
+                  "value": "0"
+                }
+              },
+              "body": [
+                {
+                  "op": "command",
+                  "name": "say",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "narrator"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "before"
+                    }
+                  ],
+                  "file": "debug-main.tds",
+                  "line": 13
+                },
+                {
+                  "op": "set",
+                  "target": {
+                    "kind": "load",
+                    "name": "score"
+                  },
+                  "value": {
+                    "kind": "call",
+                    "name": "helper.increment",
+                    "args": [
+                      {
+                        "kind": "load",
+                        "name": "score"
+                      }
+                    ]
+                  },
+                  "file": "debug-main.tds",
+                  "line": 14
+                },
+                {
+                  "op": "command",
+                  "name": "say",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "narrator"
+                    },
+                    {
+                      "kind": "binary",
+                      "operator": "+",
+                      "left": {
+                        "kind": "binary",
+                        "operator": "+",
+                        "left": {
+                          "kind": "binary",
+                          "operator": "+",
+                          "left": {
+                            "kind": "binary",
+                            "operator": "+",
+                            "left": {
+                              "kind": "binary",
+                              "operator": "+",
+                              "left": {
+                                "kind": "binary",
+                                "operator": "+",
+                                "left": {
+                                  "kind": "binary",
+                                  "operator": "+",
+                                  "left": {
+                                    "kind": "binary",
+                                    "operator": "+",
+                                    "left": {
+                                      "kind": "binary",
+                                      "operator": "+",
+                                      "left": {
+                                        "kind": "binary",
+                                        "operator": "+",
+                                        "left": {
+                                          "kind": "call",
+                                          "name": "str",
+                                          "args": [
+                                            {
+                                              "kind": "load",
+                                              "name": "score"
+                                            }
+                                          ]
+                                        },
+                                        "right": {
+                                          "kind": "literal",
+                                          "value": ":"
+                                        }
+                                      },
+                                      "right": {
+                                        "kind": "call",
+                                        "name": "str",
+                                        "args": [
+                                          {
+                                            "kind": "load",
+                                            "name": "ratio"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "right": {
+                                      "kind": "literal",
+                                      "value": ":"
+                                    }
+                                  },
+                                  "right": {
+                                    "kind": "load",
+                                    "name": "label"
+                                  }
+                                },
+                                "right": {
+                                  "kind": "literal",
+                                  "value": ":"
+                                }
+                              },
+                              "right": {
+                                "kind": "call",
+                                "name": "str",
+                                "args": [
+                                  {
+                                    "kind": "index",
+                                    "target": {
+                                      "kind": "load",
+                                      "name": "counts"
+                                    },
+                                    "key": {
+                                      "kind": "literal",
+                                      "value": "key"
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            "right": {
+                              "kind": "literal",
+                              "value": ":"
+                            }
+                          },
+                          "right": {
+                            "kind": "call",
+                            "name": "str",
+                            "args": [
+                              {
+                                "kind": "index",
+                                "target": {
+                                  "kind": "load",
+                                  "name": "pair"
+                                },
+                                "key": {
+                                  "kind": "literal",
+                                  "value": "left"
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        "right": {
+                          "kind": "literal",
+                          "value": ":"
+                        }
+                      },
+                      "right": {
+                        "kind": "call",
+                        "name": "str",
+                        "args": [
+                          {
+                            "kind": "index",
+                            "target": {
+                              "kind": "load",
+                              "name": "pair"
+                            },
+                            "key": {
+                              "kind": "literal",
+                              "value": "right"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ],
+                  "file": "debug-main.tds",
+                  "line": 15
+                }
+              ],
+              "elseIf": [],
+              "otherwise": [],
+              "file": "debug-main.tds",
+              "line": 12
+            }
+          ]
+        }
+      ],
+      "variables": [
+        {
+          "name": "total",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "outer",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "inner",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "shift",
+          "type": "float",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "duration",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "hero",
+          "type": {
+            "kind": "struct",
+            "name": "character:hero"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "friend",
+          "type": {
+            "kind": "struct",
+            "name": "character:friend"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ghost",
+          "type": {
+            "kind": "struct",
+            "name": "character:ghost"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "score",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 1,
+              "column": 12,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "intro",
+              "line": 12,
+              "column": 6,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "intro",
+              "kind": "assignment",
+              "line": 14,
+              "column": 9
+            },
+            {
+              "scope": "scene",
+              "container": "intro",
+              "line": 14,
+              "column": 34,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "intro",
+              "line": 15,
+              "column": 22,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "ratio",
+          "type": "float",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 2,
+              "column": 14,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "intro",
+              "line": 15,
+              "column": 41,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "label",
+          "type": "str",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 3,
+              "column": 12,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "intro",
+              "line": 15,
+              "column": 56,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "counts",
+          "type": {
+            "kind": "dict",
+            "value": "int"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 4,
+              "column": 18,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "intro",
+              "line": 15,
+              "column": 74,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "pair",
+          "type": {
+            "kind": "struct",
+            "name": "Pair"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 9,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "intro",
+              "line": 15,
+              "column": 101,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "intro",
+              "line": 15,
+              "column": 124,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "value",
+          "type": "int",
+          "scope": "function",
+          "definedIn": "helper.increment",
+          "definitions": [
+            {
+              "scope": "function",
+              "container": "helper.increment",
+              "line": 1,
+              "column": 14,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "function",
+              "container": "helper.increment",
+              "line": 1,
+              "column": 42,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "debug-loop.tds": {
+      "version": 2,
+      "assets": [],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "hero",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/pixel.png",
+              "line": 20,
+              "column": 3
+            }
+          ],
+          "line": 18,
+          "column": 1,
+          "endLine": 21,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "friend",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/pixel.png",
+              "line": 24,
+              "column": 3
+            }
+          ],
+          "line": 22,
+          "column": 1,
+          "endLine": 25,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "ghost",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/broken.png",
+              "line": 28,
+              "column": 3
+            }
+          ],
+          "line": 26,
+          "column": 1,
+          "endLine": 29,
+          "endColumn": 1,
+          "external": true
+        }
+      ],
+      "globals": [
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:hero"
+          },
+          "name": "hero",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Hero"
+                }
+              }
+            ]
+          },
+          "line": 18
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:friend"
+          },
+          "name": "friend",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Friend"
+                }
+              }
+            ]
+          },
+          "line": 22
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:ghost"
+          },
+          "name": "ghost",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Ghost"
+                }
+              }
+            ]
+          },
+          "line": 26
+        },
+        {
+          "op": "declare",
+          "type": "int",
+          "name": "total",
+          "constant": false,
+          "initial": {
+            "kind": "integer",
+            "value": "0"
+          },
+          "file": "debug-loop.tds",
+          "line": 1
+        },
+        {
+          "op": "declare",
+          "type": "int",
+          "name": "outer",
+          "constant": false,
+          "initial": {
+            "kind": "integer",
+            "value": "0"
+          },
+          "file": "debug-loop.tds",
+          "line": 9
+        },
+        {
+          "op": "declare",
+          "type": "int",
+          "name": "inner",
+          "constant": false,
+          "initial": {
+            "kind": "integer",
+            "value": "0"
+          },
+          "file": "debug-loop.tds",
+          "line": 10
+        }
+      ],
+      "functions": [],
+      "scenes": [
+        {
+          "name": "main",
+          "file": "debug-loop.tds",
+          "line": 2,
+          "instructions": [
+            {
+              "op": "for",
+              "name": "i",
+              "start": {
+                "kind": "integer",
+                "value": "1"
+              },
+              "stop": {
+                "kind": "integer",
+                "value": "3"
+              },
+              "step": {
+                "kind": "integer",
+                "value": "1"
+              },
+              "body": [
+                {
+                  "op": "set",
+                  "target": {
+                    "kind": "load",
+                    "name": "total"
+                  },
+                  "value": {
+                    "kind": "binary",
+                    "operator": "+",
+                    "left": {
+                      "kind": "load",
+                      "name": "total"
+                    },
+                    "right": {
+                      "kind": "load",
+                      "name": "i"
+                    }
+                  },
+                  "file": "debug-loop.tds",
+                  "line": 4
+                },
+                {
+                  "op": "command",
+                  "name": "say",
+                  "args": [
+                    {
+                      "kind": "literal",
+                      "value": "narrator"
+                    },
+                    {
+                      "kind": "call",
+                      "name": "str",
+                      "args": [
+                        {
+                          "kind": "load",
+                          "name": "i"
+                        }
+                      ]
+                    }
+                  ],
+                  "file": "debug-loop.tds",
+                  "line": 5
+                }
+              ],
+              "file": "debug-loop.tds",
+              "line": 3
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "call",
+                  "name": "str",
+                  "args": [
+                    {
+                      "kind": "load",
+                      "name": "total"
+                    }
+                  ]
+                }
+              ],
+              "file": "debug-loop.tds",
+              "line": 7
+            }
+          ]
+        },
+        {
+          "name": "nested",
+          "file": "debug-loop.tds",
+          "line": 11,
+          "instructions": [
+            {
+              "op": "while",
+              "condition": {
+                "kind": "binary",
+                "operator": "<",
+                "left": {
+                  "kind": "load",
+                  "name": "outer"
+                },
+                "right": {
+                  "kind": "integer",
+                  "value": "2"
+                }
+              },
+              "body": [
+                {
+                  "op": "set",
+                  "target": {
+                    "kind": "load",
+                    "name": "inner"
+                  },
+                  "value": {
+                    "kind": "integer",
+                    "value": "0"
+                  },
+                  "file": "debug-loop.tds",
+                  "line": 13
+                },
+                {
+                  "op": "for",
+                  "name": "i",
+                  "start": {
+                    "kind": "integer",
+                    "value": "1"
+                  },
+                  "stop": {
+                    "kind": "integer",
+                    "value": "2"
+                  },
+                  "step": {
+                    "kind": "integer",
+                    "value": "1"
+                  },
+                  "body": [
+                    {
+                      "op": "set",
+                      "target": {
+                        "kind": "load",
+                        "name": "inner"
+                      },
+                      "value": {
+                        "kind": "binary",
+                        "operator": "+",
+                        "left": {
+                          "kind": "load",
+                          "name": "inner"
+                        },
+                        "right": {
+                          "kind": "integer",
+                          "value": "1"
+                        }
+                      },
+                      "file": "debug-loop.tds",
+                      "line": 15
+                    },
+                    {
+                      "op": "command",
+                      "name": "say",
+                      "args": [
+                        {
+                          "kind": "literal",
+                          "value": "narrator"
+                        },
+                        {
+                          "kind": "binary",
+                          "operator": "+",
+                          "left": {
+                            "kind": "binary",
+                            "operator": "+",
+                            "left": {
+                              "kind": "binary",
+                              "operator": "+",
+                              "left": {
+                                "kind": "binary",
+                                "operator": "+",
+                                "left": {
+                                  "kind": "call",
+                                  "name": "str",
+                                  "args": [
+                                    {
+                                      "kind": "load",
+                                      "name": "outer"
+                                    }
+                                  ]
+                                },
+                                "right": {
+                                  "kind": "literal",
+                                  "value": ":"
+                                }
+                              },
+                              "right": {
+                                "kind": "call",
+                                "name": "str",
+                                "args": [
+                                  {
+                                    "kind": "load",
+                                    "name": "i"
+                                  }
+                                ]
+                              }
+                            },
+                            "right": {
+                              "kind": "literal",
+                              "value": ":"
+                            }
+                          },
+                          "right": {
+                            "kind": "call",
+                            "name": "str",
+                            "args": [
+                              {
+                                "kind": "load",
+                                "name": "inner"
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "file": "debug-loop.tds",
+                      "line": 16
+                    }
+                  ],
+                  "file": "debug-loop.tds",
+                  "line": 14
+                },
+                {
+                  "op": "set",
+                  "target": {
+                    "kind": "load",
+                    "name": "outer"
+                  },
+                  "value": {
+                    "kind": "binary",
+                    "operator": "+",
+                    "left": {
+                      "kind": "load",
+                      "name": "outer"
+                    },
+                    "right": {
+                      "kind": "integer",
+                      "value": "1"
+                    }
+                  },
+                  "file": "debug-loop.tds",
+                  "line": 18
+                }
+              ],
+              "file": "debug-loop.tds",
+              "line": 12
+            }
+          ]
+        }
+      ],
+      "variables": [
+        {
+          "name": "score",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ratio",
+          "type": "float",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "label",
+          "type": "str",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "counts",
+          "type": {
+            "kind": "dict",
+            "value": "int"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "shift",
+          "type": "float",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "duration",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "hero",
+          "type": {
+            "kind": "struct",
+            "name": "character:hero"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "friend",
+          "type": {
+            "kind": "struct",
+            "name": "character:friend"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ghost",
+          "type": {
+            "kind": "struct",
+            "name": "character:ghost"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "total",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 1,
+              "column": 12,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "local",
+              "container": "main:for1",
+              "line": 4,
+              "column": 9,
+              "kind": "assignment"
+            },
+            {
+              "scope": "local",
+              "container": "main:for1",
+              "line": 4,
+              "column": 17,
+              "kind": "definition"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 7,
+              "column": 20,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "outer",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 9,
+              "column": 12,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "nested",
+              "line": 12,
+              "column": 9,
+              "kind": "expression"
+            },
+            {
+              "scope": "local",
+              "container": "nested:for2",
+              "line": 16,
+              "column": 24,
+              "kind": "definition"
+            },
+            {
+              "scope": "scene",
+              "container": "nested",
+              "kind": "assignment",
+              "line": 18,
+              "column": 9
+            },
+            {
+              "scope": "scene",
+              "container": "nested",
+              "line": 18,
+              "column": 17,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "inner",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 10,
+              "column": 12,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "nested",
+              "kind": "assignment",
+              "line": 13,
+              "column": 9
+            },
+            {
+              "scope": "local",
+              "container": "nested:for2",
+              "line": 15,
+              "column": 11,
+              "kind": "assignment"
+            },
+            {
+              "scope": "local",
+              "container": "nested:for2",
+              "line": 15,
+              "column": 19,
+              "kind": "definition"
+            },
+            {
+              "scope": "local",
+              "container": "nested:for2",
+              "line": 16,
+              "column": 58,
+              "kind": "definition"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "i",
+          "type": "int",
+          "scope": "local",
+          "definedIn": "main:for1",
+          "definitions": [
+            {
+              "scope": "local",
+              "container": "main:for1",
+              "line": 3,
+              "column": 7,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "local",
+              "container": "main:for1",
+              "line": 4,
+              "column": 25,
+              "kind": "definition"
+            },
+            {
+              "scope": "local",
+              "container": "main:for1",
+              "line": 5,
+              "column": 22,
+              "kind": "definition"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "i",
+          "type": "int",
+          "scope": "local",
+          "definedIn": "nested:for2",
+          "definitions": [
+            {
+              "scope": "local",
+              "container": "nested:for2",
+              "line": 14,
+              "column": 9,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "local",
+              "container": "nested:for2",
+              "line": 16,
+              "column": 43,
+              "kind": "definition"
+            }
+          ],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "debug-helper.tds": {
+      "version": 2,
+      "assets": [],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "hero",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/pixel.png",
+              "line": 20,
+              "column": 3
+            }
+          ],
+          "line": 18,
+          "column": 1,
+          "endLine": 21,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "friend",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/pixel.png",
+              "line": 24,
+              "column": 3
+            }
+          ],
+          "line": 22,
+          "column": 1,
+          "endLine": 25,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "ghost",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/broken.png",
+              "line": 28,
+              "column": 3
+            }
+          ],
+          "line": 26,
+          "column": 1,
+          "endLine": 29,
+          "endColumn": 1,
+          "external": true
+        }
+      ],
+      "globals": [
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:hero"
+          },
+          "name": "hero",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Hero"
+                }
+              }
+            ]
+          },
+          "line": 18
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:friend"
+          },
+          "name": "friend",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Friend"
+                }
+              }
+            ]
+          },
+          "line": 22
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:ghost"
+          },
+          "name": "ghost",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Ghost"
+                }
+              }
+            ]
+          },
+          "line": 26
+        }
+      ],
+      "functions": [
+        {
+          "op": "function",
+          "name": "increment",
+          "returnType": "int",
+          "params": [
+            {
+              "name": "value",
+              "type": "int",
+              "line": 1,
+              "column": 14,
+              "file": "debug-helper.tds"
+            }
+          ],
+          "body": [
+            {
+              "op": "return",
+              "value": {
+                "kind": "binary",
+                "operator": "+",
+                "left": {
+                  "kind": "load",
+                  "name": "value"
+                },
+                "right": {
+                  "kind": "integer",
+                  "value": "1"
+                }
+              },
+              "file": "debug-helper.tds",
+              "line": 1
+            }
+          ]
+        }
+      ],
+      "scenes": [],
+      "variables": [
+        {
+          "name": "total",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "outer",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "inner",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "score",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ratio",
+          "type": "float",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "label",
+          "type": "str",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "counts",
+          "type": {
+            "kind": "dict",
+            "value": "int"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "shift",
+          "type": "float",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "duration",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "hero",
+          "type": {
+            "kind": "struct",
+            "name": "character:hero"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "friend",
+          "type": {
+            "kind": "struct",
+            "name": "character:friend"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ghost",
+          "type": {
+            "kind": "struct",
+            "name": "character:ghost"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "value",
+          "type": "int",
+          "scope": "function",
+          "definedIn": "increment",
+          "definitions": [
+            {
+              "scope": "function",
+              "container": "increment",
+              "line": 1,
+              "column": 14,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "function",
+              "container": "increment",
+              "line": 1,
+              "column": 42,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        }
+      ],
+      "includes": []
+    },
+    "audio.tds": {
+      "version": 2,
+      "assets": [],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "hero",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/pixel.png",
+              "line": 20,
+              "column": 3
+            }
+          ],
+          "line": 18,
+          "column": 1,
+          "endLine": 21,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "friend",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/pixel.png",
+              "line": 24,
+              "column": 3
+            }
+          ],
+          "line": 22,
+          "column": 1,
+          "endLine": 25,
+          "endColumn": 1,
+          "external": true
+        },
+        {
+          "kind": "character",
+          "name": "ghost",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/broken.png",
+              "line": 28,
+              "column": 3
+            }
+          ],
+          "line": 26,
+          "column": 1,
+          "endLine": 29,
+          "endColumn": 1,
+          "external": true
+        }
+      ],
+      "globals": [
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:hero"
+          },
+          "name": "hero",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Hero"
+                }
+              }
+            ]
+          },
+          "line": 18
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:friend"
+          },
+          "name": "friend",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Friend"
+                }
+              }
+            ]
+          },
+          "line": 22
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:ghost"
+          },
+          "name": "ghost",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "Ghost"
+                }
+              }
+            ]
+          },
+          "line": 26
+        }
+      ],
+      "functions": [
+        {
+          "op": "function",
+          "name": "transition_duration",
+          "returnType": "int",
+          "params": [],
+          "body": [
+            {
+              "op": "return",
+              "value": {
+                "kind": "integer",
+                "value": "1000"
+              },
+              "file": "audio.tds",
+              "line": 1
+            }
+          ]
+        }
+      ],
+      "scenes": [],
+      "variables": [
+        {
+          "name": "total",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "outer",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "inner",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "score",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ratio",
+          "type": "float",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "label",
+          "type": "str",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "counts",
+          "type": {
+            "kind": "dict",
+            "value": "int"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "shift",
+          "type": "float",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "duration",
+          "type": "int",
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "hero",
+          "type": {
+            "kind": "struct",
+            "name": "character:hero"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "friend",
+          "type": {
+            "kind": "struct",
+            "name": "character:friend"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
+          "mutable": true
+        },
+        {
+          "name": "ghost",
+          "type": {
+            "kind": "struct",
+            "name": "character:ghost"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [],
+          "references": [],
           "mutable": true
         }
       ],

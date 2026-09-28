@@ -1,5 +1,5 @@
 import { Lexer, Token } from './lexer';
-import { Asset, AssetKind, Character, Condition, Expr, FunctionDef, Include, PrimitiveType, Scene, Script, Statement, StructDef, ValueType } from './ast';
+import { Asset, AssetKind, Character, Condition, Expr, FunctionDef, Include, NodeLocation, PrimitiveType, Scene, Script, Statement, StructDef, ValueType } from './ast';
 
 const ASSET_TYPES = new Set<AssetKind>(['bg', 'char', 'bgm', 'se', 'voice', 'video', 'image']);
 const TYPES = new Set(['int', 'float', 'str', 'none']);
@@ -170,15 +170,16 @@ export class Parser {
   private parseStruct(): StructDef {
     const start = this.take(); const name = this.expectIdentifier('Expected struct name');
     this.skipLines();
-    this.expect('{'); this.skipLines(); const fields: Record<string, PrimitiveType> = {};
+    this.expect('{'); this.skipLines(); const fields: Record<string, PrimitiveType> = {}; const fieldLocations: Record<string, NodeLocation> = {};
     while (!this.atValue('}')) {
+      const fieldToken = this.current;
       const field = this.expectIdentifier('Expected field name'); this.expect(':');
       const type = this.expectWord('Expected field type') as PrimitiveType;
       if (type !== 'int' && type !== 'float' && type !== 'str') throw this.error('Struct fields must be int, float or str');
       if (fields[field]) throw this.error(`Duplicate struct field '${field}'`);
-      fields[field] = type; this.endLine(); this.skipLines();
+      fields[field] = type; fieldLocations[field] = { line: fieldToken.line, column: fieldToken.column }; this.endLine(); this.skipLines();
     }
-    this.take(); this.declaredStructs.add(name); return { kind: 'struct', name, fields, line: start.line, column: start.column };
+    this.take(); this.declaredStructs.add(name); return { kind: 'struct', name, fields, fieldLocations, line: start.line, column: start.column };
   }
 
 
@@ -248,6 +249,15 @@ export class Parser {
     const token = this.current;
     if (token.type !== 'word') throw this.error('Expected command');
     const command = token.value;
+    const topLevelOnly: Record<string, string> = {
+      asset: 'asset 宣言はファイルのトップレベルでのみ使用できます',
+      character: 'character 宣言はファイルのトップレベルでのみ使用できます',
+      fn: '関数宣言はファイルのトップレベルでのみ使用できます',
+      include: 'include 宣言はファイルのトップレベルでのみ使用できます',
+      scene: 'scene 宣言はファイルのトップレベルでのみ使用できます',
+      struct: 'struct 宣言はファイルのトップレベルでのみ使用できます',
+    };
+    if (topLevelOnly[command]) throw this.error(topLevelOnly[command]);
     if (this.isQualifiedCallAhead()) {
       const name = this.parseQualifiedCallName();
       return { kind: 'call', name, args: this.parseCallArgs(), line: token.line, column: token.column };
@@ -443,6 +453,20 @@ export class Parser {
     const args: Expr[] = [];
     while (!this.atLineEnd() && !this.atValue('}')) {
       const token = this.current;
+      const isCommandWord = token.type === 'word' && (() => {
+        switch (command) {
+          case 'bg':
+          case 'bgm': return args.length === 0;
+          case 'show':
+            if (args.some((argument) => argument.kind === 'literal' && argument.value === 'fade')) return false;
+            return args.length < (args[0]?.kind === 'literal' && args[0].value === 'image' ? 3 : 2) || token.value === 'fade';
+          case 'hide': return args.length === 0 || token.value === 'fade';
+          case 'clear': return args.length === 0 || args[0]?.kind === 'literal' && args[0].value === 'image' && args.length === 1;
+          case 'play': return args.length < 3;
+          case 'effect': return args.length < 2;
+          default: return false;
+        }
+      })();
       if (command === 'show' && args.length === 0 && token.type === 'word' && this.peekToken().value === '.') {
         this.take();
         this.expect('.');
@@ -463,7 +487,7 @@ export class Parser {
       } else if (command === 'move' && token.type === 'word' && (args.length < 3 || token.value === 'over')) {
         this.take();
         args.push({ kind: 'literal', value: token.value, line: token.line, column: token.column });
-      } else if (token.type === 'word' && ['bg', 'bgm', 'show', 'hide', 'clear', 'play', 'effect'].includes(command)) {
+      } else if (isCommandWord) {
         this.take();
         args.push({ kind: 'literal', value: token.value, line: token.line, column: token.column });
       } else {

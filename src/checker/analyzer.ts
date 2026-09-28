@@ -15,10 +15,17 @@ export interface Diagnostic {
   endColumn?: number;
 }
 
-type Constant = bigint | string | boolean | undefined;
-type VariableConstraint = { type: 'int' | 'str'; min?: bigint; max?: bigint; values?: ReadonlySet<bigint | string> };
+type Constant = bigint | number | string | boolean | undefined;
+type ConstraintDomain = { type: 'int' | 'float' | 'str'; min?: bigint; max?: bigint; floatMin?: number; floatMax?: number; values?: ReadonlySet<bigint | string>; floatValues?: ReadonlySet<number> };
+type VariableConstraint = ConstraintDomain & { flow?: boolean; declared?: ConstraintDomain };
 const INT_MIN = -(1n << 63n);
 const INT_MAX = (1n << 63n) - 1n;
+const MAX_STATIC_NUMERIC_VALUES = 64;
+const CALL_CONTEXT_DIAGNOSTICS = new Set([
+  'duration-range', 'presentation-offset-range', 'variable-constraint',
+  'non-exhaustive-condition', 'integer-overflow', 'float-overflow',
+  'division-by-zero', 'invalid-conversion', 'invalid-for-step', 'loop-limit',
+]);
 
 function at(node?: NodeLocation): Pick<Diagnostic, 'line' | 'column' | 'endLine' | 'endColumn'> {
   return {
@@ -35,9 +42,10 @@ function diagnostic(file: string, code: string, severity: DiagnosticSeverity, me
 
 function errorDiagnostic(error: unknown, file: string): Diagnostic {
   const message = error instanceof Error ? error.message : String(error);
-  const line = Number(message.match(/(?:at )?line\s+(\d+)/i)?.[1] || 1);
-  const column = Number(message.match(/column\s+(\d+)/i)?.[1] || 1);
-  return { code: error instanceof SyntaxError ? 'syntax-error' : 'type-error', severity: 'error', message, file, line, column };
+  const located = error instanceof TypeCheckError ? error : undefined;
+  const line = located?.line ?? Number(message.match(/(?:at )?line\s+(\d+)/i)?.[1] || 1);
+  const column = located?.column ?? Number(message.match(/column\s+(\d+)/i)?.[1] || 1);
+  return { code: error instanceof SyntaxError ? 'syntax-error' : 'type-error', severity: 'error', message, file: located?.file || file, line, column };
 }
 
 function integer(value: number | bigint): bigint | undefined {
@@ -46,18 +54,32 @@ function integer(value: number | bigint): bigint | undefined {
 }
 
 function constant(expr: Expr, constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map()): Constant {
+  if (expr.kind === 'float') {
+    const value = Number(expr.value);
+    return Number.isFinite(value) ? value : undefined;
+  }
   if (expr.kind === 'literal') return typeof expr.value === 'string' ? expr.value : integer(expr.value);
   if (expr.kind === 'variable') return constants.get(expr.name);
   if (expr.kind === 'unary') {
     const value = constant(expr.value, constants);
     if (expr.operator === 'not' && typeof value === 'boolean') return !value;
     if ((expr.operator === '+' || expr.operator === '-') && typeof value === 'bigint') return expr.operator === '-' ? -value : value;
+    if ((expr.operator === '+' || expr.operator === '-') && typeof value === 'number') return expr.operator === '-' ? -value : value;
     return undefined;
   }
   if (expr.kind === 'call') {
     const argument = expr.args.length === 1 ? constant(expr.args[0], constants) : undefined;
     if (expr.name === 'str' && typeof argument === 'bigint') return String(argument);
     if (expr.name === 'int' && typeof argument === 'string' && /^[+-]?\d+$/.test(argument)) return BigInt(argument);
+    if (expr.name === 'int' && typeof argument === 'number' && Number.isFinite(argument)) {
+      const value = BigInt(Math.trunc(argument));
+      return value >= INT_MIN && value <= INT_MAX ? value : undefined;
+    }
+    if (expr.name === 'float') {
+      if (typeof argument === 'string' && !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(argument)) return undefined;
+      const value = typeof argument === 'bigint' || typeof argument === 'number' || typeof argument === 'string' ? Number(argument) : NaN;
+      return Number.isFinite(value) ? value : undefined;
+    }
     return undefined;
   }
   if (expr.kind !== 'binary') return undefined;
@@ -78,6 +100,15 @@ function constant(expr: Expr, constants: ReadonlyMap<string, Exclude<Constant, u
     if (expr.operator === '*') return left * right;
     if (expr.operator === '/' && right !== 0n) return left / right;
     if (expr.operator === '%' && right !== 0n) return left % right;
+  }
+  if (typeof left === 'number' && typeof right === 'number') {
+    if (expr.operator === '>') return left > right;
+    if (expr.operator === '>=') return left >= right;
+    if (expr.operator === '<') return left < right;
+    if (expr.operator === '<=') return left <= right;
+    const value = expr.operator === '+' ? left + right : expr.operator === '-' ? left - right
+      : expr.operator === '*' ? left * right : expr.operator === '/' && right !== 0 ? left / right : undefined;
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
   }
   if (expr.operator === '+' && typeof left === 'string' && typeof right === 'string') return left + right;
   return undefined;
@@ -171,44 +202,54 @@ function constrainedCondition(expr: Expr, constraints?: ReadonlyMap<string, Vari
   }
   if (expr.kind !== 'binary' || !['==', '!=', '>', '>=', '<', '<='].includes(expr.operator)) return undefined;
   let name: string | undefined;
-  let expected: bigint | string | undefined;
+  let expected: Constant;
   let operator = expr.operator;
   if (expr.left.kind === 'variable') {
     name = expr.left.name;
-    expected = expr.right.kind === 'literal' ? (typeof expr.right.value === 'string' ? expr.right.value : integer(expr.right.value)) : undefined;
+    expected = constant(expr.right);
   } else if (expr.right.kind === 'variable') {
     name = expr.right.name;
-    expected = expr.left.kind === 'literal' ? (typeof expr.left.value === 'string' ? expr.left.value : integer(expr.left.value)) : undefined;
+    expected = constant(expr.left);
     const flipped: Record<string, string> = { '==': '==', '!=': '!=', '>': '<', '>=': '<=', '<': '>', '<=': '>=' };
     operator = flipped[operator];
   }
-  if (!name || expected === undefined) return undefined;
+  if (!name || expected === undefined || typeof expected === 'boolean') return undefined;
   const constraint = constraints.get(name);
-  if (!constraint || constraint.type === 'int' && typeof expected !== 'bigint' || constraint.type === 'str' && typeof expected !== 'string') return undefined;
-  const accepts = (value: bigint | string): boolean => {
+  if (typeof expected === 'boolean' || !constraint || constraint.type === 'int' && typeof expected !== 'bigint' || constraint.type === 'float' && typeof expected !== 'number' || constraint.type === 'str' && typeof expected !== 'string') return undefined;
+  const accepts = (value: bigint | number | string): boolean => {
     if (operator === '==') return value === expected;
     if (operator === '!=') return value !== expected;
-    if (typeof value !== 'bigint' || typeof expected !== 'bigint') return false;
-    if (operator === '>') return value > expected;
-    if (operator === '>=') return value >= expected;
-    if (operator === '<') return value < expected;
-    return value <= expected;
+    if (typeof value !== typeof expected || typeof value === 'string') return false;
+    const right = expected as bigint | number;
+    if (operator === '>') return value > right;
+    if (operator === '>=') return value >= right;
+    if (operator === '<') return value < right;
+    return value <= right;
   };
-  if (constraint.values) {
-    const values = [...constraint.values];
+  const knownValues = constraint.type === 'float' ? constraint.floatValues : constraint.values;
+  if (knownValues) {
+    const values = [...knownValues];
     if (!values.length) return undefined;
     const results = values.map(accepts);
     return results.every(Boolean) ? true : results.every((value) => !value) ? false : undefined;
   }
-  if (typeof expected !== 'bigint' || constraint.type !== 'int' || constraint.min === undefined || constraint.max === undefined) return undefined;
-  const minimum = accepts(constraint.min), maximum = accepts(constraint.max);
+  const minimumBound = constraint.type === 'float' ? constraint.floatMin : constraint.min;
+  const maximumBound = constraint.type === 'float' ? constraint.floatMax : constraint.max;
+  if (minimumBound === undefined || maximumBound === undefined || typeof expected !== typeof minimumBound || typeof expected !== typeof maximumBound) return undefined;
+  const minimum = accepts(minimumBound), maximum = accepts(maximumBound);
   if (operator === '==' || operator === '!=') {
-    if (expected < constraint.min || expected > constraint.max) return operator === '!=';
-    if (constraint.min === constraint.max) return operator === '==' ? minimum : !minimum;
+    if (expected < (minimumBound as any) || expected > (maximumBound as any)) return operator === '!=';
+    if (minimumBound === maximumBound) return operator === '==' ? minimum : !minimum;
     return undefined;
   }
   if (minimum && maximum) return true;
-  if (!minimum && !maximum && ((operator === '>' && constraint.max <= expected) || (operator === '>=' && constraint.max < expected) || (operator === '<' && constraint.min >= expected) || (operator === '<=' && constraint.min > expected))) return false;
+  const expectedNumber = expected as bigint | number;
+  const minimumNumber = minimumBound as bigint | number;
+  const maximumNumber = maximumBound as bigint | number;
+  if (!minimum && !maximum && ((operator === '>' && maximumNumber <= expectedNumber)
+    || (operator === '>=' && maximumNumber < expectedNumber)
+    || (operator === '<' && minimumNumber >= expectedNumber)
+    || (operator === '<=' && minimumNumber > expectedNumber))) return false;
   return undefined;
 }
 
@@ -249,27 +290,38 @@ function refineConstraints(constraints: ReadonlyMap<string, VariableConstraint> 
     return refineConstraints(left || constraints, expr.right, false);
   }
   if (!['==', '!=', '>', '>=', '<', '<='].includes(expr.operator)) return constraints;
+  const primitiveConstant = (value: Expr): bigint | number | string | undefined => {
+    const result = constant(value);
+    return typeof result === 'boolean' ? undefined : result;
+  };
   let name: string | undefined;
-  let expected: bigint | string | undefined;
+  let expected: bigint | number | string | undefined;
   let operator = expr.operator;
   if (expr.left.kind === 'variable') {
     name = expr.left.name;
-    expected = expr.right.kind === 'literal' ? (typeof expr.right.value === 'string' ? expr.right.value : integer(expr.right.value)) : undefined;
+    expected = primitiveConstant(expr.right);
   } else if (expr.right.kind === 'variable') {
     name = expr.right.name;
-    expected = expr.left.kind === 'literal' ? (typeof expr.left.value === 'string' ? expr.left.value : integer(expr.left.value)) : undefined;
+    expected = primitiveConstant(expr.left);
     const flipped: Record<string, string> = { '==': '==', '!=': '!=', '>': '<', '>=': '<=', '<': '>', '<=': '>=' };
     operator = flipped[operator];
   }
-  if (!name || expected === undefined) return constraints;
+  if (!name || expected === undefined || typeof expected === 'boolean') return constraints;
   const current = constraints.get(name);
-  if (!current || current.type !== (typeof expected === 'bigint' ? 'int' : 'str')) return constraints;
+  if (typeof expected === 'boolean' || !current || current.type !== (typeof expected === 'bigint' ? 'int' : typeof expected === 'number' ? 'float' : 'str')) return constraints;
   const inverse: Record<string, string> = { '==': '!=', '!=': '==', '>': '<=', '>=': '<', '<': '>=', '<=': '>' };
   const effective = truth ? operator : inverse[operator];
   const next: VariableConstraint = { ...current };
   if (current.type === 'str') {
     if (effective === '==' && current.values) next.values = new Set([...current.values].filter((value) => value === expected));
     else if (effective === '!=' && current.values) next.values = new Set([...current.values].filter((value) => value !== expected));
+  } else if (typeof expected === 'number' && current.type === 'float') {
+    if (effective === '==') { next.floatMin = expected; next.floatMax = expected; }
+    else if (effective === '>') next.floatMin = Math.max(current.floatMin ?? -Infinity, expected);
+    else if (effective === '>=') next.floatMin = Math.max(current.floatMin ?? -Infinity, expected);
+    else if (effective === '<') next.floatMax = Math.min(current.floatMax ?? Infinity, expected);
+    else if (effective === '<=') next.floatMax = Math.min(current.floatMax ?? Infinity, expected);
+    if (current.floatValues) next.floatValues = new Set([...current.floatValues].filter((value) => effective === '==' ? value === expected : effective === '!=' ? value !== expected : effective === '>' ? value > expected : effective === '>=' ? value >= expected : effective === '<' ? value < expected : value <= expected));
   } else if (typeof expected === 'bigint') {
     if (effective === '==') {
       next.min = expected;
@@ -309,36 +361,54 @@ function mergeConstraints(paths: Array<ReadonlyMap<string, VariableConstraint> |
     if (entries.every((entry) => !!entry!.values)) {
       const values = new Set<bigint | string>();
       entries.forEach((entry) => entry!.values!.forEach((value) => values.add(value)));
-      merged.values = values;
+      if (values.size <= MAX_STATIC_NUMERIC_VALUES) merged.values = values;
+    }
+    const floatMins = entries.map((entry) => entry!.floatMin).filter((value): value is number => value !== undefined);
+    const floatMaxs = entries.map((entry) => entry!.floatMax).filter((value): value is number => value !== undefined);
+    if (floatMins.length === entries.length) merged.floatMin = Math.min(...floatMins);
+    if (floatMaxs.length === entries.length) merged.floatMax = Math.max(...floatMaxs);
+    if (entries.every((entry) => !!entry!.floatValues)) {
+      const values = new Set(entries.flatMap((entry) => [...entry!.floatValues!]));
+      if (values.size <= MAX_STATIC_NUMERIC_VALUES) merged.floatValues = values;
+    }
+    if (entries.some((entry) => entry!.flow)) {
+      const declared = entries.map((entry) => entry!.flow ? entry!.declared : entry!.declared || entry!);
+      if (declared.every((entry) => entry === declared[0]) && declared[0]) merged.declared = declared[0];
+      merged.flow = true;
     }
     result.set(name, merged);
   }
   return result;
 }
 
-function finiteBranchCoverage(statement: Extract<Statement, { kind: 'if' }>, constraints?: ReadonlyMap<string, VariableConstraint>): { name: string; allowed: Set<bigint | string>; covered: Set<bigint | string> } | undefined {
+function finiteBranchCoverage(statement: Extract<Statement, { kind: 'if' }>, constraints?: ReadonlyMap<string, VariableConstraint>): { name: string; allowed: Set<bigint | number | string>; covered: Set<bigint | number | string> } | undefined {
   const branches = [statement.condition.expression, ...statement.elseIf.map((branch) => branch.condition.expression)];
   let name: string | undefined;
-  const covered = new Set<bigint | string>();
+  const covered = new Set<bigint | number | string>();
   for (const expression of branches) {
     if (expression.kind !== 'binary' || expression.operator !== '==') return undefined;
     let variable: string | undefined;
-    let value: bigint | string | undefined;
+    let value: bigint | number | string | undefined;
     if (expression.left.kind === 'variable' && expression.right.kind === 'literal') {
       variable = expression.left.name;
       value = typeof expression.right.value === 'string' ? expression.right.value : integer(expression.right.value);
+    } else if (expression.left.kind === 'variable' && expression.right.kind === 'float') {
+      variable = expression.left.name; value = Number(expression.right.value);
     } else if (expression.right.kind === 'variable' && expression.left.kind === 'literal') {
       variable = expression.right.name;
       value = typeof expression.left.value === 'string' ? expression.left.value : integer(expression.left.value);
+    } else if (expression.right.kind === 'variable' && expression.left.kind === 'float') {
+      variable = expression.right.name; value = Number(expression.left.value);
     }
     if (!variable || value === undefined || name && name !== variable) return undefined;
     name = variable; covered.add(value);
   }
   if (!name) return undefined;
   const constraint = constraints?.get(name);
-  if (!constraint?.values) return undefined;
-  const allowed = new Set(constraint.values);
-  const typeMatches = [...allowed].every((value) => constraint.type === 'str' ? typeof value === 'string' : typeof value === 'bigint');
+  const values = constraint?.type === 'float' ? constraint.floatValues : constraint?.values;
+  if (!constraint || !values) return undefined;
+  const allowed = new Set<bigint | number | string>(values);
+  const typeMatches = [...allowed].every((value) => constraint.type === 'str' ? typeof value === 'string' : constraint.type === 'float' ? typeof value === 'number' : typeof value === 'bigint');
   return typeMatches ? { name, allowed, covered } : undefined;
 }
 
@@ -435,20 +505,23 @@ function combinedIntegerCondition(expr: Extract<Expr, { kind: 'binary' }>, const
 
 function combinedFiniteCondition(expr: Extract<Expr, { kind: 'binary' }>, constraints: ReadonlyMap<string, VariableConstraint>): boolean | undefined {
   if (expr.operator !== 'and' && expr.operator !== 'or') return undefined;
-  const parse = (value: Expr): { name: string; operator: string; expected: bigint | string } | undefined => {
+  const parse = (value: Expr): { name: string; operator: string; expected: bigint | number | string } | undefined => {
     if (value.kind !== 'binary' || !['==', '!='].includes(value.operator)) return undefined;
-    if (value.left.kind === 'variable' && value.right.kind === 'literal') { const expected = typeof value.right.value === 'string' ? value.right.value : integer(value.right.value); return expected === undefined ? undefined : { name: value.left.name, operator: value.operator, expected }; }
-    if (value.right.kind === 'variable' && value.left.kind === 'literal') { const expected = typeof value.left.value === 'string' ? value.left.value : integer(value.left.value); return expected === undefined ? undefined : { name: value.right.name, operator: value.operator, expected }; }
+    if (value.left.kind === 'variable') { const expected = constant(value.right); return expected === undefined || typeof expected === 'boolean' ? undefined : { name: value.left.name, operator: value.operator, expected }; }
+    if (value.right.kind === 'variable') { const expected = constant(value.left); return expected === undefined || typeof expected === 'boolean' ? undefined : { name: value.right.name, operator: value.operator, expected }; }
     return undefined;
   };
   const left = parse(expr.left), right = parse(expr.right);
   if (!left || !right || left.name !== right.name) return undefined;
   const constraint = constraints.get(left.name);
-  if (!constraint?.values) return undefined;
+  if (!constraint) return undefined;
+  const allowed = constraint.type === 'float' ? constraint.floatValues : constraint.values;
+  if (!allowed) return undefined;
   if (constraint.type === 'str' && (typeof left.expected !== 'string' || typeof right.expected !== 'string')) return undefined;
   if (constraint.type === 'int' && (typeof left.expected !== 'bigint' || typeof right.expected !== 'bigint')) return undefined;
-  const accepts = (predicate: { operator: string; expected: bigint | string }, value: bigint | string): boolean => predicate.operator === '==' ? value === predicate.expected : value !== predicate.expected;
-  const results = [...constraint.values].map((value) => expr.operator === 'and' ? accepts(left, value) && accepts(right, value) : accepts(left, value) || accepts(right, value));
+  if (constraint.type === 'float' && (typeof left.expected !== 'number' || typeof right.expected !== 'number')) return undefined;
+  const accepts = (predicate: { operator: string; expected: bigint | number | string }, value: bigint | number | string): boolean => predicate.operator === '==' ? value === predicate.expected : value !== predicate.expected;
+  const results = [...allowed].map((value) => expr.operator === 'and' ? accepts(left, value) && accepts(right, value) : accepts(left, value) || accepts(right, value));
   return results.length && results.every(Boolean) ? true : results.length && results.every((value) => !value) ? false : undefined;
 }
 
@@ -480,7 +553,7 @@ function conditionImplies(current: Expr, previous: Expr, constants: ReadonlyMap<
 function isPureExpression(expr: Expr): boolean {
   if (expr.kind === 'float') return true;
   if (expr.kind === 'literal') return typeof expr.value !== 'string' || !/\{[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?:\(\))?\}/.test(expr.value);
-  if (expr.kind === 'call') return expr.name === 'int' || expr.name === 'str' ? expr.args.every(isPureExpression) : false;
+  if (expr.kind === 'call') return expr.name === 'int' || expr.name === 'float' || expr.name === 'str' ? expr.args.every(isPureExpression) : false;
   if (expr.kind === 'binary') return isPureExpression(expr.left) && isPureExpression(expr.right);
   if (expr.kind === 'unary') return isPureExpression(expr.value);
   if (expr.kind === 'index') return isPureExpression(expr.target) && isPureExpression(expr.key);
@@ -543,6 +616,30 @@ type IntegerBounds = { min: bigint; max: bigint };
 function integerBounds(expression: Expr, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints?: ReadonlyMap<string, VariableConstraint>): IntegerBounds | undefined {
   const value = constant(expression, constants);
   if (typeof value === 'bigint') return { min: value, max: value };
+  // int(floatExpr) truncates toward zero, so the interval endpoints remain
+  // sufficient to bound every result (including intervals crossing zero).
+  if (expression.kind === 'call' && expression.name === 'int' && expression.args.length === 1) {
+    const argument = expression.args[0];
+    const bounds = floatBounds(argument, constants, constraints);
+    if (bounds) return { min: BigInt(Math.trunc(bounds.min)), max: BigInt(Math.trunc(bounds.max)) };
+    if (argument.kind === 'variable') {
+      const constraint = constraints?.get(argument.name);
+      if (constraint?.type === 'str' && constraint.values?.size) {
+        const integerValues = [...constraint.values].map(value => typeof value === 'string' && /^[+-]?\d+$/.test(value) ? BigInt(value) : undefined);
+        if (integerValues.length && integerValues.every((value): value is bigint => value !== undefined)) {
+          return {
+            min: integerValues.reduce((minimum, value) => value < minimum ? value : minimum),
+            max: integerValues.reduce((maximum, value) => value > maximum ? value : maximum),
+          };
+        }
+      }
+    }
+  }
+  if (expression.kind === 'unary' && (expression.operator === '+' || expression.operator === '-')) {
+    const bounds = integerBounds(expression.value, constants, constraints);
+    if (!bounds) return undefined;
+    return expression.operator === '+' ? bounds : { min: -bounds.max, max: -bounds.min };
+  }
   if (expression.kind === 'variable') {
     const constraint = constraints?.get(expression.name);
     if (constraint?.type !== 'int') return undefined;
@@ -553,12 +650,369 @@ function integerBounds(expression: Expr, constants: ReadonlyMap<string, Exclude<
     }
     if (constraint.min !== undefined && constraint.max !== undefined) return { min: constraint.min, max: constraint.max };
   }
-  if (expression.kind === 'binary' && (expression.operator === '+' || expression.operator === '-')) {
+  if (expression.kind === 'binary' && ['+', '-', '*', '/'].includes(expression.operator)) {
     const left = integerBounds(expression.left, constants, constraints);
     const right = integerBounds(expression.right, constants, constraints);
-    if (left && right) return expression.operator === '+' ? { min: left.min + right.min, max: left.max + right.max } : { min: left.min - right.max, max: left.max - right.min };
+    if (!left || !right) return undefined;
+    if (expression.operator === '+') return { min: left.min + right.min, max: left.max + right.max };
+    if (expression.operator === '-') return { min: left.min - right.max, max: left.max - right.min };
+    if (expression.operator === '*') {
+      const products = [left.min * right.min, left.min * right.max, left.max * right.min, left.max * right.max];
+      return { min: products.reduce((min, item) => item < min ? item : min), max: products.reduce((max, item) => item > max ? item : max) };
+    }
+    if (right.min <= 0n && right.max >= 0n) return undefined;
+    const quotients = [left.min / right.min, left.min / right.max, left.max / right.min, left.max / right.max];
+    return { min: quotients.reduce((min, item) => item < min ? item : min), max: quotients.reduce((max, item) => item > max ? item : max) };
   }
   return undefined;
+}
+
+const MAX_TIMED_COMMAND_MS = 2147483647n;
+const MAX_PRESENTATION_OFFSET_PX = 1000000n;
+
+function timedCommandValue(statement: Statement): Expr | undefined {
+  if (statement.kind !== 'command') return undefined;
+  const args = statement.args;
+  if (statement.name === 'wait') return args[0];
+  if (statement.name === 'effect') return args[2];
+  if (statement.name === 'move') {
+    const marker = args.findIndex((argument) => argument.kind === 'literal' && argument.value === 'over');
+    return marker >= 0 ? args[marker + 1] : undefined;
+  }
+  if (statement.name === 'show' || statement.name === 'hide') {
+    const marker = args.findIndex((argument) => argument.kind === 'literal' && argument.value === 'fade');
+    return marker >= 0 ? args[marker + 1] : undefined;
+  }
+  return undefined;
+}
+
+function analyzePresentationOffsets(statement: Statement, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints: ReadonlyMap<string, VariableConstraint>, file: string, out: Diagnostic[]): void {
+  if (statement.kind !== 'command') return;
+  const args = statement.args;
+  let index: number;
+  if (statement.name === 'move') index = args[0]?.kind === 'literal' && args[0].value === 'character' ? 3 : args[0]?.kind === 'literal' && args[0].value === 'bg' ? 2 : args.length;
+  else if (statement.name === 'show' && !(args[0]?.kind === 'literal' && args[0].value === 'image')) index = 2;
+  else return;
+
+  while (index < args.length) {
+    const token = args[index];
+    const value = token.kind === 'literal' && typeof token.value === 'string' ? token.value : '';
+    const match = /^([xy])([+-])(\d+)?$/.exec(value);
+    if (!match) break;
+    if (match[3]) { index++; continue; } // Literal pixel offsets are already checked by type checking.
+    const expression = args[index + 1];
+    if (!expression) break;
+    const sign = match[2] === '-' ? -1 : 1;
+    const exact = constant(expression, constants);
+    if (typeof exact === 'bigint' || typeof exact === 'number') {
+      const signed = sign > 0 ? exact : -exact;
+      const limit = typeof exact === 'bigint' ? MAX_PRESENTATION_OFFSET_PX : Number(MAX_PRESENTATION_OFFSET_PX);
+      if (signed > limit || signed < -limit) {
+        const alreadyReported = out.some(item => item.code === 'type-error' && item.file === (statement.file || file)
+          && item.line === statement.line && item.message.includes(MAX_PRESENTATION_OFFSET_PX.toString()));
+        if (!alreadyReported) out.push(diagnostic(file, 'presentation-offset-range', 'error',
+          `表示位置のずらし量は±${MAX_PRESENTATION_OFFSET_PX} pxの範囲を超えています`, statement));
+      }
+    }
+    if (exact === undefined) {
+      const integerRange = integerBounds(expression, constants, constraints);
+      const floatRange = integerRange ? undefined : floatBounds(expression, constants, constraints);
+      if (integerRange || floatRange && Number.isFinite(floatRange.min) && Number.isFinite(floatRange.max)) {
+        const limit = MAX_PRESENTATION_OFFSET_PX;
+        const minimum = integerRange ? (sign > 0 ? integerRange.min : -integerRange.max) : sign > 0 ? floatRange!.min : -floatRange!.max;
+        const maximum = integerRange ? (sign > 0 ? integerRange.max : -integerRange.min) : sign > 0 ? floatRange!.max : -floatRange!.min;
+        const limitValue = integerRange ? limit : Number(limit);
+        const definitelyOut = minimum > limitValue || maximum < -limitValue;
+        const mayBeOut = definitelyOut || minimum < -limitValue || maximum > limitValue;
+        if (mayBeOut) {
+          const alreadyReported = out.some(item => item.code === 'type-error' && item.file === (statement.file || file)
+            && item.line === statement.line && item.message.includes(limit.toString()));
+          if (!alreadyReported) out.push(diagnostic(file, 'presentation-offset-range', definitelyOut ? 'error' : 'warning',
+            `位置ずらし '${match[1]}' の値域が ±${limit} px の範囲を${definitelyOut ? '超えています' : '超える可能性があります'}`, statement));
+        }
+      }
+    }
+    index += 2;
+  }
+}
+
+function finiteIntegerValues(expr: Expr, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints: ReadonlyMap<string, VariableConstraint>): Set<bigint> | undefined {
+  const exact = constant(expr, constants);
+  if (typeof exact === 'bigint') return new Set([exact]);
+  if (expr.kind === 'variable') {
+    const domain = constraints.get(expr.name);
+    if (domain?.type === 'int' && domain.values?.size && domain.values.size <= MAX_STATIC_NUMERIC_VALUES) {
+      const values = [...domain.values];
+      return values.every((value): value is bigint => typeof value === 'bigint') ? new Set(values) : undefined;
+    }
+    return undefined;
+  }
+  if (expr.kind === 'unary' && (expr.operator === '+' || expr.operator === '-')) {
+    const values = finiteIntegerValues(expr.value, constants, constraints);
+    if (!values) return undefined;
+    const result = new Set([...values].map(value => expr.operator === '-' ? -value : value));
+    return [...result].every(value => value >= INT_MIN && value <= INT_MAX) ? result : undefined;
+  }
+  if (expr.kind === 'call' && expr.name === 'int' && expr.args.length === 1) {
+    const argument = expr.args[0];
+    const floats = finiteFloatValues(argument, constants, constraints);
+    if (floats) {
+      const values = new Set([...floats].map(value => BigInt(Math.trunc(value))));
+      return [...values].every(value => value >= INT_MIN && value <= INT_MAX) ? values : undefined;
+    }
+    if (argument.kind === 'variable') {
+      const domain = constraints.get(argument.name);
+      if (domain?.type === 'str' && domain.values?.size && domain.values.size <= MAX_STATIC_NUMERIC_VALUES) {
+        const values = [...domain.values].map(value => typeof value === 'string' && /^[+-]?\d+$/.test(value) ? BigInt(value) : undefined);
+        if (values.length && values.every((value): value is bigint => value !== undefined && value >= INT_MIN && value <= INT_MAX)) return new Set(values);
+      }
+    }
+    return undefined;
+  }
+  if (expr.kind !== 'binary' || !['+', '-', '*', '/', '%'].includes(expr.operator)) return undefined;
+  const left = finiteIntegerValues(expr.left, constants, constraints), right = finiteIntegerValues(expr.right, constants, constraints);
+  if (!left || !right || left.size * right.size > MAX_STATIC_NUMERIC_VALUES) return undefined;
+  const result = new Set<bigint>();
+  for (const a of left) for (const b of right) {
+    if ((expr.operator === '/' || expr.operator === '%') && b === 0n) return undefined;
+    const value = expr.operator === '+' ? a + b : expr.operator === '-' ? a - b : expr.operator === '*' ? a * b
+      : expr.operator === '/' ? a / b : a % b;
+    if (value < INT_MIN || value > INT_MAX) return undefined;
+    result.add(value);
+  }
+  return result;
+}
+
+function finiteFloatValues(expr: Expr, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints: ReadonlyMap<string, VariableConstraint>): Set<number> | undefined {
+  const exact = constant(expr, constants);
+  if (typeof exact === 'number') return new Set([exact]);
+  if (expr.kind === 'variable') {
+    const domain = constraints.get(expr.name);
+    return domain?.type === 'float' && domain.floatValues?.size && domain.floatValues.size <= MAX_STATIC_NUMERIC_VALUES
+      ? new Set(domain.floatValues) : undefined;
+  }
+  if (expr.kind === 'unary' && (expr.operator === '+' || expr.operator === '-')) {
+    const values = finiteFloatValues(expr.value, constants, constraints);
+    return values ? new Set([...values].map(value => expr.operator === '-' ? -value : value)) : undefined;
+  }
+  if (expr.kind === 'call' && expr.name === 'float' && expr.args.length === 1) {
+    const argument = expr.args[0];
+    const integers = finiteIntegerValues(argument, constants, constraints);
+    if (integers) return new Set([...integers].map(value => Number(value)));
+    if (argument.kind === 'variable') {
+      const domain = constraints.get(argument.name);
+      if (domain?.type === 'str' && domain.values?.size && domain.values.size <= MAX_STATIC_NUMERIC_VALUES) {
+        const values = [...domain.values].map(value => typeof value === 'string'
+          && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value) && Number.isFinite(Number(value)) ? Number(value) : undefined);
+        if (values.length && values.every((value): value is number => value !== undefined)) return new Set(values);
+      }
+    }
+    return undefined;
+  }
+  if (expr.kind !== 'binary' || !['+', '-', '*', '/'].includes(expr.operator)) return undefined;
+  const left = finiteFloatValues(expr.left, constants, constraints), right = finiteFloatValues(expr.right, constants, constraints);
+  if (!left || !right || left.size * right.size > MAX_STATIC_NUMERIC_VALUES) return undefined;
+  const result = new Set<number>();
+  for (const a of left) for (const b of right) {
+    if (expr.operator === '/' && b === 0) return undefined;
+    const value = expr.operator === '+' ? a + b : expr.operator === '-' ? a - b : expr.operator === '*' ? a * b : a / b;
+    if (!Number.isFinite(value)) return undefined;
+    result.add(value);
+  }
+  return result;
+}
+
+function finiteStringValues(expr: Expr, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints: ReadonlyMap<string, VariableConstraint>): Set<string> | undefined {
+  const exact = constant(expr, constants);
+  if (typeof exact === 'string') return new Set([exact]);
+  if (expr.kind === 'variable') {
+    const domain = constraints.get(expr.name);
+    if (domain?.type === 'str' && domain.values?.size && domain.values.size <= MAX_STATIC_NUMERIC_VALUES) {
+      const values = [...domain.values];
+      return values.every((value): value is string => typeof value === 'string') ? new Set(values) : undefined;
+    }
+    return undefined;
+  }
+  if (expr.kind === 'binary' && expr.operator === '+') {
+    const left = finiteStringValues(expr.left, constants, constraints), right = finiteStringValues(expr.right, constants, constraints);
+    if (!left || !right || left.size * right.size > MAX_STATIC_NUMERIC_VALUES) return undefined;
+    return new Set([...left].flatMap(a => [...right].map(b => a + b)));
+  }
+  if (expr.kind === 'call' && expr.name === 'str' && expr.args.length === 1) {
+    const argument = expr.args[0];
+    const strings = finiteStringValues(argument, constants, constraints);
+    if (strings) return strings;
+    const integers = finiteIntegerValues(argument, constants, constraints);
+    return integers && integers.size <= MAX_STATIC_NUMERIC_VALUES ? new Set([...integers].map(String)) : undefined;
+  }
+  return undefined;
+}
+
+function assignedIntegerFact(statement: Statement, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints: ReadonlyMap<string, VariableConstraint>): { name: string; bounds: IntegerBounds; values?: Set<bigint> } | undefined {
+  const name = statement.kind === 'declare' ? statement.name
+    : statement.kind === 'set' && statement.target.kind === 'variable' ? statement.target.name : undefined;
+  const expression = statement.kind === 'declare' ? statement.initial
+    : statement.kind === 'set' ? statement.value : undefined;
+  if (!name || !expression) return undefined;
+  const value = constant(expression, constants);
+  const bounds = typeof value === 'bigint' ? { min: value, max: value } : integerBounds(expression, constants, constraints);
+  const values = finiteIntegerValues(expression, constants, constraints);
+  return bounds ? { name, bounds, ...(values ? { values } : {}) } : undefined;
+}
+
+function assignedFloatFact(statement: Statement, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints: ReadonlyMap<string, VariableConstraint>): { name: string; bounds: { min: number; max: number }; values?: Set<number> } | undefined {
+  const name = statement.kind === 'declare' ? statement.name
+    : statement.kind === 'set' && statement.target.kind === 'variable' ? statement.target.name : undefined;
+  const expression = statement.kind === 'declare' ? statement.initial
+    : statement.kind === 'set' ? statement.value : undefined;
+  if (!name || !expression) return undefined;
+  const bounds = floatBounds(expression, constants, constraints);
+  const values = finiteFloatValues(expression, constants, constraints);
+  return bounds ? { name, bounds, ...(values ? { values } : {}) } : undefined;
+}
+
+function assignedStringFact(statement: Statement, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints: ReadonlyMap<string, VariableConstraint>): { name: string; values: Set<string> } | undefined {
+  const name = statement.kind === 'declare' ? statement.name
+    : statement.kind === 'set' && statement.target.kind === 'variable' ? statement.target.name : undefined;
+  const expression = statement.kind === 'declare' ? statement.initial
+    : statement.kind === 'set' ? statement.value : undefined;
+  if (!name || !expression) return undefined;
+  const values = finiteStringValues(expression, constants, constraints);
+  return values ? { name, values } : undefined;
+}
+
+function analyzeKnownFunctionCall(name: string, args: Expr[], constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints: ReadonlyMap<string, VariableConstraint>, file: string, out: Diagnostic[]): void {
+  const fn = activeFunctionDefinitions.get(name);
+  if (!fn || activeFunctionCallStack.has(fn.name)) return;
+  const callConstants = new Map([...constants].filter(([name]) => activeGlobalNames.has(name)));
+  const callConstraints = new Map([...constraints].filter(([name]) => activeGlobalNames.has(name)));
+  let hasKnownArgument = false;
+  fn.params.forEach((param, index) => {
+    const argument = args[index];
+    callConstants.delete(param.name); // Parameters shadow constants just as they shadow globals.
+    if (!argument) return;
+    callConstraints.delete(param.name); // A parameter shadows a same-named global.
+    const value = constant(argument, constants);
+    if (value !== undefined) {
+      callConstants.set(param.name, value);
+      hasKnownArgument = true;
+    }
+    if (param.type === 'int') {
+      const bounds = typeof value === 'bigint' ? { min: value, max: value } : integerBounds(argument, constants, constraints);
+      if (bounds) {
+        const values = finiteIntegerValues(argument, constants, constraints);
+        callConstraints.set(param.name, {
+          type: 'int', min: bounds.min, max: bounds.max, flow: true,
+          ...(values ? { values } : {}),
+        });
+        hasKnownArgument = true;
+      }
+    } else if (param.type === 'float') {
+      const bounds = typeof value === 'number' ? { min: value, max: value } : floatBounds(argument, constants, constraints);
+      if (bounds) {
+        const values = finiteFloatValues(argument, constants, constraints);
+        callConstraints.set(param.name, {
+          type: 'float', floatMin: bounds.min, floatMax: bounds.max, flow: true,
+          ...(values ? { floatValues: values } : {}),
+        });
+        hasKnownArgument = true;
+      }
+    } else if (param.type === 'str') {
+      const values = finiteStringValues(argument, constants, constraints);
+      if (values?.size) {
+        callConstraints.set(param.name, { type: 'str', values, flow: true });
+        hasKnownArgument = true;
+      }
+    }
+  });
+  if (!hasKnownArgument) return;
+
+  activeFunctionCallStack.add(fn.name);
+  try {
+    const contextualDiagnostics: Diagnostic[] = [];
+    analyzeBlock(fn.body, file, contextualDiagnostics, true, callConstants, new Map(), callConstraints);
+    const severityRank = { info: 0, warning: 1, error: 2 };
+    for (const item of contextualDiagnostics) {
+      // Specializing a helper with one call's argument makes ordinary branches
+      // look unreachable (for example sqrt(-1) takes its documented clamp
+      // branch). Those are not defects in the shared function body. Keep only
+      // diagnostics whose validation meaningfully depends on the supplied
+      // values or affects runtime safety.
+      if (!CALL_CONTEXT_DIAGNOSTICS.has(item.code)) continue;
+      const previous = out.find(existing => existing.code === item.code && existing.file === item.file && existing.line === item.line && existing.column === item.column);
+      if (!previous) out.push(item);
+      else if (severityRank[item.severity] > severityRank[previous.severity]) {
+        previous.severity = item.severity;
+        previous.message = item.message;
+      }
+    }
+  } finally {
+    activeFunctionCallStack.delete(fn.name);
+  }
+}
+
+function analyzeTimedCommand(statement: Statement, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints: ReadonlyMap<string, VariableConstraint> | undefined, file: string, out: Diagnostic[]): void {
+  const expression = timedCommandValue(statement);
+  if (!expression) return;
+  const exact = constant(expression, constants);
+  if (typeof exact === 'bigint') {
+    if (exact >= 0n && exact <= MAX_TIMED_COMMAND_MS) return;
+    const sourceFile = statement.file || file;
+    const alreadyReported = out.some((item) => item.code === 'type-error' && item.severity === 'error'
+      && item.file === sourceFile && item.line === statement.line && item.message.includes('時間'));
+    if (!alreadyReported) out.push(diagnostic(file, 'duration-range', 'error', '確定した演出時間が 0〜2147483647 ms の範囲外です', statement));
+    return;
+  }
+  if (exact !== undefined) return;
+  const finiteValues = finiteIntegerValues(expression, constants, constraints || new Map());
+  if (finiteValues?.size) {
+    const validValues = [...finiteValues].filter(value => value >= 0n && value <= MAX_TIMED_COMMAND_MS);
+    if (!validValues.length) {
+      out.push(diagnostic(file, 'duration-range', 'error', '演出時間の有限候補がすべて0〜2147483647 msの範囲外です', statement));
+      return;
+    }
+    if (validValues.length !== finiteValues.size) {
+      out.push(diagnostic(file, 'duration-range', 'warning', '演出時間の有限候補に0〜2147483647 msの範囲外が含まれます', statement));
+      return;
+    }
+    return;
+  }
+  let bounds = integerBounds(expression, constants, constraints);
+  if (!bounds && expression.kind === 'variable') {
+    const constraint = constraints?.get(expression.name);
+    if (constraint?.type === 'int' && (constraint.min !== undefined || constraint.max !== undefined)) {
+      // An omitted bound is limited only by the language's signed 64-bit int domain.
+      bounds = { min: constraint.min ?? INT_MIN, max: constraint.max ?? INT_MAX };
+    }
+  }
+  if (!bounds) return;
+  let minimum = bounds.min, maximum = bounds.max;
+  if (expression.kind === 'variable') {
+    const constraint = constraints?.get(expression.name);
+    if (constraint?.type === 'int' && constraint.values?.size) {
+      const values = [...constraint.values].filter((value): value is bigint => typeof value === 'bigint');
+      if (values.length === constraint.values.size) {
+        minimum = values.reduce((min, item) => item < min ? item : min);
+        maximum = values.reduce((max, item) => item > max ? item : max);
+        const validValues = values.filter((value) => value >= 0n && value <= MAX_TIMED_COMMAND_MS);
+        if (!validValues.length) {
+          out.push(diagnostic(file, 'duration-range', 'error', '演出時間の許容値がすべて 0〜2147483647 ms の範囲外です', statement));
+          return;
+        }
+        if (validValues.length !== values.length) {
+          out.push(diagnostic(file, 'duration-range', 'warning', '演出時間の許容値に 0〜2147483647 ms の範囲外が含まれます', statement));
+          return;
+        }
+        return;
+      }
+    }
+  }
+  const below = minimum < 0n, above = maximum > MAX_TIMED_COMMAND_MS;
+  if (!below && !above) return;
+  const entirelyOutside = maximum < 0n || minimum > MAX_TIMED_COMMAND_MS;
+  out.push(diagnostic(file, 'duration-range', entirelyOutside ? 'error' : 'warning', entirelyOutside
+    ? '演出時間の値域がすべて 0〜2147483647 ms の範囲外です'
+    : '演出時間の値域に 0〜2147483647 ms の範囲外が含まれる可能性があります', statement));
 }
 
 function forVariableBounds(statement: Extract<Statement, { kind: 'for' }>, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints?: ReadonlyMap<string, VariableConstraint>): IntegerBounds | undefined {
@@ -912,7 +1366,9 @@ function definitelyTerminates(statement: Statement, constants: ReadonlyMap<strin
   if (statement.kind === 'while') {
     if (conditionValue(statement.condition.expression, constants, facts, constraints) !== true) return false;
     const stable = loopConstants(statement, constants);
-    return conditionValue(statement.condition.expression, stable, new Map(), constraints) === true || blockTerminates(statement.body, constants, facts, constraints);
+    const stableConstraints = constraints ? new Map(constraints) : undefined;
+    invalidateConstraintState(statement, stableConstraints);
+    return conditionValue(statement.condition.expression, stable, new Map(), stableConstraints) === true || blockTerminates(statement.body, constants, facts, constraints);
   }
   if (statement.kind === 'for') return forExecution(statement, constants) !== 'invalid' && blockTerminates(statement.body, constants, facts, forBodyConstraints(statement, constants, constraints));
   if (statement.kind === 'choice') return statement.options.length > 0 && statement.options.every((option) => blockTerminates(option.body, constants, facts, constraints));
@@ -927,9 +1383,12 @@ function writtenVariables(statement: Statement, result = new Set<string>()): Set
 }
 
 let activeFunctionEffects: ReadonlyMap<string, ReadonlySet<string>> = new Map();
+let activeFunctionDefinitions: ReadonlyMap<string, FunctionDef> = new Map();
+let activeGlobalNames: ReadonlySet<string> = new Set();
+const activeFunctionCallStack = new Set<string>();
 
 function callChangesState(name: string): boolean {
-  if (name === 'int' || name === 'str') return false;
+  if (name === 'int' || name === 'float' || name === 'str') return false;
   const effects = activeFunctionEffects.get(name);
   return !effects || effects.has('*') || effects.size > 0;
 }
@@ -1064,8 +1523,8 @@ function functionEffects(functions: readonly FunctionDef[], globals: ReadonlySet
           const target = statement.target;
           if (target.kind === 'variable' && !locals.has(target.name) && globals.has(target.name)) writes.add(target.name);
         }
-        if (statement.kind === 'call' && statement.name !== 'int' && statement.name !== 'str') invoked.add(statement.name);
-        for (const expression of statementExpressions(statement)) expressionCalls(expression).forEach((name) => { if (name !== 'int' && name !== 'str') invoked.add(name); });
+        if (statement.kind === 'call' && statement.name !== 'int' && statement.name !== 'float' && statement.name !== 'str') invoked.add(statement.name);
+        for (const expression of statementExpressions(statement)) expressionCalls(expression).forEach((name) => { if (name !== 'int' && name !== 'float' && name !== 'str') invoked.add(name); });
         for (const body of nested(statement)) walk(body, new Set(locals));
       }
     };
@@ -1392,10 +1851,32 @@ export function sceneReachability(script: Script, constraints?: ReadonlyMap<stri
 
 function analyzeExpression(expr: Expr, file: string, out: Diagnostic[], constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map()): void {
   const walk = (current: Expr, parent?: Expr): void => {
+    if (current.kind === 'call' && current.args.length === 1 && (current.name === 'int' || current.name === 'float')) {
+      const argument = constant(current.args[0], constants);
+      let invalid: string | undefined;
+      if (current.name === 'int' && typeof argument === 'string' && !/^[+-]?\d+$/.test(argument)) invalid = 'int() 変換エラー: 渡された文字列が整数形式ではありません';
+      if (current.name === 'int' && typeof argument === 'number' && Number.isFinite(argument)) {
+        const value = BigInt(Math.trunc(argument));
+        if (value < INT_MIN || value > INT_MAX) invalid = 'int() 変換エラー: 結果が64bit整数の範囲を超えます';
+      }
+      if (current.name === 'float' && typeof argument === 'string') {
+        if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(argument) || !Number.isFinite(Number(argument))) invalid = 'float() 変換エラー: 渡された文字列が有限数値形式ではありません';
+      }
+      if (current.name === 'float' && typeof argument === 'number' && !Number.isFinite(argument)) invalid = 'float() 変換エラー: 結果が有限値ではありません';
+      if (invalid) out.push(diagnostic(file, 'invalid-conversion', 'error', invalid, current));
+    }
     if (current.kind === 'binary') {
       const right = constant(current.right, constants);
-      if ((current.operator === '/' || current.operator === '%') && right === 0n) {
+      if ((current.operator === '/' || current.operator === '%') && (right === 0n || right === 0)) {
         out.push(diagnostic(file, 'division-by-zero', 'warning', '0 による除算または剰余は実行時エラーになります', current));
+      }
+      if (['+', '-', '*', '/'].includes(current.operator)) {
+        const left = constant(current.left, constants);
+        if (typeof left === 'number' && typeof right === 'number') {
+          const result = current.operator === '+' ? left + right : current.operator === '-' ? left - right
+            : current.operator === '*' ? left * right : right === 0 ? undefined : left / right;
+          if (result !== undefined && !Number.isFinite(result)) out.push(diagnostic(file, 'float-overflow', 'error', '小数演算の結果が有限値の範囲を超えます', current));
+        }
       }
     }
     const value = constant(current, constants);
@@ -1416,15 +1897,111 @@ function analyzeExpression(expr: Expr, file: string, out: Diagnostic[], constant
   walk(expr);
 }
 
+function analyzeConstrainedConversions(expr: Expr, file: string, out: Diagnostic[], constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints: ReadonlyMap<string, VariableConstraint>): void {
+  visitExpressions(expr, current => {
+    if (current.kind !== 'call' || current.args.length !== 1) return;
+    const argument = current.args[0];
+    if (constant(argument, constants) !== undefined) return;
+    if (current.name === 'int') {
+      const bounds = floatBounds(argument, constants, constraints);
+      if (bounds) {
+        const minimum = Number(INT_MIN), maximumExclusive = Number(INT_MAX) + 1;
+        const definitelyInvalid = bounds.max < minimum || bounds.min >= maximumExclusive;
+        const mayBeInvalid = definitelyInvalid || bounds.min < minimum || bounds.max >= maximumExclusive;
+        if (mayBeInvalid) out.push(diagnostic(file, 'invalid-conversion', definitelyInvalid ? 'error' : 'warning',
+          'int() の値域に64bit整数へ変換できない値が含まれます', current));
+      }
+      if (argument.kind === 'variable') {
+        const domain = constraints.get(argument.name);
+        if (domain?.type === 'str' && domain.values?.size) {
+          const valid = [...domain.values].filter((value): value is string => typeof value === 'string').filter(value => {
+            if (!/^[+-]?\d+$/.test(value)) return false;
+            const integerValue = BigInt(value);
+            return integerValue >= INT_MIN && integerValue <= INT_MAX;
+          });
+          const invalidCount = domain.values.size - valid.length;
+          if (invalidCount) out.push(diagnostic(file, 'invalid-conversion', valid.length ? 'warning' : 'error',
+            'int() の文字列候補に整数へ変換できない値が含まれます', current));
+        }
+      }
+    } else if (current.name === 'float' && argument.kind === 'variable') {
+      const domain = constraints.get(argument.name);
+      if (domain?.type === 'str' && domain.values?.size) {
+        const valid = [...domain.values].filter((value): value is string => typeof value === 'string').filter(value =>
+          /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value) && Number.isFinite(Number(value)));
+        if (valid.length !== domain.values.size) out.push(diagnostic(file, 'invalid-conversion', valid.length ? 'warning' : 'error',
+          'float() の文字列候補に有限数へ変換できない値が含まれます', current));
+      }
+    }
+  });
+}
+
 function constraintViolation(value: Exclude<Constant, undefined>, constraint: VariableConstraint): string | undefined {
   if (constraint.type === 'int' && typeof value !== 'bigint') return '整数';
   if (constraint.type === 'str' && typeof value !== 'string') return '文字列';
-  if (constraint.values && (typeof value === 'string' || typeof value === 'bigint') && !constraint.values.has(value)) return '許容値集合';
+  if (constraint.type === 'float' && typeof value !== 'number') return '小数';
+  if (constraint.type === 'float' && constraint.floatValues && typeof value === 'number' && !constraint.floatValues.has(value)) return '許容値集合';
+  if (constraint.type === 'float' && typeof value === 'number' && constraint.floatMin !== undefined && value < constraint.floatMin) return `min=${constraint.floatMin}`;
+  if (constraint.type === 'float' && typeof value === 'number' && constraint.floatMax !== undefined && value > constraint.floatMax) return `max=${constraint.floatMax}`;
+  if (constraint.type !== 'float' && constraint.values && (typeof value === 'string' || typeof value === 'bigint') && !constraint.values.has(value)) return '許容値集合';
   if (typeof value === 'bigint') {
     if (constraint.min !== undefined && value < constraint.min) return `min=${constraint.min}`;
     if (constraint.max !== undefined && value > constraint.max) return `max=${constraint.max}`;
   }
   return undefined;
+}
+
+function floatBounds(expr: Expr, constants: ReadonlyMap<string, Exclude<Constant, undefined>>, constraints?: ReadonlyMap<string, VariableConstraint>): { min: number; max: number } | undefined {
+  const value = constant(expr, constants);
+  if (typeof value === 'number') return { min: value, max: value };
+  if (expr.kind === 'variable') {
+    const constraint = constraints?.get(expr.name);
+    if (constraint?.type !== 'float') return undefined;
+    const values = constraint.floatValues ? [...constraint.floatValues] : [];
+    const min = constraint.floatMin ?? (values.length ? Math.min(...values) : undefined);
+    const max = constraint.floatMax ?? (values.length ? Math.max(...values) : undefined);
+    return min !== undefined && max !== undefined ? { min, max } : undefined;
+  }
+  if (expr.kind === 'call' && expr.name === 'float' && expr.args.length === 1) {
+    const argument = expr.args[0];
+    const integerRange = integerBounds(argument, constants, constraints);
+    if (integerRange) {
+      const min = Number(integerRange.min), max = Number(integerRange.max);
+      if (Number.isFinite(min) && Number.isFinite(max)) return { min, max };
+    }
+    if (argument.kind === 'variable') {
+      const constraint = constraints?.get(argument.name);
+      if (constraint?.type === 'str' && constraint.values?.size) {
+        const numericValues = [...constraint.values].map(value => {
+          if (typeof value !== 'string' || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) return undefined;
+          const converted = Number(value);
+          return Number.isFinite(converted) ? converted : undefined;
+        });
+        if (numericValues.length && numericValues.every((value): value is number => value !== undefined)) {
+          return { min: Math.min(...numericValues), max: Math.max(...numericValues) };
+        }
+      }
+    }
+    return undefined;
+  }
+  if (expr.kind === 'unary' && (expr.operator === '+' || expr.operator === '-')) {
+    const bounds = floatBounds(expr.value, constants, constraints);
+    if (!bounds) return undefined;
+    return expr.operator === '+' ? bounds : { min: -bounds.max, max: -bounds.min };
+  }
+  if (expr.kind !== 'binary' || !['+', '-', '*', '/'].includes(expr.operator)) return undefined;
+  const left = floatBounds(expr.left, constants, constraints), right = floatBounds(expr.right, constants, constraints);
+  if (!left || !right) return undefined;
+  let candidates: number[];
+  if (expr.operator === '+') candidates = [left.min + right.min, left.max + right.max];
+  else if (expr.operator === '-') candidates = [left.min - right.max, left.max - right.min];
+  else if (expr.operator === '*') candidates = [left.min * right.min, left.min * right.max, left.max * right.min, left.max * right.max];
+  else {
+    if (right.min <= 0 && right.max >= 0) return undefined;
+    candidates = [left.min / right.min, left.min / right.max, left.max / right.min, left.max / right.max];
+  }
+  if (!candidates.every(Number.isFinite)) return undefined;
+  return { min: Math.min(...candidates), max: Math.max(...candidates) };
 }
 
 function analyzeVariableConstraints(statements: Statement[], file: string, out: Diagnostic[], constraints: ReadonlyMap<string, VariableConstraint>): void {
@@ -1788,31 +2365,60 @@ function analyzeBackgroundClearDivergence(statements: Statement[], file: string,
   return analyze(statements, false);
 }
 
-function analyzeBlock(statements: Statement[], file: string, out: Diagnostic[], reachable = true, constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(), facts: ReadonlyMap<string, boolean> = new Map(), constraints?: ReadonlyMap<string, VariableConstraint>): void {
+function analyzeBlock(statements: Statement[], file: string, out: Diagnostic[], reachable = true, constants: ReadonlyMap<string, Exclude<Constant, undefined>> = new Map(), facts: ReadonlyMap<string, boolean> = new Map(), constraints?: ReadonlyMap<string, VariableConstraint>): ReadonlyMap<string, VariableConstraint> | undefined {
   let canReach = reachable;
   const known = new Map(constants);
   const knownFacts = new Map(facts);
-  const activeConstraints = constraints ? new Map(constraints) : undefined;
+  const activeConstraints = new Map<string, VariableConstraint>();
+  for (const [name, constraint] of constraints || []) {
+    activeConstraints.set(name, constraint.flow || constraint.declared ? constraint : { ...constraint, declared: constraint });
+  }
   for (const statement of statements) {
+    let singleIterationLoopResult: ReadonlyMap<string, VariableConstraint> | undefined;
     if (!canReach) {
       out.push(diagnostic(file, 'unreachable-code', 'warning', 'この文には到達できません', statement));
       for (const body of nested(statement)) analyzeBlock(body, file, out, false, known, knownFacts, activeConstraints);
       continue;
     }
     statementExpressions(statement).forEach((expr) => analyzeExpression(expr, file, out, known));
+    statementExpressions(statement).forEach((expr) => analyzeConstrainedConversions(expr, file, out, known, activeConstraints));
     statementExpressions(statement).forEach((expression) => invalidateConstraintCallsInExecution(expression, known, knownFacts, activeConstraints));
+    if (statement.kind === 'call') analyzeKnownFunctionCall(statement.name, statement.args, known, activeConstraints, file, out);
+    statementExpressions(statement).forEach(expression => visitExpressions(expression, current => {
+      if (current.kind === 'call') analyzeKnownFunctionCall(current.name, current.args, known, activeConstraints, file, out);
+    }));
     if (statement.kind === 'call') invalidateConstraintCalls([], activeConstraints, [statement.name]);
 
-    if (statement.kind === 'set' && statement.target.kind === 'variable' && activeConstraints?.get(statement.target.name)?.type === 'int' && constant(statement.value, known) === undefined) {
-      const constraint = activeConstraints.get(statement.target.name)!;
-      const bounds = integerBounds(statement.value, known, activeConstraints);
-      if (bounds && (constraint.min !== undefined || constraint.max !== undefined)) {
-        const definitelyOutside = constraint.min !== undefined && bounds.max < constraint.min || constraint.max !== undefined && bounds.min > constraint.max;
-        const mayEscape = constraint.min !== undefined && bounds.min < constraint.min || constraint.max !== undefined && bounds.max > constraint.max;
-        if (definitelyOutside) out.push(diagnostic(file, 'variable-constraint', 'error', `変数 '${statement.target.name}' への代入値の範囲が変数テーブルの制約外です`, statement, statement.target.name));
-        else if (mayEscape) out.push(diagnostic(file, 'variable-constraint', 'warning', `変数 '${statement.target.name}' への代入値が変数テーブルの範囲を外れる可能性があります`, statement, statement.target.name));
+    if (statement.kind === 'set' && statement.target.kind === 'variable' && constant(statement.value, known) === undefined) {
+      const name = statement.target.name, currentConstraint = activeConstraints.get(name);
+      const constraint = currentConstraint?.flow ? currentConstraint.declared : currentConstraint;
+      if (constraint?.type === 'int') {
+        const bounds = integerBounds(statement.value, known, activeConstraints);
+        if (bounds && (constraint.min !== undefined || constraint.max !== undefined)) {
+          const definitelyOutside = constraint.min !== undefined && bounds.max < constraint.min || constraint.max !== undefined && bounds.min > constraint.max;
+          const mayEscape = constraint.min !== undefined && bounds.min < constraint.min || constraint.max !== undefined && bounds.max > constraint.max;
+          if (definitelyOutside) out.push(diagnostic(file, 'variable-constraint', 'error', `変数 '${name}' への代入値の範囲が変数テーブルの制約外です`, statement, name));
+          else if (mayEscape) out.push(diagnostic(file, 'variable-constraint', 'warning', `変数 '${name}' への代入値が変数テーブルの範囲を外れる可能性があります`, statement, name));
+        }
+      } else if (constraint?.type === 'float') {
+        const bounds = floatBounds(statement.value, known, activeConstraints);
+        const values = constraint.floatValues ? [...constraint.floatValues] : [];
+        const minimum = constraint.floatMin ?? (values.length ? Math.min(...values) : undefined);
+        const maximum = constraint.floatMax ?? (values.length ? Math.max(...values) : undefined);
+        if (bounds && (minimum !== undefined || maximum !== undefined || constraint.floatValues !== undefined)) {
+          const outsideBounds = minimum !== undefined && bounds.max < minimum || maximum !== undefined && bounds.min > maximum;
+          const mayEscapeBounds = minimum !== undefined && bounds.min < minimum || maximum !== undefined && bounds.max > maximum;
+          const domainIntersects = !constraint.floatValues || [...constraint.floatValues].some((allowed) => allowed >= bounds.min && allowed <= bounds.max);
+          const definitelyOutside = outsideBounds || !!constraint.floatValues && !domainIntersects;
+          const mayEscape = mayEscapeBounds || !!constraint.floatValues && !definitelyOutside && (bounds.min !== bounds.max || !constraint.floatValues.has(bounds.min));
+          if (definitelyOutside) out.push(diagnostic(file, 'variable-constraint', 'error', `変数 '${name}' への代入値の範囲が変数テーブルの制約外です`, statement, name));
+          else if (mayEscape) out.push(diagnostic(file, 'variable-constraint', 'warning', `変数 '${name}' への代入値が変数テーブルの範囲を外れる可能性があります`, statement, name));
+        }
       }
     }
+
+    analyzeTimedCommand(statement, known, activeConstraints, file, out);
+    analyzePresentationOffsets(statement, known, activeConstraints, file, out);
 
     if (statement.kind === 'choice') {
       const labels = new Set<string>();
@@ -1830,7 +2436,7 @@ function analyzeBlock(statements: Statement[], file: string, out: Diagnostic[], 
       const finiteCoverage = finiteBranchCoverage(statement, activeConstraints);
       const rangeCoverage = integerRangeCoverage(statement, activeConstraints);
       const incompleteFinite = finiteCoverage && !statement.otherwise.length && [...finiteCoverage.allowed].some((value) => !finiteCoverage.covered.has(value));
-      const incompleteRange = rangeCoverage && !statement.otherwise.length && !rangeCoverage.exhaustive;
+      const incompleteRange = !finiteCoverage && rangeCoverage && !statement.otherwise.length && !rangeCoverage.exhaustive;
       if (incompleteFinite || incompleteRange) {
         const name = finiteCoverage?.name || rangeCoverage?.name || '変数';
         out.push(diagnostic(file, 'non-exhaustive-condition', 'warning', `変数 '${name}' の取り得る値をすべて処理していないため、未処理の値が残ります`, statement.condition));
@@ -1855,16 +2461,18 @@ function analyzeBlock(statements: Statement[], file: string, out: Diagnostic[], 
         const branchConstraints = refineConstraints(remainingConstraints, branch.expression, true) || remainingConstraints;
         // Branch bodies execute on separate paths.  Do not let a constant
         // learned in one branch leak into a sibling elif/else condition.
-        analyzeBlock(branch.body, file, out, canReach && !previousAlways && value !== false && !duplicate, new Map(known), bodyFacts, branchConstraints);
-        if (!previousAlways && value !== false && !duplicate) branchConstraintPaths.push(branchConstraints);
+        const branchResult = analyzeBlock(branch.body, file, out, canReach && !previousAlways && value !== false && !duplicate, new Map(known), bodyFacts, branchConstraints);
+        if (!previousAlways && value !== false && !duplicate) branchConstraintPaths.push(branchResult || branchConstraints);
         if (isPureExpression(branch.expression)) seen.add(key);
         if (isPureExpression(branch.expression)) previousConditions.push(branch.expression);
         recordCondition(remainingFacts, branch.expression, false);
         remainingConstraints = refineConstraints(remainingConstraints, branch.expression, false);
         if (value === true) previousAlways = true;
       }
-      if (statement.otherwise.length) analyzeBlock(statement.otherwise, file, out, canReach && !previousAlways, new Map(known), remainingFacts, remainingConstraints);
-      if (!previousAlways) branchConstraintPaths.push(remainingConstraints);
+      const otherwiseResult = statement.otherwise.length
+        ? analyzeBlock(statement.otherwise, file, out, canReach && !previousAlways, new Map(known), remainingFacts, remainingConstraints)
+        : remainingConstraints;
+      if (!previousAlways) branchConstraintPaths.push(otherwiseResult || remainingConstraints);
       const mergedConstraints = mergeConstraints(branchConstraintPaths);
       if (activeConstraints && mergedConstraints) {
         const entries = [...mergedConstraints.entries()];
@@ -1875,8 +2483,9 @@ function analyzeBlock(statements: Statement[], file: string, out: Diagnostic[], 
     } else if (statement.kind === 'choice') {
       // Each choice option is a separate runtime path.  Keep option-local
       // constants, facts, and constraints isolated from sibling options.
+      const choiceConstraintPaths: Array<ReadonlyMap<string, VariableConstraint> | undefined> = [];
       for (const option of statement.options) {
-        analyzeBlock(
+        const optionResult = analyzeBlock(
           option.body,
           file,
           out,
@@ -1885,14 +2494,22 @@ function analyzeBlock(statements: Statement[], file: string, out: Diagnostic[], 
           new Map(knownFacts),
           activeConstraints ? new Map(activeConstraints) : undefined,
         );
+        choiceConstraintPaths.push(optionResult);
+      }
+      const mergedChoiceConstraints = mergeConstraints(choiceConstraintPaths);
+      if (mergedChoiceConstraints) {
+        activeConstraints.clear();
+        mergedChoiceConstraints.forEach((constraint, name) => activeConstraints.set(name, constraint));
       }
     } else if (statement.kind === 'while') {
       const value = conditionValue(statement.condition.expression, known, knownFacts, activeConstraints);
       if (value === false) out.push(diagnostic(file, 'constant-condition', 'warning', 'while の条件は常に偽です。ループ本体には到達できません', statement.condition));
       const stable = loopConstants(statement, known);
+      const stableConstraints = new Map(activeConstraints);
+      invalidateConstraintState(statement, stableConstraints);
       const bodyFacts = new Map<string, boolean>(); recordCondition(bodyFacts, statement.condition.expression, true);
-      const stableCondition = conditionValue(statement.condition.expression, stable, new Map(), activeConstraints);
-      if (stableCondition === true && !blockTerminates(statement.body, stable, bodyFacts, constraints)) out.push(diagnostic(file, 'infinite-loop', 'warning', 'while の条件は常に真で、ループ本体は後続へ進みません', statement.condition));
+      const stableCondition = conditionValue(statement.condition.expression, stable, new Map(), stableConstraints);
+      if (stableCondition === true && !blockTerminates(statement.body, stable, bodyFacts, stableConstraints)) out.push(diagnostic(file, 'infinite-loop', 'warning', 'while の条件は常に真で、ループ本体は後続へ進みません', statement.condition));
       if (whileUpdateOverflows(statement, known)) {
         out.push(diagnostic(file, 'integer-overflow', 'error', 'while ループの更新で64bit整数オーバーフローが発生します', statement.body[0]));
       }
@@ -1904,7 +2521,7 @@ function analyzeBlock(statements: Statement[], file: string, out: Diagnostic[], 
       // A while body may execute zero times, so body-local narrowing must not
       // leak into the post-loop path.
       analyzeBlock(statement.body, file, out, canReach && value !== false, stable, bodyFacts, activeConstraints ? new Map(activeConstraints) : undefined);
-      if (canReach && value === true && !blockTerminates(statement.body, stable, bodyFacts, activeConstraints)) canReach = false;
+      if (canReach && stableCondition === true && !blockTerminates(statement.body, stable, bodyFacts, stableConstraints)) canReach = false;
     } else if (statement.kind === 'for') {
       const execution = forExecution(statement, known);
       if (execution === 'invalid') {
@@ -1924,15 +2541,70 @@ function analyzeBlock(statements: Statement[], file: string, out: Diagnostic[], 
           ? 'for ループの値域付き更新で64bit整数オーバーフローが発生します'
           : 'for ループの値域付き更新で64bit整数オーバーフローの可能性があります', statement.body[0]));
       }
-      analyzeBlock(statement.body, file, out, canReach && execution !== 'invalid', loopConstants(statement, known), new Map(), forBodyConstraints(statement, known, activeConstraints));
+      const loopInputConstraints = forBodyConstraints(statement, known, activeConstraints);
+      const loopResultConstraints = analyzeBlock(statement.body, file, out, canReach && execution !== 'invalid', loopConstants(statement, known), new Map(), loopInputConstraints);
+      // A statically known single-iteration for loop is an unconditional
+      // execution path. Preserve its effects after the loop, while keeping the
+      // loop index and body-local declarations scoped to the body.
+      if (canReach && execution !== 'invalid' && iterations === 1n) singleIterationLoopResult = loopResultConstraints;
     } else {
       for (const body of nested(statement)) analyzeBlock(body, file, out, canReach, known, knownFacts, activeConstraints);
     }
     if (canReach && definitelyTerminates(statement, known, knownFacts, activeConstraints)) canReach = false;
-    invalidateConstraintState(statement, activeConstraints);
-    updateKnownConstants(statement, known);
+    const assignedFact = assignedIntegerFact(statement, known, activeConstraints);
+    const assignedFloat = assignedFloatFact(statement, known, activeConstraints);
+    const assignedString = assignedStringFact(statement, known, activeConstraints);
+    if (statement.kind !== 'if' && statement.kind !== 'choice') {
+      invalidateConstraintState(statement, activeConstraints);
+      if (statement.kind === 'for' && singleIterationLoopResult) {
+        const assignedInBody = writtenVariables(statement);
+        const declaredInBody = new Set<string>();
+        const collectDeclarations = (items: Statement[]) => items.forEach((item) => {
+          if (item.kind === 'declare') declaredInBody.add(item.name);
+          nested(item).forEach(collectDeclarations);
+        });
+        collectDeclarations(statement.body);
+        for (const [name, result] of singleIterationLoopResult) {
+          if (name !== statement.name && assignedInBody.has(name) && !declaredInBody.has(name)) activeConstraints.set(name, result);
+        }
+      }
+      if (assignedFact) {
+        const previous = activeConstraints.get(assignedFact.name);
+        const declared = previous?.flow ? previous.declared : previous?.declared || previous;
+        activeConstraints.set(assignedFact.name, {
+          type: 'int', min: assignedFact.bounds.min, max: assignedFact.bounds.max, flow: true,
+          ...(assignedFact.values ? { values: assignedFact.values } : {}),
+          ...(declared ? { declared } : {}),
+        });
+      }
+      if (assignedFloat) {
+        const previous = activeConstraints.get(assignedFloat.name);
+        const declared = previous?.flow ? previous.declared : previous?.declared || previous;
+        activeConstraints.set(assignedFloat.name, {
+          type: 'float', floatMin: assignedFloat.bounds.min, floatMax: assignedFloat.bounds.max, flow: true,
+          ...(assignedFloat.values ? { floatValues: assignedFloat.values } : {}),
+          ...(declared ? { declared } : {}),
+        });
+      }
+      if (assignedString) {
+        const previous = activeConstraints.get(assignedString.name);
+        const declared = previous?.flow ? previous.declared : previous?.declared || previous;
+        activeConstraints.set(assignedString.name, {
+          type: 'str', values: assignedString.values, flow: true,
+          ...(declared ? { declared } : {}),
+        });
+      }
+    }
+    if (statement.kind === 'if' || statement.kind === 'choice') {
+      const flow = reachableTransfers([statement], known, knownFacts, activeConstraints);
+      known.clear();
+      flow.fallthrough?.forEach((value, name) => known.set(name, value));
+    } else {
+      updateKnownConstants(statement, known);
+    }
     if (invalidatesConditionFacts(statement)) knownFacts.clear();
   }
+  return activeConstraints;
 }
 
 function analyzeUnused(fn: FunctionDef, file: string, out: Diagnostic[]): void {
@@ -1973,9 +2645,16 @@ export function analyzeScript(script: Script, file = 'current', externalGlobals 
   const constraints = (externalGlobals as Map<string, ValueType> & { constraints?: ReadonlyMap<string, VariableConstraint> }).constraints;
   const globalNames = new Set<string>([...externalGlobals.keys(), ...externalCharacters.keys(), ...script.globals.filter((statement) => statement.kind === 'declare').map((statement) => statement.name)]);
   activeFunctionEffects = functionEffects(script.functions, globalNames);
+  activeFunctionDefinitions = new Map(script.functions.map(fn => [fn.name, fn]));
+  activeGlobalNames = globalNames;
+  activeFunctionCallStack.clear();
   if (constraints) {
     analyzeVariableConstraints(script.globals, file, out, constraints);
-    script.functions.forEach((fn) => analyzeVariableConstraints(fn.body, file, out, constraints));
+    script.functions.forEach((fn) => {
+      const scopedConstraints = new Map(constraints);
+      fn.params.forEach(param => scopedConstraints.delete(param.name));
+      analyzeVariableConstraints(fn.body, file, out, scopedConstraints);
+    });
     script.scenes.forEach((scene) => analyzeVariableConstraints(scene.body, file, out, constraints));
   }
   analyzeCharacterPlacements(script.globals, file, out);
@@ -2007,9 +2686,11 @@ export function analyzeScript(script: Script, file = 'current', externalGlobals 
   for (const fn of script.functions) {
     const functionConstants = new Map(constants);
     fn.params.forEach((param) => functionConstants.delete(param.name));
-    analyzeBlock(fn.body, file, out, true, functionConstants, new Map(), constraints);
+    const functionConstraints = constraints ? new Map(constraints) : undefined;
+    fn.params.forEach(param => functionConstraints?.delete(param.name));
+    analyzeBlock(fn.body, file, out, true, functionConstants, new Map(), functionConstraints);
     analyzeUnused(fn, file, out);
-    if (fn.returnType !== 'none' && !blockTerminates(fn.body, functionConstants, new Map(), constraints)) {
+    if (fn.returnType !== 'none' && !blockTerminates(fn.body, functionConstants, new Map(), functionConstraints)) {
       out.push(diagnostic(file, 'missing-return', 'error', `関数 '${fn.name}' はすべての経路で値を返していません`, fn));
     }
   }
@@ -2022,7 +2703,9 @@ export function analyzeScript(script: Script, file = 'current', externalGlobals 
     // mistakes without emitting a cascade of unreachable-code warnings per line.
     analyzeBlock(scene.body, file, out, true, constants, new Map(), constraints);
   });
-  return out.sort((a, b) => a.line - b.line || a.column - b.column || ({ error: 0, warning: 1, info: 2 }[a.severity] - { error: 0, warning: 1, info: 2 }[b.severity]));
+  return out.sort((a, b) => Number(a.file !== file) - Number(b.file !== file)
+    || a.line - b.line || a.column - b.column
+    || ({ error: 0, warning: 1, info: 2 }[a.severity] - { error: 0, warning: 1, info: 2 }[b.severity]));
 }
 
 export function assertAnalyzed(script: Script, file = 'current', externalGlobals = new Map<string, ValueType>(), externalCharacters = new Map<string, Set<string> | ExternalCharacter>()): Diagnostic[] {

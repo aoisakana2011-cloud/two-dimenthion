@@ -11,7 +11,7 @@ const { seedEmptyProject } = require('../tools/project-layout');
 async function main() {
   const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-editor-typing-'));
   const previousProjectRoot = process.env.NOVEL_PROJECT_ROOT;
-  seedEmptyProject(projectRoot);
+  const layout = seedEmptyProject(projectRoot);
   process.env.NOVEL_PROJECT_ROOT = projectRoot;
   const { handleApi, serveStatic } = require('../Edit/server');
   const server = http.createServer(async (request, response) => {
@@ -33,6 +33,93 @@ async function main() {
     const editor = page.locator('#editor');
     await editor.waitFor();
     await page.waitForFunction(() => document.querySelector('#scene-name')?.value === 'main.tds' && document.querySelector('#editor')?.value.includes('scene main'));
+    await fs.writeFile(path.join(layout.scenesRoot, 'helpers.tds'), 'fn smooth(value: float) -> float {\n  return value\n}\n', 'utf8');
+
+    await editor.fill('include "std/math.tds" as math\nscene main { say "hello" }');
+    const tokenKinds = await editor.evaluate(() => ({
+      path: window.tokenAtSourceOffset(document.querySelector('#editor').value.indexOf('std/math') + 2)?.name,
+      text: window.tokenAtSourceOffset(document.querySelector('#editor').value.indexOf('hello') + 2)?.name,
+    }));
+    assert.equal(tokenKinds.path, 'path', 'file-path literals use their contextual path role rather than the generic string explanation');
+
+    await editor.fill('cho');
+    await page.waitForFunction(() => [...document.querySelectorAll('#suggestions .suggestion')].some(item => item.textContent.trim().endsWith('choice')));
+    await editor.press('Enter');
+    assert.equal(await editor.inputValue(), 'choice', 'accepting a completion does not append whitespace');
+    assert.equal(await caret(), 'choice'.length, 'caret stops immediately after the completed token');
+
+    await editor.fill('cho ');
+    await editor.evaluate(element => {
+      element.setSelectionRange(3, 3);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.waitForFunction(() => [...document.querySelectorAll('#suggestions .suggestion')].some(item => item.textContent.trim().endsWith('choice')));
+    await editor.press('Enter');
+    assert.equal(await editor.inputValue(), 'choice ', 'completion preserves existing following whitespace without adding another');
+    assert.equal(await caret(), 'choice'.length, 'caret remains before the existing separator');
+
+    const completionScopeSource = `int global_score = 1
+fn helper(input_score: int) -> int {
+  int local_score = input_score
+  wait local_sc
+  return input_score
+}
+scene main { wait 1 }`;
+    await editor.fill(completionScopeSource);
+    const localPrefixCaret = completionScopeSource.indexOf('local_sc', completionScopeSource.indexOf('wait')) + 'local_sc'.length;
+    await editor.evaluate((element, position) => {
+      element.focus();
+      element.setSelectionRange(position, position);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }, localPrefixCaret);
+    await page.waitForFunction(() => [...document.querySelectorAll('#suggestions .suggestion')].some(item => item.textContent.trim().endsWith('local_score')));
+    await editor.press('Enter');
+    assert.ok((await editor.inputValue()).includes('wait local_score'), 'local variables in the active function are suggested');
+
+    const functionPrefixSource = (await editor.inputValue()).replace('wait local_score', 'wait helper');
+    await editor.fill(functionPrefixSource);
+    const helperPrefixCaret = functionPrefixSource.indexOf('helper', functionPrefixSource.indexOf('wait')) + 'helper'.length;
+    await editor.evaluate((element, position) => {
+      element.focus();
+      element.setSelectionRange(position, position);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }, helperPrefixCaret);
+    await page.waitForFunction(() => [...document.querySelectorAll('#suggestions .suggestion')].some(item => item.textContent.trim().endsWith('helper()')));
+    await editor.press('Enter');
+    assert.ok((await editor.inputValue()).includes('wait helper()'), 'user-defined functions are completed as calls');
+    assert.equal(await caret(), helperPrefixCaret + 1, 'function completion places the caret inside its parentheses');
+
+    const isolatedScopesSource = `fn first() -> int {
+  int first_only = 1
+  return first_only
+}
+fn second() -> int {
+  wait first_o
+  return 0
+}
+scene main { wait 1 }`;
+    await editor.fill(isolatedScopesSource);
+    const isolatedCaret = isolatedScopesSource.indexOf('first_o', isolatedScopesSource.indexOf('wait')) + 'first_o'.length;
+    await editor.evaluate((element, position) => {
+      element.focus();
+      element.setSelectionRange(position, position);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }, isolatedCaret);
+    await page.waitForTimeout(150);
+    assert.equal(await page.locator('#suggestions .suggestion').filter({ hasText: 'first_only' }).count(), 0, 'locals from a different function are not suggested');
+
+    const importedSource = `include "helpers.tds" as helpers\nscene main {\n  wait helpers.smo\n}`;
+    await editor.fill(importedSource);
+    const importedCaret = importedSource.indexOf('helpers.smo') + 'helpers.smo'.length;
+    await editor.evaluate((element, position) => {
+      element.focus();
+      element.setSelectionRange(position, position);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }, importedCaret);
+    await page.waitForFunction(() => [...document.querySelectorAll('#suggestions .suggestion')].some(item => item.textContent.trim().endsWith('smooth()')));
+    await editor.press('Enter');
+    assert.ok((await editor.inputValue()).includes('wait helpers.smooth()'), 'functions from aliased project includes are suggested');
+    assert.equal(await caret(), importedCaret + 4, 'included function completion keeps the caret inside parentheses after expanding its prefix');
 
     async function select(source, start, end = start) {
       await editor.fill(source);
@@ -138,7 +225,17 @@ async function main() {
     await editor.fill('scene analysis {\n  if 1 == 2 {\n    wait 1\n  }\n}');
     await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('constant-condition'), null, { timeout: 5000 });
 
-    console.log('PASS editor typing: Enter, selection, braces, whitespace, undo/redo, beforeinput, Tab, Home, line indent shortcuts');
+    await page.locator('.scene-folder[data-path="setting"]').click();
+    await page.locator('.scene-file[data-path="setting/asset-folders.txt"] .scene-file-open').click();
+    await page.waitForFunction(() => document.querySelector('#scene-name')?.value === 'setting/asset-folders.txt');
+    assert.equal(await page.locator('#suggestions').isHidden(), true, 'opening a plain-text setting document hides code completions');
+    await editor.fill('custom asset conventions\n');
+    await page.waitForTimeout(350);
+    assert.equal(await page.locator('#suggestions').isHidden(), true, 'typing in a plain-text setting document never shows code completions');
+    await editor.press('Control+s');
+    await page.waitForFunction(async () => (await (await fetch('/api/setting-file?name=asset-folders.txt')).json()).source === 'custom asset conventions\n');
+
+    console.log('PASS editor typing and setting-file CRUD: scoped variables/functions, autocomplete spacing/caret, Enter, selection, braces, whitespace, undo/redo, beforeinput, Tab, Home, line indent shortcuts');
   } finally {
     await browser?.close();
     await new Promise(resolve => server.close(resolve));

@@ -1,7 +1,7 @@
 /* Local-only editor server. Project data is separate from editor files. */
 const http = require('node:http');
 const { spawn } = require('node:child_process');
-const { compileProject, resolveProjectScript, projectContext, inside } = require('../tools/project');
+const { compileProject, resolveProjectScript, projectContext, inside, isStandardLibraryInclude, listStandardLibrary, readStandardLibraryFile } = require('../tools/project');
 const { pack } = require('../tools/pack');
 const fs = require('node:fs/promises');
 const crypto = require('node:crypto');
@@ -9,7 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { readRecentProjects, rememberProject } = require('./recent-projects');
 const { ProjectChangeTracker } = require('./project-changes');
-const { defaultGameScreens, validateGameScreens } = require('./game-screens');
+const { defaultGameScreens, validateGameScreens, withSaveLoadScreens } = require('./game-screens');
 
 const EDIT_ROOT = __dirname;
 const REPO_ROOT = path.resolve(EDIT_ROOT, '..');
@@ -18,6 +18,7 @@ const { readStaticVariables } = require('../tools/static-variables');
 let layout = projectLayout(projectOption(require.main === module ? process.argv.slice(2) : []));
 let PROJECT_ROOT = layout.projectRoot;
 let SCENES_ROOT = layout.scenesRoot;
+let SETTINGS_ROOT = layout.settingsRoot;
 let SETTING_FILE = layout.settingFile;
 let DATA_ROOT = layout.dataRoot;
 let ASSETS_ROOT = layout.assetsRoot;
@@ -31,6 +32,7 @@ function bindLayout(root) {
   layout = projectLayout(root);
   PROJECT_ROOT = layout.projectRoot;
   SCENES_ROOT = layout.scenesRoot;
+  SETTINGS_ROOT = layout.settingsRoot;
   SETTING_FILE = layout.settingFile;
   DATA_ROOT = layout.dataRoot;
   ASSETS_ROOT = layout.assetsRoot;
@@ -80,6 +82,33 @@ const DEFAULT_PLAYER_UI_THEME = Object.freeze({
   },
 });
 
+function validatePlayerUiTheme(theme) {
+  if (!(theme?.version === 1 && theme.screen && theme.dialog?.message && theme.dialog?.nameplate?.text && theme.choices)) throw Error('Invalid player UI theme shape.');
+  const controls = theme.controls;
+  if (controls === undefined) return theme;
+  if (!controls || typeof controls !== 'object' || Array.isArray(controls)
+    || controls.enabled !== undefined && typeof controls.enabled !== 'boolean'
+    || controls.anchor !== undefined && !['dialogue-top-left', 'stage'].includes(controls.anchor)
+    || !Array.isArray(controls.buttons) || controls.buttons.length > 8) throw Error('Invalid player controls settings.');
+  const actions = new Set();
+  for (const button of controls.buttons) {
+    if (!button || !['save', 'load'].includes(button.action) || actions.has(button.action)) throw Error('Player controls must have unique save/load actions.');
+    actions.add(button.action);
+    for (const key of ['label', 'hoverLabel', 'image', 'hoverImage', 'color', 'hoverColor', 'backgroundColor', 'hoverBackgroundColor', 'borderColor', 'hoverBorderColor']) {
+      if (button[key] !== undefined && (typeof button[key] !== 'string' || button[key].length > 240)) throw Error(`Invalid player control ${key}.`);
+    }
+    if (button.display !== undefined && !['text', 'image', 'both'].includes(button.display)) throw Error('Invalid player control display mode.');
+    for (const key of ['x', 'y', 'width', 'height', 'fontSize', 'borderRadius']) {
+      if (button[key] !== undefined && (!Number.isFinite(button[key]) || ['width', 'height', 'fontSize'].includes(key) && button[key] <= 0 || key === 'borderRadius' && button[key] < 0)) throw Error(`Invalid player control ${key}.`);
+    }
+    for (const key of ['image', 'hoverImage']) {
+      const relative = String(button[key] || '').replaceAll('\\', '/').replace(/^asset\//i, '');
+      if (relative && (relative.startsWith('/') || /^[A-Za-z]:/.test(relative) || relative.split('/').some(part => !part || part === '.' || part === '..'))) throw Error('Player control images must stay inside the asset folder.');
+    }
+  }
+  return theme;
+}
+
 function isEditorTree(root) {
   const resolved = path.resolve(root);
   return resolved === EDIT_ROOT || resolved === REPO_ROOT;
@@ -93,40 +122,60 @@ async function playerUiTheme() {
   if (!layout.settings.native_ui_theme) {
     return { path: '', theme: JSON.parse(JSON.stringify(DEFAULT_PLAYER_UI_THEME)) };
   }
-  const theme = JSON.parse(await fs.readFile(await safeAssetPath(layout.settings.native_ui_theme), 'utf8'));
+  const themeFile = layout.legacySettings
+    ? await safeAssetPath(layout.settings.native_ui_theme)
+    : await safeSettingPath(layout.settings.native_ui_theme);
+  const theme = JSON.parse(await fs.readFile(themeFile, 'utf8'));
+  validatePlayerUiTheme(theme);
   if (theme.version !== 1 || !theme.screen || !theme.dialog?.message || !theme.dialog?.nameplate?.text || !theme.choices) throw Error('再生機UIテーマは現行のscreen/dialog/choices形式で指定してください');
-  return { path: layout.settings.native_ui_theme, theme };
+  return { path: layout.legacySettings ? layout.settings.native_ui_theme : `setting/${layout.settings.native_ui_theme}`, theme };
 }
 
 async function playerUiThemeWriteFile() {
-  if (!layout.settings.native_ui_theme) await updateProjectSettings({ native_ui_theme: 'ui/player-ui.json' });
-  return safeAssetPath(layout.settings.native_ui_theme, { createParents: true });
+  if (!layout.settings.native_ui_theme) await updateProjectSettings({ native_ui_theme: layout.legacySettings ? 'ui/player-ui.json' : 'player-ui.json' });
+  return layout.legacySettings
+    ? safeAssetPath(layout.settings.native_ui_theme, { createParents: true })
+    : safeSettingPath(layout.settings.native_ui_theme, { createParents: true });
 }
 
 async function updatePlayerUiTheme(theme) {
   if (theme?.version === 1 && theme.screen && theme.dialog?.message && theme.dialog?.nameplate?.text && theme.choices) {
+    validatePlayerUiTheme(theme);
     await fs.writeFile(await playerUiThemeWriteFile(), JSON.stringify(theme, null, 2) + '\n', 'utf8');
     return { ok: true, theme };
   }
   throw Error('再生機UIテーマは現行のscreen/dialog/choices形式で指定してください');
 }
 
-const GAME_SCREENS_PATH = 'ui/game-screens.json';
+const GAME_SCREENS_PATH = 'game-screens.json';
 async function gameScreens() {
+  const legacy = layout.legacySettings;
+  const display = (await playerUiTheme()).theme.screen;
   try {
-    const file = await safeAssetPath(GAME_SCREENS_PATH);
+    const file = legacy
+      ? await safeAssetPath('ui/game-screens.json')
+      : await safeSettingPath(GAME_SCREENS_PATH);
     const value = JSON.parse(await fs.readFile(file, 'utf8'));
-    return { path: GAME_SCREENS_PATH, configured: true, screens: validateGameScreens(value) };
+    const screens = withSaveLoadScreens(validateGameScreens(value));
+    if (!legacy) screens.canvas = { width: display.width, height: display.height };
+    return { path: legacy ? 'ui/game-screens.json' : `setting/${GAME_SCREENS_PATH}`, configured: true, screens };
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
-    return { path: GAME_SCREENS_PATH, configured: false, screens: defaultGameScreens() };
+    const screens = defaultGameScreens();
+    screens.canvas = { width: display.width, height: display.height };
+    return { path: legacy ? 'ui/game-screens.json' : `setting/${GAME_SCREENS_PATH}`, configured: false, screens };
   }
 }
 async function updateGameScreens(value) {
   validateGameScreens(value);
-  const file = await safeAssetPath(GAME_SCREENS_PATH, { createParents: true });
-  await fs.writeFile(file, JSON.stringify(value, null, 2) + '\n', 'utf8');
-  return { ok: true, path: GAME_SCREENS_PATH, screens: value };
+  const legacy = layout.legacySettings;
+  const file = legacy
+    ? await safeAssetPath('ui/game-screens.json', { createParents: true })
+    : await safeSettingPath(GAME_SCREENS_PATH, { createParents: true });
+  const stored = { ...value };
+  if (!legacy) delete stored.canvas;
+  await fs.writeFile(file, JSON.stringify(stored, null, 2) + '\n', 'utf8');
+  return { ok: true, ...(await gameScreens()) };
 }
 
 async function updateProjectSettings(values) {
@@ -135,6 +184,7 @@ async function updateProjectSettings(values) {
   for (const key of keys) {
     if (values[key] !== undefined) next[key] = String(values[key]).trim();
   }
+  if (!layout.legacySettings && next.native_ui_theme.startsWith('ui/')) next.native_ui_theme = next.native_ui_theme.slice(3);
   const title = values.title === undefined ? layout.title : String(values.title).replace(/[\r\n]/g, '').trim();
   const source = [
     '# Novel Script project settings',
@@ -143,9 +193,10 @@ async function updateProjectSettings(values) {
     `asset_dir = ${next.asset_dir}`,
     `start_file = ${next.start_file}`,
     `title = ${title}`,
-    ...['native_ui_theme'].filter((key) => next[key]).map((key) => `${key} = ${next[key]}`),
+  ...['native_ui_theme'].filter((key) => next[key]).map((key) => `${key} = ${next[key]}`),
   ].join('\n') + '\n';
   parseSettings(source);
+  if (!layout.legacySettings) await ensureProjectDirectory(SETTINGS_ROOT, 'setting');
   await ensureProjectDirectory(path.resolve(PROJECT_ROOT, next.scenario_dir), 'scenario_dir');
   await ensureProjectDirectory(path.resolve(PROJECT_ROOT, next.asset_dir), 'asset_dir');
   await ensureProjectDirectory(DATA_ROOT, '.novel');
@@ -218,11 +269,11 @@ async function imagePathsForProject() {
   for (const asset of catalog.assets || []) if (['bg', 'char', 'image'].includes(asset.type)) await add(asset.path);
   if (layout.settings.native_ui_theme) {
     const themeRelative = layout.settings.native_ui_theme.replaceAll('\\', '/');
-    const themePath = await safeAssetPath(themeRelative);
-    const rel = path.relative(path.resolve(ASSETS_ROOT), themePath);
+    const themePath = layout.legacySettings ? await safeAssetPath(themeRelative) : await safeSettingPath(themeRelative);
+    const rel = layout.legacySettings ? path.relative(path.resolve(ASSETS_ROOT), themePath) : '';
     if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw Error('再生UIテーマのパスがassetフォルダー外です');
     const theme = JSON.parse(await fs.readFile(themePath, 'utf8'));
-    const directory = path.posix.dirname(themeRelative);
+    const directory = layout.legacySettings ? path.posix.dirname(themeRelative) : '';
     for (const image of [theme.dialog?.image, theme.dialog?.nameplate?.image, theme.choices?.image, theme.choices?.activeImage]) if (typeof image === 'string' && image) await add(path.posix.join(directory, image));
   }
   return [...found].sort();
@@ -318,7 +369,8 @@ async function prepareProject() {
   catch (error) {
     if (error.code !== 'ENOENT') throw error;
     await fs.mkdir(PROJECT_ROOT, { recursive: true });
-    await fs.writeFile(SETTING_FILE, settingTemplate(path.basename(PROJECT_ROOT)), { encoding: 'utf8', flag: 'wx' });
+    await ensureProjectDirectory(path.join(PROJECT_ROOT, 'setting'), 'setting');
+    await fs.writeFile(path.join(PROJECT_ROOT, 'setting', 'setting.txt'), settingTemplate(path.basename(PROJECT_ROOT)), { encoding: 'utf8', flag: 'wx' });
     bindLayout(PROJECT_ROOT);
   }
   await ensureProjectDirectory(SCENES_ROOT, 'scenario_dir');
@@ -505,6 +557,10 @@ async function globalCharacterTable(excludeName = '', analysis = null) {
 
 async function listProjectFiles() {
   const result = [];
+  const settingDirectoryExists = async () => {
+    try { const info = await fs.lstat(path.join(PROJECT_ROOT, 'setting')); return info.isDirectory() && !info.isSymbolicLink(); }
+    catch { return false; }
+  };
   async function visit(directory, prefix = '') {
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
@@ -512,10 +568,13 @@ async function listProjectFiles() {
       else result.push({ path: relative, directory: false });
     }
   }
-  for (const directory of [layout.settings.asset_dir, layout.settings.scenario_dir]) {
+  const directories = [layout.settings.asset_dir, layout.settings.scenario_dir];
+  if (!layout.legacySettings || await settingDirectoryExists()) directories.push('setting');
+  for (const directory of directories) {
     result.push({ path: directory, directory: true });
     await visit(path.join(PROJECT_ROOT, directory), directory);
   }
+  if (layout.legacySettings) result.push({ path: 'setting.txt', directory: false });
   return result.sort((a, b) => a.path.localeCompare(b.path, 'ja'));
 }
 
@@ -538,7 +597,13 @@ async function scanProjectFileSignatures(root) {
       await visit(path.join(directory, entry.name), relative);
     }
   }
-  for (const directory of [project.settings.scenario_dir, project.settings.asset_dir]) {
+  const directories = [project.settings.scenario_dir, project.settings.asset_dir];
+  if (!project.legacySettings) directories.push('setting');
+  else {
+    try { const info = await fs.lstat(path.join(root, 'setting')); if (info.isDirectory() && !info.isSymbolicLink()) directories.push('setting'); }
+    catch { /* An optional legacy-project setting folder may not exist yet. */ }
+  }
+  for (const directory of directories) {
     signatures.set(directory, 'directory');
     await visit(path.join(root, directory), directory);
   }
@@ -643,6 +708,7 @@ async function sceneGraph() {
     for (const scene of ast.scenes) if ((scene.file || name) === name && reachability.reachableScenes.has(scene.name)) visitGotos(scene.body, scene.name);
     for (const fn of ast.functions) if ((fn.file || name) === name) visitGotos(fn.body, `function ${fn.name}`);
     for (const include of ast.includes) {
+      if (isStandardLibraryInclude(include.path)) continue;
       const target = sceneName(include.path);
       if (target) addEdge(name, target, 'include');
     }
@@ -664,7 +730,28 @@ async function sceneGraph() {
         ]);
         program = await compileProject(source, ASSETS_ROOT, SCENES_ROOT, globalVariables, characters, name);
       }
-      variables = program.variables.map((variable) => ({ ...variable, file: name }));
+      const normalizeFile = (file) => String(file || name).replaceAll('\\', '/').toLocaleLowerCase('en-US');
+      const functionOwners = new Map(ast.functions.map((fn) => [fn.name, normalizeFile(fn.file)]));
+      const sceneOwners = new Map(ast.scenes.map((scene) => [scene.name, normalizeFile(scene.file)]));
+      const ownerOf = (variable) => {
+        const container = String(variable.definedIn || '');
+        if (variable.scope === 'function') return functionOwners.get(container) || '';
+        if (variable.scope === 'scene') return sceneOwners.get(container) || '';
+        if (variable.scope === 'local') {
+          const owners = [...functionOwners, ...sceneOwners];
+          const match = owners.find(([scope]) => container === scope || container.startsWith(`${scope}:`));
+          return match?.[1] || '';
+        }
+        return normalizeFile(name);
+      };
+      variables = program.variables
+        .filter((variable) => ownerOf(variable) === normalizeFile(name))
+        .map((variable) => ({
+          ...variable,
+          file: name,
+          definitions: (variable.definitions || []).map((location) => ({ ...location, file: name })),
+          references: (variable.references || []).map((location) => ({ ...location, file: name })),
+        }));
     } catch (compileError) {
       error = true;
       if (!diagnostics.some((item) => item.severity === 'error')) diagnostics.push(diagnosticForError(compileError, name));
@@ -691,7 +778,18 @@ async function sceneGraph() {
     for (const target of reachability.externalGotos) addEdge(name, sceneName(target) || target, 'goto');
   }
   const config = await readSceneConfig();
-  const start = sceneName(config.start_file || '');
+  let titleScene = null;
+  try { titleScene = (await gameScreens()).screens.titleScene || null; }
+  catch { /* The screen endpoint reports malformed front-end settings. */ }
+  const start = sceneName(titleScene?.file || config.start_file || '');
+  if (titleScene) {
+    const titleNode = nodes.find(node => node.id.toLocaleLowerCase('en-US') === start?.toLocaleLowerCase('en-US'));
+    if (!titleNode || !titleNode.sceneLocations?.some(scene => scene.name === titleScene.scene)) {
+      const diagnostic = { code: 'invalid-title-scene', severity: 'error', message: `Configured title scene '${titleScene.scene}' was not found in '${start}'.`, file: start || titleScene.file, line: 1, column: 1 };
+      if (titleNode) { titleNode.error = true; titleNode.diagnostics.push(diagnostic); }
+      else nodes.push({ id: start || titleScene.file, label: start || titleScene.file, variables: [], diagnostics: [diagnostic], error: true, reachable: false });
+    }
+  }
   const nodeIds = new Set(nodes.map((node) => node.id));
   const adjacency = new Map();
   for (const edge of edges) {
@@ -710,6 +808,7 @@ async function sceneGraph() {
   return {
     version: 2,
     start,
+    startScene: titleScene?.scene || null,
     nodes,
     edges,
     summary: {
@@ -984,6 +1083,50 @@ async function safeAssetPath(relative, { createParents = false } = {}) {
   }
 }
 
+async function safeSettingPath(relative, { createParents = false } = {}) {
+  const normalized = String(relative || '').replaceAll('\\', '/');
+  if (!normalized || normalized.split('/').some((part) => !part || part === '.' || part === '..') || !['.txt', '.md', '.json'].includes(path.posix.extname(normalized).toLowerCase())) {
+    throw outsideProjectPath('setting path');
+  }
+  const requested = path.resolve(SETTINGS_ROOT, normalized);
+  const lexicalRoot = path.resolve(SETTINGS_ROOT);
+  if (!isPathInside(lexicalRoot, requested)) throw outsideProjectPath('setting path');
+  if (createParents) await ensureProjectDirectory(path.dirname(requested), 'setting');
+  const root = await realProjectDirectory(SETTINGS_ROOT, 'setting');
+  try {
+    const info = await fs.lstat(requested);
+    assertRegularProjectFile(info, 'setting path');
+    const resolved = await fs.realpath(requested);
+    if (!isPathInside(root, resolved)) throw outsideProjectPath('setting path');
+    return resolved;
+  } catch (error) {
+    if (error.code !== 'ENOENT' || !createParents) throw error;
+    return requested;
+  }
+}
+
+async function safeSettingDocumentPath(relative, { createParents = false } = {}) {
+  if (!layout.legacySettings) return safeSettingPath(relative, { createParents });
+  const normalized = String(relative || '').replaceAll('\\', '/');
+  if (normalized === 'setting.txt') return safeSettingPath(normalized, { createParents });
+  if (!normalized || normalized.split('/').some((part) => !part || part === '.' || part === '..') || !['.txt', '.md', '.json'].includes(path.posix.extname(normalized).toLowerCase())) throw outsideProjectPath('setting document');
+  const root = path.resolve(PROJECT_ROOT, 'setting');
+  const requested = path.resolve(root, normalized);
+  if (!isPathInside(root, requested)) throw outsideProjectPath('setting document');
+  if (createParents) await ensureProjectDirectory(path.dirname(requested), 'setting');
+  const realRoot = await realProjectDirectory(root, 'setting');
+  try {
+    const info = await fs.lstat(requested);
+    assertRegularProjectFile(info, 'setting document');
+    const resolved = await fs.realpath(requested);
+    if (!isPathInside(realRoot, resolved)) throw outsideProjectPath('setting document');
+    return resolved;
+  } catch (error) {
+    if (error.code !== 'ENOENT' || !createParents) throw error;
+    return requested;
+  }
+}
+
 async function safeBuildPath(relative, { createParents = false } = {}) {
   const requested = path.resolve(NATIVE_PACKAGES_ROOT, relative);
   const lexicalRoot = path.resolve(NATIVE_PACKAGES_ROOT);
@@ -1168,8 +1311,53 @@ async function compileSource(source, name = '', analysis = null, options = {}) {
   return compileProject(source, ASSETS_ROOT, SCENES_ROOT, globalVariables, characters, name || 'current', options);
 }
 
+async function editorSymbols(source, name = '') {
+  const sourceName = sceneName(name) || 'current';
+  const script = await resolveProjectScript(source, SCENES_ROOT, new Set(), sourceName);
+  const variables = [];
+  const visit = (statements, scope, container) => {
+    for (const statement of statements || []) {
+      if (statement.kind === 'declare') variables.push({
+        name: statement.name, type: statement.type, constant: Boolean(statement.constant), global: Boolean(statement.global),
+        initial: statement.initial, line: statement.nameLine || statement.line, column: statement.nameColumn || statement.column,
+        scope, container, file: statement.file || sourceName,
+      });
+      else if (statement.kind === 'for') {
+        variables.push({ name: statement.name, type: 'int', constant: true, scope: 'loop', container, line: statement.nameLine || statement.line, column: statement.nameColumn || statement.column, file: statement.file || sourceName });
+        visit(statement.body, scope, container);
+      } else if (statement.kind === 'if') {
+        visit(statement.body, scope, container);
+        for (const branch of statement.elseIf || []) visit(branch.body, scope, container);
+        visit(statement.otherwise, scope, container);
+      } else if (statement.kind === 'choice') for (const option of statement.options || []) visit(option.body, scope, container);
+      else if (statement.kind === 'while') visit(statement.body, scope, container);
+    }
+  };
+  visit(script.globals, 'global', 'global');
+  for (const fn of script.functions) {
+    for (const param of fn.params || []) variables.push({ name: param.name, type: param.type, constant: false, global: false, parameter: true, line: param.line || fn.line, column: param.column || fn.column, scope: 'function', container: fn.name, file: fn.file || sourceName });
+    visit(fn.body, 'function', fn.name);
+  }
+  for (const scene of script.scenes) visit(scene.body, 'scene', scene.name);
+  return {
+    functions: script.functions.map(fn => ({ name: fn.name, params: fn.params, returnType: fn.returnType, line: fn.line, column: fn.column, file: fn.file || sourceName })),
+    structs: script.structs.map(item => ({ name: item.name, fields: Object.entries(item.fields).map(([name, type]) => ({ name, type, ...(item.fieldLocations?.[name] || {}) })), line: item.line, column: item.column, file: item.file || sourceName })),
+    characters: script.characters.map(item => ({ name: item.name, properties: item.properties, poses: item.poses, line: item.line, column: item.column, file: item.file || sourceName })),
+    assets: script.assets.map(item => ({ type: item.type, name: item.name, path: item.path, line: item.line, column: item.column, file: item.file || sourceName })),
+    scenes: script.scenes.map(item => ({ name: item.name, line: item.line, endLine: item.endLine, file: item.file || sourceName })),
+    includes: script.includes.map(item => ({ path: item.path, alias: item.alias, line: item.line, column: item.column, file: item.file || sourceName })),
+    variables,
+  };
+}
+
+async function configuredEntry(name) {
+  const requested = sceneName(name);
+  const screens = await gameScreens();
+  return sceneName(screens.screens.titleScene?.file || requested || '');
+}
+
 async function buildWholeProject(name) {
-  const entry = sceneName(name);
+  const entry = await configuredEntry(name);
   const sceneFiles = await listScenes();
   if (!entry || !sceneFiles.includes(entry)) return {
     ok: false,
@@ -1200,10 +1388,17 @@ async function buildWholeProject(name) {
   if (firstError) return { ok: false, build: true, fileCount: sceneFiles.length, diagnostics: uniqueDiagnostics, error: firstError.message };
 
   try {
+    const buildSnapshot = await readScenarioBuildSnapshot(entry);
     await ensureProjectDirectory(NATIVE_PACKAGES_ROOT, '.novel/build');
     const packageName = `${path.basename(entry, path.extname(entry))}.nsp.json`;
     const packagePath = await safeBuildPath(packageName, { createParents: true });
     const data = await pack(scenePath(entry), packagePath, { projectRoot: PROJECT_ROOT, scenesRoot: SCENES_ROOT, assetsRoot: ASSETS_ROOT });
+    const verifiedSnapshot = await readScenarioBuildSnapshot(entry);
+    if (JSON.stringify(buildSnapshot.files) !== JSON.stringify(verifiedSnapshot.files)) {
+      throw new Error('ビルド中にシナリオが変更されました。もう一度ビルドしてください');
+    }
+    const statePath = await safeBuildPath(`${path.basename(entry, path.extname(entry))}.build-state.json`, { createParents: true });
+    await fs.writeFile(statePath, `${JSON.stringify(buildSnapshot, null, 2)}\n`, 'utf8');
     return {
       ok: true, build: true, fileCount: sceneFiles.length, diagnostics: uniqueDiagnostics,
       name: packageName, path: `.novel/build/${packageName}`,
@@ -1217,6 +1412,35 @@ async function buildWholeProject(name) {
       error: message,
     };
   }
+}
+
+async function readScenarioBuildSnapshot(entry) {
+  const files = {};
+  for (const file of await listScenes()) {
+    const source = await readSceneSource(file);
+    files[file] = crypto.createHash('sha256').update(source, 'utf8').digest('hex');
+  }
+  return { version: 1, entry, files };
+}
+
+async function projectBuildStatus(name) {
+  const entry = await configuredEntry(name);
+  if (!entry) return { built: false, changedFiles: [], reason: 'entry-missing' };
+  const stateName = `${path.basename(entry, path.extname(entry))}.build-state.json`;
+  let previous;
+  try {
+    previous = JSON.parse(await fs.readFile(await safeBuildPath(stateName), 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return { built: false, changedFiles: [], reason: 'not-built' };
+  }
+  if (previous.version !== 1 || previous.entry !== entry || !previous.files || typeof previous.files !== 'object') {
+    return { built: false, changedFiles: [], reason: 'build-state-invalid' };
+  }
+  const current = await readScenarioBuildSnapshot(entry);
+  const changedFiles = [...new Set([...Object.keys(previous.files), ...Object.keys(current.files)])]
+    .filter((file) => previous.files[file] !== current.files[file]).sort();
+  return { built: changedFiles.length === 0, changedFiles, reason: changedFiles.length ? 'scenario-changed' : 'up-to-date' };
 }
 
 async function serveStatic(response, pathname) {
@@ -1281,10 +1505,54 @@ async function serveNativePackage(response, url) {
 }
 
 async function handleApi(request, response, url) {
+  if (request.method === 'GET' && url.pathname === '/api/standard-library') {
+    try { return json(response, 200, { modules: await listStandardLibrary() }); }
+    catch (error) { return json(response, 500, { error: error instanceof Error ? error.message : String(error) }); }
+  }
+  if (request.method === 'GET' && url.pathname === '/api/standard-library-file') {
+    try { return json(response, 200, await readStandardLibraryFile(url.searchParams.get('name') || '')); }
+    catch (error) { return json(response, error?.code === 'ENOENT' ? 404 : 400, { error: error instanceof Error ? error.message : String(error) }); }
+  }
   if (request.method === 'GET' && url.pathname === '/api/scenes') {
     return json(response, 200, { scenes: await listScenes() });
   }
   if (request.method === 'GET' && url.pathname === '/api/files') return json(response, 200, { title: layout.title, projectRoot: PROJECT_ROOT, scenarioDir: layout.settings.scenario_dir, files: await listProjectFiles() });
+  if (request.method === 'GET' && url.pathname === '/api/setting-file') {
+    const name = String(url.searchParams.get('name') || '').replaceAll('\\', '/').replace(/^setting\//, '');
+    try {
+      const file = await safeSettingDocumentPath(name);
+      const source = await fs.readFile(file, 'utf8');
+      return json(response, 200, { name: `setting/${name}`, source, revision: sceneRevision(source) });
+    } catch (error) { return json(response, error?.code === 'ENOENT' ? 404 : 400, { error: error instanceof Error ? error.message : String(error) }); }
+  }
+  if (request.method === 'PUT' && url.pathname === '/api/setting-file') {
+    const body = await readJson(request);
+    const name = String(body.name || '').replaceAll('\\', '/').replace(/^setting\//, '');
+    if (typeof body.source !== 'string' || Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'Setting file must be text no larger than 2 MB.' });
+    let settings = null;
+    try {
+      if (name === 'setting.txt') {
+        settings = parseSettings(body.source);
+        await ensureProjectDirectory(path.resolve(PROJECT_ROOT, settings.scenario_dir), 'scenario_dir');
+        await ensureProjectDirectory(path.resolve(PROJECT_ROOT, settings.asset_dir), 'asset_dir');
+      } else if (path.posix.extname(name).toLowerCase() === '.json') {
+        const value = JSON.parse(body.source);
+        if (name === 'game-screens.json') validateGameScreens(value);
+        if (name === 'player-ui.json' && !(value?.version === 1 && value.screen && value.dialog?.message && value.dialog?.nameplate?.text && value.choices)) throw new Error('Invalid player UI settings.');
+      }
+      if (name === 'player-ui.json') validatePlayerUiTheme(value);
+      const file = await safeSettingDocumentPath(name, { createParents: true });
+      if (body.expectedRevision !== undefined) {
+        let current;
+        try { current = sceneRevision(await fs.readFile(file, 'utf8')); }
+        catch (error) { if (error?.code === 'ENOENT') return json(response, 409, { error: 'Setting file changed externally; reload before saving.', code: 'SETTING_CONFLICT' }); throw error; }
+        if (current !== body.expectedRevision) return json(response, 409, { error: 'Setting file changed externally; reload before saving.', code: 'SETTING_CONFLICT', revision: current });
+      }
+      await fs.writeFile(file, body.source, 'utf8');
+      if (settings) bindLayout(PROJECT_ROOT);
+      return json(response, 200, { ok: true, name: `setting/${name}`, revision: sceneRevision(body.source) });
+    } catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
+  }
   if (request.method === 'GET' && url.pathname === '/api/project/changes') return json(response, 200, await projectChangeTracker.changes(PROJECT_ROOT, String(url.searchParams.get('since') || '').slice(0, 500)));
   if (request.method === 'GET' && url.pathname === '/api/project') return json(response, 200, await projectInfo());
   if (request.method === 'PUT' && url.pathname === '/api/project/settings') {
@@ -1458,6 +1726,13 @@ async function handleApi(request, response, url) {
     try { return json(response, 200, { ok: true, program: await compileSource(body.source, sceneName(body.name || '') || '', null, { debug: body.debug === true }) }); }
     catch (error) { return json(response, 400, { ok: false, error: error instanceof Error ? error.message : String(error) }); }
   }
+  if (request.method === 'POST' && url.pathname === '/api/editor-symbols') {
+    const body = await readJson(request);
+    if (typeof body.source !== 'string') return json(response, 400, { error: 'source is required' });
+    if (Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'source must be no larger than 2 MB.' });
+    try { return json(response, 200, { symbols: await editorSymbols(body.source, body.name || '') }); }
+    catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
+  }
   if (request.method === 'POST' && url.pathname === '/api/native-build') {
     const body = await readJson(request);
     const name = sceneName(body.name);
@@ -1500,6 +1775,10 @@ async function handleApi(request, response, url) {
   if (request.method === 'POST' && url.pathname === '/api/project-build') {
     const body = await readJson(request);
     return json(response, 200, await buildWholeProject(body.name));
+  }
+  if (request.method === 'POST' && url.pathname === '/api/project-build-status') {
+    const body = await readJson(request);
+    return json(response, 200, await projectBuildStatus(body.name));
   }
   return json(response, 404, { error: 'API が見つかりません。' });
 }
@@ -1549,7 +1828,7 @@ function listenOnAvailablePort(server, port, attempts = 0) {
   server.listen(port, '127.0.0.1');
 }
 
-module.exports = { sceneGraph, validate, validateGraph, validateFlow, compileSource, buildWholeProject, collectSyntaxDiagnostics, handleApi, serveStatic };
+module.exports = { sceneGraph, validate, validateGraph, validateFlow, compileSource, buildWholeProject, projectBuildStatus, collectSyntaxDiagnostics, handleApi, serveStatic };
 if (require.main === module) main().catch((error) => {
   console.error(error);
   process.exitCode = 1;

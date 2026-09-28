@@ -41,6 +41,8 @@ document.querySelectorAll('[data-menu]').forEach((button) => button.addEventList
 document.addEventListener('click', (event) => { if (!event.target.closest('.menu-item')) closeMenus(); });
 
 let currentProjectRoot = '';
+let activeSettingDocument = '';
+let activeStandardLibraryDocument = '';
 let debugExecutingFile = '';
 let debugExecutingLine = 0;
 let scenarioDirectory = 'senario';
@@ -53,9 +55,13 @@ let quickWorkspaceSymbolsPromise = null;
 let pendingEditorChord = '';
 let editorChordTimer = null;
 let knownVariables = [];
+let includedFunctionNames = [];
+let standardLibraryModules = [];
+let standardLibraryPromise = null;
 let staticVariableDeclarations = new Map();
 let knownVariableDataLoaded = false;
 let currentVariableAnalysis = null;
+let currentEditorSymbols = null;
 let variableTooltipRequestId = 0;
 let suggestionRefreshId = 0;
 let validationTimer = null;
@@ -85,6 +91,11 @@ function scenarioRelativePath(name) {
   const prefix = `${root}/`;
   return normalized.toLowerCase().startsWith(prefix.toLowerCase()) ? normalized.slice(prefix.length) : null;
 }
+const isStandardLibraryPath = (name) => {
+  const normalized = String(name || '').replaceAll('\\', '/');
+  return /^std\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.tds$/i.test(normalized)
+    && !normalized.split('/').some(part => !part || part === '.' || part === '..');
+};
 const normalizedScenePath = (name) => scenarioRelativePath(name) ?? String(name || '').replaceAll('\\', '/');
 const diagnosticForCurrentFile = (item) => !item.file || item.file === 'current' || normalizedScenePath(item.file) === normalizedScenePath(sceneName.value);
 const diagnosticLineRange = (item) => {
@@ -501,6 +512,10 @@ async function refreshFiles() {
           else openScene(name).catch(showError);
         };
       }
+      if ((file.path.startsWith('setting/') || file.path === 'setting.txt') && /\.(txt|md|json)$/i.test(file.path)) {
+        openButton.title = '設定・規約ファイルを編集';
+        openButton.onclick = () => openSettingFile(file.path).catch(showError);
+      }
       if (file.path.startsWith('asset/')) { openButton.title = '?????'; openButton.onclick = () => window.open('/' + file.path.split('/').map(encodeURIComponent).join('/'), '_blank', 'noopener'); }
       item.append(openButton);
       parent.append(item);
@@ -824,17 +839,18 @@ function completionContext() {
   const lineStart = source.lastIndexOf('\n', end - 1) + 1;
   const line = source.slice(lineStart, end);
   const quotedGotoPath = /^\s*goto\s+"/.test(line);
-  if ((line.split('"').length - 1) % 2 && !quotedGotoPath) return null;
+  const quotedIncludePath = /^\s*include\s+"/.test(line);
+  if ((line.split('"').length - 1) % 2 && !quotedGotoPath && !quotedIncludePath) return null;
 
   let start = end;
-  if (quotedGotoPath) start = lineStart + line.indexOf('"') + 1;
+  if (quotedGotoPath || quotedIncludePath) start = lineStart + line.indexOf('"') + 1;
   else while (start > lineStart && !/[\s{}"=:><!+\-.]/.test(source[start - 1])) start--;
   const hyphenatedPositionPrefix = /(?:^|\s)(far-(?:left|right)?)$/.exec(line);
   if (hyphenatedPositionPrefix) start = lineStart + hyphenatedPositionPrefix.index + hyphenatedPositionPrefix[0].search(/far-/);
   // カーソルが単語の途中にあっても、右側の残りを含めて置換する。
   // 例: i|nt で int を確定したときに "int nt" を作らない。
   let replaceEnd = end;
-  if (quotedGotoPath) {
+  if (quotedGotoPath || quotedIncludePath) {
     const newline = source.indexOf('\n', end);
     const lineEnd = newline < 0 ? source.length : newline;
     const closingQuote = source.indexOf('"', end);
@@ -843,13 +859,91 @@ function completionContext() {
     while (replaceEnd < source.length && !/[\s{}"=:><!+\-.]/.test(source[replaceEnd])) replaceEnd++;
   }
   const prefix = source.slice(start, end);
-  const words = source.slice(lineStart, start).trim().split(/\s+/).filter(Boolean);
-  return { start, end, replaceEnd, prefix, words, line };
+  const words = quotedIncludePath ? ['include'] : source.slice(lineStart, start).trim().split(/\s+/).filter(Boolean);
+  return { start, end, replaceEnd, prefix, words, line, quotedIncludePath };
+}
+
+async function loadStandardLibraryModules() {
+  if (!standardLibraryPromise) {
+    standardLibraryPromise = request('/api/standard-library').then((data) => {
+      standardLibraryModules = Array.isArray(data.modules) ? data.modules : [];
+      return standardLibraryModules;
+    }).catch((error) => { standardLibraryPromise = null; throw error; });
+  }
+  return standardLibraryPromise;
+}
+
+function completionScopes() {
+  const source = editor.value;
+  const scopes = [];
+  const headers = /^(\s*)(fn|scene)\s+([A-Za-z_][A-Za-z0-9_-]*)\b([^{}]*\{)/gm;
+  for (const match of source.matchAll(headers)) {
+    const open = match.index + match[0].lastIndexOf('{');
+    let depth = 1, quote = false, escaped = false, comment = false, close = open + 1;
+    for (; close < source.length && depth; close++) {
+      const character = source[close];
+      if (comment) { if (character === '\n') comment = false; continue; }
+      if (quote) {
+        if (escaped) escaped = false;
+        else if (character === '\\') escaped = true;
+        else if (character === '"') quote = false;
+        continue;
+      }
+      if (character === '"') quote = true;
+      else if (character === '#') comment = true;
+      else if (character === '{') depth++;
+      else if (character === '}') depth--;
+    }
+    if (!depth) scopes.push({ kind: match[2], name: match[3], params: match[2] === 'fn' ? /\(([^)]*)\)/.exec(match[4])?.[1] || '' : '', open, close });
+  }
+  return scopes;
+}
+
+function completionScope(context) {
+  return completionScopes().filter(scope => scope.kind === 'fn' && context.start > scope.open && context.start < scope.close)
+    .sort((left, right) => right.open - left.open)[0] || null;
+}
+
+function completionVariableDeclarations(context) {
+  const source = editor.value;
+  const before = source.slice(0, context.start);
+  const scopes = completionScopes();
+  const active = scopes.filter(scope => context.start > scope.open && context.start < scope.close)
+    .sort((left, right) => right.open - left.open)[0] || null;
+  const declarations = new Map();
+  const add = (name, type = '') => { if (name) declarations.set(name, { name, type }); };
+  const declarationPattern = /\b(?:global\s+)?(int|float|str|bool|character)\s+([A-Za-z_][A-Za-z0-9_]*)\b|\blet\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*(int|float|str|bool|character))?/g;
+  for (const match of before.matchAll(declarationPattern)) {
+    const owner = scopes.filter(scope => match.index > scope.open && match.index < scope.close).sort((left, right) => right.open - left.open)[0] || null;
+    if (owner && owner !== active) continue;
+    add(match[2] || match[3], match[1] || match[4] || '');
+  }
+  if (active?.kind === 'fn') {
+    for (const parameter of active.params.matchAll(/(?:^|,)\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(int|float|str|bool|character)\b/g)) add(parameter[1], parameter[2]);
+  }
+  const activeContainer = active ? `${active.kind === 'fn' ? 'function' : 'scene'} (${active.name})` : 'global';
+  for (const variable of knownVariables) {
+    if (variable.scope === 'global' || variable.static) add(variable.name, valueTypeLabel(variable.type));
+    else if (active && variable.definedIn === activeContainer) add(variable.name, valueTypeLabel(variable.type));
+  }
+  return [...declarations.values()];
+}
+
+function completionVariableNames(context) {
+  return completionVariableDeclarations(context).map(variable => variable.name);
+}
+
+function currentFileFunctionNames() {
+  return [...new Set([...editor.value.matchAll(/\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)].map(match => match[1]))];
 }
 
 function candidatesFor(context) {
   const [command, ...args] = context.words;
   if (!command) return KEYWORDS;
+  if (command === 'include' && context.quotedIncludePath) {
+    return [...new Set([...sceneNames, ...standardLibraryModules.map((module) => module.path)])];
+  }
+  const visibleVariables = completionVariableDeclarations(context);
 
   // シナリオおよびプロジェクトで宣言されたキャラクターと表情を抽出
   const charDefs = new Map();
@@ -914,28 +1008,54 @@ function candidatesFor(context) {
     if (args.length === 1) return ['from'];
     if (args.length === 2) return ['0'];
     if (args.length === 3) return ['to'];
-    if (args.length === 4) return ['10', ...knownVariables.filter((variable) => variable.type === 'int').map((variable) => variable.name)];
+    if (args.length === 4) return ['10', ...visibleVariables.filter((variable) => variable.type === 'int').map((variable) => variable.name)];
     if (args.length === 5) return ['step'];
   }
-  if (command === 'if' && args.length === 0) return knownVariables.map((variable) => variable.name);
+  if (command === 'if' && args.length === 0) return visibleVariables.map((variable) => variable.name);
   if (command === 'if' && args.length === 1) return ['==', '>=', '<=', '!=', '>', '<'];
   if (command === 'if' && args.length >= 2 && ['>=', '<=', '==', '!=', '>', '<'].includes(args[1])) {
-    const values = knownVariables.flatMap((variable) => variable.values || variable.allowedValues || []);
+    const visibleNames = new Set(visibleVariables.map(variable => variable.name));
+    const values = knownVariables.filter(variable => variable.name === args[0] && visibleNames.has(variable.name)).flatMap((variable) => variable.values || variable.allowedValues || []);
     return [...new Set(values.map(String))];
   }
-  if (command === 'set' && args.length === 0) return knownVariables.map((variable) => variable.name);
+  if (command === 'set' && args.length === 0) return visibleVariables.map((variable) => variable.name);
+  if (args.length && args.at(-1).includes('.')) {
+    const namespace = args.at(-1).slice(0, args.at(-1).lastIndexOf('.') + 1);
+    const members = includedFunctionNames.filter(name => name.startsWith(namespace)).map(name => name.slice(namespace.length));
+    if (members.length) return members;
+  }
+  if (['wait', 'set', 'if', 'return'].includes(command)) {
+    return [...new Set([...completionVariableNames(context), ...currentFileFunctionNames().map(name => `${name}()`), ...includedFunctionNames])];
+  }
   if (command === 'asset' && args.length === 0) return ['bg', 'char', 'bgm', 'se', 'voice', 'image', 'video'];
   return [];
 }
 
 async function updateSuggestions() {
-  if (document.activeElement !== editor) return hideSuggestions();
+  if (document.activeElement !== editor || activeSettingDocument || activeStandardLibraryDocument || !/\.tds$/i.test(sceneName.value)) return hideSuggestions();
   const refreshId = ++suggestionRefreshId;
   try {
     const [sceneData, variableData] = await Promise.all([request('/api/scenes'), request('/api/variables')]);
     if (refreshId !== suggestionRefreshId) return;
     sceneNames = sceneData.scenes || [];
     setKnownVariableData(variableData);
+    if (/^\s*include\s+"/.test(editor.value.slice(editor.value.lastIndexOf('\n', editor.selectionStart - 1) + 1, editor.selectionStart))
+      || [...editor.value.matchAll(/^\s*include\s+"([^"]+)"\s+as\s+/gm)].some(([, includePath]) => includePath.startsWith('std/'))) {
+      try { await loadStandardLibraryModules(); } catch { /* Standard-library completions are optional when unavailable. */ }
+      if (refreshId !== suggestionRefreshId) return;
+    }
+    const aliases = [...editor.value.matchAll(/^\s*include\s+"([^"]+)"\s+as\s+([A-Za-z_][A-Za-z0-9_]*)/gm)];
+    includedFunctionNames = (await Promise.all(aliases.map(async ([, includePath, alias]) => {
+      const normalizedPath = includePath.replaceAll('\\', '/');
+      const standardModule = standardLibraryModules.find(module => module.path === normalizedPath);
+      if (standardModule) return standardModule.functions.map(name => `${alias}.${name}()`);
+      const file = sceneNames.find(name => name.replaceAll('\\', '/') === normalizedPath);
+      if (!file) return [];
+      try {
+        const module = await request(`/api/scene?name=${encodeURIComponent(file)}`);
+        return [...module.source.matchAll(/\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)].map(match => `${alias}.${match[1]}()`);
+      } catch { return []; }
+    }))).flat();
   } catch (error) {
     showError(error);
     return;
@@ -1121,8 +1241,50 @@ function tokenAtSourceOffset(offset) {
   const line = before.split('\n').length;
   const column = offset - lineStart;
   const sourceLine = editor.value.slice(lineStart).split(/\r?\n/, 1)[0] || '';
-  const match = [...sourceLine.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)].find((item) => column >= item.index && column < item.index + item[0].length);
-  return match ? { name: match[0], line, column: match.index, sourceLine } : null;
+  let inString = false; let escaped = false;
+  for (let index = 0; index <= Math.min(column, sourceLine.length); index++) {
+    const character = sourceLine[index];
+    if (index === column) {
+      if (inString) {
+        const expectsFilePath = /^\s*(?:include|goto)\s+"/.test(sourceLine)
+          || /^\s*asset\s+(?:bg|bgm|se|voice|video|image|char)\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*"/.test(sourceLine)
+          || /^\s*pose\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*"/.test(sourceLine);
+        if (expectsFilePath) return { name: 'path', line, column, sourceLine };
+        let interpolationStart = -1;
+        let depth = 0;
+        for (let cursor = 0; cursor < sourceLine.length; cursor++) {
+          if (sourceLine[cursor] === '{') { if (depth++ === 0) interpolationStart = cursor + 1; }
+          else if (sourceLine[cursor] === '}' && depth > 0) { depth--; if (!depth) interpolationStart = -1; }
+          if (cursor === column && depth > 0) {
+            let interpolationEnd = cursor;
+            while (interpolationEnd < sourceLine.length && sourceLine[interpolationEnd] !== '}') interpolationEnd++;
+            const identifier = [...sourceLine.slice(interpolationStart, interpolationEnd).matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)]
+              .find(match => cursor >= interpolationStart + match.index && cursor < interpolationStart + match.index + match[0].length);
+            if (identifier) return { name: identifier[0], line, column: interpolationStart + identifier.index, sourceLine };
+            break;
+          }
+        }
+        return { name: 'string', line, column, sourceLine };
+      }
+      if (character === '#') return { name: 'comment', line, column, sourceLine };
+    }
+    if (index >= column) break;
+    if (escaped) { escaped = false; continue; }
+    if (character === '\\' && inString) { escaped = true; continue; }
+    if (character === '"') inString = !inString;
+    if (character === '#' && !inString) return { name: 'comment', line, column, sourceLine };
+  }
+  const identifier = [...sourceLine.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)].find((item) => column >= item.index && column < item.index + item[0].length);
+  if (identifier) return { name: identifier[0], line, column: identifier.index, sourceLine };
+  const operators = ['->', '==', '!=', '<=', '>=', '+', '-', '*', '/', '%', '<', '>', '=', ':', ',', '.', '(', ')', '[', ']', '{', '}'];
+  const operator = operators.find(value => sourceLine.startsWith(value, column) || column > 0 && sourceLine.startsWith(value, column - 1));
+  if (operator) return { name: operator, line, column: sourceLine.indexOf(operator, Math.max(0, column - 1)), sourceLine };
+  if (/\d/.test(sourceLine[column] || '')) {
+    const number = [...sourceLine.matchAll(/\b\d+(?:\.\d+)?(?:e[+-]?\d+)?\b/gi)].find(item => column >= item.index && column < item.index + item[0].length);
+    if (number) return { name: 'number', line, column: number.index, sourceLine };
+  }
+  if (sourceLine[column] === '#') return { name: 'comment', line, column, sourceLine };
+  return null;
 }
 
 function sourceTokenAtEvent(event) {
@@ -1153,8 +1315,8 @@ function sourceTokenAtEvent(event) {
     pixel += width;
   }
   if (column < 0) return null;
-  const match = [...sourceLine.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)].find((item) => column >= item.index && column < item.index + item[0].length);
-  return match ? { name: match[0], line: lineIndex + 1, column: match.index, sourceLine } : null;
+  const absolute = editor.value.split(/\r?\n/).slice(0, lineIndex).reduce((offset, value) => offset + value.length + 1, 0) + column;
+  return tokenAtSourceOffset(absolute);
 }
 
 function mergeVariableLocations(...groups) {
@@ -1178,7 +1340,7 @@ function enrichCurrentVariableEntries(file, variables) {
     if (staticDeclaration) definitions.push({ scope: 'global', container: 'global', kind: 'definition', file: '.novel/variables.json' });
     return {
       ...variable,
-      ...(staticDeclaration ? { static: true } : {}),
+      ...(staticDeclaration ? { static: true, readonly: Boolean(staticDeclaration.constant) } : {}),
       ...(staticConstraint ? { constraint: staticConstraint } : project?.constraint ? { constraint: project.constraint } : {}),
       definitions: mergeVariableLocations(definitions),
       references: mergeVariableLocations(here(variable.references || []), elsewhere(project?.references || [])),
@@ -1208,6 +1370,157 @@ async function compiledVariablesForCurrentSource(file, source) {
   return analysis.promise;
 }
 
+async function editorSymbolsForCurrentSource(file, source) {
+  if (currentEditorSymbols?.file === file && currentEditorSymbols.source === source && currentEditorSymbols.value) return currentEditorSymbols.value;
+  if (currentEditorSymbols?.file === file && currentEditorSymbols.source === source && currentEditorSymbols.promise) return currentEditorSymbols.promise;
+  const entry = { file, source, value: null, promise: null };
+  currentEditorSymbols = entry;
+  entry.promise = request('/api/editor-symbols', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: file, source }),
+  }).then(response => {
+    if (!response.symbols) throw new Error(response.error || 'シンボル情報を解析できませんでした');
+    if (sceneName.value !== file || editor.value !== source) throw new Error('表示中のシナリオが変更されました');
+    entry.value = response.symbols;
+    entry.promise = null;
+    return entry.value;
+  }).catch(error => { if (currentEditorSymbols === entry) currentEditorSymbols = null; throw error; });
+  return entry.promise;
+}
+
+function editorTypeName(type) {
+  if (typeof type === 'string') return type;
+  if (type?.kind === 'struct') return type.name;
+  if (type?.kind === 'dict') return `dict[${type.value}]`;
+  return type?.kind || '不明';
+}
+
+function expressionPreview(expression) {
+  if (!expression) return '';
+  if (expression.kind === 'literal') return typeof expression.value === 'string' ? JSON.stringify(expression.value) : String(expression.value);
+  if (expression.kind === 'float') return expression.value;
+  if (expression.kind === 'variable') return expression.name;
+  if (expression.kind === 'call') return `${expression.name}(…)`;
+  if (expression.kind === 'binary') return `${expressionPreview(expression.left)} ${expression.operator} ${expressionPreview(expression.right)}`;
+  if (expression.kind === 'unary') return `${expression.operator}${expressionPreview(expression.value)}`;
+  if (expression.kind === 'dict') return `{ ${expression.entries.map(entry => `${JSON.stringify(entry.key)}: ${expressionPreview(entry.value)}`).join(', ')} }`;
+  return '式';
+}
+
+function qualifiedTokenName(token) {
+  const line = token.sourceLine || '';
+  const pattern = /[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/g;
+  return [...line.matchAll(pattern)].find(match => token.column >= match.index && token.column < match.index + match[0].length)?.[0] || token.name;
+}
+
+function editorContainerAtLine(source, targetLine) {
+  const lines = source.split(/\r?\n/);
+  let active = null;
+  let depth = 0;
+  for (let index = 0; index < lines.length; index++) {
+    const header = !active && /^\s*(fn|scene)\s+([A-Za-z_][A-Za-z0-9_-]*)\b.*\{/.exec(lines[index]);
+    if (header) { active = { kind: header[1], name: header[2] }; depth = 0; }
+    if (active) {
+      depth += (lines[index].match(/\{/g) || []).length - (lines[index].match(/\}/g) || []).length;
+      if (index + 1 === targetLine && depth > 0) return active;
+      if (depth <= 0) active = null;
+    }
+  }
+  return null;
+}
+
+async function showDeclarationTooltip(event, requestId, token) {
+  if (!token) return false;
+  const file = sceneName.value;
+  const source = editor.value;
+  const symbols = await editorSymbolsForCurrentSource(file, source);
+  if (requestId !== variableTooltipRequestId || sceneName.value !== file || editor.value !== source) return false;
+  const symbolName = qualifiedTokenName(token);
+  const matchAt = item => item.name === symbolName && (item.file === file ? Number(item.line) === token.line : true);
+  const fn = symbols.functions.find(matchAt) || symbols.functions.find(item => item.name === symbolName);
+  const struct = symbols.structs.find(matchAt) || symbols.structs.find(item => item.name === token.name && item.file === file && Number(item.line) === token.line);
+  const structField = symbols.structs.flatMap(item => (item.fields || []).map(field => ({ ...field, structName: item.name, file: item.file })))
+    .find(item => item.name === token.name && item.file === file && Number(item.line) === token.line && Number(item.column) === token.column + 1);
+  const character = symbols.characters.find(matchAt) || symbols.characters.find(item => item.name === token.name && item.file === file && Number(item.line) === token.line);
+  const asset = symbols.assets.find(item => item.name === token.name && item.file === file && Number(item.line) === token.line);
+  const scene = symbols.scenes.find(item => item.name === token.name && item.file === file && Number(item.line) === token.line);
+  const include = symbols.includes.find(item => item.alias === token.name && item.file === file && Number(item.line) === token.line);
+  const declaration = symbols.variables.find(item => item.name === token.name && item.file === file && Number(item.line) === token.line);
+  const container = editorContainerAtLine(source, token.line);
+  const scopedVariable = declaration || symbols.variables.find(item => item.name === token.name && item.file === file
+    && ((item.scope === 'function' && container?.kind === 'fn' && item.container === container.name)
+      || (item.scope === 'scene' && container?.kind === 'scene' && item.container === container.name)));
+  if (!fn && !struct && !structField && !character && !asset && !scene && !include && !scopedVariable) return false;
+  variableTooltip.replaceChildren();
+  const add = (className, text) => { const row = document.createElement('div'); row.className = className; row.textContent = text; variableTooltip.append(row); return row; };
+  const addDefinition = item => {
+    const fileName = item.file || file;
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'variable-tooltip-location';
+    button.textContent = `定義: ${fileName}:${item.line || '?'}`;
+    button.addEventListener('click', () => jumpToLocation({ file: fileName, line: item.line, column: item.column }, item.name).catch(showError));
+    variableTooltip.append(button);
+  };
+  if (fn) {
+    const signature = `${fn.name}(${fn.params.map(param => `${param.name}: ${editorTypeName(param.type)}`).join(', ')}) -> ${editorTypeName(fn.returnType)}`;
+    add('variable-tooltip-title', signature);
+    addDefinition(fn);
+  } else if (struct) {
+    add('variable-tooltip-title', `struct ${struct.name}`);
+    for (const field of struct.fields || []) add('variable-tooltip-row', `${field.name}: ${editorTypeName(field.type)}`);
+    addDefinition(struct);
+  } else if (structField) {
+    add('variable-tooltip-title', `${structField.structName}.${structField.name}: ${editorTypeName(structField.type)}`);
+    addDefinition({ ...structField, name: structField.structName });
+  } else if (character) {
+    add('variable-tooltip-title', `character ${character.name}`);
+    const displayName = character.properties?.find(property => property.name === 'name');
+    if (displayName) add('variable-tooltip-row', `表示名: ${expressionPreview(displayName.value)}`);
+    for (const property of character.properties || []) if (property.name !== 'name') add('variable-tooltip-row', `${property.name}: ${expressionPreview(property.value)}`);
+    add('variable-tooltip-heading', `立ち絵ポーズ (${character.poses.length})`);
+    for (const pose of character.poses) add('variable-tooltip-row', `${pose.name} — ${pose.path}`);
+    addDefinition(character);
+  } else if (asset) {
+    add('variable-tooltip-title', `asset ${asset.type} ${asset.name}`);
+    add('variable-tooltip-row', `参照パス: ${asset.path}`);
+    addDefinition(asset);
+  } else if (scene) {
+    add('variable-tooltip-title', `scene ${scene.name}`);
+    add('variable-tooltip-row', `定義ファイル: ${scene.file}`);
+    add('variable-tooltip-row', `範囲: ${scene.line}–${scene.endLine || scene.line} 行`);
+    addDefinition(scene);
+  } else if (include) {
+    add('variable-tooltip-title', `include as ${include.alias}`);
+    add('variable-tooltip-row', `読み込み先: ${include.path}`);
+    const exports = symbols.functions.filter(item => item.name.startsWith(`${include.alias}.`)).map(item => item.name.slice(include.alias.length + 1));
+    if (exports.length) add('variable-tooltip-row', `公開関数: ${exports.join(', ')}`);
+    addDefinition(include);
+  } else if (scopedVariable && !declaration) {
+    add('variable-tooltip-title', `${scopedVariable.name}: ${editorTypeName(scopedVariable.type)}`);
+    add('variable-tooltip-row', `スコープ: ${scopedVariable.scope}${scopedVariable.container ? ` (${scopedVariable.container})` : ''}`);
+    add('variable-tooltip-row', scopedVariable.constant ? '定数・読み取り専用' : '変更可能');
+    addDefinition(scopedVariable);
+  } else if (declaration) {
+    const variable = (await compiledVariablesForCurrentSource(file, source)).find(item => item.name === declaration.name && item.definedIn === declaration.container && (item.scope === declaration.scope || declaration.scope === 'loop'));
+    add('variable-tooltip-title', `${declaration.name}: ${editorTypeName(variable?.type || declaration.type)}`);
+    add('variable-tooltip-row', `${declaration.constant ? '定数' : '変更可能な変数'} · ${declaration.global ? 'global' : declaration.container}`);
+    if (declaration.initial) add('variable-tooltip-row', `初期値: ${expressionPreview(declaration.initial)}`);
+    if (variable?.constraint) {
+      const constraint = variable.constraint;
+      if (constraint.min !== undefined || constraint.max !== undefined) add('variable-tooltip-constraint', `設定値域: ${constraint.min ?? '下限なし'} – ${constraint.max ?? '上限なし'}`);
+      const values = constraint.possibleValues || constraint.values;
+      if (Array.isArray(values) && values.length) add('variable-tooltip-constraint', `設定された値: ${values.map(String).join(', ')}`);
+    }
+    if (variable && !variable.constraint) add('variable-tooltip-row', '静的な値域制約は設定されていません。実行時の値はシナリオ経路に依存します。');
+    addDefinition(declaration);
+  }
+  variableTooltip.hidden = false;
+  const bounds = variableTooltip.getBoundingClientRect();
+  variableTooltip.style.left = `${Math.max(8, Math.min(event.clientX + 14, window.innerWidth - bounds.width - 8))}px`;
+  variableTooltip.style.top = `${Math.max(8, Math.min(event.clientY + 14, window.innerHeight - bounds.height - 8))}px`;
+  return true;
+}
+
 async function showVariableTooltip(event, requestId) {
   const token = sourceTokenAtEvent(event);
   if (!token) return false;
@@ -1215,9 +1528,21 @@ async function showVariableTooltip(event, requestId) {
   const source = editor.value;
   const variables = await compiledVariablesForCurrentSource(file, source);
   if (requestId !== variableTooltipRequestId || sceneName.value !== file || editor.value !== source) return false;
-  const matches = variables.filter((variable) => variable.name === token.name && [...(variable.definitions || []), ...(variable.references || [])].some((location) => Number(location.line) === token.line && Number(location.column) === token.column + 1));
+  const exactMatches = variables.filter((variable) => variable.name === token.name && [...(variable.definitions || []), ...(variable.references || [])].some((location) => Number(location.line) === token.line && Number(location.column) === token.column + 1));
+  // Some expression forms (notably `{...}` interpolation) report line-only
+  // reference locations from the compiler. Resolve those only when the line
+  // identifies one unambiguous variable, preserving shadowing correctness.
+  const lineMatches = exactMatches.length ? exactMatches : variables.filter((variable) => variable.name === token.name
+    && [...(variable.definitions || []), ...(variable.references || [])].some((location) => Number(location.line) === token.line));
+  const matches = lineMatches.length === 1 ? lineMatches : exactMatches;
   if (matches.length !== 1) return false;
   const variable = matches[0];
+  let symbolInfo = null;
+  try { symbolInfo = await editorSymbolsForCurrentSource(file, source); } catch { /* Compiler facts remain useful for temporarily incomplete source. */ }
+  if (requestId !== variableTooltipRequestId || sceneName.value !== file || editor.value !== source) return false;
+  const definitionLocations = (variable.definitions || []).filter(location => (location.file || file) === file);
+  const declaration = symbolInfo?.variables?.find(item => item.name === variable.name && item.file === file
+    && definitionLocations.some(location => Number(location.line) === Number(item.line) && Number(location.column) === Number(item.column)));
   variableTooltip.replaceChildren();
   const title = document.createElement('strong');
   title.className = 'variable-tooltip-title';
@@ -1227,6 +1552,16 @@ async function showVariableTooltip(event, requestId) {
   scope.className = 'variable-tooltip-row';
   scope.textContent = `スコープ: ${variable.scope}${variable.definedIn && variable.definedIn !== 'global' ? ` (${variable.definedIn})` : ''}`;
   variableTooltip.append(scope);
+  if (declaration?.initial) {
+    const initial = document.createElement('div');
+    initial.className = 'variable-tooltip-row';
+    initial.textContent = `宣言時の初期値: ${expressionPreview(declaration.initial)}`;
+    variableTooltip.append(initial);
+  }
+  const mutability = document.createElement('div');
+  mutability.className = 'variable-tooltip-row';
+  mutability.textContent = declaration?.constant || variable.mutable === false || variable.readonly ? '定数・読み取り専用です' : '変更可能です';
+  variableTooltip.append(mutability);
   const constraint = variable.constraint || {};
   if (constraint.min !== undefined || constraint.max !== undefined) {
     const range = document.createElement('div');
@@ -1234,10 +1569,11 @@ async function showVariableTooltip(event, requestId) {
     range.textContent = `許容範囲: ${constraint.min ?? '下限なし'} ～ ${constraint.max ?? '上限なし'}`;
     variableTooltip.append(range);
   }
-  if (Array.isArray(constraint.possibleValues) && constraint.possibleValues.length) {
+  const allowedValues = constraint.possibleValues || constraint.values;
+  if (Array.isArray(allowedValues) && allowedValues.length) {
     const values = document.createElement('div');
     values.className = 'variable-tooltip-row variable-tooltip-constraint';
-    values.textContent = `許容値: ${constraint.possibleValues.join(', ')}`;
+    values.textContent = `設定された値: ${allowedValues.map(String).join(', ')}`;
     variableTooltip.append(values);
   }
   const addLocations = (label, locations) => {
@@ -1305,6 +1641,10 @@ function showSyntaxTooltip(event) {
     const description = document.createElement('div'); description.className = 'syntax-tooltip-description'; description.textContent = recipe.description;
     variableTooltip.append(description);
   }
+  if (recipe?.snippet && !recipe.snippet.includes('¦')) {
+    const example = document.createElement('pre'); example.className = 'syntax-tooltip-example'; example.textContent = recipe.snippet;
+    variableTooltip.append(example);
+  }
   const guideButton = document.createElement('button'); guideButton.type = 'button'; guideButton.className = 'syntax-tooltip-link'; guideButton.textContent = '構文リファレンスを開く';
   guideButton.addEventListener('click', () => { hideVariableTooltip(); showLanguageGuide(); });
   variableTooltip.append(guideButton);
@@ -1351,10 +1691,10 @@ function acceptSuggestion() {
   const following = source.slice(replaceEnd, replaceEnd + 1);
   const speakerCompletion = completionRange.words[0] === 'say' && completionRange.words.length === 1;
   const showCharacterCompletion = completionRange.words[0] === 'show' && completionRange.words.length === 1 && candidate !== 'image' && candidate !== 'char';
-  const insertion = speakerCompletion ? `${candidate} ""` : showCharacterCompletion ? `${candidate}.` : `${completionRange.insertLeadingSpace ? ' ' : ''}${candidate}${following && /\s/.test(following) ? '' : ' '}`;
+  const insertion = speakerCompletion ? `${candidate} ""` : showCharacterCompletion ? `${candidate}.` : `${completionRange.insertLeadingSpace ? ' ' : ''}${candidate}`;
   rememberUndo();
   editor.value = `${source.slice(0, completionRange.start)}${insertion}${source.slice(replaceEnd)}`;
-  const caret = completionRange.start + (speakerCompletion ? candidate.length + 2 : insertion.length);
+  const caret = completionRange.start + (speakerCompletion ? candidate.length + 2 : candidate.endsWith('()') && !showCharacterCompletion ? insertion.length - 1 : insertion.length);
   editor.focus();
   editor.setSelectionRange(caret, caret);
   editor.dispatchEvent(new Event('input'));
@@ -1363,7 +1703,11 @@ function acceptSuggestion() {
 }
 
 async function openScene(name) {
+  if (isStandardLibraryPath(name)) return openStandardLibraryFile(name);
   if (sceneName?.value && sceneName.value !== name && isDirty) await saveScene();
+  activeSettingDocument = '';
+  activeStandardLibraryDocument = '';
+  editor.readOnly = false;
   variableTooltipRequestId++;
   currentVariableAnalysis = null;
   const scene = await request(`/api/scene?name=${encodeURIComponent(name)}`);
@@ -1383,10 +1727,55 @@ result.textContent = '';
   scheduleValidation();
 }
 
+async function openStandardLibraryFile(name) {
+  if (!isStandardLibraryPath(name)) throw Error('Invalid standard library path.');
+  if (sceneName?.value && sceneName.value !== name && isDirty && !activeStandardLibraryDocument) await saveScene();
+  const file = await request(`/api/standard-library-file?name=${encodeURIComponent(name)}`);
+  activeSettingDocument = '';
+  activeStandardLibraryDocument = file.name;
+  variableTooltipRequestId++;
+  currentVariableAnalysis = null;
+  currentEditorSymbols = null;
+  if (!openTabs.includes(file.name)) openTabs.push(file.name);
+  localStorage.setItem(lastSceneKey(), file.name);
+  sceneName.value = file.name;
+  editor.value = file.source;
+  editor.readOnly = true;
+  sceneRevision = '';
+  clearEditorHistory();
+  updateDirtyState(false);
+  updateLineNumbers();
+  updateHighlight();
+  result.textContent = '';
+  hideSuggestions();
+  setStatus(`${file.name} · 標準ライブラリ（読み取り専用）`);
+  renderEditorTabs(file.name);
+}
+
+async function openSettingFile(name) {
+  if (sceneName?.value && sceneName.value !== name && isDirty) await saveScene();
+  const file = await request(`/api/setting-file?name=${encodeURIComponent(name)}`);
+  activeSettingDocument = file.name;
+  activeStandardLibraryDocument = '';
+  sceneName.value = file.name;
+  editor.value = file.source;
+  editor.readOnly = false;
+  sceneRevision = String(file.revision || '');
+  clearEditorHistory();
+  updateDirtyState(false);
+  updateLineNumbers();
+  updateHighlight();
+  renderEditorTabs(file.name);
+  result.textContent = '';
+  hideSuggestions();
+  setStatus(`${file.name} を開きました`);
+}
+
 async function jumpToLocation(location, symbol = '') {
   const requestedFile = String(location.file || sceneName.value);
   const file = requestedFile === 'current' ? sceneName.value : scenarioRelativePath(requestedFile) ?? requestedFile;
-  if (file && normalizedScenePath(file) !== normalizedScenePath(sceneName.value)) {
+  if (file && isStandardLibraryPath(file) && normalizedScenePath(file) !== normalizedScenePath(sceneName.value)) await openStandardLibraryFile(file);
+  else if (file && normalizedScenePath(file) !== normalizedScenePath(sceneName.value)) {
     if (!sceneNames.includes(file)) { setStatus(`シナリオ '${file}' は現在の作品内にありません`, 'warning'); return; }
     await openScene(file);
   }
@@ -1688,6 +2077,7 @@ function replaceWithFormattedSource(source, caretOffset = null, selectionEnd = c
 }
 
 function formatCode() {
+  if (activeSettingDocument || activeStandardLibraryDocument) return;
   const source = editor.value;
   const formatted = formatSource(source);
   if (formatted === source) return;
@@ -1695,6 +2085,21 @@ function formatCode() {
 }
 
 async function saveScene() {
+  if (activeStandardLibraryDocument) {
+    setStatus(`${activeStandardLibraryDocument} · 標準ライブラリは読み取り専用です`);
+    return;
+  }
+  if (activeSettingDocument) {
+    const saved = await request('/api/setting-file', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: activeSettingDocument, source: editor.value, ...(sceneRevision ? { expectedRevision: sceneRevision } : {}) }),
+    });
+    sceneRevision = String(saved.revision || '');
+    updateDirtyState(false);
+    setStatus(`${saved.name} を保存しました`, 'ok');
+    if (activeSettingDocument === 'setting/setting.txt') await refreshFiles();
+    return;
+  }
   // Saving is a durable boundary: persist the same canonical source that the
   // editor validates and previews, using the cursor-preserving formatter path.
   formatCode();
@@ -1785,7 +2190,7 @@ async function formatProjectScenes() {
   }
   await refreshScenes(sceneName.value);
   await refreshSceneGraph();
-  setStatus(`${changed.length} 繝輔ぃ繧､繝ｫ繧剃ｿ晏ｭ倥＠縺ｾ縺励◆`, 'ok');
+  setStatus(`${changed.length} ファイルを保存しました`, 'ok');
   return changed;
 }
 
@@ -1906,6 +2311,7 @@ if (fileInfoBase && typeof fileInfoBase === 'object') {
 
 function scheduleValidation() {
   clearTimeout(validationTimer);
+  if (activeSettingDocument) { result.textContent = ''; return; }
   validationTimer = setTimeout(() => validate().catch(showError), 1000);
 }
 
@@ -1955,6 +2361,9 @@ function showGotoMenu(event) {
   return true;
 }
 function clearLeftEditor() {
+  activeSettingDocument = '';
+  activeStandardLibraryDocument = '';
+  editor.readOnly = false;
   sceneName.value = '';
   editor.value = '';
   clearEditorHistory();
@@ -2101,6 +2510,27 @@ splitResizer?.addEventListener('keydown', (event) => {
 });
 async function playCurrentScene() {
   await saveAllScenes();
+  const buildState = await request('/api/project-build-status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: sceneName.value }),
+  });
+  if (!buildState.built) {
+    const changed = Array.isArray(buildState.changedFiles) && buildState.changedFiles.length
+      ? `\n${buildState.changedFiles.slice(0, 8).join('\n')}${buildState.changedFiles.length > 8 ? `\nほか ${buildState.changedFiles.length - 8} ファイル` : ''}`
+      : '';
+    if (!(await uiAsk(`ビルド済みシナリオと現在の内容が異なります。先にビルドしますか？${changed}`, 'ビルドして再生'))) return;
+    const buildReport = await request('/api/project-build', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: sceneName.value }),
+    });
+    if (!buildReport.ok) {
+      await validate(buildReport);
+      return buildReport;
+    }
+    await validate(buildReport);
+  }
   setStatus('native player を起動中…');
   const report = await request('/api/native-play', {
     method: 'POST',
@@ -2208,9 +2638,15 @@ editor.addEventListener('contextmenu', (event) => {
   // 解決できなかった語だけに表示し、変数の右クリックを奪わない。
   if (showGotoMenu(event)) return;
   showVariableTooltip(event, requestId).then((shown) => {
-    if (requestId === variableTooltipRequestId && !shown) showSyntaxTooltip(event);
+    if (requestId !== variableTooltipRequestId || shown) return;
+    showDeclarationTooltip(event, requestId, hoveredToken).then((declared) => {
+      if (requestId === variableTooltipRequestId && !declared) showSyntaxTooltip(event);
+    }).catch(() => { if (requestId === variableTooltipRequestId) showSyntaxTooltip(event); });
   }).catch(() => {
-    if (requestId === variableTooltipRequestId) showSyntaxTooltip(event);
+    if (requestId !== variableTooltipRequestId) return;
+    showDeclarationTooltip(event, requestId, hoveredToken).then((declared) => {
+      if (requestId === variableTooltipRequestId && !declared) showSyntaxTooltip(event);
+    }).catch(() => { if (requestId === variableTooltipRequestId) showSyntaxTooltip(event); });
   });
 });
 document.addEventListener('click', (event) => {
@@ -2658,7 +3094,7 @@ async function loadWorkspace(keepScene = false) {
   const selected = new URLSearchParams(location.search).get('scene');
   const remembered = localStorage.getItem(lastSceneKey());
   const candidate = selected || remembered;
-  if (candidate && sceneNames.includes(candidate)) await openScene(candidate);
+  if (candidate && (sceneNames.includes(candidate) || isStandardLibraryPath(candidate))) await openScene(candidate);
   else if (sceneNames.length) await openScene(sceneNames[0]);
 }
 
@@ -2796,7 +3232,7 @@ Promise.all([request('/api/project'), loadWorkspace(true)])
       if (currentProjectRoot !== startupProjectRoot || sceneName.value || isDirty) return;
       const remembered = localStorage.getItem(lastSceneKey());
       const candidate = selectedScene || remembered;
-      if (candidate && sceneNames.includes(candidate)) openScene(candidate).then(() => { if (!selectedSymbol) return; const match = new RegExp(`^\\s*(?:global\\s+)?(?:int|string|str|bool|struct|const)\\s+${selectedSymbol}\\b`, 'm').exec(editor.value); if (match) revealEditorRange(match.index, match.index + selectedSymbol.length); }).catch(showError);
+      if (candidate && (sceneNames.includes(candidate) || isStandardLibraryPath(candidate))) openScene(candidate).then(() => { if (!selectedSymbol) return; const match = new RegExp(`^\\s*(?:global\\s+)?(?:int|string|str|bool|struct|const)\\s+${selectedSymbol}\\b`, 'm').exec(editor.value); if (match) revealEditorRange(match.index, match.index + selectedSymbol.length); }).catch(showError);
       else if (sceneNames.length) openScene(sceneNames[0]).catch(showError);
     };
     restoreStartupScene();
@@ -2831,10 +3267,27 @@ function updateMiniMap() {
   minimapContent.style.minHeight = '0px';
   const max = Math.max(1, editor.scrollHeight - editor.clientHeight);
   const ratio = editor.clientHeight / Math.max(editor.scrollHeight, editor.clientHeight);
-  const height = Math.max(24, minimap.clientHeight * ratio);
+  const height = Math.min(minimap.clientHeight, Math.max(1, minimap.clientHeight * ratio));
   minimapViewport.style.height = `${height}px`;
   minimapViewport.style.top = `${(editor.scrollTop / max) * Math.max(0, minimap.clientHeight - height)}px`;
 }
+// The editor and minimap share a flexible workbench pane. A window resize can
+// change their box sizes without changing the document or dispatching scroll,
+// so keep the viewport indicator synchronized with the actual rendered boxes.
+let minimapResizeFrame = 0;
+const scheduleMiniMapUpdate = () => {
+  if (minimapResizeFrame) cancelAnimationFrame(minimapResizeFrame);
+  minimapResizeFrame = requestAnimationFrame(() => {
+    minimapResizeFrame = 0;
+    updateMiniMap();
+  });
+};
+if (typeof ResizeObserver !== 'undefined') {
+  const minimapResizeObserver = new ResizeObserver(scheduleMiniMapUpdate);
+  if (editor) minimapResizeObserver.observe(editor);
+  if (minimap) minimapResizeObserver.observe(minimap);
+}
+window.addEventListener('resize', scheduleMiniMapUpdate);
 function updateHighlight() {
   if (!highlight) return;
   const lines = editor.value.split('\n');
@@ -2870,6 +3323,10 @@ const dirtyStyle=document.createElement('style');dirtyStyle.textContent='.dirty-
 const thinDiagnosticStyle=document.createElement('style');thinDiagnosticStyle.textContent='.hl-error,.hl-warning,.hl-info{text-decoration-line:underline;text-decoration-style:wavy;text-decoration-thickness:1px!important;background:transparent!important}.hl-error{text-decoration-color:#e85b68!important}.hl-warning{text-decoration-color:#e3b35c!important}.hl-info{text-decoration-color:#6aa9d8!important}.status-chip.warning .status-dot{background:#e3b35c}';document.head.append(thinDiagnosticStyle);
 highlight?.addEventListener('mouseover', (event) => { const line = event.target.closest('.hl-error,.hl-warning,.hl-info'); if (line) { const lineNumber = [...highlight.children].indexOf(line) + 1; line.title = diagnostics.filter(diagnosticForCurrentFile).filter((item) => Number(item.line) === lineNumber).map((item) => `${item.severity}: ${item.message}`).join('\n'); } });
 const syntaxHints = {
+  path: 'ファイルパス（include / goto / asset / pose の指定値）',
+  include: 'include "module.tds" as alias',
+  let: 'let <名前> = <式>', pose: 'pose <ポーズ名> = "<画像パス>"',
+  none: '関数の戻り値がないことを示す型です。',
   asset: 'asset <種類> <名前> = "パス"',
   character: 'character <名前> {\n  name = "表示名"\n  affection = 0\n  pose normal = "画像パス"\n}',
   struct: 'struct <名前> {\n  name: str\n  score: int\n}',
@@ -2880,16 +3337,52 @@ const syntaxHints = {
   const: 'const <型> <名前> = <値>',
   global: 'global [const] <型> <名前> = <値>',
   set: 'set <既存の変数> = <値>',
+  unset: 'unset <既存の変数> [キー]',
+  and: '<条件> and <条件>', or: '<条件> or <条件>', not: 'not <条件>',
   say: 'say <文字列リテラルで始まるstr式> または say <話者> <str式>',
   bg: 'bg <背景アセット>', bgm: 'bgm <BGMアセット>', se: 'play se <SEアセット>',
   show: 'show <名前>.<ポーズ> <位置> [x+(式)] [y-(式)] [fade <ミリ秒>]', hide: 'hide <名前> [fade <ミリ秒>]',
+  move: 'move character <名前> by x+<px> y-<px> [over <ミリ秒>] / move bg by x+<px> y-<px> [over <ミリ秒>]',
+  clear: 'clear bg | image | bgm',
+  image: 'asset image <名前> = "<画像パス>" / show image <名前> <位置>',
+  at: 'show <character.pose> at <position>',
+  async: 'play voice <名前> async', blocking: 'play voice <名前> blocking',
+  voice: 'play voice <名前> [blocking|async]', video: 'play video <名前> [blocking|async]',
+  true: '真を表す真偽値リテラルです。', false: '偽を表す真偽値リテラルです。',
   if: 'if <条件> { ... } else { ... }', elif: 'elif <条件> { ... }', else: 'else { ... }',
   for: 'for <変数> from <開始> to <終了> [step <幅>] { ... }',
   while: 'while <条件> { ... }', choice: 'choice "質問" { "選択肢" { ... } }',
   fn: 'fn <名前>(<引数>: <型>) -> <戻り値> { ... }', return: 'return [値]', goto: 'goto <シーン> または goto "<外部ファイルパス>"',
   wait: 'wait <ミリ秒>', effect: 'effect fade <色> [ミリ秒]', play: 'play <種類> <アセット>'
 };
+Object.assign(syntaxHints, {
+  scene: 'scene <名前> { … }',
+  string: '文字列リテラル。式中では {変数名} による文字列補間ができます。',
+  number: '数値リテラル。整数はint、小数点または指数表記を含む値はfloatです。',
+  '->': '関数の戻り値型を区切ります。例: fn score() -> int { … }',
+  '==': '等しいかを比較します。条件式で使用します。', '!=': '等しくないかを比較します。',
+  '<': '左辺が右辺より小さいかを比較します。', '>': '左辺が右辺より大きいかを比較します。',
+  '<=': '左辺が右辺以下かを比較します。', '>=': '左辺が右辺以上かを比較します。',
+  '+': '加算です。str同士では文字列を連結します。', '-': '減算または数値の符号反転です。',
+  '*': '数値の乗算です。', '/': '数値の除算です。', '%': '整数の剰余です。',
+  '(': '関数呼び出しの引数、または式の括弧を開始します。', ')': '関数呼び出しの引数、または式の括弧を閉じます。',
+  '{': 'ブロックまたは辞書の開始です。対応する } までが範囲です。', '}': 'ブロックまたは辞書を閉じます。',
+  ':': '関数引数・構造体フィールドの型指定、または辞書キーと値の区切りです。',
+  '=': '宣言時の初期値、またはasset/pose定義の値です。既存変数への代入はsetを使います。',
+  comment: '# から行末まではコメントで、実行されません。',
+});
 const syntaxRecipes = {
+  path: { description: 'この位置では文字列ではなく、読み込み・遷移・素材参照に使うファイルパスを指定します。パス専用の値型を作らず、構文上の役割として扱います。' },
+  include: { description: '別ファイルをモジュールとして読み込み、関数名を alias.function() の形で参照します。読み込み先はシナリオフォルダー内の相対パスです。', snippet: 'include "std/math.tds" as math\nwait math.sin(angle)\n' },
+  unset: { description: '辞書のキーを削除します。変数そのものを宣言解除する命令ではありません。', snippet: 'unset inventory["key"]\n' },
+  move: { description: '表示中の立ち絵または背景を現在位置からpx単位で移動します。overを指定すると時間をかけて移動します。', snippet: 'move character hero by x+5 y-8 over 300\n' },
+  clear: { description: '指定した演出レイヤーを消去します。対象がない状態でも安全に使用できます。', snippet: 'clear bgm\n' },
+  scene: { description: 'gotoなどで遷移するシーンの入口を定義します。シーン名は同一ファイル内で一意にします。', snippet: 'scene chapter_start {\n  say "始めます"\n}\n' },
+  string: { description: '文字列内の {name} は変数値に置き換わります。式の結果が文字列でない場合は str(...) で変換します。', snippet: 'say narrator "好感度: {str(affection)}"\n' },
+  let: { description: '型を式から推論するローカル変数宣言です。推論型は後から別の型に変えられません。', snippet: 'let count = 0\n' },
+  and: { description: '左右の条件が両方とも真のとき真です。左が偽なら右側は短絡評価されません。', snippet: 'if ready and score > 0 {\n  wait 1\n}\n' },
+  or: { description: '左右の条件のどちらかが真なら真です。左が真なら右側は短絡評価されません。', snippet: 'if ready or retry {\n  wait 1\n}\n' },
+  not: { description: '条件の真偽を反転します。', snippet: 'if not finished {\n  wait 1\n}\n' },
   asset: { description: '素材ファイルを名前で呼べるようにします。パスを書くのはこの宣言時だけです。', snippet: 'asset bg background = "asset/bg/¦.png"\n' },
   character: { description: '立ち絵とポーズをまとめて定義します。', snippet: 'character hero {\n  name = "主人公"\n  pose normal = "asset/char/hero/¦.png"\n}\n' },
   int: { description: '整数のローカル変数です。ファイル間で共有するなら global を付けます。', snippet: 'int count = ¦0\n' },
@@ -3021,6 +3514,31 @@ async function showProjectSettings() {
   playerField('靄の色 RGBA', 'fog_color', rgba(theme.screen.backdrop?.bottomFog?.color || [255, 250, 253, 255]));
   playerField('靄の高さ', 'fog_height', theme.screen.backdrop?.bottomFog?.height ?? 300, 'number');
   const preview = document.createElement('div'); preview.className = 'player-ui-preview'; preview.setAttribute('aria-label', '再生機UI配置プレビュー');
+  const controlsGroup = playerGroup('Dialogue Save / Load buttons');
+  const controls = theme.controls || { enabled: true, anchor: 'dialogue-top-left', buttons: [
+    { action: 'save', label: 'Save', x: 0, y: -44, width: 84, height: 36 },
+    { action: 'load', label: 'Load', x: 92, y: -44, width: 84, height: 36 },
+  ] };
+  const controlsEnabled = document.createElement('input'); controlsEnabled.type = 'checkbox'; controlsEnabled.checked = controls.enabled !== false;
+  const enabledLabel = document.createElement('label'); enabledLabel.textContent = 'Show controls'; enabledLabel.append(controlsEnabled); controlsGroup.append(enabledLabel);
+  const anchorSelect = document.createElement('select');
+  for (const [value, text] of [['dialogue-top-left', 'Dialogue top-left'], ['stage', 'Stage coordinates']]) { const option = document.createElement('option'); option.value = value; option.textContent = text; anchorSelect.append(option); }
+  anchorSelect.value = controls.anchor || 'dialogue-top-left';
+  const anchorLabel = document.createElement('label'); anchorLabel.textContent = 'Anchor'; anchorLabel.append(anchorSelect); controlsGroup.append(anchorLabel);
+  const controlFields = {};
+  for (const action of ['save', 'load']) {
+    const item = controls.buttons?.find(button => button.action === action) || { action, label: action, x: action === 'save' ? 0 : 92, y: -44, width: 84, height: 36 };
+    const group = document.createElement('section'); group.className = 'player-ui-settings-group';
+    const groupTitle = document.createElement('h3'); groupTitle.textContent = action.toUpperCase(); group.append(groupTitle); controlsGroup.append(group);
+    for (const key of ['label', 'hoverLabel', 'x', 'y', 'width', 'height', 'image', 'hoverImage', 'display']) {
+      const fieldLabel = document.createElement('label'); fieldLabel.textContent = key;
+      const input = key === 'display' ? document.createElement('select') : document.createElement('input');
+      if (key === 'display') for (const [value, label] of [['both', 'Text + image'], ['text', 'Text only'], ['image', 'Image only']]) { const option = document.createElement('option'); option.value = value; option.textContent = label; input.append(option); }
+      else input.type = ['x', 'y', 'width', 'height'].includes(key) ? 'number' : 'text';
+      input.value = item[key] ?? (key === 'display' ? 'both' : '');
+      controlFields[`${action}_${key}`] = input; fieldLabel.append(input); group.append(fieldLabel);
+    }
+  }
   const previewDialog = document.createElement('div'); previewDialog.className = 'player-ui-preview-dialog';
   const themeDirectory = String(project.settings?.native_ui_theme || '').replaceAll('\\', '/').split('/').slice(0, -1).join('/');
   const previewAsset = (name) => `url(/asset/${[themeDirectory, name].filter(Boolean).map(encodeURIComponent).join('/')})`;
@@ -3103,6 +3621,18 @@ async function showProjectSettings() {
   assets.append(assetTitle, assetList, assetNote, checkImages);
   const footer = document.createElement('footer');
   const save = document.createElement('button'); save.type = 'button'; save.className = 'project-settings-save'; save.textContent = '作品・再生機UI設定を保存';
+  const buildPlayerControls = () => ({
+    enabled: controlsEnabled.checked,
+    anchor: anchorSelect.value,
+    buttons: ['save', 'load'].map(action => {
+      const item = { action };
+      for (const key of ['label', 'hoverLabel', 'x', 'y', 'width', 'height', 'image', 'hoverImage', 'display']) {
+        const value = controlFields[`${action}_${key}`].value;
+        if (value !== '') item[key] = ['x', 'y', 'width', 'height'].includes(key) ? Number(value) : value;
+      }
+      return item;
+    }),
+  });
   save.addEventListener('click', async () => {
     const updated = await request('/api/project/settings', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -3113,6 +3643,7 @@ async function showProjectSettings() {
       version: 1, screen: { width: integer('screen_width'), height: integer('screen_height'), backdrop: { bottomFog: { enabled: fog.checked, color: rgbaValue('fog_color'), height: integer('fog_height') } } },
       dialog: { image: playerFields.dialog_image.value, x: integer('dialog_x'), y: integer('dialog_y'), width: integer('dialog_width'), height: integer('dialog_height'), message: { x: integer('dialog_text_x'), y: integer('dialog_text_y'), width: integer('dialog_text_width'), height: integer('dialog_text_height'), size: integer('dialog_text_size'), color: rgbaValue('dialog_text_color') }, nameplate: { x: integer('speaker_x'), y: integer('speaker_y'), width: integer('speaker_width'), height: integer('speaker_height'), image: playerFields.speaker_image.value, text: { x: 0, y: 0, width: integer('speaker_width'), height: integer('speaker_height'), size: integer('speaker_size'), color: rgbaValue('speaker_color') } } },
       choices: { x: integer('choice_x'), y: integer('choice_y'), width: integer('choice_width'), height: integer('choice_view_height'), itemHeight: integer('choice_height'), gap: integer('choice_gap'), image: playerFields.choice_image.value, activeImage: playerFields.choice_active_image.value, text: { x: integer('choice_text_x'), y: integer('choice_text_y'), width: integer('choice_width') - integer('choice_text_x') * 2, height: integer('choice_height'), size: integer('choice_text_size'), color: rgbaValue('choice_text_color') } },
+      controls: buildPlayerControls(),
     } }) });
     currentProjectRoot = updated.projectRoot || currentProjectRoot;
     await Promise.all([refreshFiles(), refreshCatalog(), refreshScenes()]);
@@ -3179,6 +3710,7 @@ async function showGameScreenSettings() {
 
   const assetDirectory = String(project.settings?.asset_dir || 'asset').replaceAll('\\', '/').replace(/\/$/, '');
   const imageAssets = (assetData.assets || []).filter(item => ['bg', 'image'].includes(item.type));
+  const buttonAssets = assetData.assets || [];
   const assetRelative = value => {
     let rel = String(value || '').replaceAll('\\', '/').replace(/^asset\//i, '');
     if (rel.startsWith(assetDirectory + '/')) rel = rel.slice(assetDirectory.length + 1);
@@ -3258,9 +3790,51 @@ async function showGameScreenSettings() {
     const screen = selectedScreen();
     const title = document.createElement('h2'); title.textContent = selectedItem ? '選択中のボタン' : '画面'; inspector.append(title);
     if (!selectedItem) {
+      const bgmAssets = (assetData.assets || []).filter(asset => asset.type === 'bgm');
+      selectField('Screen BGM', screen.music || '', [['', 'None'], ...bgmAssets.map(asset => [asset.name, `${asset.name}  ${asset.path}`])], value => { screen.music = value; render(); });
       field('画面タイトル', 'title', screen.title);
       field('説明文', 'description', screen.description || '');
       selectField('背景画像', screen.background, [['', 'なし'], ...imageAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { screen.background = value; render(); });
+      field('この画面のBGM（素材名）', 'music', screen.music || '');
+      selectField('画面の役割', screen.role || '', [['', '通常画面'], ['save-slots', 'セーブ枠'], ['load-slots', 'ロード枠']], value => {
+        for (const candidate of Object.values(config.screens)) if (candidate !== screen && candidate.role === value) delete candidate.role;
+        if (value) screen.role = value; else delete screen.role;
+        screen.slotLayout ||= { x: 420, y: 190, width: 440, height: 420, rowHeight: 42, gap: 8, count: 8 };
+        renderInspector(); render();
+      });
+      if (screen.role === 'save-slots' || screen.role === 'load-slots') {
+        screen.slotLayout ||= { x: 420, y: 190, width: 440, height: 420, rowHeight: 42, gap: 8, count: 8 };
+        for (const key of ['x', 'y', 'width', 'height', 'rowHeight', 'gap', 'count']) {
+          const label = document.createElement('label'); label.textContent = `枠 ${key}`;
+          const input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.max = '4096'; input.step = '1'; input.value = screen.slotLayout[key];
+          input.addEventListener('input', () => { screen.slotLayout[key] = Number(input.value); render(); });
+          label.append(input); inspector.append(label);
+        }
+      }
+      if (screen.role === 'save-slots' || screen.role === 'load-slots') {
+        screen.slotStyle ||= {};
+        selectField('Slot image', screen.slotStyle.image || '', [['', 'Theme default'], ...buttonAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { screen.slotStyle.image = value; render(); });
+        selectField('Slot hover image', screen.slotStyle.hoverImage || '', [['', 'Use normal image'], ...buttonAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { screen.slotStyle.hoverImage = value; render(); });
+        for (const key of ['color', 'hoverColor', 'backgroundColor', 'hoverBackgroundColor', 'borderColor', 'hoverBorderColor', 'fontSize']) {
+          const label = document.createElement('label'); label.textContent = `Slot ${key}`;
+          const input = document.createElement('input'); input.type = key === 'fontSize' ? 'number' : 'text'; input.value = screen.slotStyle[key] ?? '';
+          input.addEventListener('input', () => { screen.slotStyle[key] = key === 'fontSize' ? Number(input.value) : input.value; });
+          label.append(input); inspector.append(label);
+        }
+      }
+      if (screenSelect.value === config.initial) {
+        const titleScene = config.titleScene || { file: '', scene: '' };
+        const sceneLabel = document.createElement('h3'); sceneLabel.textContent = 'TDSタイトルシーン（任意）'; inspector.append(sceneLabel);
+        const sceneFile = document.createElement('input'); sceneFile.type = 'text'; sceneFile.value = titleScene.file || ''; sceneFile.placeholder = 'main.tds'; sceneFile.setAttribute('aria-label', 'TDSタイトルファイル');
+        const sceneName = document.createElement('input'); sceneName.type = 'text'; sceneName.value = titleScene.scene || ''; sceneName.placeholder = 'title'; sceneName.setAttribute('aria-label', 'TDSタイトルscene');
+        const fileLabel = document.createElement('label'); fileLabel.textContent = 'ファイル'; fileLabel.append(sceneFile); inspector.append(fileLabel);
+        const nameLabel = document.createElement('label'); nameLabel.textContent = 'scene名'; nameLabel.append(sceneName); inspector.append(nameLabel);
+        const updateTitleScene = () => {
+          if (!sceneFile.value.trim()) { delete config.titleScene; return; }
+          config.titleScene = { file: sceneFile.value.trim(), scene: sceneName.value.trim() || 'title' };
+        };
+        sceneFile.addEventListener('input', updateTitleScene); sceneName.addEventListener('input', updateTitleScene);
+      }
       const makeInitial = document.createElement('button'); makeInitial.type = 'button'; makeInitial.textContent = 'この画面を開始画面にする'; makeInitial.disabled = config.initial === screenSelect.value;
       makeInitial.onclick = () => { config.initial = screenSelect.value; refreshScreenOptions(); renderInspector(); };
       inspector.append(makeInitial);
@@ -3272,10 +3846,15 @@ async function showGameScreenSettings() {
       return;
     }
     field('ボタン文字', 'label', selectedItem.label);
+    field('カーソル時の文字（任意）', 'hoverLabel', selectedItem.hoverLabel || '');
     for (const key of ['x', 'y', 'width', 'height']) field({ x: 'X', y: 'Y', width: '幅', height: '高さ' }[key], key, selectedItem[key], 'number');
-    selectField('動作', selectedItem.action, [['start', 'ゲーム開始'], ['resume', 'ゲームに戻る'], ['open-screen', '別画面を開く'], ['back', '前の画面に戻る'], ['quit', '終了']], value => { selectedItem.action = value; if (value !== 'open-screen') delete selectedItem.target; renderInspector(); });
+    selectField('動作', selectedItem.action, [['start', 'ゲーム開始'], ['resume', 'ゲームに戻る'], ['save', 'セーブ画面'], ['load', 'ロード画面'], ['open-screen', '別画面を開く'], ['back', '前の画面に戻る'], ['quit', '終了']], value => { selectedItem.action = value; if (value !== 'open-screen') delete selectedItem.target; renderInspector(); });
     if (selectedItem.action === 'open-screen') selectField('移動先', selectedItem.target, Object.keys(config.screens).filter(id => id !== screenSelect.value).map(id => [id, id]), value => { selectedItem.target = value; });
-    selectField('ボタン画像', selectedItem.image, [['', 'テーマ標準'], ...imageAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { selectedItem.image = value; render(); });
+    selectField('ボタン画像', selectedItem.image, [['', 'テーマ標準'], ...buttonAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { selectedItem.image = value; render(); });
+    selectField('カーソル時の画像', selectedItem.hoverImage, [['', '通常画像を使用'], ...buttonAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { selectedItem.hoverImage = value; render(); });
+    selectField('画像と文字の表示', selectedItem.display || 'both', [['both', '文字と画像'], ['text', '文字のみ'], ['image', '画像のみ']], value => { selectedItem.display = value; render(); });
+    field('文字サイズ', 'fontSize', selectedItem.fontSize ?? 22, 'number');
+    for (const [key, label] of [['color', '文字色'], ['hoverColor', 'カーソル時の文字色'], ['backgroundColor', '背景色'], ['hoverBackgroundColor', 'カーソル時の背景色'], ['borderColor', '枠線色'], ['hoverBorderColor', 'カーソル時の枠線色']]) field(label, key, selectedItem[key] || '');
     const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'ボタンを削除'; remove.onclick = () => { screen.items = screen.items.filter(item => item !== selectedItem); selectedItem = null; renderInspector(); render(); }; inspector.append(remove);
   }
   refreshScreenOptions();
@@ -3507,7 +4086,7 @@ function openEditorFind(showReplace) {
   const selectionEnd = editor.selectionEnd;
   const selectedText = editor.value.slice(selectionStart, selectionEnd);
   editorFindSelectionCandidate = selectionEnd > selectionStart ? { start: selectionStart, end: selectionEnd } : null;
-  if (selectedText && !/[\r\n]/.test(selectedText)) editorFindInput.value = selectedText;
+  if (selectedText && !/[\n]/.test(selectedText)) editorFindInput.value = selectedText;
   editorFindPanel.hidden = false;
   editorReplaceRow.hidden = false;
   syncEditorFindFieldWidths();
@@ -3968,6 +4547,7 @@ const menuActions = {
   'toggle-sidebar': () => document.querySelector('.app-shell')?.classList.toggle('sidebar-hidden'),
   'toggle-minimap': () => document.querySelector('.app-shell')?.classList.toggle('minimap-hidden'),
   'scene-flow': showSceneFlowView,
+  build: () => compileProjectFromMenu().catch(showError),
   compile: () => compileProjectFromMenu().catch(showError),
   play: () => playCurrentScene().catch(showError),
   'native-build': () => runNativeTool('build', 'ネイティブビルド').catch(showError),

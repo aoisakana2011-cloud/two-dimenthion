@@ -5,10 +5,16 @@
       <FullPath>C:\Users\Owner\Desktop\Novel Editer\native\build\x64\Release\ZERO_CHECK</FullPath>
     </ProjectOutput>
     <ProjectOutput>
+      <FullPath>C:\Users\Owner\Desktop\Novel Editer\native\build\Release\audio_transition_test.exe</FullPath>
+    </ProjectOutput>
+    <ProjectOutput>
       <FullPath>C:\Users\Owner\Desktop\Novel Editer\native\build\Release\check_image.exe</FullPath>
     </ProjectOutput>
     <ProjectOutput>
       <FullPath>C:\Users\Owner\Desktop\Novel Editer\native\build\Release\novel_player.exe</FullPath>
+    </ProjectOutput>
+    <ProjectOutput>
+      <FullPath>C:\Users\Owner\Desktop\Novel Editer\native\build\Release\scene_geometry_test.exe</FullPath>
     </ProjectOutput>
     <ProjectOutput>
       <FullPath>C:\Users\Owner\Desktop\Novel Editer\native\build\x64\Release\ALL_BUILD</FullPath>

@@ -587,6 +587,18 @@ let flowDomains = {};
 let flowTestSelectionKey = '';
 let flowTestVariableDefinitions = new Map();
 const flowVariableDrafts = new Map();
+let flowDomainRenderPendingKey = '';
+let flowTestPanelUpdatePendingKey = '';
+function currentFlowTestSelection() {
+  const separator = flowTestSelectionKey.indexOf('\0');
+  if (separator < 1) return null;
+  const file = flowTestSelectionKey.slice(0, separator);
+  const sceneName = flowTestSelectionKey.slice(separator + 1);
+  if (!file || !sceneName || flowTestScene.value !== sceneName) return null;
+  const node = data?.nodes.find((item) => item.id === file);
+  const scene = node?.sceneLocations?.find((item) => item.name === sceneName);
+  return node && scene ? { node, scene } : null;
+}
 function confirmedFlowDomain(name) {
   const found = flowDomains[name];
   return found?.kind === 'exact' && Array.isArray(found.values) && found.values.length === 1 ? found : null;
@@ -607,6 +619,14 @@ function displayFlowDomainValue(variable, value) {
   return String(value);
 }
 function renderFlowTestVariables() {
+  if (flowTestVars.contains(document.activeElement) && document.activeElement.matches('input[data-name]')) {
+    flowDomainRenderPendingKey = flowTestSelectionKey;
+    return;
+  }
+  flowDomainRenderPendingKey = '';
+  const drafts = flowVariableDrafts.get(flowTestSelectionKey) || new Map();
+  for (const input of flowTestVars.querySelectorAll('input[data-name]')) drafts.set(input.dataset.name, input.value);
+  if (flowTestSelectionKey) flowVariableDrafts.set(flowTestSelectionKey, drafts);
   flowTestVars.replaceChildren();
   const definitions = [...flowTestVariableDefinitions.values()];
   const confirmed = definitions.filter((variable) => confirmedFlowDomain(variable.name));
@@ -628,7 +648,6 @@ function renderFlowTestVariables() {
   if (uncertain.length) {
     const group = document.createElement('section'); group.className = 'flow-test-group flow-test-uncertain-group';
     const heading = document.createElement('div'); heading.className = 'flow-test-group-heading'; heading.textContent = '初期値を指定（不確定）'; group.append(heading);
-    const drafts = flowVariableDrafts.get(flowTestSelectionKey) || new Map();
     for (const variable of uncertain) {
       const found = flowDomains[variable.name] || { kind: 'unknown', values: [] };
       const row = document.createElement('label'); row.className = 'flow-test-variable';
@@ -637,7 +656,7 @@ function renderFlowTestVariables() {
       const values = found.values.map((value) => displayFlowDomainValue(variable, value));
       info.textContent = found.kind === 'finite' ? `候補 ${values.length}: ${values.slice(0, 4).join(' / ')}${values.length > 4 ? ' …' : ''}` : '不明';
       info.title = found.kind === 'finite' ? values.join(' / ') : '値を特定できないため、開始値を指定できます';
-      const input = document.createElement('input'); input.type = 'text'; input.autocomplete = 'off'; input.dataset.name = variable.name; input.dataset.type = variable.type; input.dataset.domainKind = found.kind; input.dataset.domainValues = JSON.stringify(found.values); input.placeholder = '変更しない場合は空欄';
+      const input = document.createElement('input'); input.type = 'text'; input.autocomplete = 'off'; input.dataset.name = variable.name; input.dataset.type = variable.type; input.dataset.selectionKey = flowTestSelectionKey; input.dataset.domainKind = found.kind; input.dataset.domainValues = JSON.stringify(found.values); input.placeholder = '変更しない場合は空欄';
       if (variable.fields) input.dataset.fields = JSON.stringify(variable.fields);
       input.value = drafts.get(variable.name) || '';
       row.append(name, info, input); group.append(row);
@@ -646,8 +665,37 @@ function renderFlowTestVariables() {
   }
   if (!definitions.length) flowTestVars.textContent = '変更が必要な変数はありません';
 }
+flowTestVars.addEventListener('focusout', (event) => {
+  if (!event.target.matches('input[data-name]')) return;
+  const selectionKey = event.target.dataset.selectionKey;
+  if (!selectionKey) return;
+  const drafts = flowVariableDrafts.get(selectionKey) || new Map();
+  drafts.set(event.target.dataset.name, event.target.value);
+  flowVariableDrafts.set(selectionKey, drafts);
+  // Do not rebuild the value panel in the focusout microtask: a pointer click
+  // on "play from here" is dispatched after focusout, and disabling the button
+  // in that microtask can cancel that very click. Let the click handler consume
+  // the current snapshot first, then apply any coalesced graph refresh.
+  setTimeout(() => {
+    if (flowTestVars.contains(document.activeElement)) return;
+    const activeSelectionKey = flowTestSelectionKey;
+    // Deferred work belongs to the selection that requested it. A stale
+    // focusout must never restart analysis or replace the rendered variables
+    // for a newer graph node/scene.
+    if (flowTestPanelUpdatePendingKey && flowTestPanelUpdatePendingKey !== activeSelectionKey) flowTestPanelUpdatePendingKey = '';
+    if (flowDomainRenderPendingKey && flowDomainRenderPendingKey !== activeSelectionKey) flowDomainRenderPendingKey = '';
+    if (flowTestPanelUpdatePendingKey === activeSelectionKey) {
+      flowTestPanelUpdatePendingKey = '';
+      updateFlowTestPanel();
+    } else if (flowDomainRenderPendingKey === activeSelectionKey) {
+      flowDomainRenderPendingKey = '';
+      renderFlowTestVariables();
+    }
+  }, 0);
+});
 async function refreshFlowDomains(node, scene, line, names) {
   const requestId = ++flowDomainRequest;
+  const requestSelectionKey = node && scene ? `${node.id}\0${scene.name}` : '';
   flowDomains = {};
   const run = document.querySelector('#flow-test-run');
   if (!node || !scene || !names.length) return;
@@ -657,12 +705,12 @@ async function refreshFlowDomains(node, scene, line, names) {
     const response = await fetch(`/api/flow-domains?${query}`, { cache: 'no-store' });
     const result = await response.json();
     if (!response.ok) throw Error(result.error || '値集合を解析できませんでした');
-    if (requestId !== flowDomainRequest) return;
+    if (requestId !== flowDomainRequest || flowTestSelectionKey !== requestSelectionKey) return;
     flowDomains = result.domains || {};
     renderFlowTestVariables();
     run.disabled = false;
   } catch (error) {
-    if (requestId !== flowDomainRequest) return;
+    if (requestId !== flowDomainRequest || flowTestSelectionKey !== requestSelectionKey) return;
     flowDomains = Object.fromEntries(names.map((name) => [name, { kind: 'unknown', values: [] }]));
     renderFlowTestVariables();
     document.querySelector('#flow-test-message').textContent = error.message;
@@ -672,6 +720,15 @@ async function refreshFlowDomains(node, scene, line, names) {
 function updateFlowTestPanel() {
   if (!flowTestPanel || !data) return;
   const node = data.nodes.find((item) => item.id === selected);
+  const selectedSceneName = flowTestScene.value;
+  const nextScene = node?.sceneLocations?.find((scene) => scene.name === selectedSceneName) || node?.sceneLocations?.[0];
+  const nextSelectionKey = nextScene ? `${node.id}\0${nextScene.name}` : '';
+  if (flowTestVars.contains(document.activeElement) && document.activeElement.matches('input[data-name]')
+    && nextSelectionKey === flowTestSelectionKey) {
+    flowTestPanelUpdatePendingKey = nextSelectionKey;
+    return;
+  }
+  flowTestPanelUpdatePendingKey = '';
   document.querySelector('#flow-test-file').textContent = node?.id || 'ノードを選択';
   const previousScene = flowTestScene.value;
   const previousLine = flowTestLine.value;
@@ -695,6 +752,7 @@ function updateFlowTestPanel() {
   flowTestLine.max = selectedScene?.endLine || '';
   ++flowDomainRequest;
   flowDomains = {};
+  flowDomainRenderPendingKey = '';
   flowTestVars.replaceChildren();
   const line = flowTestLine.value === '' ? null : Number(flowTestLine.value);
   const validLine = line === null || Boolean(selectedScene && Number.isSafeInteger(line) && line >= selectedScene.line && line <= selectedScene.endLine);
@@ -731,32 +789,34 @@ function updateFlowTestPanel() {
 flowTestScene.addEventListener('change', updateFlowTestPanel);
 flowTestLine.addEventListener('input', () => {
   updateFlowTestPanel();
-  const node = data?.nodes.find((item) => item.id === selected);
-  const scene = node?.sceneLocations?.find((item) => item.name === flowTestScene.value);
+  const selection = currentFlowTestSelection();
+  const { node, scene } = selection || {};
   const line = Number(flowTestLine.value);
   if (node && scene && Number.isSafeInteger(line) && line >= scene.line && line <= scene.endLine) {
     sendToEditor({ type: 'scene-flow:start-line-preview', file: node.id, scene: scene.name, line });
   }
 });
 document.querySelector('#flow-test-pick-line').addEventListener('click', () => {
-  const node = data?.nodes.find((item) => item.id === selected);
-  const scene = node?.sceneLocations?.find((item) => item.name === flowTestScene.value);
+  const selection = currentFlowTestSelection();
+  const { node, scene } = selection || {};
   if (node && scene) {
     sendToEditor({ type: 'scene-flow:pick-line', file: node.id, scene: scene.name, startLine: scene.line, endLine: scene.endLine });
   }
 });
 flowTestVars.addEventListener('input', (event) => {
-  if (!event.target.matches('input[data-name]') || !flowTestSelectionKey) return;
-  const draft = flowVariableDrafts.get(flowTestSelectionKey) || new Map();
+  if (!event.target.matches('input[data-name]')) return;
+  const selectionKey = event.target.dataset.selectionKey;
+  if (!selectionKey) return;
+  const draft = flowVariableDrafts.get(selectionKey) || new Map();
   draft.set(event.target.dataset.name, event.target.value);
-  flowVariableDrafts.set(flowTestSelectionKey, draft);
+  flowVariableDrafts.set(selectionKey, draft);
 });
 document.querySelector('#flow-test-run').addEventListener('click', () => {
-  const node = data?.nodes.find((item) => item.id === selected);
-  if (!node) return;
-  const scene = node.sceneLocations?.find((item) => item.name === flowTestScene.value);
+  const selection = currentFlowTestSelection();
+  const { node, scene } = selection || {};
   const line = flowTestLine.value === '' ? null : Number(flowTestLine.value);
   const message = document.querySelector('#flow-test-message');
+  if (!node || !scene) { message.textContent = '開始ノードとsceneを選択してください'; return; }
   if (line !== null && (!Number.isSafeInteger(line) || !scene || line < scene.line || line > scene.endLine)) { message.textContent = '選択したscene内の行を指定してください'; return; }
   const variables = {};
   for (const definition of flowTestVariableDefinitions.values()) {

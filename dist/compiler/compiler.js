@@ -114,6 +114,10 @@ function constantValue(expression, constants) {
         return undefined;
     if (expression.kind === 'integer')
         return BigInt(expression.value);
+    if (expression.kind === 'float') {
+        const value = Number(expression.value);
+        return Number.isFinite(value) ? value : undefined;
+    }
     if (expression.kind === 'literal') {
         if (typeof expression.value === 'bigint' || typeof expression.value === 'string' || typeof expression.value === 'boolean')
             return expression.value;
@@ -131,6 +135,10 @@ function constantValue(expression, constants) {
             return -value;
         if (typeof value === 'bigint' && expression.operator === '+')
             return value;
+        if (typeof value === 'number' && expression.operator === '-')
+            return -value;
+        if (typeof value === 'number' && expression.operator === '+')
+            return value;
         return undefined;
     }
     if (expression.kind === 'call') {
@@ -140,6 +148,14 @@ function constantValue(expression, constants) {
         if (expression.name === 'int' && typeof argument === 'string' && /^[+-]?\d+$/.test(argument)) {
             const value = BigInt(argument);
             return value >= -(1n << 63n) && value <= (1n << 63n) - 1n ? value : undefined;
+        }
+        if (expression.name === 'int' && typeof argument === 'number' && Number.isFinite(argument)) {
+            const value = BigInt(Math.trunc(argument));
+            return value >= -(1n << 63n) && value <= (1n << 63n) - 1n ? value : undefined;
+        }
+        if (expression.name === 'float') {
+            const value = typeof argument === 'bigint' || typeof argument === 'number' || typeof argument === 'string' ? Number(argument) : NaN;
+            return Number.isFinite(value) ? value : undefined;
         }
         return undefined;
     }
@@ -177,6 +193,19 @@ function constantValue(expression, constants) {
         if (expression.operator === '%' && right !== 0n)
             return left % right;
     }
+    if (typeof left === 'number' && typeof right === 'number') {
+        if (expression.operator === '>')
+            return left > right;
+        if (expression.operator === '>=')
+            return left >= right;
+        if (expression.operator === '<')
+            return left < right;
+        if (expression.operator === '<=')
+            return left <= right;
+        const value = expression.operator === '+' ? left + right : expression.operator === '-' ? left - right
+            : expression.operator === '*' ? left * right : expression.operator === '/' && right !== 0 ? left / right : undefined;
+        return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+    }
     if (expression.operator === '+' && typeof left === 'string' && typeof right === 'string')
         return left + right;
     return undefined;
@@ -203,6 +232,44 @@ function constrainedCondition(expression, constraints, locals) {
     }
     if (expression.kind !== 'binary' || !['==', '!=', '>', '>=', '<', '<='].includes(expression.operator))
         return undefined;
+    const floatLiteral = (value) => value.kind === 'float' && Number.isFinite(Number(value.value)) ? Number(value.value) : undefined;
+    let floatName;
+    let floatExpected;
+    let floatOperator = expression.operator;
+    if (expression.left.kind === 'load') {
+        floatName = expression.left.name;
+        floatExpected = floatLiteral(expression.right);
+    }
+    else if (expression.right.kind === 'load') {
+        floatName = expression.right.name;
+        floatExpected = floatLiteral(expression.left);
+        const flipped = { '==': '==', '!=': '!=', '>': '<', '>=': '<=', '<': '>', '<=': '>=' };
+        floatOperator = flipped[floatOperator];
+    }
+    if (floatName && !locals?.has(floatName) && floatExpected !== undefined) {
+        const floating = constraints.get(floatName);
+        if (floating?.type === 'float') {
+            const accepts = (value) => floatOperator === '==' ? value === floatExpected : floatOperator === '!=' ? value !== floatExpected : floatOperator === '>' ? value > floatExpected : floatOperator === '>=' ? value >= floatExpected : floatOperator === '<' ? value < floatExpected : value <= floatExpected;
+            if (floating.floatValues) {
+                const results = [...floating.floatValues].map(accepts);
+                if (results.length)
+                    return results.every(Boolean) ? true : results.every((value) => !value) ? false : undefined;
+            }
+            if (floating.floatMin !== undefined && floating.floatMax !== undefined) {
+                const minResult = accepts(floating.floatMin), maxResult = accepts(floating.floatMax);
+                if (floatOperator === '==' || floatOperator === '!=') {
+                    if (floatExpected < floating.floatMin || floatExpected > floating.floatMax)
+                        return floatOperator === '!=';
+                    if (floating.floatMin === floating.floatMax)
+                        return minResult;
+                }
+                else if (minResult && maxResult)
+                    return true;
+                else if (!minResult && !maxResult && ((floatOperator === '>' && floating.floatMax <= floatExpected) || (floatOperator === '>=' && floating.floatMax < floatExpected) || (floatOperator === '<' && floating.floatMin >= floatExpected) || (floatOperator === '<=' && floating.floatMin > floatExpected)))
+                    return false;
+            }
+        }
+    }
     let name;
     let expected;
     let operator = expression.operator;
@@ -311,7 +378,7 @@ function combinedCompiledFiniteCondition(expression, constraints, locals) {
     const parse = (value) => {
         if (value.kind !== 'binary' || !['==', '!='].includes(value.operator))
             return undefined;
-        const literal = (item) => item.kind === 'integer' ? BigInt(item.value) : item.kind === 'literal' && (typeof item.value === 'bigint' || typeof item.value === 'string') ? item.value : undefined;
+        const literal = (item) => item.kind === 'integer' ? BigInt(item.value) : item.kind === 'float' && Number.isFinite(Number(item.value)) ? Number(item.value) : item.kind === 'literal' && (typeof item.value === 'bigint' || typeof item.value === 'string') ? item.value : undefined;
         if (value.left.kind === 'load') {
             const expected = literal(value.right);
             return expected === undefined ? undefined : { name: value.left.name, operator: value.operator, expected };
@@ -326,10 +393,11 @@ function combinedCompiledFiniteCondition(expression, constraints, locals) {
     if (!left || !right || left.name !== right.name || locals?.has(left.name))
         return undefined;
     const constraint = constraints.get(left.name);
-    if (!constraint?.values || constraint.type === 'str' && (typeof left.expected !== 'string' || typeof right.expected !== 'string') || constraint.type === 'int' && (typeof left.expected !== 'bigint' || typeof right.expected !== 'bigint'))
+    const allowed = constraint?.type === 'float' ? constraint.floatValues : constraint?.values;
+    if (!constraint || !allowed || constraint.type === 'str' && (typeof left.expected !== 'string' || typeof right.expected !== 'string') || constraint.type === 'int' && (typeof left.expected !== 'bigint' || typeof right.expected !== 'bigint') || constraint.type === 'float' && (typeof left.expected !== 'number' || typeof right.expected !== 'number'))
         return undefined;
     const accepts = (predicate, value) => predicate.operator === '==' ? value === predicate.expected : value !== predicate.expected;
-    const results = [...constraint.values].map((value) => expression.operator === 'and' ? accepts(left, value) && accepts(right, value) : accepts(left, value) || accepts(right, value));
+    const results = [...allowed].map((value) => expression.operator === 'and' ? accepts(left, value) && accepts(right, value) : accepts(left, value) || accepts(right, value));
     return results.length && results.every(Boolean) ? true : results.length && results.every((value) => !value) ? false : undefined;
 }
 function refineCompiledConstraints(constraints, expression, truth, locals) {
@@ -349,6 +417,43 @@ function refineCompiledConstraints(constraints, expression, truth, locals) {
     }
     if (!['==', '!=', '>', '>=', '<', '<='].includes(expression.operator))
         return constraints;
+    const floatLiteral = (value) => value?.kind === 'float' && Number.isFinite(Number(value.value)) ? Number(value.value) : undefined;
+    let floatName;
+    let floatExpected;
+    let floatOperator = expression.operator;
+    if (expression.left.kind === 'load') {
+        floatName = expression.left.name;
+        floatExpected = floatLiteral(expression.right);
+    }
+    else if (expression.right.kind === 'load') {
+        floatName = expression.right.name;
+        floatExpected = floatLiteral(expression.left);
+        const flipped = { '==': '==', '!=': '!=', '>': '<', '>=': '<=', '<': '>', '<=': '>=' };
+        floatOperator = flipped[floatOperator];
+    }
+    const floating = floatName ? constraints.get(floatName) : undefined;
+    if (floating?.type === 'float' && floatExpected !== undefined && !locals?.has(floatName)) {
+        const inverse = { '==': '!=', '!=': '==', '>': '<=', '>=': '<', '<': '>=', '<=': '>' };
+        const effective = truth ? floatOperator : inverse[floatOperator];
+        const next = { ...floating };
+        if (effective === '==') {
+            next.floatMin = floatExpected;
+            next.floatMax = floatExpected;
+        }
+        else if (effective === '>')
+            next.floatMin = Math.max(floating.floatMin ?? -Infinity, floatExpected);
+        else if (effective === '>=')
+            next.floatMin = Math.max(floating.floatMin ?? -Infinity, floatExpected);
+        else if (effective === '<')
+            next.floatMax = Math.min(floating.floatMax ?? Infinity, floatExpected);
+        else if (effective === '<=')
+            next.floatMax = Math.min(floating.floatMax ?? Infinity, floatExpected);
+        if (floating.floatValues)
+            next.floatValues = new Set([...floating.floatValues].filter((value) => effective === '==' ? value === floatExpected : effective === '!=' ? value !== floatExpected : effective === '>' ? value > floatExpected : effective === '>=' ? value >= floatExpected : effective === '<' ? value < floatExpected : value <= floatExpected));
+        const result = new Map(constraints);
+        result.set(floatName, next);
+        return result;
+    }
     const literal = (value) => {
         if (value?.kind === 'integer')
             return BigInt(value.value);
@@ -506,6 +611,8 @@ function literalForConstant(value) {
         return undefined;
     if (typeof value === 'bigint')
         return { kind: 'integer', value: value.toString() };
+    if (typeof value === 'number')
+        return { kind: 'float', value: String(value) };
     return { kind: 'literal', value };
 }
 function foldExpression(expression, constants) {
@@ -1175,13 +1282,21 @@ function compile(script, externalGlobals = new Map(), externalCharacters = new M
     // On an ordinary file transfer preserveGlobals keeps the existing value.
     const rawGlobals = compiler.statements([...externalCharacterGlobals, ...runtimeScript.globals]);
     const rawFunctions = script.functions.map((fn) => compiler.function(fn));
+    const immutableGlobals = new Map();
+    for (const instruction of rawGlobals) {
+        if (instruction.op !== 'declare' || !instruction.constant || !instruction.initial)
+            continue;
+        const value = constantValue(instruction.initial, immutableGlobals);
+        if (value !== undefined)
+            immutableGlobals.set(instruction.name, value);
+    }
     const effects = functionWrites(rawFunctions, new Set([...externalGlobals.keys(), ...runtimeScript.globals.filter((statement) => statement.kind === 'declare').map((statement) => statement.name)]));
     // A transferred file executes globals with preserve=true: an existing
     // global keeps its value instead of receiving the declaration initializer.
     // Do not fold declaration-derived values in this scope.
     const globals = debug ? rawGlobals : optimizeInstructions(rawGlobals, effects, new Map(), { preserveDeclarations: true }, undefined, constraints);
     const functions = debug ? rawFunctions : rawFunctions.map((instruction) => instruction.op === 'function'
-        ? { ...instruction, body: optimizeInstructions(instruction.body, effects, new Map(), { preserveDeclarations: false }, new Set(instruction.params.map((param) => param.name)), constraints) }
+        ? { ...instruction, body: optimizeInstructions(instruction.body, effects, new Map([...immutableGlobals].filter(([name]) => !instruction.params.some((param) => param.name === name))), { preserveDeclarations: false }, new Set(instruction.params.map((param) => param.name)), constraints) }
         : instruction);
     const externalCharacterDefinitions = externalCharacterSources
         .map(({ properties: _properties, ...character }) => ({ ...character, external: true }));
@@ -1191,7 +1306,7 @@ function compile(script, externalGlobals = new Map(), externalCharacters = new M
         characters: [...externalCharacterDefinitions, ...script.characters.map(({ properties: _properties, ...character }) => character)],
         globals,
         functions,
-        scenes: script.scenes.map((scene) => ({ name: scene.name, file: scene.file, line: scene.line, instructions: debug ? compiler.statements(scene.body) : optimizeInstructions(compiler.statements(scene.body), effects, new Map(), { preserveDeclarations: false }, undefined, constraints) })),
+        scenes: script.scenes.map((scene) => ({ name: scene.name, file: scene.file, line: scene.line, instructions: debug ? compiler.statements(scene.body) : optimizeInstructions(compiler.statements(scene.body), effects, new Map(immutableGlobals), { preserveDeclarations: false }, undefined, constraints) })),
         variables,
     };
 }

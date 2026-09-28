@@ -174,6 +174,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </ProjectReference>
+    <ProjectReference Include="C:\Users\Owner\Desktop\Novel Editer\native\build\audio_transition_test.vcxproj">
+      <Project>{56602E91-5AAC-3BE4-9595-9288617F84D0}</Project>
+      <Name>audio_transition_test</Name>
+    </ProjectReference>
     <ProjectReference Include="C:\Users\Owner\Desktop\Novel Editer\native\build\check_image.vcxproj">
       <Project>{DD1E038B-24D2-3B9D-8AA3-2085A909F2CC}</Project>
       <Name>check_image</Name>
@@ -181,6 +185,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ProjectReference Include="C:\Users\Owner\Desktop\Novel Editer\native\build\novel_player.vcxproj">
       <Project>{E5AA2D26-9DE2-331F-BFCF-A79EF091D5C8}</Project>
       <Name>novel_player</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\Owner\Desktop\Novel Editer\native\build\scene_geometry_test.vcxproj">
+      <Project>{18E9BB9F-571B-3C0B-916F-A1D0961B9DE0}</Project>
+      <Name>scene_geometry_test</Name>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

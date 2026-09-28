@@ -63,6 +63,20 @@ test('parses explicit global declarations', () => {
   assert.throws(() => checkTypes(parse('fn bad() -> none { global int value = 1 }')), /global.*トップレベル/);
 });
 
+test('top-level declarations report their own restriction when nested in executable blocks', () => {
+  for (const [declaration, label] of [
+    ['fn nested() -> none {}', /関数宣言.*トップレベル/],
+    ['scene nested {}', /scene 宣言.*トップレベル/],
+    ['struct Nested { value: int }', /struct 宣言.*トップレベル/],
+    ['include "module.tds" as module', /include 宣言.*トップレベル/],
+    ['asset bg nested = "asset/bg.png"', /asset 宣言.*トップレベル/],
+    ['character nested {}', /character 宣言.*トップレベル/],
+  ]) {
+    assert.throws(() => parse(`scene main { ${declaration} }`), label, declaration);
+    assert.throws(() => parse(`fn outer() -> none { ${declaration} }`), label, declaration);
+  }
+});
+
 test('rejects every DSL keyword documented as unavailable for identifiers', () => {
   const reserved = [
     'scene', 'asset', 'character', 'struct', 'pose', 'include',
@@ -171,6 +185,42 @@ test('warns when a move target is not statically established', () => {
   assert.equal(valid.some(item => item.code.startsWith('move-')), false);
 });
 
+test('float value ranges validate character and background pixel offsets', () => {
+  const globals = new Map([['offset', 'float']]);
+  globals.constraints = new Map([['offset', { type: 'float', floatMin: 1000000.25, floatMax: 1000001.5 }]]);
+  const moved = parse('float displacement = 0.0\nscene main { set displacement = offset\nmove bg by x+(displacement) }');
+  const diagnostics = analyzeScript(moved, 'main.tds', globals);
+  assert.ok(diagnostics.some(item => item.code === 'presentation-offset-range' && item.severity === 'error'));
+  assert.throws(() => compile(moved, globals), /位置ずらし/);
+
+  const exactAfterAssignment = parse('float displacement = 0.0\nscene main { set displacement = 1000001.0\nmove bg by x+(displacement) }');
+  assert.ok(analyzeScript(exactAfterAssignment).some(item => item.code === 'presentation-offset-range' && item.severity === 'error'),
+    'an exact mutable value must still be checked against the pixel-offset limit');
+  assert.throws(() => compile(exactAfterAssignment), /±1000000 px/);
+
+  const integerOffsets = new Map([['offset', 'int']]);
+  integerOffsets.constraints = new Map([['offset', { type: 'int', min: 1000001n, max: 1000002n }]]);
+  const convertedInteger = parse('scene main { move bg by x+(float(offset)) }');
+  assert.ok(analyzeScript(convertedInteger, 'main.tds', integerOffsets).some(item => item.code === 'presentation-offset-range' && item.severity === 'error'),
+    'float(int-variable) must retain the variable-table interval');
+  assert.throws(() => compile(convertedInteger, integerOffsets), /±1000000 px/);
+
+  const numericStrings = new Map([['offsetText', 'str']]);
+  numericStrings.constraints = new Map([['offsetText', { type: 'str', values: new Set(['1000001.0', '1000002.0']) }]]);
+  const convertedString = parse('scene main { move bg by x+(float(offsetText)) }');
+  assert.ok(analyzeScript(convertedString, 'main.tds', numericStrings).some(item => item.code === 'presentation-offset-range' && item.severity === 'error'),
+    'finite numeric string candidates must retain their converted interval');
+  assert.throws(() => compile(convertedString, numericStrings), /±1000000 px/);
+
+  const negative = analyzeScript(parse('scene main { move bg by x-(offset) }'), 'main.tds', globals);
+  assert.ok(negative.some(item => item.code === 'presentation-offset-range' && item.severity === 'error'), 'the x- direction must invert the range');
+
+  globals.constraints = new Map([['offset', { type: 'float', floatMin: 999999.5, floatMax: 1000000.5 }]]);
+  const uncertain = analyzeScript(parse('scene main { show hero.normal center x+(offset) }'), 'main.tds', globals,
+    new Map([['hero', new Set(['normal'])]]));
+  assert.ok(uncertain.some(item => item.code === 'presentation-offset-range' && item.severity === 'warning'));
+});
+
 test('character declarations require a string name and constant primitive fields', () => {
   assert.throws(() => checkTypes(parse('character ayase { pose normal = "asset/a.png" }')), /name/);
   assert.throws(() => checkTypes(parse('character ayase { name = 1 }')), /str.*name/);
@@ -198,6 +248,36 @@ test('rejects statically invalid non-negative timing values before runtime', () 
   assert.throws(() => checkTypes(parse('scene main { wait 2147483648 }')), /2147483647/);
   assert.throws(() => checkTypes(parse('scene main { effect fade black -1 }')), /2147483647/);
   assert.throws(() => checkTypes(parse('character hero {\nname = "Hero"\npose normal = "asset/hero.png"\n}\nscene main { show hero.normal center fade 2147483648 }')), /2147483647/);
+});
+
+test('duration bounds use known global and local constants in new animation commands', () => {
+  const invalid = [
+    'const int bad_duration = -1\nscene main { wait bad_duration }',
+    'const int bad_duration = 2147483648\nscene main { effect fade black bad_duration }',
+    'const int bad_duration = -1\nscene main { move bg by x+1 over bad_duration }',
+    'character hero { name = "Hero"\npose normal = "asset/hero.png" }\nconst int bad_duration = -1\nscene main { show hero.normal center fade bad_duration }',
+    'fn animate() -> none { const int bad_duration = 2147483648\nwait bad_duration }',
+    'fn animate() -> none { const int bad_duration = -1\nmove bg by y+1 over bad_duration }',
+  ];
+  for (const source of invalid) assert.throws(() => checkTypes(parse(source)), /2147483647/, source);
+
+  assert.doesNotThrow(() => checkTypes(parse('character hero { name = "Hero"\npose normal = "asset/hero.png" }\nconst int safe_duration = 250\nscene main { wait safe_duration\neffect fade black safe_duration\nshow hero.normal center fade safe_duration\nmove bg by x+1 over safe_duration }')));
+  assert.doesNotThrow(() => checkTypes(parse('fn animate() -> none { int duration = 250\nset duration = 300\nwait duration }')));
+});
+
+test('validates and preserves non-blocking BGM crossfade options', () => {
+  const script = parse(`
+    asset bgm calm = "asset/calm.ogg"
+    int fade_ms = 320
+    scene main { play bgm calm crossfade fade_ms }
+  `);
+  checkTypes(script);
+  const compiled = compile(script);
+  const command = compiled.scenes[0].instructions.find(statement => statement.op === 'command');
+  assert.deepEqual(command.args.slice(0, 3).map(item => item.kind === 'literal' ? item.value : item.name), ['bgm', 'calm', 'crossfade']);
+  assert.equal(command.args[3].name, 'fade_ms');
+  assert.throws(() => checkTypes(parse(`asset bgm calm = "asset/calm.ogg"\nplay bgm calm dissolve 100`)), /crossfade/);
+  assert.throws(() => checkTypes(parse(`asset bgm calm = "asset/calm.ogg"\nplay bgm calm crossfade -1`)), /譎る俣|duration|0/);
 });
 
 test('supports explicit blocking and async voice playback modes', () => {
@@ -561,6 +641,79 @@ test('analyzes constant if branches and unreachable statements', () => {
   assert.ok(diagnostics.some((item) => item.code === 'unreachable-code'));
 });
 
+test('float constants are propagated through conditions in diagnostics and optimized code', () => {
+  const script = parse(`
+    const float half = 0.5
+    scene main {
+      if half + 0.25 == 0.75 {
+        wait 1
+      } else {
+        say narrator "unreachable float branch"
+      }
+    }
+  `);
+  const diagnostics = analyzeScript(script);
+  assert.ok(diagnostics.some((item) => item.code === 'constant-condition' && item.severity === 'info'));
+  assert.ok(diagnostics.some((item) => item.code === 'unreachable-branch'));
+  const program = compile(script);
+  const instructions = program.scenes.find((scene) => scene.name === 'main').instructions;
+  assert.deepEqual(instructions.map((instruction) => instruction.op), ['command']);
+  assert.equal(instructions[0].name, 'wait');
+});
+
+test('float division by zero and overflow are diagnosed statically', () => {
+  const diagnostics = analyzeScript(parse(`
+    scene main {
+      if 1.0 / 0.0 > 0.0 { wait 1 }
+      if 1e308 * 1e308 > 0.0 { wait 1 }
+    }
+  `));
+  assert.ok(diagnostics.some((item) => item.code === 'division-by-zero' && item.severity === 'warning'));
+  assert.ok(diagnostics.some((item) => item.code === 'float-overflow' && item.severity === 'error'));
+  assert.throws(() => parse('float value = 1e309'), /float literal must be finite/);
+  assert.doesNotThrow(() => compile(parse('float value = 5e-324')), 'finite subnormal literals remain valid');
+});
+
+test('float arithmetic is evaluated before rejecting out-of-range show offsets', () => {
+  const source = `character hero {
+    name = "Hero"
+    pose normal = "asset/hero.png"
+  }
+  scene main { show hero.normal center x+(500001.0 * 2.0) }`;
+  assert.throws(() => checkTypes(parse(source)), /1000000 px/);
+  const constantSource = `const float shift = 500001.0
+  character hero {
+    name = "Hero"
+    pose normal = "asset/hero.png"
+  }
+  scene main { show hero.normal center x+(shift * 2.0) }`;
+  assert.throws(() => checkTypes(parse(constantSource)), /1000000 px/);
+  assert.throws(() => checkTypes(parse('const float shift = 500001.0\nscene main { move bg by x+(shift * 2.0) }')), /1000000 px/);
+  assert.throws(() => checkTypes(parse(`character hero {
+    name = "Hero"
+    pose normal = "asset/hero.png"
+  }
+  fn place() -> none {
+    const float shift = 500001.0
+    show hero.normal center x+(shift * 2.0)
+  }`)), /1000000 px/);
+  assert.doesNotThrow(() => checkTypes(parse(`const float shift = 500001.0
+    character hero {
+      name = "Hero"
+      pose normal = "asset/hero.png"
+    }
+    fn place(shift: float) -> none { show hero.normal center x+(shift) }
+    scene main { wait 1 }`)));
+  assert.doesNotThrow(() => checkTypes(parse(`const float shift = 500001.0
+    character hero {
+      name = "Hero"
+      pose normal = "asset/hero.png"
+    }
+    fn place(flag: int) -> none {
+      if flag == 0 { float shift = 1.0 } else { float shift = 2.0 }
+      show hero.normal center x+(shift)
+    }`)));
+});
 test('warns about statically conflicting character slots without rejecting intentional switches', () => {
   const diagnostics = analyzeScript(parse(`
     character hero {
@@ -1180,6 +1333,311 @@ test('compiler keeps a condition after a mutating function call inside an expres
   assert.equal(program.globals.at(-1).op, 'if');
 });
 
+test('float variable-table domains drive diagnostics and compiler branch folding', () => {
+  const external = new Map([['ratio', 'float']]);
+  external.constraints = new Map([['ratio', { type: 'float', floatMin: 0.25, floatMax: 0.5, floatValues: new Set([0.25, 0.5]) }]]);
+  const script = parse(`scene main {
+    if ratio > 0.75 { say narrator "impossible" } else { wait 1 }
+  }`);
+  const diagnostics = analyzeScript(script, 'current', external);
+  assert.ok(diagnostics.some((item) => item.code === 'constant-condition'));
+  const program = compile(script, external);
+  assert.deepEqual(program.scenes[0].instructions.map((instruction) => instruction.op), ['command']);
+  assert.equal(program.scenes[0].instructions[0].name, 'wait');
+});
+
+test('float domains are refined inside branches without discarding possible values', () => {
+  const external = new Map([['ratio', 'float']]);
+  external.constraints = new Map([['ratio', { type: 'float', floatMin: 0.25, floatMax: 0.5, floatValues: new Set([0.25, 0.5]) }]]);
+  const script = parse(`scene main {
+    if ratio >= 0.5 {
+      if ratio < 0.5 { say narrator "impossible after refinement" } else { wait 2 }
+    }
+  }`);
+  const diagnostics = analyzeScript(script, 'current', external);
+  assert.ok(diagnostics.some((item) => item.code === 'constant-condition'));
+  const program = compile(script, external);
+  assert.equal(program.scenes[0].instructions[0].op, 'if');
+  assert.deepEqual(program.scenes[0].instructions[0].body.map((instruction) => instruction.op), ['command']);
+  assert.equal(program.scenes[0].instructions[0].body[0].name, 'wait');
+});
+
+test('float finite domains prove exhaustive equality branches', () => {
+  const external = new Map([['ratio', 'float']]);
+  external.constraints = new Map([['ratio', { type: 'float', floatValues: new Set([0.25, 0.5]) }]]);
+  const script = parse(`scene main {
+    if ratio == 0.25 { wait 1 } elif ratio == 0.5 { wait 2 }
+  }`);
+  const diagnostics = analyzeScript(script, 'current', external);
+  assert.equal(diagnostics.some((item) => item.code === 'non-exhaustive-condition'), false);
+  const instructions = compile(script, external).scenes[0].instructions;
+  assert.deepEqual(instructions.map((instruction) => instruction.op), ['if']);
+  assert.equal(instructions[0].body[0].name, 'wait');
+  assert.equal(instructions[0].elseIf[0].body[0].name, 'wait');
+
+  const copied = parse(`float copy = 0.0
+scene main {
+  set copy = ratio * 2.0
+  if copy == 0.5 { wait 1 } elif copy == 1.0 { wait 2 }
+}`);
+  const copiedDiagnostics = analyzeScript(copied, 'current', external);
+  assert.equal(copiedDiagnostics.some(item => item.code === 'non-exhaustive-condition'), false,
+    'float finite candidates must survive local assignment and pure arithmetic');
+});
+
+test('float finite domains evaluate combined comparisons in diagnostics and optimization', () => {
+  const external = new Map([['ratio', 'float']]);
+  external.constraints = new Map([['ratio', { type: 'float', floatValues: new Set([0.25, 0.5]) }]]);
+  const script = parse(`scene main {
+    if ratio != 0.25 and ratio != 0.5 { say narrator "impossible" } else { wait 3 }
+  }`);
+  const diagnostics = analyzeScript(script, 'current', external);
+  assert.ok(diagnostics.some((item) => item.code === 'constant-condition'));
+  const instructions = compile(script, external).scenes[0].instructions;
+  assert.deepEqual(instructions.map((instruction) => instruction.op), ['command']);
+  assert.equal(instructions[0].name, 'wait');
+});
+
+test('float variable constraints reject constant writes outside configured bounds', () => {
+  const external = new Map([['ratio', 'float']]);
+  external.constraints = new Map([['ratio', { type: 'float', floatMin: 0.25, floatMax: 0.5, floatValues: new Set([0.25, 0.5]) }]]);
+  const diagnostics = analyzeScript(parse('scene main { set ratio = 0.75 }'), 'current', external);
+  assert.ok(diagnostics.some((item) => item.code === 'variable-constraint' && item.severity === 'error'));
+});
+
+test('integer variable domains validate timed presentation commands', () => {
+  const globals = new Map([['duration', 'int']]);
+  globals.constraints = new Map([['duration', { type: 'int', min: -5n, max: -1n }]]);
+  const script = parse(`character hero { name = "Hero"\npose normal = "asset/hero.png" }
+scene main {
+  wait duration
+  effect fade black duration
+  show hero.normal center fade duration
+  hide hero fade duration
+  move bg by x+1 over duration
+}`);
+  const diagnostics = analyzeScript(script, 'main.tds', globals).filter((item) => item.code === 'duration-range');
+  assert.equal(diagnostics.length, 5);
+  assert.ok(diagnostics.every((item) => item.severity === 'error'));
+  assert.throws(() => compile(script, globals), /演出時間の値域がすべて/);
+
+  globals.constraints = new Map([['duration', { type: 'int', values: new Set([-1n, 100n]) }]]);
+  const mixed = analyzeScript(parse('scene main { wait duration }'), 'main.tds', globals);
+  assert.ok(mixed.some((item) => item.code === 'duration-range' && item.severity === 'warning'));
+  assert.doesNotThrow(() => compile(parse('scene main { wait duration }'), globals));
+
+  globals.constraints = new Map([['duration', { type: 'int', min: 2147483648n }]]);
+  assert.ok(analyzeScript(parse('scene main { wait duration }'), 'main.tds', globals).some((item) => item.code === 'duration-range' && item.severity === 'error'));
+  globals.constraints = new Map([['duration', { type: 'int', max: -1n }]]);
+  assert.ok(analyzeScript(parse('scene main { wait duration }'), 'main.tds', globals).some((item) => item.code === 'duration-range' && item.severity === 'error'));
+
+  globals.constraints = new Map([['duration', { type: 'int', min: 0n, max: 100000n }]]);
+  const valid = analyzeScript(parse('scene main { wait duration * 2 }'), 'main.tds', globals);
+  assert.equal(valid.some((item) => item.code === 'duration-range'), false);
+
+  globals.constraints = new Map([['duration', { type: 'int', min: 0n, max: 2147483648n }]]);
+  const guarded = parse('scene main { if duration > 2147483647 { wait duration } }');
+  const guardedDiagnostics = analyzeScript(guarded, 'main.tds', globals);
+  assert.ok(guardedDiagnostics.some((item) => item.code === 'duration-range' && item.severity === 'error'));
+  assert.throws(() => compile(guarded, globals), /演出時間の値域がすべて/);
+  const safeBranch = analyzeScript(parse('scene main { if duration <= 2147483647 { wait duration } }'), 'main.tds', globals);
+  assert.equal(safeBranch.some((item) => item.code === 'duration-range'), false);
+});
+
+test('integer bounds preserve float variable ranges through int conversion', () => {
+  const globals = new Map([['ratio', 'float']]);
+  globals.constraints = new Map([['ratio', { type: 'float', floatMin: -3.2, floatMax: -2.1 }]]);
+  const definitelyNegative = parse('scene main { wait int(ratio) }');
+  assert.ok(analyzeScript(definitelyNegative, 'main.tds', globals).some((item) => item.code === 'duration-range' && item.severity === 'error'));
+  assert.throws(() => compile(definitelyNegative, globals), /演出時間/);
+
+  globals.constraints = new Map([['ratio', { type: 'float', floatMin: -1.2, floatMax: 2.2 }]]);
+  const partlyNegative = analyzeScript(parse('scene main { wait int(ratio) }'), 'main.tds', globals);
+  assert.ok(partlyNegative.some((item) => item.code === 'duration-range' && item.severity === 'warning'));
+  assert.doesNotThrow(() => compile(parse('scene main { wait int(ratio) }'), globals));
+
+  globals.constraints = new Map([['ratio', { type: 'float', floatMin: -0.9, floatMax: 2.2 }]]);
+  const truncatedSafe = analyzeScript(parse('scene main { wait int(ratio) }'), 'main.tds', globals);
+  assert.equal(truncatedSafe.some((item) => item.code === 'duration-range'), false, 'truncation toward zero makes every value nonnegative');
+
+  const textGlobals = new Map([['durationText', 'str']]);
+  textGlobals.constraints = new Map([['durationText', { type: 'str', values: new Set(['-5', '-1']) }]]);
+  const negativeTextDuration = analyzeScript(parse('scene main { wait int(durationText) }'), 'main.tds', textGlobals);
+  assert.ok(negativeTextDuration.some(item => item.code === 'duration-range' && item.severity === 'error'),
+    'finite integer-string candidates must survive str-to-int conversion');
+  assert.throws(() => compile(parse('scene main { wait int(durationText) }'), textGlobals), /演出時間/);
+
+  textGlobals.constraints = new Map([['durationText', { type: 'str', values: new Set(['-1', '2147483648']) }]]);
+  const disjointInvalid = analyzeScript(parse('scene main { wait int(durationText) }'), 'main.tds', textGlobals);
+  assert.ok(disjointInvalid.some(item => item.code === 'duration-range' && item.severity === 'error'),
+    'a finite set with invalid values on both sides of the valid duration interval must not be widened into a warning');
+
+  textGlobals.constraints = new Map([['durationText', { type: 'str', values: new Set(['-1', '100']) }]]);
+  assert.ok(analyzeScript(parse('scene main { wait int(durationText) }'), 'main.tds', textGlobals)
+    .some(item => item.code === 'duration-range' && item.severity === 'warning'), 'mixed valid and invalid durations must remain uncertain, not silently safe');
+
+  const floatSource = new Map([['largeFloat', 'float']]);
+  floatSource.constraints = new Map([['largeFloat', { type: 'float', floatMin: 1e20, floatMax: 1e21 }]]);
+  assert.ok(analyzeScript(parse('scene main { say narrator str(int(largeFloat)) }'), 'main.tds', floatSource)
+    .some(item => item.code === 'invalid-conversion' && item.severity === 'error'), 'known float domains outside int64 must be rejected before runtime');
+
+  textGlobals.constraints = new Map([['durationText', { type: 'str', values: new Set(['not-a-number', '12']) }]]);
+  assert.ok(analyzeScript(parse('scene main { say narrator str(int(durationText)) }'), 'main.tds', textGlobals)
+    .some(item => item.code === 'invalid-conversion' && item.severity === 'warning'), 'mixed valid and malformed configured strings must be reported as uncertain');
+});
+
+test('integer finite candidates survive local copies for exhaustive branch analysis', () => {
+  const external = new Map([['route', 'int']]);
+  external.constraints = new Map([['route', { type: 'int', min: 0n, max: 2n, values: new Set([0n, 2n]) }]]);
+  const script = parse(`int copy = 0
+scene main {
+  set copy = route
+  if copy == 0 { wait 1 } elif copy == 2 { wait 2 }
+}`);
+  const diagnostics = analyzeScript(script, 'current', external);
+  assert.equal(diagnostics.some(item => item.code === 'non-exhaustive-condition'), false,
+    'finite integer alternatives must not be widened to their min/max interval on assignment');
+});
+
+test('float local assignments retain ranges through branch merges and int conversion', () => {
+  const globals = new Map([['ratio', 'float'], ['gate', 'int']]);
+  globals.constraints = new Map([['ratio', { type: 'float', floatMin: -3.2, floatMax: -2.1 }]]);
+  const copied = parse('fn timed() -> none { float local_ratio = ratio\nwait int(local_ratio) }\nscene main { timed() }');
+  assert.ok(analyzeScript(copied, 'main.tds', globals).some(item => item.code === 'duration-range' && item.severity === 'error'));
+  assert.throws(() => compile(copied, globals), /演出時間/);
+
+  const merged = parse(`float duration = 0.0
+scene main {
+  if gate == 1 { set duration = -2.0 } else { set duration = 50.0 }
+  wait int(duration)
+}`);
+  const mergedDiagnostics = analyzeScript(merged, 'main.tds', globals);
+  assert.ok(mergedDiagnostics.some(item => item.code === 'duration-range' && item.severity === 'warning'), 'branch merge retains that some float outcomes truncate below zero');
+  assert.doesNotThrow(() => compile(merged, globals));
+});
+
+test('timed-command bounds follow values fixed by assignments and branch merges', () => {
+  const assigned = parse('int duration = 100\nscene main { set duration = -1\nwait duration }');
+  assert.ok(analyzeScript(assigned).some((item) => item.code === 'duration-range' && item.severity === 'error'));
+  assert.throws(() => compile(assigned), /確定した演出時間/);
+
+  const merged = parse(`int gate = 0
+int duration = 100
+scene main {
+  if gate == 1 { set duration = -2 } else { set duration = -2 }
+  wait duration
+}`);
+  const mergedDiagnostics = analyzeScript(merged).filter((item) => item.code === 'duration-range');
+  assert.ok(mergedDiagnostics.some((item) => item.severity === 'error'));
+  assert.throws(() => compile(merged), /確定した演出時間/);
+
+  const differentValues = parse(`int gate = 0
+int duration = 100
+scene main {
+  if gate == 1 { set duration = -2 } else { set duration = -3 }
+  wait duration
+}`);
+  const mergedRange = analyzeScript(differentValues).filter((item) => item.code === 'duration-range');
+  assert.ok(mergedRange.some((item) => item.severity === 'error'), 'both incoming values are invalid even though they are not identical');
+  assert.throws(() => compile(differentValues), /演出時間/);
+});
+
+test('exactly-once for loops propagate definite numeric assignments', () => {
+  const globals = new Map([['duration', 'int']]);
+  globals.constraints = new Map([['duration', { type: 'int', min: -100n, max: 100n }]]);
+  const script = parse(`global int duration = 100
+scene main {
+  for i from 0 to 0 step 1 {
+    set duration = -1
+  }
+  wait duration
+}`);
+  const diagnostics = analyzeScript(script, 'current', globals).filter(item => item.code === 'duration-range');
+  assert.ok(diagnostics.some(item => item.severity === 'error'), 'an exactly-once loop must propagate its definite assignment');
+  assert.throws(() => compile(script), /演出時間/);
+});
+
+test('function call arguments flow into timed and movement validation', () => {
+  const negativeDuration = parse('fn animate(duration: int) -> none { wait duration }\nscene main { animate(-1) }');
+  assert.ok(analyzeScript(negativeDuration).some(item => item.code === 'duration-range' && item.severity === 'error'));
+  assert.throws(() => compile(negativeDuration), /演出時間/);
+  assert.equal(analyzeScript(parse('fn animate(duration: int) -> none { wait duration }\nscene main { animate(250) }')).some(item => item.code === 'duration-range'), false);
+  const specializedBranch = parse('fn clamp(value: int) -> int { if value <= 0 { return 0 }\nreturn value }\nscene main { clamp(-1) }');
+  const specializedDiagnostics = analyzeScript(specializedBranch);
+  assert.equal(specializedDiagnostics.some(item => ['constant-condition', 'unreachable-code'].includes(item.code) && item.line <= 2), false,
+    'call-specific branch selection must not leak internal unreachable-code noise from a shared helper');
+  const nestedCall = parse('fn animate(duration: int) -> int { wait duration\nreturn duration }\nfn wrapper() -> int { return animate(-1) }\nint result = 0\nscene main { set result = wrapper() }');
+  assert.ok(analyzeScript(nestedCall).some(item => item.code === 'duration-range' && item.severity === 'error'), 'expression calls in function bodies also propagate known arguments');
+  const shadowedParameter = parse('const int duration = -1\nfn animate(duration: int, marker: int) -> none { wait duration }\nscene main { animate(dynamicDuration, 1) }');
+  assert.doesNotThrow(() => compile(shadowedParameter, new Map([['dynamicDuration', 'int']])), 'a same-named global constant must not be mistaken for an unknown parameter');
+
+  const finiteGlobals = new Map([['route', 'int']]);
+  finiteGlobals.constraints = new Map([['route', { type: 'int', min: 0n, max: 2n, values: new Set([0n, 2n]) }]]);
+  const finiteDispatch = parse('fn dispatch(route: int) -> none { if route == 0 { wait 1 } elif route == 2 { wait 1 } }\nscene main { dispatch(route) }');
+  const finiteDiagnostics = analyzeScript(finiteDispatch, 'main.tds', finiteGlobals);
+  assert.equal(finiteDiagnostics.some(item => item.code === 'non-exhaustive-condition'), false, JSON.stringify(finiteDiagnostics.filter(item => item.code === 'non-exhaustive-condition')));
+  const transformedDispatch = parse('fn dispatch(route: int) -> none { if route == 0 { wait 1 } elif route == 4 { wait 1 } }\nscene main { dispatch(route * 2) }');
+  assert.equal(analyzeScript(transformedDispatch, 'main.tds', finiteGlobals).some(item => item.code === 'non-exhaustive-condition'), false,
+    'finite integer domains must survive arithmetic at an interprocedural callsite');
+
+  const stringGlobals = new Map([['routeName', 'str'], ['gate', 'int']]);
+  stringGlobals.constraints = new Map([['routeName', { type: 'str', values: new Set(['common', 'true']) }]]);
+  stringGlobals.constraints.set('gate', { type: 'int', min: 0n, max: 1n, values: new Set([0n, 1n]) });
+  const stringDispatch = parse('fn dispatch_name(routeName: str) -> none { if routeName == "common" { wait 1 } }\nscene main { dispatch_name(routeName) }');
+  assert.ok(analyzeScript(stringDispatch, 'main.tds', stringGlobals).some(item => item.code === 'non-exhaustive-condition'), 'string possibleValues must remain finite across parameter passing');
+  const stringCopy = parse(`str local_route = ""
+str branched_route = ""
+fn dispatch_name(routeName: str) -> none {
+  if routeName == "common_" { wait 1 } elif routeName == "true_" { wait 1 }
+}
+scene main {
+  set local_route = routeName + "_"
+  if local_route == "common_" { wait 1 } elif local_route == "true_" { wait 1 }
+  dispatch_name(routeName + "_")
+  if gate == 0 { set branched_route = routeName + "_" } else { set branched_route = routeName + "!" }
+  if branched_route == "common_" { wait 1 }
+  elif branched_route == "true_" { wait 1 }
+  elif branched_route == "common!" { wait 1 }
+  elif branched_route == "true!" { wait 1 }
+}`);
+  assert.equal(analyzeScript(stringCopy, 'main.tds', stringGlobals).some(item => item.code === 'non-exhaustive-condition'), false,
+    'string candidate sets must survive concatenation, local assignment, branch merge and function-call analysis');
+
+  const globals = new Map([['offset', 'float']]);
+  globals.constraints = new Map([['offset', { type: 'float', floatMin: 1000001.0, floatMax: 1000002.0 }]]);
+  const moved = parse('fn shift(amount: float) -> none { move bg by x+(amount) }\nscene main { shift(offset) }');
+  assert.ok(analyzeScript(moved, 'main.tds', globals).some(item => item.code === 'presentation-offset-range' && item.severity === 'error'));
+  assert.throws(() => compile(moved, globals), /位置ずらし/);
+});
+
+test('float variable constraints bound arithmetic assignments and warn when only some values escape', () => {
+  const external = new Map([['ratio', 'float']]);
+  external.constraints = new Map([['ratio', { type: 'float', floatMin: 0.25, floatMax: 0.5 }]]);
+  const diagnostics = analyzeScript(parse('scene main { set ratio = ratio + 0.1 }'), 'current', external);
+  assert.ok(diagnostics.some((item) => item.code === 'variable-constraint' && item.severity === 'warning'));
+  external.constraints = new Map([['ratio', { type: 'float', floatMin: 0.75, floatMax: 1.0 }]]);
+  const definitelyInvalid = analyzeScript(parse('scene main { set ratio = ratio + 2.0 }'), 'current', external);
+  assert.ok(definitelyInvalid.some((item) => item.code === 'variable-constraint' && item.severity === 'error'));
+});
+
+test('float value domains are invalidated by direct and compiled function side effects', () => {
+  const external = new Map([['ratio', 'float']]);
+  external.constraints = new Map([['ratio', { type: 'float', floatMin: 0.25, floatMax: 0.5, floatValues: new Set([0.25, 0.5]) }]]);
+  const script = parse(`fn set_low() -> none { set ratio = 0.25 }
+scene main {
+  if ratio == 0.25 {
+    set_low()
+    if ratio == 0.25 { wait 1 }
+  }
+}`);
+  const diagnostics = analyzeScript(script, 'current', external);
+  assert.equal(diagnostics.some((item) => item.code === 'constant-condition' && item.line === 5), false);
+  const program = compile(script, external);
+  const outer = program.scenes[0].instructions[0];
+  assert.equal(outer.op, 'if');
+  assert.equal(outer.body.find((instruction) => instruction.op === 'if')?.condition.left.kind, 'load');
+});
+
 test('compiler does not invalidate facts from a dormant elif condition', () => {
   const external = new Map([['counter', 'int']]);
   external.constraints = new Map([['counter', { type: 'int', min: 1n, max: 3n }]]);
@@ -1393,7 +1851,28 @@ test('analyzes constant builtin conversions for flow and range safety', () => {
   assert.ok(diagnostics.some((item) => item.code === 'constant-condition'));
   assert.ok(diagnostics.some((item) => item.code === 'unreachable-scene' && /hidden/.test(item.message)));
   assert.throws(() => compile(parse('int value = int("9223372036854775808")')), /64bit/);
-  assert.doesNotThrow(() => compile(parse('int value = int("+-1")')));
+  assert.throws(() => compile(parse('int value = int("+-1")')), /整数形式/);
+  assert.throws(() => compile(parse('float value = float(" ")')), /有限数値形式/);
+  assert.throws(() => compile(parse('int value = int(1e20)')), /64bit整数/);
+  assert.throws(() => compile(parse('float value = float("1e999")')), /有限数値形式/);
+  assert.doesNotThrow(() => compile(parse('int value = int("+1")\nfloat ratio = float("-1.25e2")')));
+});
+
+test('float conversions participate in side-effect-safe condition deduplication', () => {
+  const globals = new Map([['ratio', 'float']]);
+  globals.constraints = new Map([['ratio', { type: 'float', floatMin: 0.25, floatMax: 0.5 }]]);
+  const diagnostics = analyzeScript(parse(`scene main {
+    if float(ratio) > 0.0 { wait 1 }
+    elif float(ratio) > 0.0 { wait 2 }
+  }`), 'main.tds', globals);
+  assert.ok(diagnostics.some((item) => item.code === 'duplicate-condition'));
+
+  const throughFunction = analyzeScript(parse(`fn convert(value: float) -> float { return float(value) }
+scene main {
+  float copy = convert(ratio)
+  if ratio > 1.0 { wait 1 }
+}`), 'main.tds', globals);
+  assert.ok(throughFunction.some((item) => item.code === 'constant-condition' && item.severity === 'warning'), 'pure conversion wrappers must not erase the static variable domain');
 });
 
 test('warns when a constant for range exceeds the runtime loop limit', () => {
@@ -1401,6 +1880,23 @@ test('warns when a constant for range exceeds the runtime loop limit', () => {
   assert.ok(diagnostics.some((item) => item.code === 'loop-limit' && item.severity === 'warning'));
   const exact = analyzeScript(parse('scene start { for i from 0 to 99999 { wait 1 } }'));
   assert.equal(exact.some((item) => item.code === 'loop-limit'), false);
+});
+
+test('while loop updates invalidate entry value constraints before infinite-loop analysis', () => {
+  const diagnostics = analyzeScript(parse(`fn refine(value: float) -> float {
+  float scaled = value
+  float scale = 1.0
+  while scaled >= 4.0 {
+    set scaled = scaled / 4.0
+    set scale = scale * 2.0
+  }
+  int iteration = 0
+  while iteration < 8 {
+    set iteration = iteration + 1
+  }
+  return scale
+}`));
+  assert.equal(diagnostics.some(item => item.code === 'infinite-loop' || item.code === 'unreachable-code'), false, JSON.stringify(diagnostics));
 });
 
 test('warns when a provably bounded while exceeds the runtime loop limit', () => {

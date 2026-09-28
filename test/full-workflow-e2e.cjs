@@ -190,8 +190,8 @@ async function stopServer(child) {
     await editorPage.locator('.project-settings footer .project-settings-save').click();
     await editorPage.waitForFunction(() => document.querySelector('#status')?.textContent.includes('作品設定を保存しました'));
     const savedTheme = await editorPage.evaluate(async () => (await (await fetch('/api/project')).json()).settings.native_ui_theme);
-    assert.equal(savedTheme, 'ui/player-ui.json');
-    assert.equal(JSON.parse(await fs.readFile(path.join(projectRoot, 'asset', 'ui', 'player-ui.json'), 'utf8')).version, 1);
+    assert.equal(savedTheme, 'player-ui.json');
+    assert.equal(JSON.parse(await fs.readFile(path.join(projectRoot, 'setting', 'player-ui.json'), 'utf8')).version, 1);
 
     await editorPage.locator('[data-activity="explorer"]').click();
     await editorPage.locator('.scene-folder[data-path="senario"] .tree-action').click();
@@ -207,7 +207,7 @@ async function stopServer(child) {
     await fs.copyFile(path.join(root, 'native', 'engine_data', 'ui', 'dialogue_box.png'), path.join(projectAssets, 'pixel.png'));
     await fs.writeFile(path.join(projectRoot, 'senario', 'common.tds'), 'fn shared_helper() -> none { wait 1 }\n', 'utf8');
     const source = [
-      'include "common.tds"',
+      'include "common.tds" as common',
       'asset image portrait = "asset/pixel.png"',
       'global int score = 0',
       'scene main {',
@@ -223,7 +223,7 @@ async function stopServer(child) {
       '',
     ].join('\n');
     const unformattedSource = [
-      'include "common.tds"',
+      'include "common.tds" as common',
       'asset image portrait="asset/pixel.png"',
       'global int score=0',
       'scene main{',
@@ -241,7 +241,10 @@ async function stopServer(child) {
     const chapterSource = 'scene chapter {\n  say narrator "Chapter reached"\n}\n';
     const editor = editorPage.locator('#editor');
     await editor.fill(unformattedSource);
-    await editorPage.waitForFunction(() => document.querySelector('#status')?.textContent.includes('検証に成功しました'));
+    await editorPage.waitForFunction(() => document.querySelector('#status')?.textContent.includes('検証に成功しました')).catch(async (error) => {
+      const state = await editorPage.evaluate(() => ({ status: document.querySelector('#status')?.textContent, result: document.querySelector('#result')?.textContent }));
+      throw Error(`live validation did not settle: ${JSON.stringify(state)} (${error.message})`);
+    });
     assert.equal(await editor.inputValue(), unformattedSource, 'startup restore must not replace edits after a project switch');
     await editorPage.locator('[data-menu="file"]').click();
     await editorPage.locator('[data-menu-action="save"]').click();
@@ -320,7 +323,7 @@ async function stopServer(child) {
 
     await fs.writeFile(path.join(projectRoot, 'senario', 'chapter.tds'), 'scene chapter{say narrator "Compile boundary"}\n', 'utf8');
     await editorPage.locator('[data-menu="run"]').click();
-    await editorPage.locator('[data-menu-action="compile"]').click();
+    await editorPage.locator('[data-menu-action="build"]').click();
     await editorPage.waitForFunction(() => document.querySelector('#status')?.textContent.includes('ファイル精査完了')).catch(async (error) => {
       const state = await editorPage.evaluate(() => ({ status: document.querySelector('#status')?.textContent, result: document.querySelector('#result')?.textContent }));
       throw Error(`project compile did not complete: ${JSON.stringify(state)} (${error.message})`);

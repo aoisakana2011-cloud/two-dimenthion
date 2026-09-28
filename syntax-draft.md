@@ -53,7 +53,7 @@ scene main {
 - 空行は無視される。
 - 改行は通常、命令の終端になる。辞書リテラル内では改行できる。
 - 整数は符号付き64 bitで扱う。
-- 保存可能な基本型は `int` と `str`。複合型として `dict[int]`、`dict[str]`、名前付き `struct`、キャラクターオブジェクトがある。
+- 基本型は `int`、`float`、`str`。複合型として `dict[int]`、`dict[float]`、`dict[str]`、名前付き `struct`、キャラクターオブジェクトがある。`none` は関数の戻り値型に使えるが、値や変数の型には使えない。
 - 内部的な真偽値は条件式にだけ存在し、`bool` 型の変数は宣言できない。
 - `true`、`false`、`null` のリテラルはない。真偽値は比較・論理演算の結果としてのみ存在する。
 
@@ -157,6 +157,8 @@ Project/
 ```tds
 include "functions.tds" as funcs
 include "chapter/common.tds" as common
+include "std/math.tds" as math
+include "std/motion/walk.tds" as walk
 ```
 
 - importには必ず一意な別名を指定し、関数は `funcs.add(1)` のように修飾して呼び出す。
@@ -167,6 +169,9 @@ include "chapter/common.tds" as common
 - include先は再利用宣言用モジュールで、シーンや実行命令は書けない。関数名は別名で修飾される。アセット、キャラクター、struct、global宣言は互換性のためプロジェクト共通カタログに統合される。
 - モジュールのglobal宣言は依存先から初期化される。シナリオファイルへの遷移は `goto` のみで行う。
 - include先の `struct` はプロジェクト統合時に型宣言として取り込まれ、include元のグローバル宣言・関数シグネチャ・関数本体から参照できる。循環includeや同名structはエラーになる。
+- `std/` はエディター同梱の読み取り専用標準ライブラリ用予約パスで、作品内の `scenario_dir/std/` より優先される。`std/math.tds`、`std/motion/walk.tds`、`std/motion/effects.tds` をincludeできる。
+
+例: `include "std/math.tds" as math` の後に `math.sin(angle)`、`include "std/motion/walk.tds" as walk` の後に `walk.walk_bob(6.0, progress)` と書く。`std/motion/effects.tds` は `shake`、`breathe`、`hop`、`drift` を提供する。引数と単位の詳細は [`std/README.md`](std/README.md) を参照。
 
 別ファイルへの遷移は `goto` で行う。
 
@@ -333,7 +338,7 @@ set user.age = user.age + 1
 say narrator "{user.name}: {user.age}"
 ```
 
-- structフィールド型は `int` または `str`。
+- structフィールド型は `int`、`float` または `str`。
 - `struct` はファイルのトップレベルで宣言する。scene、関数、choice、条件ブロックの内部には書けない。同一ファイル内では前方参照も解決される。
 - 未宣言の型名を変数宣言に書いてもstructとして推測しない。`User user = ...` を使うファイル自身、またはinclude依存先に必ず `struct User { ... }` を置く。
 - 初期値は辞書形式で指定する。
@@ -441,11 +446,11 @@ say narrator "{copy.volume}"      # 20
 | `Player copy = player` | 宣言時のstruct初期化エラー | `{ ... }` で初期化してから `set copy = player` |
 | `set p.rank = 1` | 未定義フィールドでエラー | フィールド追加は不可 |
 | `unset p.name` | エラー | `unset` は辞書要素専用 |
-| `struct Party { leader: Player }` | 構文エラー | フィールド型は `int` または `str` のみ |
-| `dict[Player] members = ...` | 型として使用不可 | 辞書の値型も `int` または `str` のみ |
+| `struct Party { leader: Player }` | 構文エラー | フィールド型は `int`、`float` または `str` のみ |
+| `dict[Player] members = ...` | 型として使用不可 | 辞書の値型は `int`、`float`、`str` のいずれか |
 | `Player p = ...` を `struct Player` より前に書く | 同一ファイル内またはinclude依存先にstructがあれば有効 | structはトップレベルで宣言する |
 
-structの入れ子、structフィールドへの辞書、辞書の値としてのstruct、`bool` フィールドは現在のDSLでは対応していない。複雑な状態が必要なら、複数のstruct変数に分けるか、`dict[int]` / `dict[str]` を別変数として持つ。
+structの入れ子、structフィールドへの辞書、辞書の値としてのstruct、`bool` フィールドは現在のDSLでは対応していない。複雑な状態が必要なら、複数のstruct変数に分けるか、`dict[int]` / `dict[float]` / `dict[str]` を別変数として持つ。
 
 ### 8.8 複数ファイルで使うstruct
 
@@ -498,7 +503,7 @@ ayase.affection
 7. `and`
 8. `or`
 
-`+` は `int + int` または `str + str`。`-`、`*`、`/`、`%` は `int` 専用。`>`、`>=`、`<`、`<=` は `int` 専用。`==` と `!=` は左右が同じ型でなければならない。
+`+` は `int + int`、`float + float`、または `str + str`。`-`、`*`、`/` は左右が同じ数値型（`int` 同士または `float` 同士）で使用できる。`%` は `int` 同士のみ。`>`、`>=`、`<`、`<=` は同じ数値型同士で使用できる。暗黙の `int` / `float` 変換はない。`==` と `!=` は左右が同じ型でなければならない。
 
 論理演算は短絡評価される。条件全体の型は内部的な `bool` でなければならない。
 
@@ -590,7 +595,7 @@ say narrator "結果は {ending_text()}"
 
 ## 13. 画像、音声、動画、演出
 
-配置位置は `left`、`center`、`right`。
+配置位置は `far_left`、`left`、`center`、`right`、`far_right` の5種類。
 
 ### 13.1 背景とBGM
 
@@ -621,7 +626,7 @@ hide ayase fade 300
 
 - `show <character>.<pose> <position>` はキャラクターを表示する。
 - `x+30` / `x-20` / `y+50` / `y-10` でslotの基準位置からpx単位でずらす。x+は右、y+は下。x/y各1回、±1,000,000 pxまで。
-- `move character <id> by x±<px> y±<px> [over <ms>]` は表示中のキャラクターを現在位置から移動する。`move bg by ...` は設定済み背景を移動する。移動量はpx、x+は右、y+は下。指定した時間の移動は完了まで待ち、時間省略時は即時。x/y各1回、累積位置は±1,000,000 pxまで。
+- `move character <id> by [x±<px>] [y±<px>] [over <ms>]` は表示中のキャラクターを現在位置から移動する。`move bg by ...` は設定済み背景を移動する。x/yのどちらか少なくとも一方は必須で、各軸は1回まで。移動量はpx、x+は右、y+は下。指定した時間の移動は完了まで待ち、時間省略時は即時。累積位置は±1,000,000 pxまで。
 - 既に表示中なら、同じ命令で位置とポーズを更新する。
 - `fade <int>` を付けるとフェードインする。
 - `hide` は必要ならフェードアウトしてから表示を解除する。
@@ -854,8 +859,8 @@ scene chapter1 {
 
 | 分類 | 構文 | 制約 |
 |---|---|---|
-| 宣言 | `int\|str <name> = <expr>` | 初期値は必須、型は一致させる |
-| 宣言 | `dict[int\|str] <name> = <dict>` | キーは常に `str` |
+| 宣言 | `int\|float\|str <name> = <expr>` | 初期値は必須、型は一致させる |
+| 宣言 | `dict[int\|float\|str] <name> = <dict>` | キーは常に `str` |
 | 宣言 | `const <type> <name> = <expr>` | 以後の `set` / `unset` は不可 |
 | 宣言 | `global <declaration>` | ファイルのトップレベルだけ |
 | 更新 | `set <target> = <expr>` | target は変数、辞書要素、struct／キャラクターフィールド |
@@ -864,7 +869,7 @@ scene chapter1 {
 | 背景 | `bg <bg-id>` / `bgm <bgm-id>` | 種別が一致するアセットID |
 | 表示 | `show <character>.<pose> <far_left\|left\|center\|right\|far_right> [x±<px>] [y±<px>] [fade <ms>]` | 5スロットの立ち絵表示。x+は右、y+は下 |
 | 表示 | `hide <character> [fade <ms>]` | キャラクターを非表示 |
-| 移動 | `move character <id> by [x±<px>] [y±<px>] [over <ms>]` / `move bg by [x±<px>] [y±<px>] [over <ms>]` | 現在位置からの差分移動。時間付きはblocking |
+| 移動 | `move character <id> by [x±<px>] [y±<px>] [over <ms>]` / `move bg by [x±<px>] [y±<px>] [over <ms>]` | x/yのいずれか必須。現在位置からの差分移動。時間付きはblocking |
 | 表示 | `show image <image-id> <far_left\|left\|center\|right\|far_right>` / `clear image <image-id>` | 一般画像。fade不可 |
 | 再生 | `play <se\|voice\|bgm> <id>` | 種別が一致するアセットID。voiceは `[blocking\|async]` を追加可能 |
 | 再生 | `play video <id> [blocking\|async]` | 省略時は `async` |
@@ -942,7 +947,7 @@ scene ending {
 
 ```text
 scene asset character struct pose include
-int str dict none global
+int float str dict none global
 set unset
 say bg bgm char show at hide image clear play effect wait
 if elif else and or not

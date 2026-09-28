@@ -1,6 +1,0 @@
-# Novel Script project settings
-scenario_dir = senario
-asset_dir = asset
-start_file = main.tds
-title = 二十面相は恋を盗む
-native_ui_theme = ui/player-ui.json

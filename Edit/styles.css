@@ -74,7 +74,7 @@ button { cursor: pointer; }
 #editor::-webkit-scrollbar { display: none; }
 #minimap { position: absolute; z-index: 2; top: 0; right: 0; bottom: 0; width: 92px; overflow: hidden; border-left: 1px solid #1c2630; background: #0b1016; opacity: .9; cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: none; }
 #minimap-content { position: absolute; top: 10px; right: 6px; left: 7px; margin: 0; color: #668b72; font: 3px/4px ui-monospace,Consolas,monospace; white-space: pre; overflow: hidden; }
-#minimap-viewport { position: absolute; right: 1px; left: 1px; min-height: 24px; border-radius: 3px; background: #aeb4bd66; cursor: grab; }
+#minimap-viewport { position: absolute; right: 1px; left: 1px; min-height: 0; border-radius: 3px; background: #aeb4bd66; cursor: grab; }
 #minimap-viewport:active { cursor: grabbing; }
 .app-grid { height: calc(100vh - 52px) !important; }
 #minimap:hover { opacity: 1; }
@@ -494,6 +494,7 @@ html.electron-desktop .menu-bar, html.electron-desktop .menu-popup, html.electro
   background: transparent;
 }
 .syntax-tooltip-description { margin:0 0 7px; color:#a9a9a9; }
+.syntax-tooltip-example { margin:6px 0 8px; padding:7px 8px; overflow:auto; border-left:2px solid #55748a; color:#d4d4d4; background:#1e1e1e; font:11px/1.5 Consolas,monospace; white-space:pre-wrap; }
 .syntax-tooltip-link {
   margin-top: 4px;
   padding: 4px 5px;
@@ -657,3 +658,69 @@ html.electron-desktop .menu-bar, html.electron-desktop .menu-popup, html.electro
 .debug-player-viewport { position:relative; flex:none; width:100%; aspect-ratio:var(--debug-player-aspect,16 / 9); overflow:hidden; background:#111; }
 .debug-player-viewport iframe { position:absolute; top:0; left:0; display:block; width:1280px; height:720px; max-width:none; max-height:none; border:0; background:#111; transform-origin:top left; }
 @media(max-width:900px) { .debug-player-panel { right:8px; bottom:8px; width:min(78vw,560px); } }
+
+/* Keep editor-owned dialogs on the same compact, neutral workbench surface. */
+.editor-dialog {
+  box-sizing:border-box;
+  min-width:min(280px,calc(100vw - 24px));
+  max-width:calc(100vw - 24px);
+  padding:12px;
+  border:1px solid #3c3c3c;
+  border-radius:3px;
+  color:#cccccc;
+  background:#252526;
+  box-shadow:0 8px 24px #0008;
+}
+.editor-dialog input {
+  padding:4px 7px;
+  border:1px solid #3c3c3c;
+  border-radius:2px;
+  color:#ddd;
+  background:#1f1f1f;
+}
+.editor-dialog button {
+  min-height:26px;
+  margin:8px 4px 0 0;
+  padding:4px 10px;
+  border:1px solid #454545;
+  border-radius:2px;
+  color:#cccccc;
+  background:#2d2d30;
+  font-size:11px;
+}
+.editor-dialog button:hover { color:#fff; background:#383838; }
+.editor-dialog .project-settings-close {
+  position:absolute;
+  top:7px;
+  right:8px;
+  display:grid;
+  width:26px;
+  height:26px;
+  min-height:0;
+  margin:0;
+  padding:0;
+  place-items:center;
+  border:0;
+  border-radius:2px;
+  color:#aaa;
+  background:transparent;
+  font-size:18px;
+  line-height:1;
+}
+.editor-dialog .project-settings-close:hover { color:#fff; background:#3a3d41; }
+.game-screen-settings {
+  width:min(1000px,calc(100vw - 32px));
+  max-height:calc(100vh - 48px);
+  padding:12px;
+}
+.project-settings {
+  width:min(700px,calc(100vw - 32px));
+  max-height:calc(100vh - 48px);
+  padding:12px;
+}
+.workbench-message { width:min(430px,calc(100vw - 32px)); padding:12px; }
+.language-guide {
+  width:min(620px,calc(100vw - 32px));
+  max-height:calc(100vh - 48px);
+  padding:14px 16px;
+}

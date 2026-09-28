@@ -77,6 +77,7 @@ async function projectGlobalVariables(scenesRoot, dataRoot) {
 }
 
 const { validateVariableFlow } = require('./variable-flow');
+const { withSaveLoadScreens } = require('../Edit/game-screens');
 async function pack(input, output, roots = {}) {
   const layout = roots.projectRoot ? projectLayout(roots.projectRoot) : (!roots.scenesRoot || !roots.assetsRoot) ? layoutForInput(input) : null;
   const scenesRoot = roots.scenesRoot || layout.scenesRoot;
@@ -103,7 +104,7 @@ async function pack(input, output, roots = {}) {
     for (const name of declarationsByFile.get(file) || []) visibleGlobals.delete(name);
     const visibleCharacters = new Map(characters);
     for (const [name, owner] of characterOwners) if (owner === file) visibleCharacters.delete(name);
-    const p = await compileProject(source, assetsRoot, scenesRoot, visibleGlobals, visibleCharacters);
+    const p = await compileProject(source, assetsRoot, scenesRoot, visibleGlobals, visibleCharacters, file, { debug: Boolean(roots.debug) });
     p.includes = []; // Each packaged program already contains its resolved includes.
     files[file] = p;
     const local = new Set(p.scenes.map(s => s.name));
@@ -117,7 +118,7 @@ async function pack(input, output, roots = {}) {
   for (const name of declarationsByFile.get(entry) || []) entryGlobals.delete(name);
   const entryCharacters = new Map(characters);
   for (const [name, owner] of characterOwners) if (owner === entry) entryCharacters.delete(name);
-  const program = await compileProject(await fs.readFile(await inside(scenesRoot, entry), 'utf8'), assetsRoot, scenesRoot, entryGlobals, entryCharacters);
+  const program = await compileProject(await fs.readFile(await inside(scenesRoot, entry), 'utf8'), assetsRoot, scenesRoot, entryGlobals, entryCharacters, entry, { debug: Boolean(roots.debug) });
   const destination = path.resolve(output);
   if (layout) {
     const relativeParent = path.relative(layout.projectRoot, path.dirname(destination));
@@ -164,20 +165,23 @@ async function pack(input, output, roots = {}) {
     await assertOutputFile(target);
     if (path.resolve(source) !== target) await fs.copyFile(source, target);
   }
-  const nativeUi = layout?.settings.native_ui_theme ? { native_ui_theme: layout.settings.native_ui_theme } : {};
+  const nativeUi = layout?.settings.native_ui_theme ? { native_ui_theme: layout.legacySettings ? layout.settings.native_ui_theme : 'ui/player-ui.json' } : {};
   if (nativeUi.native_ui_theme) {
-    const themePath = nativeUi.native_ui_theme;
-    const themeSource = await inside(assetsRoot, themePath);
-    const themeTarget = path.resolve(path.dirname(destination), 'asset', themePath);
+    const sourceThemePath = layout.legacySettings ? layout.settings.native_ui_theme : layout.settings.native_ui_theme;
+    const themeSource = await inside(layout.legacySettings ? assetsRoot : layout.settingsRoot, sourceThemePath);
+    const themeTarget = path.resolve(path.dirname(destination), 'asset', 'ui', 'player-ui.json');
     await ensureOutputDirectory(path.dirname(themeTarget));
     await assertOutputFile(themeTarget);
     if (path.resolve(themeSource) !== themeTarget) await fs.copyFile(themeSource, themeTarget);
-    const theme = JSON.parse(await fs.readFile(await inside(assetsRoot, themePath), 'utf8'));
+    const theme = JSON.parse(await fs.readFile(themeSource, 'utf8'));
     if (theme.version !== 1) throw Error('Unsupported native UI theme version');
-    const themeDirectory = path.posix.dirname(themePath.replaceAll('\\', '/'));
-    const imageNames = [theme?.dialog?.image, theme?.dialog?.nameplate?.image, theme?.choices?.image, theme?.choices?.activeImage].filter((value) => typeof value === 'string' && value.length > 0);
-    for (const imageName of imageNames) {
-      const relative = path.posix.join(themeDirectory, imageName);
+    const themeDirectory = layout.legacySettings ? path.posix.dirname(sourceThemePath.replaceAll('\\', '/')) : '';
+    const themedImageNames = [theme?.dialog?.image, theme?.dialog?.nameplate?.image, theme?.choices?.image, theme?.choices?.activeImage].filter((value) => typeof value === 'string' && value.length > 0);
+    const controlImageNames = (theme?.controls?.buttons || []).flatMap(button => [button.image, button.hoverImage]).filter((value) => typeof value === 'string' && value.length > 0);
+    for (const [imageName, relative] of [
+      ...themedImageNames.map(imageName => [imageName, path.posix.join(themeDirectory, imageName)]),
+      ...controlImageNames.map(imageName => [imageName, imageName]),
+    ]) {
       const source = await inside(assetsRoot, relative);
       const target = path.resolve(path.dirname(destination), 'asset', relative);
       await ensureOutputDirectory(path.dirname(target));
@@ -186,8 +190,9 @@ async function pack(input, output, roots = {}) {
     }
   }
   if (layout) {
-    const screensPath = 'ui/game-screens.json';
-    const screensCandidate = path.resolve(assetsRoot, screensPath);
+    const screensPath = layout.legacySettings ? 'ui/game-screens.json' : 'game-screens.json';
+    const screensRoot = layout.legacySettings ? assetsRoot : layout.settingsRoot;
+    const screensCandidate = path.resolve(screensRoot, screensPath);
     let hasScreens = true;
     try {
       await fs.access(screensCandidate);
@@ -196,15 +201,33 @@ async function pack(input, output, roots = {}) {
       hasScreens = false;
     }
     if (hasScreens) {
-      const screensSource = await inside(assetsRoot, screensPath);
-      const screens = validateGameScreens(JSON.parse(await fs.readFile(screensSource, 'utf8')));
-      const target = path.resolve(path.dirname(destination), 'asset', screensPath);
+      const screensSource = await inside(screensRoot, screensPath);
+      const screens = withSaveLoadScreens(validateGameScreens(JSON.parse(await fs.readFile(screensSource, 'utf8'))));
+      if (screens.titleScene && path.posix.normalize(screens.titleScene.file.replaceAll('\\', '/')).toLowerCase() === entry.toLowerCase()) {
+        const selected = program.scenes.findIndex(scene => scene.name === screens.titleScene.scene);
+        if (selected < 0) throw new Error(`Title scene '${screens.titleScene.scene}' was not found in '${entry}'`);
+        if (selected > 0) program.scenes.unshift(...program.scenes.splice(selected, 1));
+      }
+      if (!layout.legacySettings) {
+        let display = { width: 1280, height: 720 };
+        if (layout.settings.native_ui_theme) {
+          const themePath = await inside(layout.settingsRoot, layout.settings.native_ui_theme);
+          const theme = JSON.parse(await fs.readFile(themePath, 'utf8'));
+          display = theme.screen;
+        }
+        screens.canvas = { width: display.width, height: display.height };
+      }
+      const target = path.resolve(path.dirname(destination), 'asset', 'ui', 'game-screens.json');
       await ensureOutputDirectory(path.dirname(target));
       await assertOutputFile(target);
-      if (path.resolve(screensSource) !== target) await fs.copyFile(screensSource, target);
-      nativeUi.game_screens = screensPath;
+      if (layout.legacySettings) {
+        if (path.resolve(screensSource) !== target) await fs.copyFile(screensSource, target);
+      } else {
+        await fs.writeFile(target, `${JSON.stringify(screens, null, 2)}\n`, 'utf8');
+      }
+      nativeUi.game_screens = 'ui/game-screens.json';
       for (const screen of Object.values(screens.screens)) {
-        const imageNames = [screen.background, ...screen.items.map(item => item.image || '')].filter(Boolean);
+        const imageNames = [screen.background, screen.slotStyle?.image, screen.slotStyle?.hoverImage, ...screen.items.flatMap(item => [item.image || '', item.hoverImage || ''])].filter(Boolean);
         for (const imageName of imageNames) {
           const relative = imageName.replace(/^asset[\\/]/i, '').replaceAll('\\', '/');
           const imageSource = await inside(assetsRoot, relative);
@@ -216,17 +239,17 @@ async function pack(input, output, roots = {}) {
       }
     }
   }
-  const data = { format: 'novel-script-package', version: 1, source: entry, program, files, native_ui: nativeUi };
+  const data = { format: 'novel-script-package', version: 1, source: entry, ...(roots.debug ? { debug: true } : {}), program, files, native_ui: nativeUi };
   await assertOutputFile(destination);
   await fs.writeFile(destination, JSON.stringify(data, null, 2) + '\n', 'utf8');
   return data;
 }
 module.exports = { pack, validateVariableFlow };
 if (require.main === module) {
-  const args = process.argv.slice(2), positional = positionalArguments(args);
+  const args = process.argv.slice(2), debug = args.includes('--debug'), positional = positionalArguments(args.filter(arg => arg !== '--debug'));
   const selected = projectOption(args);
   const layout = selected ? projectLayout(selected) : positional[0] ? layoutForInput(positional[0]) : projectLayout();
   const input = positional[0] || entryFile(layout);
   const output = positional[1] || path.join(layout.buildRoot, path.basename(input, path.extname(input)) + '.nsp.json');
-  pack(input, output, { projectRoot: layout.projectRoot }).then(() => console.log(`Packed ${input} -> ${output}`)).catch(e => { console.error(`Pack failed: ${e.message}`); process.exitCode = 1; });
+  pack(input, output, { projectRoot: layout.projectRoot, debug }).then(() => console.log(`Packed ${input} -> ${output}${debug ? ' (debug)' : ''}`)).catch(e => { console.error(`Pack failed: ${e.message}`); process.exitCode = 1; });
 }

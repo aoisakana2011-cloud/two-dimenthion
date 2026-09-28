@@ -8,6 +8,12 @@
     for (const key of Object.keys(value)) result[key] = copy(value[key]);
     return result;
   }
+  function cloneSceneValue(value) {
+    if (!value || typeof value !== 'object') return value;
+    const result = Array.isArray(value) ? [] : Object.create(Object.getPrototypeOf(value));
+    for (const key of Object.keys(value)) result[key] = cloneSceneValue(value[key]);
+    return result;
+  }
   function serialized(value) {
     if (typeof value === 'bigint') return String(value);
     if (typeof value === 'string') return JSON.stringify(value);
@@ -45,10 +51,12 @@
     return {
       revision: 0,
       logicalTimeMs: 0,
+      nextVisualOrder: 0,
       background: null,
       characters: Object.create(null),
       slots: Object.fromEntries(DEFAULT_SLOTS.map(slot => [slot, null])),
       images: Object.create(null),
+      video: null,
       audio: { bgm: null, se: [], voices: [] },
       effects: [],
       choices: [],
@@ -117,17 +125,77 @@
     }
     return { targetKind, target, delta, durationMs };
   }
-  function beginTransition(state, transition) {
+  function beginTransition(state, transition, id) {
     const startedAt = state.logicalTimeMs;
     const durationMs = transition.durationMs;
-    return { ...transition, startedAt, endsAt: startedAt + durationMs, progress: durationMs ? 0 : 1, status: durationMs ? 'running' : 'complete' };
+    return { ...transition, ...(id ? { id } : {}), startedAt, endsAt: startedAt + durationMs, progress: durationMs ? 0 : 1, status: durationMs ? 'running' : 'complete' };
   }
   function updateTransition(transition, now) {
-    if (!transition || typeof transition !== 'object' || typeof transition.durationMs !== 'number') return;
+    if (!transition || typeof transition !== 'object' || typeof transition.durationMs !== 'number'
+      || transition.status === 'complete' || transition.clock === 'audio') return;
     const duration = transition.durationMs;
     const progress = duration ? Math.max(0, Math.min(1, (now - transition.startedAt) / duration)) : 1;
     transition.progress = progress;
     transition.status = progress >= 1 ? 'complete' : 'running';
+  }
+  function sampleTransition(item, transition) {
+    const interpolation = transition?.interpolation;
+    if (!interpolation) return;
+    if (interpolation.property === 'opacity') {
+      item.opacity = interpolation.from + (interpolation.to - interpolation.from) * transition.progress;
+    } else if (interpolation.property === 'offset') {
+      item.offsetX = interpolation.from.x + (interpolation.to.x - interpolation.from.x) * transition.progress;
+      item.offsetY = interpolation.from.y + (interpolation.to.y - interpolation.from.y) * transition.progress;
+    } else if (interpolation.property === 'gain') {
+      item.gain = interpolation.from + (interpolation.to - interpolation.from) * transition.progress;
+    }
+  }
+  function transitionOwners(state, id) {
+    const owners = [];
+    const visit = item => {
+      if (!item || typeof item !== 'object') return;
+      if (Array.isArray(item)) return item.forEach(visit);
+      if (item.transition?.id === id) owners.push(item);
+      for (const [key, child] of Object.entries(item)) if (key !== 'transition') visit(child);
+    };
+    [state.background, state.characters, state.images, state.audio, state.effects].forEach(visit);
+    return owners;
+  }
+  function startBgmState(state, asset, transition, actionId) {
+    const duration = transition.durationMs;
+    const crossfading = transition.type === 'crossfade' && duration > 0;
+    const current = state.audio.bgm;
+    const previousLayers = current?.layers || (current ? [{ asset: current.asset, actionId: current.actionId, gain: current.gain ?? 1, role: 'active' }] : []);
+    const bgmTransition = beginTransition(state, transition, actionId);
+    // BGM automation is measured by the audio playback clock (WebAudio/SDL mixer),
+    // not by deterministic script time. A suspended audio device must not
+    // make the canonical scene state claim that its audible fade advanced.
+    bgmTransition.clock = 'audio';
+    const layers = crossfading ? previousLayers.map(layer => ({
+      asset: layer.asset, actionId: layer.actionId, gain: layer.gain ?? 1, role: 'outgoing',
+      transition: { ...bgmTransition, interpolation: { property: 'gain', from: layer.gain ?? 1, to: 0 } },
+    })) : [];
+    const incoming = {
+      asset, actionId, gain: crossfading ? 0 : 1, role: crossfading ? 'incoming' : 'active',
+      transition: { ...bgmTransition, interpolation: { property: 'gain', from: crossfading ? 0 : 1, to: 1 } },
+    };
+    layers.push(incoming);
+    bgmTransition.interpolation = { property: 'gain', from: incoming.gain, to: 1 };
+    state.audio.bgm = { asset, gain: incoming.gain, transition: bgmTransition, actionId, layers };
+  }
+  function pruneBgmLayers(state, id) {
+    const bgm = state.audio.bgm;
+    if (!bgm || bgm.transition?.id !== id || bgm.transition.status !== 'complete' || !Array.isArray(bgm.layers)) return;
+    bgm.layers = bgm.layers.filter(layer => layer.role === 'incoming');
+    for (const layer of bgm.layers) { layer.gain = 1; layer.role = 'active'; }
+  }
+  function removeBgmLayer(state, actionId) {
+    const bgm = state.audio.bgm;
+    if (!bgm || !Array.isArray(bgm.layers)) return false;
+    const remaining = bgm.layers.filter(layer => layer.actionId !== actionId);
+    if (remaining.length === bgm.layers.length) return false;
+    bgm.layers = remaining;
+    return true;
   }
   function advanceSceneTime(state, elapsedMs) {
     const elapsed = Number(elapsedMs);
@@ -137,20 +205,34 @@
       if (!value || typeof value !== 'object') return;
       if (Array.isArray(value)) return value.forEach(visit);
       updateTransition(value.transition, state.logicalTimeMs);
+      sampleTransition(value, value.transition);
+      if (value.transition?.id && state.actions[value.transition.id])
+        state.actions[value.transition.id].progress = value.transition.progress;
       Object.values(value).forEach(child => { if (child && typeof child === 'object' && child !== value.transition) visit(child); });
     };
     visit(state.background); visit(state.characters); visit(state.images); visit(state.audio); visit(state.effects);
+    const bgmTransitionId = state.audio.bgm?.transition?.id;
+    if (bgmTransitionId) pruneBgmLayers(state, bgmTransitionId);
     return state;
   }
   function registerAction(state, action) {
     state.actions[action.id] = { ...action, status: action.status || 'running' };
     return action.id;
   }
+  function retireActiveAudio(state, action) {
+    if (action?.kind !== 'se' && action?.kind !== 'voice') return;
+    const active = action.kind === 'se' ? state.audio.se : state.audio.voices;
+    const index = active.findIndex(item => item.actionId === action.id);
+    if (index >= 0) active.splice(index, 1);
+  }
   function finishAction(state, id) {
     const action = id && state.actions[id];
     if (!action) return;
     action.status = 'complete';
+    if (typeof action.durationMs === 'number') action.progress = 1;
     action.endedAt = state.logicalTimeMs;
+    retireActiveAudio(state, action);
+    if (state.video?.actionId === id) state.video = null;
   }
   function stopAction(state, id, reason = 'stopped', metadata = {}) {
     const action = id && state.actions[id];
@@ -159,6 +241,8 @@
     action.reason = reason;
     Object.assign(action, metadata);
     action.endedAt = state.logicalTimeMs;
+    retireActiveAudio(state, action);
+    if (state.video?.actionId === id) state.video = null;
   }
   function normalizeSlot(slot) {
     if (!DEFAULT_SLOTS.includes(slot)) throw Error(`未知の配置場所 '${slot}' です`);
@@ -174,7 +258,10 @@
           : instruction.op === 'for' || instruction.op === 'while' ? [instruction.body] : [];
       for (const body of bodies) {
         const suffix = instructionsFromLine(body, file, line);
-        if (suffix) return [...suffix, ...instructions.slice(index + 1)];
+        if (suffix) {
+          if (instruction.op === 'for' || instruction.op === 'while') return [{ ...cloneSceneValue(instruction), debugBody: suffix }, ...instructions.slice(index + 1)];
+          return [...suffix, ...instructions.slice(index + 1)];
+        }
       }
     }
     return null;
@@ -190,11 +277,15 @@
       const toX = fromX + move.delta.x;
       const toY = fromY + move.delta.y;
       if (Math.abs(toX) > 1_000_000 || Math.abs(toY) > 1_000_000) throw Error('move target position exceeds ±1000000 px');
-      const transition = beginTransition(state, { type: 'move', durationMs: move.durationMs });
-      Object.assign(current, { offsetX: toX, offsetY: toY, transition });
+      const actionId = move.durationMs ? `move:${++state.revision}` : undefined;
+      const transition = beginTransition(state, {
+        type: 'move', durationMs: move.durationMs,
+        ...(move.durationMs ? { interpolation: { property: 'offset', from: { x: fromX, y: fromY }, to: { x: toX, y: toY } } } : {}),
+      }, actionId);
+      Object.assign(current, { offsetX: move.durationMs ? fromX : toX, offsetY: move.durationMs ? fromY : toY, transition });
+      sampleTransition(current, transition);
       op.move = { ...move, fromX, fromY, toX, toY };
       if (move.durationMs) {
-        const actionId = `move:${++state.revision}`;
         op.actionId = actionId;
         op.blocking = true;
         registerAction(state, { id: actionId, kind: 'move', targetKind: move.targetKind, target: move.target, durationMs: move.durationMs, startedAt: state.logicalTimeMs, blocking: true });
@@ -207,18 +298,24 @@
     else if (name === 'bgm') {
       const actionId = `bgm:${++state.revision}`;
       const replacedActionId = state.audio.bgm?.actionId;
+      const transition = transitionFrom(args, 1);
       stopAction(state, replacedActionId, 'replaced', { replacedBy: actionId });
       op.actionId = actionId;
+      op.transitionId = actionId;
+      op.transition = transition;
       if (replacedActionId) op.replacedActionId = replacedActionId;
-      state.audio.bgm = { asset: args[0], transition: beginTransition(state, transitionFrom(args, 1)), actionId };
+      startBgmState(state, args[0], transition, actionId);
       registerAction(state, { id: actionId, kind: 'bgm', asset: args[0], startedAt: state.logicalTimeMs, blocking: false });
     } else if (name === 'play' && args[0] === 'bgm') {
       const actionId = `bgm:${++state.revision}`;
       const replacedActionId = state.audio.bgm?.actionId;
+      const transition = transitionFrom(args, 2);
       stopAction(state, replacedActionId, 'replaced', { replacedBy: actionId });
       op.actionId = actionId;
+      op.transitionId = actionId;
+      op.transition = transition;
       if (replacedActionId) op.replacedActionId = replacedActionId;
-      state.audio.bgm = { asset: args[1], transition: beginTransition(state, transitionFrom(args, 2)), actionId };
+      startBgmState(state, args[1], transition, actionId);
       registerAction(state, { id: actionId, kind: 'bgm', asset: args[1], startedAt: state.logicalTimeMs, blocking: false });
     } else if (name === 'play' && args[0] === 'se') {
       const actionId = `se:${++state.revision}`;
@@ -235,8 +332,10 @@
     } else if (name === 'play' && args[0] === 'video') {
       const actionId = `video:${++state.revision}`;
       const blocking = args[2] === 'blocking';
+      if (state.video?.actionId) op.replacedActionId = state.video.actionId;
       op.actionId = actionId;
       op.blocking = blocking;
+      state.video = { asset: args[1], actionId, startedAt: state.logicalTimeMs, blocking, status: 'running' };
       registerAction(state, { id: actionId, kind: 'video', asset: args[1], startedAt: state.logicalTimeMs, blocking });
     }
     else if (name === 'clear' && args[0] === 'bg') {
@@ -252,7 +351,10 @@
     else if (name === 'clear' && args[0] === 'image') delete state.images[args[1]];
     else if (name === 'show') {
       if (args[0] === 'image') {
-        state.images[args[1]] = { asset: args[1], slot: normalizeSlot(args[2]), transition: beginTransition(state, transitionFrom(args, 3)) };
+        state.images[args[1]] = {
+          asset: args[1], slot: normalizeSlot(args[2]), visualOrder: ++state.nextVisualOrder,
+          transition: beginTransition(state, transitionFrom(args, 3)),
+        };
       } else {
         const match = /^([^\.]+)\.([^\.]+)$/.exec(args[0] || '');
         if (match) {
@@ -274,7 +376,17 @@
             op.blocking = true;
             registerAction(state, { id: actionId, kind: 'show', target: match[1], slot, durationMs: transition.durationMs, startedAt: state.logicalTimeMs, blocking: true });
           }
-          state.characters[match[1]] = { id: match[1], pose: match[2], slot, offsetX: showOptions.x, offsetY: showOptions.y, visible: true, opacity: 1, zIndex: 0, transition: beginTransition(state, transition), ...(actionId ? { actionId } : {}) };
+          const visualTransition = beginTransition(state, {
+            ...transition,
+            ...(transition.type === 'fade' ? { interpolation: { property: 'opacity', from: 0, to: 1 } } : {}),
+          }, actionId);
+          state.characters[match[1]] = {
+            id: match[1], pose: match[2], slot, offsetX: showOptions.x, offsetY: showOptions.y,
+            visible: true, opacity: transition.type === 'fade' ? 0 : 1, zIndex: 0,
+            visualOrder: old?.visible ? old.visualOrder : ++state.nextVisualOrder,
+            transition: visualTransition, ...(actionId ? { actionId } : {}),
+          };
+          sampleTransition(state.characters[match[1]], visualTransition);
         }
       }
     } else if (name === 'hide') {
@@ -289,37 +401,133 @@
           op.actionId = actionId;
           op.blocking = true;
           current.actionId = actionId;
-          current.transition = beginTransition(state, transition);
+          current.transition = beginTransition(state, {
+            ...transition,
+            interpolation: { property: 'opacity', from: current.opacity, to: 0 },
+          }, actionId);
+          sampleTransition(current, current.transition);
           current.pendingVisibility = false;
           registerAction(state, { id: actionId, kind: 'hide', target: args[0], slot: current.slot, durationMs: transition.durationMs, startedAt: state.logicalTimeMs, blocking: true });
         }
       }
     } else if (name === 'effect' && args[0] === 'fade') {
       const actionId = `effect:${++state.revision}`;
-      const transition = transitionWith('fade', args[2]);
+      const transition = { ...transitionWith('fade', args[2]), interpolation: { property: 'opacity', from: 1, to: 0 } };
       op.actionId = actionId;
       op.blocking = true;
-      state.effects.push({ id: actionId, actionId, type: 'fade', color: args[1], transition: beginTransition(state, transition) });
+      const effect = { id: actionId, actionId, type: 'fade', color: args[1], opacity: 1, transition: beginTransition(state, transition, actionId) };
+      sampleTransition(effect, effect.transition);
+      state.effects.push(effect);
       registerAction(state, { id: actionId, kind: 'effect', color: args[1], durationMs: transition.durationMs, startedAt: state.logicalTimeMs, blocking: true });
     }
     state.revision++;
     return op;
   }
   class Runtime {
-    constructor(host = {}) { this.host = host; this.globals = Object.create(null); this.frames = [this.globals]; this.loopFrames = new WeakSet(); this.readonlyFrames = new WeakMap(); this.functions = new Map(); this.program = null; this.sceneState = createSceneState(); }
-    completeAction(id) {
-      if (!id || !this.sceneState.actions[id] || this.sceneState.actions[id].status !== 'running') return;
-      finishAction(this.sceneState, id);
-      this.sceneState.revision++;
-      const event = { name: 'action:end', args: [], actionId: id };
+    constructor(host = {}) { this.host = host; this.globals = Object.create(null); this.frames = [this.globals]; this.loopFrames = new WeakSet(); this.readonlyFrames = new WeakMap(); this.functions = new Map(); this.program = null; this.currentSceneName = ''; this.sceneState = createSceneState(); this.pendingSceneActionEvents = null; this.transitionProgressNotifications = new WeakMap(); }
+    notifySceneState(event) {
       Promise.resolve(this.host.sceneState?.(this.sceneState, event, this)).catch(() => {});
     }
-    stopAction(id, reason = 'stopped') {
-      if (!id || !this.sceneState.actions[id] || this.sceneState.actions[id].status !== 'running') return;
-      stopAction(this.sceneState, id, reason);
+    applySceneActionEvent(event) {
+      const action = event.id && this.sceneState.actions[event.id];
+      const failedBgm = event.type === 'stop' && event.reason === 'failed' && action?.kind === 'bgm';
+      if (!action || (action.status !== 'running' && !failedBgm)) return;
+      const actionWasRunning = action.status === 'running';
+      if (event.type === 'complete') finishAction(this.sceneState, event.id);
+      else if (actionWasRunning) {
+        stopAction(this.sceneState, event.id, event.reason);
+      }
+      const removedBgmLayer = failedBgm && removeBgmLayer(this.sceneState, event.id);
+      if (failedBgm && this.sceneState.audio.bgm?.actionId === event.id) this.sceneState.audio.bgm = null;
+      if (!actionWasRunning && !removedBgmLayer) return;
       this.sceneState.revision++;
-      const event = { name: 'action:stop', args: [], actionId: id, reason };
-      Promise.resolve(this.host.sceneState?.(this.sceneState, event, this)).catch(() => {});
+      this.notifySceneState({
+        name: !actionWasRunning ? 'audio:layer-end' : event.type === 'complete' ? 'action:end' : 'action:stop',
+        args: [], actionId: event.id, ...(event.type === 'stop' ? { reason: event.reason } : {}),
+      });
+    }
+    applySceneTransitionEvent(id) {
+      const owners = transitionOwners(this.sceneState, id);
+      const transition = owners[0]?.transition;
+      if (!transition) return;
+      const action = this.sceneState.actions[id];
+      if (action) action.progress = 1;
+      if (transition.status !== 'running') return;
+      for (const owner of owners) {
+        owner.transition.progress = 1;
+        owner.transition.status = 'complete';
+        sampleTransition(owner, owner.transition);
+      }
+      pruneBgmLayers(this.sceneState, id);
+      this.sceneState.revision++;
+      this.notifySceneState({ name: 'transition:end', args: [], transitionId: id });
+    }
+    reportTransitionProgress(id, progress) {
+      const action = id && this.sceneState.actions[id];
+      const value = Number(progress);
+      if (!action || action.status !== 'running' || !Number.isFinite(value)) return false;
+      const bounded = Math.max(0, Math.min(1, value));
+      if (this.pendingSceneActionEvents) {
+        // Progress is a latest-value signal, not a history stream. Keep only
+        // the newest sample for this action while preserving its position
+        // relative to completion/stop events in the transaction journal.
+        let previous = null;
+        for (let index = this.pendingSceneActionEvents.length - 1; index >= 0; index--) {
+          const event = this.pendingSceneActionEvents[index];
+          if (event.type === 'progress' && event.id === id) { previous = event; break; }
+        }
+        if (previous) previous.progress = bounded;
+        else this.pendingSceneActionEvents.push({ type: 'progress', id, progress: bounded });
+      }
+      return this.applySceneTransitionProgress(id, bounded);
+    }
+    applySceneTransitionProgress(id, progress) {
+      const action = id && this.sceneState.actions[id];
+      if (!action || action.status !== 'running') return false;
+      const owners = transitionOwners(this.sceneState, id);
+      const transition = owners[0]?.transition;
+      if (!transition || transition.status !== 'running') return false;
+      const bounded = Math.max(0, Math.min(1, progress));
+      action.progress = bounded;
+      for (const owner of owners) {
+        owner.transition.progress = bounded;
+        sampleTransition(owner, owner.transition);
+      }
+      const lastReported = this.transitionProgressNotifications.get(action);
+      if (bounded - (lastReported ?? -1) >= 0.01 || bounded === 1) {
+        this.transitionProgressNotifications.set(action, bounded);
+        this.sceneState.revision++;
+        this.notifySceneState({ name: 'transition:progress', args: [], actionId: id, transitionId: id, progress: bounded });
+      }
+      return true;
+    }
+    flushSceneActionEvents(events) {
+      for (const event of events) {
+        if (event.type === 'transition') this.applySceneTransitionEvent(event.id);
+        else if (event.type === 'progress') this.applySceneTransitionProgress(event.id, event.progress);
+        else this.applySceneActionEvent(event);
+      }
+    }
+    completeAction(id) {
+      if (!id) return;
+      if (this.pendingSceneActionEvents) {
+        this.pendingSceneActionEvents.push({ type: 'complete', id });
+      }
+      this.applySceneActionEvent({ type: 'complete', id });
+    }
+    stopAction(id, reason = 'stopped') {
+      if (!id) return;
+      if (this.pendingSceneActionEvents) {
+        this.pendingSceneActionEvents.push({ type: 'stop', id, reason });
+      }
+      this.applySceneActionEvent({ type: 'stop', id, reason });
+    }
+    completeTransition(id) {
+      if (!id) return;
+      if (this.pendingSceneActionEvents) {
+        this.pendingSceneActionEvents.push({ type: 'transition', id });
+      }
+      this.applySceneTransitionEvent(id);
     }
     get(name) {
       for (let i = this.frames.length - 1; i >= 0; --i) if (own(this.frames[i], name)) return this.frames[i][name];
@@ -462,8 +670,44 @@
         } else if (c.op === 'command') {
           const args = []; for (const a of c.args) args.push(await this.value(a));
           if (!this.host.command) throw Error(`命令 '${c.name}' の実行先がありません`);
-          const operation = sceneStateCommand(this.sceneState, c.name, args);
-          await this.host.command(c.name, args, this, operation);
+          // Say and wait do not mutate SceneState until after their host
+          // callback, so asynchronous media events should remain observable
+          // while either command is waiting. Stateful presentation commands
+          // retain the transaction journal for rollback safety.
+          const transactional = c.name !== 'say' && c.name !== 'wait';
+          const priorState = transactional ? cloneSceneValue(this.sceneState) : null;
+          if (transactional) this.pendingSceneActionEvents = [];
+          let operation;
+          try {
+            operation = sceneStateCommand(this.sceneState, c.name, args);
+            await this.host.command(c.name, args, this, operation);
+            // Commit replacement of the old video only after the adapter
+            // confirms that the candidate playback started successfully.
+            if (operation.replacedActionId) this.stopAction(operation.replacedActionId, 'replaced', { replacedBy: operation.actionId });
+          } catch (error) {
+            if (!transactional) throw error;
+            const deferredEvents = this.pendingSceneActionEvents;
+            const failedAction = operation?.actionId && this.sceneState.actions[operation.actionId]
+              ? cloneSceneValue(this.sceneState.actions[operation.actionId]) : null;
+            for (const key of Object.keys(this.sceneState)) delete this.sceneState[key];
+            Object.assign(this.sceneState, priorState);
+            if (failedAction && !this.sceneState.actions[operation.actionId]) {
+              failedAction.status = 'stopped';
+              failedAction.reason = 'failed';
+              failedAction.endedAt = this.sceneState.logicalTimeMs;
+              this.sceneState.actions[operation.actionId] = failedAction;
+              this.sceneState.revision++;
+            }
+            this.pendingSceneActionEvents = null;
+            this.flushSceneActionEvents(deferredEvents);
+            if (failedAction) this.notifySceneState({ name: 'action:stop', args: [], actionId: operation.actionId, reason: 'failed' });
+            throw error;
+          }
+          if (transactional) {
+            const deferredEvents = this.pendingSceneActionEvents;
+            this.pendingSceneActionEvents = null;
+            this.flushSceneActionEvents(deferredEvents);
+          }
           if (c.name === 'wait') advanceSceneTime(this.sceneState, args[0]);
           else if (c.name === 'effect') advanceSceneTime(this.sceneState, operation.args[2] === undefined ? 500 : operation.args[2]);
           else if (c.name === 'show' && operation.args[0] !== 'image' && operation.args[operation.transitionIndex] === 'fade') advanceSceneTime(this.sceneState, operation.args[operation.transitionIndex + 1]);
@@ -512,22 +756,31 @@
             for (let i = start; step > 0n ? i <= stop : i >= stop; i += step) {
               if (++count > 100000) throw Error('ループの最大反復回数を超過しました');
               this.frames[this.frames.length - 1][c.name] = integer(i);
-              const result = await this.exec(c.body); if (result) return result;
+              const result = await this.exec(count === 1 && c.debugBody ? c.debugBody : c.body); if (result) return result;
             }
           } finally { this.frames.pop(); }
         } else if (c.op === 'while') {
           let count = 0;
           while (await this.value(c.condition)) {
             if (++count > 100000) throw Error('ループの最大反復回数を超過しました');
-            const result = await this.exec(c.body); if (result) return result;
+            const result = await this.exec(count === 1 && c.debugBody ? c.debugBody : c.body); if (result) return result;
           }
         } else throw Error(`未知の命令 '${c.op}' です`);
       }
       return null;
     }
     async run(p, debug = null) {
+      if (debug?.line !== undefined && debug.line !== null
+        && (!Number.isSafeInteger(debug.line) || debug.line < 0))
+        throw Error('Debug line must be a non-negative safe integer.');
+      if (debug?.file !== undefined && debug.file !== null && typeof debug.file !== 'string')
+        throw Error('Debug source file must be a string.');
       let transferred = false;
-      this.sceneState = createSceneState();
+      // SceneState contains arrays (effects, choices, transfers, audio events).
+      // The lexical-frame copier intentionally produces plain objects, so use
+      // the structure-preserving clone for persisted scene snapshots.
+      this.sceneState = debug?.sceneState ? cloneSceneValue(debug.sceneState) : createSceneState();
+      let restored = false;
       const recordTransfer = async (target, external) => {
         const transfer = { target, external, at: this.sceneState.logicalTimeMs };
         this.sceneState.transfers.push(transfer);
@@ -537,6 +790,8 @@
       for (;;) {
         if (p.version !== 2) throw Error('未対応のプログラムバージョンです');
         this.program = p;
+        this.frames = [this.globals];
+        this.loopFrames = new WeakSet();
         this.functions = new Map(p.functions.map(f => [f.name, f]));
         await this.host.program?.(p, this.sceneState);
         let result = await this.exec(p.globals, transferred);
@@ -544,15 +799,30 @@
         if (!transferred && debug?.variables) {
           for (const [name, value] of Object.entries(debug.variables)) this.globals[name] = value;
         }
+        if (!transferred && Array.isArray(debug?.locals)) {
+          const readonly = Array.isArray(debug.readonlyLocals) ? debug.readonlyLocals : [];
+          for (let index = 0; index < debug.locals.length; index++) {
+            const frame = cloneSceneValue(debug.locals[index]);
+            this.frames.push(frame);
+            this.readonlyFrames.set(frame, new Set(readonly[index] || []));
+          }
+        }
         const selectedScene = !transferred && debug?.scene ? p.scenes.find((scene) => scene.name === debug.scene) : null;
         if (!transferred && debug?.scene && !selectedScene) throw Error(`Unknown debug scene '${debug.scene}'.`);
         const firstScene = selectedScene || p.scenes[0];
+        this.currentSceneName = firstScene?.name || '';
+        if (!restored && debug?.sceneState) {
+          await this.host.sceneState?.(this.sceneState, { name: 'restore' }, this);
+          restored = true;
+        }
         const firstInstructions = !transferred && debug?.line && firstScene
-          ? instructionsFromLine(firstScene.instructions, firstScene.file, debug.line) : null;
+          ? instructionsFromLine(firstScene.instructions,
+            debug.file == null ? firstScene.file : debug.file.replace(/\\/g, '/'), debug.line) : null;
         if (!transferred && debug?.line && !firstInstructions) throw Error(`Line ${debug.line} has no executable instruction in scene '${firstScene?.name || ''}'.`);
         if (!result && firstScene) result = await this.exec(firstInstructions || firstScene.instructions);
         while (result?.kind === 'goto' && scenes.has(result.scene)) {
           await recordTransfer(result.scene, false);
+          this.currentSceneName = result.scene;
           result = await this.exec(scenes.get(result.scene));
         }
         if (!result) return;
@@ -560,6 +830,7 @@
         await recordTransfer(result.scene, true);
         p = await this.host.load(result.scene);
         transferred = true;
+        this.currentSceneName = p.scenes?.[0]?.name || '';
       }
     }
   }

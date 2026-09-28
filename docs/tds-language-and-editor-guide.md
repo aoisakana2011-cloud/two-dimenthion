@@ -59,11 +59,12 @@ Project/
 | 対象 | DSLでの指定例 | 実ファイルの基準 |
 |---|---|---|
 | 宣言モジュール | `include "common.tds" as common` | `scenario_dir` |
+| 標準モジュール | `include "std/math.tds" as math` | エディター同梱の予約済み `std/` |
 | 外部goto | `goto "chapter/first.tds"` | `scenario_dir` |
 | 素材 | `"asset/bg/classroom.png"` | 作品ルートの `asset_dir`。`asset/` を付ける表記を推奨 |
 | 開始ファイル | `start_file = main.tds` | 作品ルートの `scenario_dir` |
 
-シナリオの `include` と外部 `goto` は、現在のファイルの場所ではなく `scenario_dir` を基準に解決します。`goto next_scene` のように拡張子もパス区切りもない名前だけを指定した場合は、同じファイル内のscene名です。外部ファイルの名前には空白、空のパス要素、`.`、`..`、Windows予約名を使わないでください。
+作品内シナリオの `include` と外部 `goto` は、現在のファイルの場所ではなく `scenario_dir` を基準に解決します。`std/` で始まるincludeはエディター同梱の標準ライブラリから解決され、作品内の同名パスより優先されます。`goto next_scene` のように拡張子もパス区切りもない名前だけを指定した場合は、同じファイル内のscene名です。外部ファイルの名前には空白、空のパス要素、`.`、`..`、Windows予約名を使わないでください。
 
 素材は `asset/` から始まる作品ルート相対パスで指定し、実体は `asset_dir` 配下に配置します。`assets/`、絶対パス、空のディレクトリ要素、`.`、`..`、末尾が空白・ドットの名前、Windows予約名、種別に合わない拡張子は診断対象です。
 
@@ -103,6 +104,8 @@ scene main {
 
 include は `include "functions.tds" as funcs` の形式で、必ず別名を指定します。関数は `funcs.add(1)` のように別名経由で呼び出します。引用符は省略できます。拡張子省略時は .tds が補われ、循環includeは禁止です。include先は宣言モジュールであり、シーンや実行命令は置けません。シナリオファイルへの移動には `goto "chapter/next.tds"` を使います。
 
+`std/` は同梱標準ライブラリの予約パスです。`include "std/math.tds" as math`、`include "std/motion/walk.tds" as walk` のように読み込み、`math.sin(...)`、`walk.walk_bob(...)` と別名経由で呼び出します。関数一覧と引数の意味は [標準ライブラリガイド](../std/README.md) を参照してください。
+
 ## 素材
 
 ~~~tds
@@ -129,7 +132,7 @@ character hero {
 }
 ~~~
 
-name は表示名です。その他のフィールドは int または str の初期値、pose は立ち絵宣言です。
+name は表示名です。その他のフィールドは `int`、`float`、`str` の初期値、pose は立ち絵宣言です。
 
 ## 型と変数
 
@@ -141,10 +144,11 @@ global int shared_score = 0
 global const str title = "Novel"
 ~~~
 
-型は int、str、dict[int]、dict[str]、宣言済みstruct、noneです。変数は初期値必須。const は変更不可です。main.tds のトップレベル変数は暗黙に共有され、それ以外のファイルから共有するには global を付けます。
+変数の基本型は `int`、`float`、`str`、辞書型は `dict[int]`、`dict[float]`、`dict[str]`、ほかに宣言済みstructを使えます。`none` は関数の戻り値型専用です。変数は初期値必須で、constは変更不可です。`int` と `float` の間に暗黙変換はありません。main.tds のトップレベル変数は暗黙に共有され、それ以外のファイルから共有するには global を付けます。
 
 ~~~tds
 dict[int] status = { "hp": 100, "affection": 0 }
+dict[float] offsets = { "x": 0.0, "y": 0.0 }
 set status["hp"] = status["hp"] - 10
 unset status["affection"]
 
@@ -153,7 +157,7 @@ if score >= 10 and route == "common" {
 }
 ~~~
 
-演算子は not、単項+/-、*/%、+-、比較、and、or の順に強く結合します。true/false/null リテラルはありません。
+演算子は not、単項+/-、*/%、+-、比較、and、or の順に強く結合します。floatでは `+`、`-`、`*`、`/` と数値比較を同じ型同士で使えます。`%` はint同士のみです。true/false/null リテラルはありません。
 
 ## struct
 
@@ -168,7 +172,7 @@ set player.coins = player.coins + 1
 say narrator "{player.name}: {player.coins}"
 ~~~
 
-フィールド型は int または str。structの入れ子、動的フィールド追加、フィールドのunsetはできません。
+フィールド型は `int`、`float`、`str`。structの入れ子、動的フィールド追加、フィールドのunsetはできません。
 
 ## 関数
 
@@ -281,7 +285,7 @@ effect fade white 300
 
 ## 変数テーブル
 
-`staticVariables` の `type` は `int` / `float` / `str`。`float` の `value`、`min`、`max`、`possibleValues` には有限の小数を指定できます。整数は従来どおり64-bitの正確な値を保つため、範囲外や桁の大きな値は文字列で指定してください。`int` と `float` の演算には暗黙変換がないため `float(i)` を使います。
+`staticVariables` の `type` は `int` / `float` / `str`。`float` の `value`、`min`、`max`、`possibleValues` には有限の小数を指定できます。`min` / `max` は `int` と `float` に指定でき、`str` では使えません。整数は64-bitの正確な値を保つため、安全な整数範囲を超える値は文字列で指定してください。`int` と `float` の演算には暗黙変換がないため `float(i)` を使います。
 
 .novel/variables.json:
 
@@ -306,7 +310,7 @@ effect fade white 300
 }
 ~~~
 
-typeはint/str。intは64-bit。min/maxはint専用。possibleValuesは空配列・重複不可。constant: true は変更不可。valueは制約を満たす必要があります。これらの制約はIDE、プロジェクトコンパイラ、Browser、Nativeで共有されます。
+typeはint/float/str。intは符号付き64-bit、floatは有限値です。min/maxはintまたはfloatに指定でき、strでは使えません。possibleValuesは空配列・重複不可。constant: true は変更不可。valueは制約を満たす必要があります。これらの制約はIDE、プロジェクトコンパイラ、Browser、Nativeで共有されます。
 
 ## IDEのお作法
 

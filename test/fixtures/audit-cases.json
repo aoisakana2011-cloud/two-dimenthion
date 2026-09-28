@@ -42,7 +42,7 @@
       "source": "fn f() -> str {\nreturn f()\n}"
   },
   "conversion": {
-    "source": "int result = int(\"+-1\")"
+    "source": "fn supplied() -> str {\nreturn \"+-1\"\n}\nfn convert(text: str) -> int {\nreturn int(text)\n}\nint result = convert(supplied())"
   },
   "newline_character": {
     "source": "character hero\n{\nname = \"Hero\"\n}"

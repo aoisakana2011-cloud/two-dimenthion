@@ -6,7 +6,12 @@
     "backdrop": {
       "bottomFog": {
         "enabled": false,
-        "color": [12, 15, 18, 255],
+        "color": [
+          12,
+          15,
+          18,
+          255
+        ],
         "height": 220
       }
     }
@@ -23,7 +28,12 @@
       "width": 1060,
       "height": 112,
       "size": 25,
-      "color": [245, 244, 239, 255]
+      "color": [
+        245,
+        244,
+        239,
+        255
+      ]
     },
     "nameplate": {
       "x": 20,
@@ -37,26 +47,36 @@
         "width": 320,
         "height": 38,
         "size": 22,
-        "color": [227, 232, 235, 255]
+        "color": [
+          227,
+          232,
+          235,
+          255
+        ]
       }
     }
   },
   "choices": {
     "x": 290,
     "y": 190,
-    "image": "",
-    "activeImage": "",
     "width": 700,
     "height": 330,
     "itemHeight": 54,
     "gap": 12,
+    "image": "",
+    "activeImage": "",
     "text": {
       "x": 24,
       "y": 0,
       "width": 652,
       "height": 54,
       "size": 20,
-      "color": [244, 245, 242, 255]
+      "color": [
+        244,
+        245,
+        242,
+        255
+      ]
     }
   }
 }

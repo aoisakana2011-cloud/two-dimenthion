@@ -1,0 +1,13 @@
+# Simple horizontal and vertical offsets for a walk animation.
+include "std/math.tds" as math
+
+# progress is one complete walk in the range [0, 1].
+fn walk_x(distance: float, progress: float) -> float {
+  return distance * math.clamp(progress, 0.0, 1.0)
+}
+
+# A gentle vertical bob; use the result as the character's Y offset.
+fn walk_bob(amplitude: float, progress: float) -> float {
+  float phase = math.tau() * 2.0 * math.clamp(progress, 0.0, 1.0)
+  return amplitude * (1.0 - math.cos(phase)) / 2.0
+}

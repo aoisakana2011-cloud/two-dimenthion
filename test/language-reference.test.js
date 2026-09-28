@@ -17,3 +17,21 @@ test('TDS examples in the language references stay syntactically valid', () => {
   }
   assert.ok(exampleCount >= 20, `expected to validate the reference examples, found ${exampleCount}`);
 });
+
+test('language references agree with implemented float, position and standard-library syntax', () => {
+  const syntax = fs.readFileSync(path.join(__dirname, '..', 'syntax-draft.md'), 'utf8');
+  const guide = fs.readFileSync(path.join(__dirname, '..', 'docs', 'tds-language-and-editor-guide.md'), 'utf8');
+  assert.match(syntax, /基本型は `int`、`float`、`str`/);
+  assert.match(syntax, /配置位置は `far_left`、`left`、`center`、`right`、`far_right` の5種類/);
+  assert.match(syntax, /`%` は `int` 同士のみ/);
+  assert.match(syntax, /`-`、`\*`、`\/` は左右が同じ数値型/);
+  assert.match(syntax, /`std\/motion\/walk\.tds`/);
+  assert.doesNotMatch(syntax, /辞書の値型も `int` または `str` のみ/);
+  assert.doesNotMatch(syntax, /配置位置は `left`、`center`、`right`/);
+  assert.doesNotMatch(syntax, /`-`、`\*`、`\/`、`%` は `int` 専用/);
+  assert.match(guide, /`dict\[float\]`/);
+  assert.match(guide, /structの入れ子/);
+  assert.match(guide, /`min` \/ `max` は `int` と `float` に指定でき/);
+  assert.doesNotMatch(guide, /型は int、str、dict\[int\]、dict\[str\]/);
+  assert.doesNotMatch(guide, /min\/maxはint専用/);
+});

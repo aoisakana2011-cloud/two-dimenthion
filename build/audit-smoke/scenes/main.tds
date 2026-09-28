@@ -5,12 +5,16 @@ asset image jpeg = "asset/pixel.jpg"
 asset image webp = "asset/pixel.webp"
 asset image gif = "asset/pixel.gif"
 asset bgm music = "asset/tone.wav"
+asset bgm music_alt = "asset/tone.wav"
+asset bgm broken_bgm = "asset/broken.wav"
 asset se sound = "asset/tone.wav"
 asset voice narrator_voice = "asset/tone.wav"
 asset se flac = "asset/tone.flac"
 asset se vorbis = "asset/tone.ogg"
 asset se mpthree = "asset/tone.mp3"
 asset video clip = "asset/clip.mp4"
+asset video broken_video = "asset/broken.mp4"
+include audio.tds as audio
 character hero {
   name = "Hero"
   pose normal = "asset/pixel.png"
@@ -19,11 +23,17 @@ character friend {
   name = "Friend"
   pose normal = "asset/pixel.png"
 }
+character ghost {
+  name = "Ghost"
+  pose normal = "asset/broken.png"
+}
 int x = 9007199254740993
 float shift = 0.5
 bg room
 bgm music
+play bgm music_alt crossfade 900
 play se sound
+for sound_index from 1 to 12 { play se sound }
 play voice narrator_voice blocking
 play se flac
 play se vorbis
@@ -36,7 +46,10 @@ clear image webp
 clear image gif
 show image first left
 show image second right
+show image first center
 show hero.normal left fade 10
+choice "sprite replacement" { "test failure" { show ghost.normal left } "continue" { wait 1 } }
+choice "successful sprite replacement" { "replace slot" { show friend.normal left } }
 show friend.normal right x-(shift * 23.0) y+(shift * 69.0) fade 10
 move character friend by x+(7.25) y-(5.25) over 10
 move bg by x+(6.5) y-(3.25)
@@ -47,7 +60,14 @@ hide hero fade 10
 effect fade white 10
 play video clip blocking
 play video clip async
-wait 500
+choice "transition" { "crossfade" { play bgm music_alt crossfade audio.transition_duration()
+play bgm music crossfade audio.transition_duration()
+wait 60
+play bgm broken_bgm crossfade audio.transition_duration()
+bgm broken_bgm
+play video clip async
+play video broken_video async } "keep" { wait 1 } }
+wait 1050
 clear bgm
 clear bg
-choice "test" { "continue" { say none str(x) } }
+say none str(x)

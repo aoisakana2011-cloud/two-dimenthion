@@ -5,6 +5,59 @@ let gameScreenConfig = null;
 let activeGameScreen = null;
 let gameStarted = false;
 let gameStartHandler = null;
+let saveStoragePrefix = '';
+let currentExecution = null;
+let resumeAtLaunch = null;
+let pendingScreenMusic = '';
+const bgmLayers = new Set();
+const bgmAnimationIds = new WeakMap();
+const bgmGainNodes = new WeakMap();
+const bgmAutomations = new Map();
+let nextBgmAnimationId = 0;
+let bgmAudioContext = null;
+function getBgmAudioContext() {
+  const AudioContextType = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextType) return null;
+  try { return bgmAudioContext ||= new AudioContextType(); }
+  catch { return null; }
+}
+function primeBgmAudioContext() {
+  const context = getBgmAudioContext();
+  if (context?.state === 'suspended') context.resume().catch(() => {});
+}
+async function connectBgmAudio(audio, initialGain) {
+  const context = getBgmAudioContext();
+  if (!context || context.state === 'closed') return false;
+  try {
+    if (context.state === 'suspended') {
+      // resume() can remain pending indefinitely until a user gesture. Never
+      // let loading a scene block on audio autoplay policy; use the legacy
+      // media-element path if the audio clock is not available promptly.
+      await Promise.race([
+        context.resume(),
+        new Promise(resolve => setTimeout(resolve, 200)),
+      ]);
+    }
+    if (context.state !== 'running') return false;
+    const source = context.createMediaElementSource(audio);
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(initialGain, context.currentTime);
+    source.connect(gain);
+    gain.connect(context.destination);
+    bgmGainNodes.set(audio, { context, source, gain, value: initialGain });
+    audio.volume = 1;
+    return true;
+  } catch {
+    return false;
+  }
+}
+function disconnectBgmAudio(audio) {
+  const route = bgmGainNodes.get(audio);
+  if (!route) return;
+  route.source.disconnect();
+  route.gain.disconnect();
+  bgmGainNodes.delete(audio);
+}
 function uiAsset(themePath, image) {
   if (!image) return '';
   const directory = themePath.replaceAll('\\', '/').split('/').slice(0, -1);
@@ -23,6 +76,7 @@ function applyPlayerUi(themePath, theme) {
   Object.assign(speaker.style, { position: 'absolute', display: 'grid', placeItems: 'center', left: `${dialog.nameplate.x}px`, top: `${dialog.nameplate.y}px`, width: `${dialog.nameplate.width}px`, height: `${dialog.nameplate.height}px`, color: `rgba(${dialog.nameplate.text.color.join(',')})`, fontSize: `${dialog.nameplate.text.size}px`, background: uiBackground(themePath, dialog.nameplate.image, '#1d344dcc'), borderRadius: dialog.nameplate.image ? '0' : '6px' });
   Object.assign(speakerText.style, { position: 'absolute', left: `${dialog.nameplate.text.x || 0}px`, top: `${dialog.nameplate.text.y || 0}px`, width: `${dialog.nameplate.text.width}px`, height: `${dialog.nameplate.text.height}px`, display: 'grid', placeItems: 'center', overflow: 'hidden' });
   Object.assign(choiceBox.style, { position: 'absolute', left: `${choices.x - dialog.x}px`, top: `${choices.y - dialog.y}px`, width: `${choices.width}px`, height: `${choices.height}px`, overflowY: 'auto', overflowX: 'hidden' });
+  renderPlayerControls(theme.controls || defaultPlayerControls(), theme.screen, dialog);
   const fog = screen.backdrop?.bottomFog;
   let fogLayer = $('bottom-fog');
   if (!fogLayer) { fogLayer = document.createElement('canvas'); fogLayer.id = 'bottom-fog'; stage.insertBefore(fogLayer, dialogue); }
@@ -63,6 +117,76 @@ function applyPlayerUi(themePath, theme) {
   window.visualViewport?.addEventListener('resize', fitStage);
 }
 
+function defaultPlayerControls() {
+  return { enabled: true, anchor: 'dialogue-top-left', buttons: [
+    { id: 'save', label: 'Save', action: 'save', x: 0, y: -44, width: 84, height: 36 },
+    { id: 'load', label: 'Load', action: 'load', x: 92, y: -44, width: 84, height: 36 },
+  ] };
+}
+function renderPlayerControls(controls, screen, dialog) {
+  const stage = $('stage');
+  let bar = $('player-controls');
+  if (!bar) { bar = document.createElement('nav'); bar.id = 'player-controls'; stage.append(bar); }
+  bar.replaceChildren();
+  if (controls?.enabled === false) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const anchor = controls?.anchor === 'dialogue-top-left';
+  for (const item of controls?.buttons || []) {
+    if (!item || !['save', 'load'].includes(item.action)) continue;
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'player-control-button'; button.dataset.action = item.action;
+    button.setAttribute('aria-label', item.label || item.action);
+    button.title = item.label || item.action;
+    const label = document.createElement('span'); label.textContent = item.label || item.action; button.append(label);
+    if (item.display === 'image') label.hidden = true;
+    Object.assign(button.style, {
+      left: `${((anchor ? dialog.x : 0) + (Number(item.x) || 0))}px`,
+      top: `${((anchor ? dialog.y : 0) + (Number(item.y) || 0))}px`,
+      width: `${Math.max(24, Number(item.width) || 84)}px`, height: `${Math.max(20, Number(item.height) || 36)}px`,
+      color: item.color || '', backgroundColor: item.backgroundColor || '', borderColor: item.borderColor || '',
+      borderRadius: Number.isFinite(item.borderRadius) ? `${item.borderRadius}px` : '',
+      fontSize: Number.isFinite(item.fontSize) ? `${item.fontSize}px` : '',
+    });
+    const setState = active => {
+      const image = active ? item.hoverImage || item.image : item.image;
+      button.style.backgroundImage = image ? `url("${screenAsset(image)}")` : 'none';
+      if (active) {
+        if (item.hoverLabel) label.textContent = item.hoverLabel;
+        if (item.display === 'image') label.hidden = true;
+        if (item.hoverColor) button.style.color = item.hoverColor;
+        if (item.hoverBackgroundColor) button.style.backgroundColor = item.hoverBackgroundColor;
+        if (item.hoverBorderColor) button.style.borderColor = item.hoverBorderColor;
+      } else {
+        label.textContent = item.label || item.action;
+        label.hidden = item.display === 'image';
+        button.style.color = item.color || '';
+        button.style.backgroundColor = item.backgroundColor || '';
+        button.style.borderColor = item.borderColor || '';
+      }
+    };
+    setState(false);
+    button.addEventListener('pointerenter', () => setState(true)); button.addEventListener('pointerleave', () => setState(false));
+    button.addEventListener('focus', () => setState(true)); button.addEventListener('blur', () => setState(false));
+    button.addEventListener('click', () => openSlotScreen(item.action));
+    bar.append(button);
+  }
+}
+
+function playScreenMusic(assetPath) {
+  pendingScreenMusic = assetPath || '';
+  if (!pendingScreenMusic) return;
+  stopBgm();
+  $('bgm')?.remove();
+  const audio = document.createElement('audio'); audio.id = 'bgm'; audio.loop = true;
+  const asset = runtime.program?.assets?.find(item => item.type === 'bgm' && item.name === pendingScreenMusic);
+  audio.src = asset ? url('bgm', pendingScreenMusic) : screenAsset(pendingScreenMusic); document.body.append(audio); bgmLayers.add(audio);
+  audio.play().catch(() => { /* Browser autoplay requires a user gesture. */ });
+}
+function resumeScreenMusic() {
+  const audio = $('bgm');
+  if (audio?.paused && pendingScreenMusic) audio.play().catch(() => {});
+}
+
 function makeChoice(label, index) {
   const { path, choices } = playerTheme;
   const button = document.createElement('button');
@@ -99,6 +223,105 @@ function screenAsset(value) {
   if (!relative || relative.split('/').some(part => !part || part === '.' || part === '..')) return '';
   return '/asset/' + relative.split('/').map(encodeURIComponent).join('/');
 }
+function encodeSave(value) {
+  return JSON.stringify(value, (_key, item) => typeof item === 'bigint' ? { __novelInteger: item.toString() } : item);
+}
+function decodeSave(value) {
+  return JSON.parse(value, (_key, item) => item && typeof item === 'object' && Object.keys(item).length === 1 && typeof item.__novelInteger === 'string'
+    ? NovelRuntime.integer(item.__novelInteger) : item);
+}
+function slotStorageKey(index) { return `${saveStoragePrefix}:slot:${index}`; }
+function readSaveSlot(index) {
+  try {
+    const raw = localStorage.getItem(slotStorageKey(index));
+    return raw ? decodeSave(raw) : null;
+  } catch { return null; }
+}
+function screenForRole(role) {
+  return Object.entries(gameScreenConfig?.screens || {}).find(([, screen]) => screen.role === role)?.[0] || '';
+}
+function openSlotScreen(action) {
+  const id = screenForRole(action === 'save' ? 'save-slots' : 'load-slots');
+  if (id) showGameScreen(id);
+  else showGameScreen('pause');
+}
+function formatSavedAt(timestamp) {
+  try { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(timestamp)); }
+  catch { return ''; }
+}
+function showSlotList(overlay, screen, scaleX, scaleY) {
+  const layout = screen.slotLayout || { x: 420, y: 190, width: 440, height: 420, rowHeight: 42, gap: 8, count: 8 };
+  const list = document.createElement('div'); list.className = 'game-save-slots';
+  Object.assign(list.style, { left: `${layout.x * scaleX}px`, top: `${layout.y * scaleY}px`, width: `${layout.width * scaleX}px`, height: `${layout.height * scaleY}px`, gap: `${layout.gap * scaleY}px` });
+  for (let index = 0; index < layout.count; index++) {
+    const saved = readSaveSlot(index);
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'game-save-slot';
+    const style = screen.slotStyle || {};
+    Object.assign(button.style, {
+      height: `${layout.rowHeight * scaleY}px`, fontSize: `${(style.fontSize || 15) * scaleY}px`,
+      color: style.color || '', backgroundColor: style.backgroundColor || '', borderColor: style.borderColor || '',
+    });
+    const label = saved
+      ? `Slot ${String(index + 1).padStart(2, '0')}  ·  ${saved.speaker || '語り手'}: ${saved.text || '(本文なし)'}  ·  ${formatSavedAt(saved.savedAt)}`
+      : `Slot ${String(index + 1).padStart(2, '0')}  ·  空き`;
+    button.textContent = label; button.disabled = screen.role === 'load-slots' ? !saved : !currentExecution?.line;
+    if (style.image) button.style.backgroundImage = `url("${screenAsset(style.image)}")`;
+    const active = () => {
+      const image = style.hoverImage || style.image;
+      button.style.backgroundImage = image ? `url("${screenAsset(image)}")` : '';
+      button.style.color = style.hoverColor || style.color || '';
+      button.style.backgroundColor = style.hoverBackgroundColor || style.backgroundColor || '';
+      button.style.borderColor = style.hoverBorderColor || style.borderColor || '';
+    };
+    const inactive = () => {
+      button.style.backgroundImage = style.image ? `url("${screenAsset(style.image)}")` : '';
+      button.style.color = style.color || '';
+      button.style.backgroundColor = style.backgroundColor || '';
+      button.style.borderColor = style.borderColor || '';
+    };
+    button.addEventListener('pointerenter', active); button.addEventListener('focus', active);
+    button.addEventListener('pointerleave', inactive); button.addEventListener('blur', inactive);
+    button.addEventListener('click', () => {
+      if (screen.role === 'save-slots') saveGameToSlot(index, overlay);
+      else loadGameSlot(index);
+    });
+    list.append(button);
+  }
+  overlay.append(list);
+}
+function saveGameToSlot(index, overlay = $('screen-overlay')) {
+  const execution = currentExecution;
+  if (!execution?.file || !execution.scene || !execution.line) return;
+  try {
+    const snapshot = {
+      version: 1, file: execution.file, scene: execution.scene, line: execution.line,
+      variables: runtime.globals, locals: runtime.frames.slice(1),
+      readonlyLocals: runtime.frames.slice(1).map(frame => [...(runtime.readonlyFrames.get(frame) || [])]),
+      sceneState: runtime.sceneState,
+      text: $('text').textContent, speaker: $('speaker-text').textContent,
+      savedAt: Date.now(),
+    };
+    const encoded = encodeSave(snapshot);
+    if (encoded.length > 3_500_000) throw Error('セーブデータが大きすぎます。変数または演出状態を減らしてください。');
+    localStorage.setItem(slotStorageKey(index), encoded);
+    showGameScreen(activeGameScreen, { push: false });
+    const notice = document.createElement('div'); notice.className = 'game-screen-notice'; notice.textContent = `Slot ${String(index + 1).padStart(2, '0')} に保存しました`;
+    $('screen-overlay').append(notice);
+    setTimeout(() => notice.remove(), 2500);
+  } catch (error) {
+    const notice = document.createElement('div'); notice.className = 'game-screen-error'; notice.textContent = `保存できませんでした: ${error.message}`; overlay.append(notice);
+  }
+}
+function loadGameSlot(index) {
+  const saved = readSaveSlot(index);
+  if (!saved || saved.version !== 1 || typeof saved.file !== 'string' || typeof saved.scene !== 'string' || !Number.isSafeInteger(saved.line) || saved.line < 1) return;
+  try {
+    localStorage.setItem(`${saveStoragePrefix}:resume`, encodeSave(saved));
+    location.reload();
+  } catch (error) {
+    const notice = document.createElement('div'); notice.className = 'game-screen-error'; notice.textContent = `ロードできませんでした: ${error.message}`; $('screen-overlay').append(notice);
+  }
+}
 function showGameScreen(id, { push = true } = {}) {
   const screen = gameScreenConfig?.screens?.[id];
   if (!screen) throw Error(`画面 '${id}' が定義されていません。`);
@@ -117,17 +340,38 @@ function showGameScreen(id, { push = true } = {}) {
     const description = document.createElement('div'); description.className = 'game-screen-description'; description.textContent = screen.description;
     Object.assign(description.style, { left: `${64 * scaleX}px`, top: `${112 * scaleY}px`, width: `${Math.min(560, gameScreenConfig.canvas.width - 128) * scaleX}px`, fontSize: `${21 * scaleY}px` }); overlay.append(description);
   }
+  if (screen.music) playScreenMusic(screen.music);
   for (const item of screen.items || []) {
     if (item.type !== 'button') continue;
-    const button = document.createElement('button'); button.type = 'button'; button.className = 'game-screen-button'; button.textContent = item.label;
-    Object.assign(button.style, { left: `${item.x * scaleX}px`, top: `${item.y * scaleY}px`, width: `${item.width * scaleX}px`, height: `${item.height * scaleY}px`, fontSize: `${22 * scaleY}px` });
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'game-screen-button'; button.setAttribute('aria-label', item.label);
+    const label = document.createElement('span'); label.textContent = item.label; button.append(label);
+    if (item.display === 'image') label.hidden = true;
+    Object.assign(button.style, { left: `${item.x * scaleX}px`, top: `${item.y * scaleY}px`, width: `${item.width * scaleX}px`, height: `${item.height * scaleY}px`, fontSize: `${(item.fontSize || 22) * scaleY}px` });
+    if (item.color) button.style.color = item.color;
+    if (item.backgroundColor) button.style.backgroundColor = item.backgroundColor;
+    if (item.borderColor) button.style.borderColor = item.borderColor;
     if (item.image) button.style.backgroundImage = `url("${screenAsset(item.image)}")`;
+    const setButtonState = active => {
+      const image = active ? item.hoverImage || item.image : item.image;
+      button.style.backgroundImage = image ? `url("${screenAsset(image)}")` : '';
+      label.textContent = active ? item.hoverLabel || item.label : item.label;
+      label.hidden = item.display === 'image';
+      button.style.color = active ? item.hoverColor || item.color || '' : item.color || '';
+      button.style.backgroundColor = active ? item.hoverBackgroundColor || item.backgroundColor || '' : item.backgroundColor || '';
+      button.style.borderColor = active ? item.hoverBorderColor || item.borderColor || '' : item.borderColor || '';
+    };
+    button.addEventListener('pointerenter', () => setButtonState(true)); button.addEventListener('pointerleave', () => setButtonState(false));
+    button.addEventListener('focus', () => setButtonState(true)); button.addEventListener('blur', () => setButtonState(false));
     button.addEventListener('click', async () => {
       if (item.action === 'start') {
+        primeBgmAudioContext();
+        resumeScreenMusic();
         overlay.hidden = true; activeGameScreen = null; screenHistory.length = 0;
         try { await gameStartHandler?.(); } catch (error) { $('speaker-text').textContent = 'PLAYER ERROR'; $('text').textContent = error.message; }
       } else if (item.action === 'resume') {
         overlay.hidden = true; activeGameScreen = null; screenHistory.length = 0;
+      } else if (item.action === 'save' || item.action === 'load') {
+        openSlotScreen(item.action);
       } else if (item.action === 'open-screen') showGameScreen(item.target);
       else if (item.action === 'back') {
         const previous = screenHistory.pop();
@@ -140,6 +384,7 @@ function showGameScreen(id, { push = true } = {}) {
     });
     overlay.append(button);
   }
+  if (screen.role === 'save-slots' || screen.role === 'load-slots') showSlotList(overlay, screen, scaleX, scaleY);
   overlay.querySelector('button')?.focus();
 }
 const screenHistory = [];
@@ -162,18 +407,220 @@ function sizeSpriteLikeNative(sprite) {
   sprite.style.height = `${sprite.naturalHeight * scale}px`;
 }
 
+function animateBgmGain(audio, target, durationMs, removeWhenDone = false, onComplete = undefined, onProgress = undefined) {
+  const animationId = ++nextBgmAnimationId;
+  bgmAnimationIds.set(audio, animationId);
+  const route = bgmGainNodes.get(audio);
+  if (route) {
+    const { context, gain } = route;
+    const parameter = gain.gain;
+    const now = context.currentTime;
+    const durationSeconds = Math.max(0, durationMs) / 1000;
+    const endTime = now + durationSeconds;
+    const previousAutomation = bgmAutomations.get(audio);
+    const currentValue = previousAutomation
+      ? previousAutomation.startValue + (previousAutomation.target - previousAutomation.startValue)
+        * Math.max(0, Math.min(1, (now - previousAutomation.startTime) / (previousAutomation.endTime - previousAutomation.startTime || 1)))
+      : route.value;
+    if (previousAutomation) clearTimeout(previousAutomation.timer);
+    parameter.cancelScheduledValues(now);
+    parameter.setValueAtTime(currentValue, now);
+    if (durationSeconds) parameter.linearRampToValueAtTime(target, endTime);
+    else parameter.setValueAtTime(target, now);
+    const finish = () => {
+      const automation = bgmAutomations.get(audio);
+      if (!automation || automation.animationId !== animationId || bgmAnimationIds.get(audio) !== animationId) return;
+      if (durationSeconds && context.state !== 'running') {
+        automation.timer = setTimeout(finish, 100);
+        return;
+      }
+      if (context.state === 'running' && context.currentTime + 0.002 < endTime) {
+        automation.timer = setTimeout(finish, Math.max(8, (endTime - context.currentTime) * 1000));
+        return;
+      }
+      bgmAutomations.delete(audio);
+      if (automation.progressTimer) clearTimeout(automation.progressTimer);
+      parameter.setValueAtTime(target, context.currentTime);
+      route.value = target;
+      onProgress?.(1);
+      if (removeWhenDone) {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+        audio.remove();
+        bgmLayers.delete(audio);
+        disconnectBgmAudio(audio);
+      }
+      onComplete?.();
+    };
+    const automation = { animationId, startTime: now, startValue: currentValue, target, endTime, timer: null, progressTimer: null, finish };
+    bgmAutomations.set(audio, automation);
+    route.value = target;
+    if (!durationSeconds) finish();
+    else {
+      const reportProgress = () => {
+        if (bgmAnimationIds.get(audio) !== animationId) return;
+        const progress = context.state === 'running' ? Math.max(0, Math.min(1, (context.currentTime - now) / durationSeconds)) : 0;
+        onProgress?.(progress);
+        if (progress < 1) automation.progressTimer = setTimeout(reportProgress, context.state === 'running' ? 16 : 100);
+      };
+      reportProgress();
+      automation.timer = setTimeout(finish, durationMs + 4);
+    }
+    return;
+  }
+  const start = performance.now();
+  const initial = audio.volume;
+  const finish = () => {
+    if (bgmAnimationIds.get(audio) !== animationId) return;
+    audio.volume = target;
+    onProgress?.(1);
+    if (removeWhenDone) {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+      audio.remove();
+      bgmLayers.delete(audio);
+    }
+    onComplete?.();
+  };
+  if (durationMs <= 0) { finish(); return; }
+  const tick = now => {
+    if (bgmAnimationIds.get(audio) !== animationId) return;
+    const progress = Math.max(0, Math.min(1, (now - start) / durationMs));
+    audio.volume = initial + (target - initial) * progress;
+    onProgress?.(progress);
+    if (progress >= 1) finish();
+    else requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+function reconcileBgmAutomations() {
+  if (document.hidden) return;
+  primeBgmAudioContext();
+  for (const automation of bgmAutomations.values()) automation.finish();
+}
+document.addEventListener('visibilitychange', reconcileBgmAutomations);
+window.addEventListener('pageshow', reconcileBgmAutomations);
+function stopBgm() {
+  const audioPlayers = new Set([...bgmLayers, $('bgm')].filter(Boolean));
+  for (const audio of audioPlayers) {
+    bgmAnimationIds.set(audio, ++nextBgmAnimationId);
+    const automation = bgmAutomations.get(audio);
+    if (automation) {
+      clearTimeout(automation.timer);
+      if (automation.progressTimer) clearTimeout(automation.progressTimer);
+    }
+    bgmAutomations.delete(audio);
+    disconnectBgmAudio(audio);
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+    if (audio !== $('bgm')) audio.remove();
+  }
+  bgmLayers.clear();
+}
+async function playBgm(name, transition, operation, runtime) {
+  const duration = transition?.type === 'crossfade' ? Number(transition.durationMs) || 0 : 0;
+  const audioFailed = audio => {
+    if (!audio.hasAttribute('src')) return;
+    const failedCurrentBgm = runtime?.sceneState.audio.bgm?.actionId === operation?.actionId;
+    bgmAnimationIds.set(audio, ++nextBgmAnimationId);
+    const automation = bgmAutomations.get(audio);
+    if (automation) {
+      clearTimeout(automation.timer);
+      if (automation.progressTimer) clearTimeout(automation.progressTimer);
+    }
+    bgmAutomations.delete(audio);
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+    if (audio !== $('bgm')) audio.remove();
+    bgmLayers.delete(audio);
+    disconnectBgmAudio(audio);
+    // A failed incoming song invalidates its whole crossfade: outgoing layers
+    // were already fading toward silence and must not keep playing invisibly
+    // after SceneState drops the failed current BGM.
+    if (failedCurrentBgm && audio.dataset.bgmCrossfadeStarted === 'true') stopBgm();
+    runtime?.stopAction(operation?.actionId, 'failed');
+  };
+  if (!duration) {
+    const previous = $('bgm');
+    const audio = document.createElement('audio');
+    audio.loop = true;
+    audio.volume = 1;
+    audio.src = url('bgm', name);
+    audio.onerror = () => audioFailed(audio);
+    try {
+      await connectBgmAudio(audio, 1);
+      await audio.play();
+    } catch (error) {
+      disconnectBgmAudio(audio);
+      audio.removeAttribute('src');
+      audio.load();
+      throw error;
+    }
+    stopBgm();
+    audio.id = 'bgm';
+    previous?.replaceWith(audio);
+    if (!audio.isConnected) document.body.append(audio);
+    bgmLayers.add(audio);
+    return;
+  }
+  const audio = document.createElement('audio');
+  audio.loop = true;
+  audio.volume = 0;
+  audio.src = url('bgm', name);
+  audio.dataset.playerBgm = 'true';
+  audio.onerror = () => audioFailed(audio);
+  document.body.append(audio);
+  bgmLayers.add(audio);
+  try {
+    await connectBgmAudio(audio, 0);
+    await audio.play();
+  } catch (error) {
+    bgmLayers.delete(audio);
+    disconnectBgmAudio(audio);
+    audio.remove();
+    throw error;
+  }
+  for (const previous of [...bgmLayers]) {
+    if (previous !== audio && !previous.paused) animateBgmGain(previous, 0, duration, true);
+  }
+  audio.dataset.bgmCrossfadeStarted = 'true';
+  animateBgmGain(audio, 1, duration, false, () => runtime?.completeTransition(operation?.transitionId),
+    progress => runtime?.reportTransitionProgress(operation?.transitionId, progress));
+}
+
 async function media(type, name, mode, operation, runtime) {
   const src = url(type, name);
   if (type === 'bgm') {
-    const a = $('bgm');
-    if (a.src !== location.origin + src) a.src = src;
-    await a.play();
+    await playBgm(name, operation?.transition, operation, runtime);
   } else {
     const a = new Audio(src);
-    let resolveEnded;
-    const ended = new Promise(resolve => { resolveEnded = resolve; });
-    a.onended = () => { a.remove(); runtime?.completeAction(operation?.actionId); resolveEnded(); };
-    await a.play();
+    let resolveEnded, rejectEnded, settled = false;
+    const ended = new Promise((resolve, reject) => { resolveEnded = resolve; rejectEnded = reject; });
+    ended.catch(() => {});
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      a.pause();
+      a.removeAttribute('src');
+      a.load();
+      a.remove();
+      runtime?.stopAction(operation?.actionId, 'failed');
+      rejectEnded(error);
+    };
+    a.onended = () => {
+      if (settled) return;
+      settled = true;
+      a.remove();
+      runtime?.completeAction(operation?.actionId);
+      resolveEnded();
+    };
+    a.onerror = () => fail(Error('Audio playback failed'));
+    try { await a.play(); }
+    catch (error) { fail(error); throw error; }
     if (mode === 'blocking') await ended;
   }
 }
@@ -181,14 +628,10 @@ async function media(type, name, mode, operation, runtime) {
 async function playVideo(name, mode, operation, runtime) {
   const src = url('video', name);
   const previous = $('active-video');
-  if (previous) {
-    const previousAction = previous.dataset.actionId;
-    previous.pause();
-    previous.remove();
-    runtime?.stopAction(previousAction, 'replaced');
-  }
   const video = document.createElement('video');
-  video.id = 'active-video';
+  // Keep the current video until its replacement has actually started. This
+  // matches Native, where make_unique constructs the new decoder before the
+  // assignment destroys the previous Video.
   if (operation?.actionId) video.dataset.actionId = operation.actionId;
   video.src = src;
   video.autoplay = true;
@@ -199,34 +642,59 @@ async function playVideo(name, mode, operation, runtime) {
   video.style.objectFit = 'contain';
   video.style.zIndex = '40';
   $('stage').append(video);
-  if (mode === 'blocking') {
-    await new Promise((resolve, reject) => {
-      video.onended = () => { video.remove(); runtime?.completeAction(operation?.actionId); resolve(); };
-      video.onerror = () => { video.remove(); reject(Error('動画の読み込みに失敗しました')); };
-      video.play().catch(reject);
-    });
-  } else {
-    video.onended = () => { video.remove(); runtime?.completeAction(operation?.actionId); };
+  let resolveEnded, rejectEnded;
+  const ended = new Promise((resolve, reject) => { resolveEnded = resolve; rejectEnded = reject; });
+  ended.catch(() => {});
+  const stopCandidate = (reason) => {
+    video.pause();
+    video.remove();
+    runtime?.stopAction(operation?.actionId, reason);
+  };
+  video.onended = () => { video.remove(); runtime?.completeAction(operation?.actionId); resolveEnded(); };
+  video.onerror = () => {
+    stopCandidate('failed');
+    rejectEnded(Error('動画の読み込みに失敗しました'));
+  };
+  try {
     await video.play();
+  } catch (error) {
+    stopCandidate('failed');
+    throw error;
   }
+  if (previous?.isConnected) {
+    previous.pause();
+    previous.remove();
+  }
+  video.id = 'active-video';
+  if (mode === 'blocking') await ended;
 }
 
-async function fade(element, from, to, duration = 500n) {
+function reportAnimationProgress(animation, runtime, actionId, durationMs) {
+  const sample = () => {
+    if (animation.playState === 'idle') return;
+    const progress = durationMs ? Number(animation.currentTime || 0) / durationMs : 1;
+    runtime?.reportTransitionProgress(actionId, progress);
+    if (progress < 1 && animation.playState !== 'finished') requestAnimationFrame(sample);
+  };
+  requestAnimationFrame(sample);
+}
+async function fade(element, from, to, duration = 500n, runtime, actionId) {
   const ms = Number(duration);
   if (ms < 0 || !Number.isSafeInteger(ms)) throw Error('演出時間が不正です');
-  if (!ms) { element.style.opacity = String(to); return; }
-  const animation = element.animate([{ opacity: from }, { opacity: to }], { duration: ms, fill: 'forwards' });
+  if (!ms) { element.style.opacity = String(to); runtime?.reportTransitionProgress(actionId, 1); return; }
+  const animation = element.animate([{ opacity: from }, { opacity: to }], { duration: ms, easing: 'linear', fill: 'forwards' });
+  reportAnimationProgress(animation, runtime, actionId, ms);
   await animation.finished;
   element.style.opacity = String(to);
   animation.cancel();
 }
-async function applyEffect(type, color, ms = 500n) {
+async function applyEffect(type, color, ms = 500n, runtime, actionId) {
   const overlay = document.createElement('div');
   Object.assign(overlay.style, { position: 'absolute', inset: '0', backgroundColor: color, zIndex: '50', pointerEvents: 'none' });
   $('stage').append(overlay);
-  try { await fade(overlay, 1, 0, ms); } finally { overlay.remove(); }
+  try { await fade(overlay, 1, 0, ms, runtime, actionId); } finally { overlay.remove(); }
 }
-async function moveLayer(operation) {
+async function moveLayer(operation, runtime) {
   const move = operation?.move;
   if (!move) throw Error('move operation metadata is missing');
   const element = move.targetKind === 'bg' ? $('background') : $(`char-${move.target}`);
@@ -243,7 +711,8 @@ async function moveLayer(operation) {
     Object.assign(element.style, to);
     return;
   }
-  const animation = element.animate([from, to], { duration: move.durationMs, fill: 'forwards' });
+  const animation = element.animate([from, to], { duration: move.durationMs, easing: 'linear', fill: 'forwards' });
+  reportAnimationProgress(animation, runtime, operation.actionId, move.durationMs);
   await animation.finished;
   Object.assign(element.style, to);
   animation.cancel();
@@ -256,7 +725,7 @@ async function command(c) {
   const showChar = n === 'show' && Boolean(poseReference);
 
   if (n === 'move') {
-    await moveLayer(c.operation);
+    await moveLayer(c.operation, c.runtime);
   } else if (n === 'bg') {
     const src = url('bg', a[0]);
     const preload = new Image(); preload.src = src; await preload.decode();
@@ -275,11 +744,9 @@ async function command(c) {
       const amount = Number(raw) * (match[2] === '+' ? 1 : -1);
       if (match[1] === 'x') offsetX = amount; else offsetY = amount;
     }
-    document.querySelectorAll(`#characters .actor[data-slot="${CSS.escape(pos)}"]`).forEach(actor => {
-      if (actor.id !== `char-${charName}`) actor.remove();
-    });
     const existing = $(`char-${charName}`);
-    const e = existing || Object.assign(document.createElement('img'), { id: `char-${charName}` });
+    const e = document.createElement('img');
+    e.id = `char-${charName}`;
     e.className = `actor ${pos}`;
     e.dataset.slot = pos;
     e.style.transform = `translateX(calc(-50% + ${offsetX}px))`;
@@ -287,21 +754,23 @@ async function command(c) {
     e.src = url('char', charName, pose);
     await e.decode();
     sizeSpriteLikeNative(e);
-    if (!e.parentNode) $('characters').append(e);
-    if (a[transitionIndex] === 'fade') await fade(e, 0, 1, a[transitionIndex + 1]);
+    if (existing) existing.replaceWith(e);
+    else $('characters').append(e);
+    document.querySelectorAll(`#characters .actor[data-slot="${CSS.escape(pos)}"]`).forEach(actor => {
+      if (actor !== e) actor.remove();
+    });
+    if (a[transitionIndex] === 'fade') await fade(e, 0, 1, a[transitionIndex + 1], c.runtime, c.operation?.actionId);
   } else if (n === 'hide') {
     const charName = a[0];
     const fadeOffset = 1;
     const e = $(`char-${charName}`);
-    if (e && a[fadeOffset] === 'fade') await fade(e, 1, 0, a[fadeOffset + 1]);
+    if (e && a[fadeOffset] === 'fade') await fade(e, 1, 0, a[fadeOffset + 1], c.runtime, c.operation?.actionId);
     e?.remove();
   } else if (n === 'clear') {
     const target = a[0];
     if (target === 'bg') { $('background').style.backgroundImage = 'none'; $('background').style.transform = ''; }
     else if (target === 'bgm') {
-      const bgm = $('bgm');
-      bgm.pause();
-      bgm.removeAttribute('src');
+      stopBgm();
     } else if (target === 'image') $(`image-${a[1]}`)?.remove();
   } else if (n === 'bgm') {
     await media('bgm', a[0], undefined, c.operation, c.runtime);
@@ -309,17 +778,19 @@ async function command(c) {
     if (a[0] === 'video') await playVideo(a[1], a[2], c.operation, c.runtime);
     else await media(a[0], a[1], a[2], c.operation, c.runtime);
   } else if (n === 'effect') {
-    await applyEffect(a[0], a[1], a[2]);
+    await applyEffect(a[0], a[1], a[2], c.runtime, c.operation?.actionId);
   } else if (n === 'show' && a[0] === 'image') {
     const imgName = a[1];
     const pos = slotClass(a[2]);
-    const e = $(`image-${imgName}`) || document.createElement('img');
+    const existing = $(`image-${imgName}`);
+    const e = document.createElement('img');
     e.id = `image-${imgName}`;
     e.className = `image ${pos}`;
     e.dataset.slot = pos;
     e.src = url('image', imgName);
     await e.decode();
     sizeSpriteLikeNative(e);
+    existing?.remove();
     $('images').append(e);
   }
 }
@@ -363,13 +834,20 @@ function reportDebugLocation(instruction, rt) {
   const step = ++debugStep;
   reportDebug('novel-debug:location', { file: instruction.file || rt.program?.sourceFile, line: instruction.line, op: instruction.op, step });
   return new Promise((resolve) => {
-    const timer = setTimeout(() => { debugAcks.delete(step); resolve(); }, 5000);
-    debugAcks.set(step, () => { clearTimeout(timer); debugAcks.delete(step); resolve(); });
+    // A location acknowledgement is a synchronization barrier: the editor must
+    // finish opening/highlighting the source before execution advances. A
+    // timeout here makes slow cross-file navigation silently run ahead.
+    debugAcks.set(step, () => { debugAcks.delete(step); resolve(); });
   });
 }
 const runtime = new NovelRuntime.Runtime({
   load: loadScene,
   beforeInstruction(instruction, rt) {
+    currentExecution = {
+      file: instruction.file || rt.program?.sourceFile || '',
+      scene: rt.currentSceneName || '',
+      line: Number(instruction.line) || 0,
+    };
     return reportDebugLocation(instruction, rt);
   },
   async command(name, args, rt, operation) {
@@ -387,8 +865,9 @@ const runtime = new NovelRuntime.Runtime({
       await new Promise(resolve => setTimeout(resolve, Number(args[0])));
     } else await command({ name, args, operation, runtime: rt });
   },
-  sceneState(state) {
+  sceneState(state, event) {
     document.body.dataset.sceneRevision = String(state.revision);
+    if (event?.name === 'restore') return restorePlayerState(state, runtime);
   },
   choice(prompt, labels) {
     $('text').textContent = prompt;
@@ -403,6 +882,35 @@ const runtime = new NovelRuntime.Runtime({
 let launchName = '';
 let launchVariables = Object.create(null);
 let launchDebug = null;
+async function restorePlayerState(state, rt) {
+  const bg = state.background;
+  $('background').style.backgroundImage = bg?.asset ? `url("${url('bg', bg.asset)}")` : 'none';
+  $('background').style.transform = `translate(${Number(bg?.offsetX) || 0}px, ${Number(bg?.offsetY) || 0}px)`;
+  $('characters').replaceChildren(); $('images').replaceChildren();
+  for (const character of Object.values(state.characters || {})) {
+    if (!character.visible) continue;
+    const sprite = document.createElement('img');
+    sprite.id = `char-${character.id}`; sprite.className = `actor ${slotClass(character.slot)}`; sprite.dataset.slot = slotClass(character.slot);
+    sprite.style.transform = `translateX(calc(-50% + ${Number(character.offsetX) || 0}px))`;
+    sprite.style.bottom = `${-(Number(character.offsetY) || 0)}px`; sprite.style.opacity = String(Number(character.opacity ?? 1));
+    sprite.style.zIndex = String(Number(character.zIndex) || 0); sprite.src = url('char', character.id, character.pose);
+    $('characters').append(sprite);
+    try { await sprite.decode(); sizeSpriteLikeNative(sprite); } catch {}
+  }
+  for (const [name, image] of Object.entries(state.images || {})) {
+    const sprite = document.createElement('img'); sprite.id = `image-${name}`; sprite.className = `image ${slotClass(image.slot)}`; sprite.dataset.slot = slotClass(image.slot);
+    sprite.src = url('image', image.asset || name); $('images').append(sprite);
+    try { await sprite.decode(); sizeSpriteLikeNative(sprite); } catch {}
+  }
+  const bgm = state.audio?.bgm;
+  stopBgm();
+  if (bgm?.asset) {
+    const audio = $('bgm'); audio.loop = true; audio.src = url('bgm', bgm.asset); audio.volume = Number(bgm.gain ?? 1);
+    try { await connectBgmAudio(audio, audio.volume); await audio.play(); bgmLayers.add(audio); }
+    catch { /* Audio may remain blocked until the next input after a reload. */ }
+  }
+  document.body.dataset.sceneRevision = String(state.revision || 0);
+}
 async function launchGame() {
   if (gameStarted) return;
   gameStarted = true;
@@ -415,19 +923,26 @@ async function launchGame() {
   applyPlayerUi(ui.path, ui.theme);
   const settings = await (await fetch('/api/scene-config')).json();
   launchName = debugParams.get('source') || settings.start_file;
+  const projectInfo = await (await fetch('/api/project')).json();
+  saveStoragePrefix = `novel-script:${encodeURIComponent(projectInfo.projectRoot || location.origin)}:${debugSession ? 'test' : 'game'}`;
   const variables = launchVariables;
   if (debugSession) {
     const supplied = JSON.parse(debugParams.get('variables') || '{}');
     for (const [key, entry] of Object.entries(supplied)) {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw Error(`Invalid debug variable: ${key}`);
-      if (entry?.type === 'int') variables[key] = NovelRuntime.integer(entry.value);
-      else if (entry?.type === 'float') variables[key] = NovelRuntime.floating(entry.value);
-      else if (entry?.type === 'str') variables[key] = String(entry.value);
+      if (entry?.type === 'int' && typeof entry.value === 'string') variables[key] = NovelRuntime.integer(entry.value);
+      else if (entry?.type === 'float' && typeof entry.value === 'string') variables[key] = NovelRuntime.floating(entry.value);
+      else if (entry?.type === 'str' && typeof entry.value === 'string') variables[key] = entry.value;
       else if (entry?.type === 'dict<int>' || entry?.type === 'dict<float>' || entry?.type === 'dict<str>') {
         const source = JSON.parse(entry.value);
         if (!source || typeof source !== 'object' || Array.isArray(source)) throw Error(`Invalid debug dictionary: ${key}`);
         const dictionary = Object.create(null);
-        for (const [field, value] of Object.entries(source)) dictionary[field] = entry.type === 'dict<int>' ? NovelRuntime.integer(value) : entry.type === 'dict<float>' ? NovelRuntime.floating(value) : String(value);
+        for (const [field, value] of Object.entries(source)) {
+          if (entry.type === 'dict<int>') dictionary[field] = NovelRuntime.integer(value);
+          else if (entry.type === 'dict<float>') dictionary[field] = NovelRuntime.floating(value);
+          else if (typeof value === 'string') dictionary[field] = value;
+          else throw Error(`Invalid debug dictionary element type: ${key}.${field}`);
+        }
         variables[key] = dictionary;
       } else if (entry?.type === 'struct') {
         const source = JSON.parse(entry.value);
@@ -445,11 +960,44 @@ async function launchGame() {
       } else throw Error(`Unsupported debug variable type: ${key}`);
     }
   }
-  const line = Number(debugParams.get('line'));
-  launchDebug = debugSession ? { scene: debugParams.get('scene') || undefined, line: Number.isSafeInteger(line) && line > 0 ? line : undefined, variables } : null;
+  const debugLineText = debugParams.get('line');
+  let debugLine;
+  if (debugSession && debugLineText !== null) {
+    if (!/^\d+$/.test(debugLineText)) throw Error('Debug line must be a non-negative integer.');
+    debugLine = Number(debugLineText);
+    if (!Number.isSafeInteger(debugLine)) throw Error('Debug line is outside the supported integer range.');
+  }
+  launchDebug = debugSession ? {
+    file: debugParams.get('source') || undefined,
+    scene: debugParams.get('scene') || undefined,
+    line: debugLine > 0 ? debugLine : undefined,
+    variables,
+  } : null;
   const menu = await (await fetch('/api/game-screens')).json();
-  if (!debugSession && menu.configured) {
-    gameScreenConfig = menu.screens;
+  gameScreenConfig = menu.screens;
+  if (!debugSession) {
+    try {
+      const rawResume = localStorage.getItem(`${saveStoragePrefix}:resume`);
+      if (rawResume) {
+        localStorage.removeItem(`${saveStoragePrefix}:resume`);
+        resumeAtLaunch = decodeSave(rawResume);
+        if (resumeAtLaunch?.version === 1 && typeof resumeAtLaunch.file === 'string' && typeof resumeAtLaunch.scene === 'string'
+          && /^[A-Za-z_][A-Za-z0-9_]*$/.test(resumeAtLaunch.scene) && Number.isSafeInteger(resumeAtLaunch.line) && resumeAtLaunch.line > 0) {
+          launchName = resumeAtLaunch.file;
+          launchDebug = { file: resumeAtLaunch.file, scene: resumeAtLaunch.scene, line: resumeAtLaunch.line, variables: resumeAtLaunch.variables || {}, locals: resumeAtLaunch.locals || [], readonlyLocals: resumeAtLaunch.readonlyLocals || [], sceneState: resumeAtLaunch.sceneState };
+          $('text').textContent = String(resumeAtLaunch.text || ''); $('speaker-text').textContent = String(resumeAtLaunch.speaker || '');
+        } else resumeAtLaunch = null;
+      }
+    } catch { resumeAtLaunch = null; }
+  }
+  if (!debugSession && menu.screens?.titleScene && !resumeAtLaunch) {
+    launchName = menu.screens.titleScene.file;
+    launchDebug = { file: menu.screens.titleScene.file, scene: menu.screens.titleScene.scene };
+    await launchGame();
+  } else if (!debugSession && resumeAtLaunch) {
+    await launchGame();
+  } else if (!debugSession && menu.configured) {
+    runtime.program = await loadScene(launchName);
     gameStartHandler = launchGame;
     showGameScreen(gameScreenConfig.initial, { push: false });
   } else await launchGame();

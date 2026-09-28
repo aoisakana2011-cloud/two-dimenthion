@@ -4,12 +4,14 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const zlib = require('node:zlib');
 const { parse, compile, analyzeScript, sceneReachability } = require('../dist');
-const { Runtime } = require('../Edit/runtime');
+const { Runtime, createSceneState } = require('../Edit/runtime');
 const { validate: validateEditorSource, compileSource: compileEditorSource } = require('../Edit/server');
 const { pack, validateVariableFlow } = require('../tools/pack');
 const { compileProject, resolveProjectScript } = require('../tools/project');
 const { readStaticVariables } = require('../tools/static-variables');
+const { seedEmptyProject, projectLayout } = require('../tools/project-layout');
 const program = source => JSON.parse(JSON.stringify(compile(parse(source))));
 async function nativeExecutableForTest(t) {
   if (process.env.NOVEL_NATIVE_EXE) {
@@ -19,6 +21,31 @@ async function nativeExecutableForTest(t) {
   const local = path.resolve(__dirname, '../native/build/Release/novel_player.exe');
   try { await fs.access(local); return local; }
   catch { t.skip('Build the native player or set NOVEL_NATIVE_EXE to enable parity checks'); return null; }
+}
+function tinyPng() {
+  const crc32 = bytes => {
+    let value = 0xffffffff;
+    for (const byte of bytes) {
+      value ^= byte;
+      for (let bit = 0; bit < 8; bit++) value = (value >>> 1) ^ (value & 1 ? 0xedb88320 : 0);
+    }
+    return (value ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (name, data) => {
+    const type = Buffer.from(name);
+    const length = Buffer.alloc(4); length.writeUInt32BE(data.length);
+    const checksum = Buffer.alloc(4); checksum.writeUInt32BE(crc32(Buffer.concat([type, data])));
+    return Buffer.concat([length, type, data, checksum]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(1, 0); header.writeUInt32BE(1, 4);
+  header[8] = 8; header[9] = 6;
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk('IHDR', header),
+    chunk('IDAT', zlib.deflateSync(Buffer.from([0, 255, 255, 255, 255]))),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
 }
 async function run(source, host = {}) {
   const rt = new Runtime({ command: async () => {}, choice: async () => 0, ...host });
@@ -48,6 +75,89 @@ scene main {
   assert.equal(seen.find((item) => item.name === 'say').args[1], '1.25');
   await assert.rejects(run('float bad = 1.0\nscene main { set bad = bad / 0.0 }'), /zero|0/);
   assert.throws(() => program('float bad = 1 + 0.5\nscene main { wait 1 }'), /型|type/i);
+});
+
+test('debug start inside a for loop resumes the selected first iteration and preserves subsequent iterations', async () => {
+  const source = `global int total = 0
+scene main {
+  for i from 1 to 3 {
+    set total = total + i
+    say narrator str(i)
+  }
+  say narrator str(total)
+}`;
+  const lines = [];
+  const runtime = new Runtime({ command: async (name, args) => { if (name === 'say') lines.push(args[1]); } });
+  await runtime.run(program(source), { scene: 'main', line: 5 });
+  assert.deepEqual(lines, ['1', '2', '3', '5']);
+  assert.equal(runtime.get('total'), 5n);
+});
+
+test('debug start inside nested while and for loops retains both loop scopes', async () => {
+  const source = `global int outer = 0
+global int inner = 0
+scene main {
+  while outer < 2 {
+    set inner = 0
+    for i from 1 to 2 {
+      set inner = inner + 1
+      say narrator str(outer) + ":" + str(i) + ":" + str(inner)
+    }
+    set outer = outer + 1
+  }
+}`;
+  const lines = [];
+  const runtime = new Runtime({ command: async (name, args) => { if (name === 'say') lines.push(args[1]); } });
+  await runtime.run(program(source), { scene: 'main', line: 8 });
+  assert.deepEqual(lines, ['0:1:0', '0:2:1', '1:1:1', '1:2:2']);
+});
+
+test('restored SceneState retains arrays for transitions, effects, and concurrent media state', async () => {
+  const sceneState = createSceneState();
+  sceneState.transfers.push({ target: 'saved', external: false, at: 12 });
+  sceneState.effects.push({ type: 'fade', blocking: false });
+  sceneState.audio.se.push({ asset: 'click', actionId: 'se-1' });
+  let restored;
+  const runtime = new Runtime({
+    command: async () => {},
+    sceneState: async (state, event) => { if (event.name === 'restore') restored = state; },
+  });
+  await runtime.run(program('scene main { wait 1 }'), { scene: 'main', sceneState });
+  assert.ok(Array.isArray(restored.transfers));
+  assert.ok(Array.isArray(restored.effects));
+  assert.ok(Array.isArray(restored.audio.se));
+  assert.deepEqual(restored.transfers[0], { target: 'saved', external: false, at: 12 });
+});
+
+test('save cursor restoration preserves active choice-local values after the declaration line', async () => {
+  const source = `scene main {
+  choice "continue?" {
+    "yes" {
+      int local_value = 7
+      say narrator str(local_value)
+      say narrator str(local_value + 1)
+    }
+  }
+}`;
+  const compiled = program(source);
+  let savedLine = 0;
+  let savedLocals = [];
+  let savedReadonlyLocals = [];
+  const firstPass = new Runtime({ choice: async () => 0, command: async (name, args) => {}, beforeInstruction(instruction) {
+    if (instruction.op === 'command' && instruction.name === 'say' && !savedLine) {
+      savedLine = instruction.line;
+      savedLocals = firstPass.frames.slice(1).map(frame => ({ ...frame }));
+      savedReadonlyLocals = firstPass.frames.slice(1).map(frame => [...(firstPass.readonlyFrames.get(frame) || [])]);
+    }
+  } });
+  await firstPass.run(compiled);
+  const resumedLines = [];
+  const resumed = new Runtime({ choice: async () => 0, command: async (name, args) => { if (name === 'say') resumedLines.push(args[1]); } });
+  await resumed.run(compiled, {
+    file: compiled.scenes[0].file, scene: compiled.scenes[0].name, line: savedLine, variables: firstPass.globals,
+    locals: savedLocals, readonlyLocals: savedReadonlyLocals,
+  });
+  assert.deepEqual(resumedLines, ['7', '8']);
 });
 
 test('native and browser agree on float arithmetic, conversion and overflow', async t => {
@@ -106,9 +216,10 @@ test('float static variable table retains finite bounds and exact initial value'
   await fs.mkdir(scenesRoot);
   await fs.mkdir(assetsRoot);
   const sceneFile = path.join(scenesRoot, 'main.tds');
-  await fs.writeFile(sceneFile, 'scene main { say narrator str(ratio) }');
+  await fs.writeFile(sceneFile, 'scene main { if ratio > 0.75 { say narrator "unreachable" } else { say narrator str(ratio) } }');
   const packed = await pack(sceneFile, path.join(root, 'float.nsp.json'), { scenesRoot, assetsRoot, dataRoot });
   assert.equal(packed.program.variables.find((variable) => variable.name === 'ratio')?.type, 'float');
+  assert.deepEqual(packed.program.scenes.find((scene) => scene.name === 'main').instructions.map((instruction) => instruction.op), ['command']);
   await fs.writeFile(file, JSON.stringify({ staticVariables: [{ name: 'ratio', type: 'float', value: 'Infinity' }] }));
   await assert.rejects(readStaticVariables(dataRoot), /有限/);
 });
@@ -130,6 +241,69 @@ scene main {
   assert.equal((await run('float result = float("+1.25")\nscene main { wait 1 }')).get('result'), 1.25);
   assert.equal((await run('int result = int(-1.9)\nscene main { wait 1 }')).get('result'), -1n);
   await assert.rejects(run('int result = int(1e20)\nscene main { wait 1 }'), /overflow|範囲|int/i);
+});
+
+test('standard walk module drives eight blocking movement frames over exactly two seconds', async t => {
+  const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-walk-cycle-'));
+  t.after(() => fs.rm(projectRoot, { recursive: true, force: true }));
+  seedEmptyProject(projectRoot);
+  const { scenesRoot, assetsRoot } = projectLayout(projectRoot);
+  const source = `include "std/motion/walk.tds" as walk
+global float walk_phase = 0.0
+global float previous_y = 0.0
+global float walk_y = 0.0
+character rei {
+  name = "Rei"
+  pose normal = "asset/char/rei.png"
+}
+scene main {
+  show rei.normal center
+  for frame from 1 to 8 {
+    set walk_phase = float(frame) / 8.0
+    set walk_y = walk.walk_bob(5.0, walk_phase)
+    move character rei by x+18 y+(walk_y - previous_y) over 250
+    set previous_y = walk_y
+  }
+}
+`;
+  await fs.writeFile(path.join(scenesRoot, 'main.tds'), source, 'utf8');
+  await fs.writeFile(path.join(assetsRoot, 'char/rei.png'), tinyPng());
+  const compiled = await compileProject(source, assetsRoot, scenesRoot, new Map(), new Map(), 'main.tds');
+  const moves = [];
+  const runtime = new Runtime({ command: async (name, args) => { if (name === 'move') moves.push(args); } });
+  await runtime.run(compiled);
+  assert.equal(moves.length, 8);
+  let actualY = 0;
+  for (let index = 0; index < moves.length; index++) {
+    const args = moves[index];
+    assert.deepEqual(args.slice(0, 5), ['character', 'rei', 'by', 'x+18', 'y+']);
+    assert.equal(args[6], 'over');
+    assert.equal(args[7], 250n);
+    actualY += args[5];
+    assert.ok(Number.isFinite(Number(args[5])), `walk frame ${index + 1} has a finite vertical delta`);
+  }
+  assert.ok(Math.abs(runtime.get('walk_phase') - 1) < 1e-12);
+  assert.ok(Math.abs(actualY) < 1e-8, 'the walk returns to its starting vertical position');
+  assert.ok(Math.abs(runtime.get('walk_y')) < 1e-5);
+  assert.equal(moves.reduce((duration, args) => duration + Number(args[7]), 0), 2000, 'the authored walk consists of one 2-second cycle');
+  const exe = await nativeExecutableForTest(t);
+  if (exe) {
+    const packagePath = path.join(projectRoot, 'walk.nsp.json');
+    await pack(path.join(scenesRoot, 'main.tds'), packagePath, { projectRoot, scenesRoot, assetsRoot });
+    const child = spawnSync(exe, [packagePath, '--headless'], { encoding: 'utf8', timeout: 10000 });
+    assert.equal(child.status, 0, child.stderr || child.error?.message);
+    const output = JSON.parse(child.stdout);
+    assert.equal(output.commands.filter(command => command.name === 'move').length, 8);
+    assert.ok(Math.abs(output.globals.walk_phase - 1) < 1e-12);
+    assert.ok(Math.abs(output.globals.walk_y) < 1e-5);
+    const start = Date.now();
+    const visibleRun = spawnSync(exe, [packagePath, '--smoke'], {
+      encoding: 'utf8', timeout: 10000,
+      env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' },
+    });
+    assert.equal(visibleRun.status, 0, visibleRun.stderr || visibleRun.error?.message);
+    assert.ok(Date.now() - start >= 1900, 'native presentation loop must spend the authored 2 seconds rendering the walk');
+  }
 });
 
 test('editor validation and compile share the source-file contract', async () => {
@@ -434,7 +608,37 @@ test('runtime keeps a unified scene state and replaces a slot atomically', async
   assert.equal(rt.sceneState.slots.far_left, 'friend');
   assert.equal(rt.sceneState.characters.hero.visible, false);
   assert.equal(rt.sceneState.characters.friend.visible, true);
+  assert.equal(rt.sceneState.characters.hero.visualOrder, 1);
+  assert.equal(rt.sceneState.characters.friend.visualOrder, 2);
   assert.equal(rt.sceneState.diagnostics.at(-1).code, 'slot-replaced');
+});
+
+test('SceneState visual order matches Native raise, preserve, and re-entry behavior', async () => {
+  const rt = await run(`
+    asset image panel = "asset/panel.png"
+    asset image card = "asset/card.png"
+    character hero {
+      name = "Hero"
+      pose normal = "asset/hero.png"
+    }
+    character friend {
+      name = "Friend"
+      pose normal = "asset/friend.png"
+    }
+    show hero.normal left
+    show friend.normal right
+    show hero.normal center
+    hide hero
+    show hero.normal center
+    show image panel left
+    show image card right
+    show image panel center
+  `);
+  assert.equal(rt.sceneState.characters.friend.visualOrder, 2);
+  assert.equal(rt.sceneState.characters.hero.visualOrder, 3, 'a still-visible character keeps order, but re-entry after hide gets a new order');
+  assert.equal(rt.sceneState.images.card.visualOrder, 5);
+  assert.equal(rt.sceneState.images.panel.visualOrder, 6, 'redisplaying an image raises it above the prior image');
+  assert.equal(rt.sceneState.nextVisualOrder, 6);
 });
 
 test('scene state tracks blocking transition time and leaves instant actions complete', async () => {
@@ -529,6 +733,42 @@ test('scene state registers blocking character fades and commits hide after comp
   assert.equal(rt.sceneState.slots.left, null);
 });
 
+test('SceneState visual values are the interpolated rendered values throughout blocking transitions', async () => {
+  const samples = Object.create(null);
+  const rt = await run(`
+    asset bg room = "asset/room.png"
+    character hero { name = "Hero"\npose normal = "asset/hero.png" }
+    bg room
+    show hero.normal center fade 100
+    move character hero by x+20 y+40 over 100
+    move bg by y+60 over 100
+    effect fade black 200
+    hide hero fade 100
+  `, {
+    command: async (name, args, runtime, operation) => {
+      const actionId = operation.actionId;
+      if (!actionId || !['show', 'move', 'effect', 'hide'].includes(name)) return;
+      runtime.reportTransitionProgress(actionId, 0.5);
+      if (name === 'show') samples.show = { opacity: runtime.sceneState.characters.hero.opacity, status: runtime.sceneState.characters.hero.transition.status };
+      if (name === 'move' && args[1] === 'hero') samples.characterMove = { x: runtime.sceneState.characters.hero.offsetX, y: runtime.sceneState.characters.hero.offsetY };
+      if (name === 'move' && args[0] === 'bg') samples.backgroundMove = { x: runtime.sceneState.background.offsetX, y: runtime.sceneState.background.offsetY };
+      if (name === 'effect') samples.effect = runtime.sceneState.effects.at(-1).opacity;
+      if (name === 'hide') samples.hide = runtime.sceneState.characters.hero.opacity;
+    },
+  });
+  assert.deepEqual({ ...samples }, {
+    show: { opacity: 0.5, status: 'running' },
+    characterMove: { x: 10, y: 20 },
+    backgroundMove: { x: 0, y: 30 },
+    effect: 0.5,
+    hide: 0.5,
+  });
+  assert.deepEqual([rt.sceneState.characters.hero.opacity, rt.sceneState.characters.hero.offsetX, rt.sceneState.characters.hero.offsetY], [0, 20, 40]);
+  assert.deepEqual([rt.sceneState.background.offsetX, rt.sceneState.background.offsetY], [0, 60]);
+  assert.equal(rt.sceneState.effects[0].opacity, 0);
+  assert.equal(rt.sceneState.logicalTimeMs, 600);
+});
+
 test('scene state records concurrent audio and blocking or async video actions', async () => {
   const rt = await run(`
     asset se click = "asset/click.wav"
@@ -543,13 +783,52 @@ test('scene state records concurrent audio and blocking or async video actions',
   assert.deepEqual(actions.map(action => action.kind), ['se', 'voice', 'video', 'video']);
   assert.equal(actions[0].blocking, false);
   assert.equal(actions[1].status, 'running');
-  assert.equal(actions[2].status, 'running');
+  assert.equal(actions[2].status, 'stopped');
+  assert.equal(actions[2].reason, 'replaced');
   assert.equal(actions[3].blocking, true);
   assert.equal(actions[3].status, 'complete');
   assert.equal(actions[3].endedAt, 0);
+  assert.equal(rt.sceneState.audio.se.length, 1);
+  assert.equal(rt.sceneState.audio.voices.length, 1);
+  assert.equal(rt.sceneState.video, null, 'the blocking replacement finishes and clears the active video');
   rt.completeAction(actions[1].id);
   assert.equal(actions[1].status, 'complete');
   assert.equal(actions[1].endedAt, 0);
+  assert.equal(rt.sceneState.audio.voices.length, 0, 'completed Voice is removed from the active playback state but retained in action history');
+  rt.completeAction(actions[0].id);
+  assert.equal(rt.sceneState.audio.se.length, 0, 'completed SE is removed from the active playback state');
+  assert.deepEqual([actions[0].status, actions[1].status], ['complete', 'complete']);
+});
+
+test('SceneState owns the active video and commits replacement only after the candidate starts', async () => {
+  const source = `
+    asset video first = "asset/first.mp4"
+    asset video second = "asset/second.mp4"
+    asset video broken = "asset/broken.mp4"
+    play video first async
+    play video second async
+  `;
+  const rt = await run(source);
+  const videos = Object.values(rt.sceneState.actions).filter(action => action.kind === 'video');
+  assert.equal(rt.sceneState.video.asset, 'second');
+  assert.equal(videos[0].status, 'stopped');
+  assert.equal(videos[0].reason, 'replaced');
+  assert.equal(videos[1].status, 'running');
+  rt.completeAction(videos[1].id);
+  assert.equal(rt.sceneState.video, null, 'natural completion removes the active video but retains action history');
+
+  const failed = new Runtime({ command: async (name, args) => {
+    if (name === 'play' && args[0] === 'video' && args[1] === 'broken') throw Error('video start failed');
+  } });
+  await assert.rejects(failed.run(program(`
+    asset video first = "asset/first.mp4"
+    asset video broken = "asset/broken.mp4"
+    play video first async
+    play video broken async
+  `)), /video start failed/);
+  const failedVideos = Object.values(failed.sceneState.actions).filter(action => action.kind === 'video');
+  assert.equal(failed.sceneState.video.asset, 'first', 'failed replacement rollback keeps the still-running video authoritative');
+  assert.deepEqual(failedVideos.map(({ status, reason }) => [status, reason]), [['running', undefined], ['stopped', 'failed']]);
 });
 
 test('scene state can stop an async media action when its presentation layer is replaced', async () => {
@@ -562,6 +841,23 @@ test('scene state can stop an async media action when its presentation layer is 
   assert.equal(action.status, 'stopped');
   assert.equal(action.reason, 'replaced');
   assert.equal(action.endedAt, 0);
+});
+
+test('stopped audio leaves active playback state while retaining its terminal action record', async () => {
+  const rt = await run(`
+    asset se click = "asset/click.wav"
+    asset voice hello = "asset/hello.wav"
+    play se click
+    play voice hello async
+  `);
+  const actions = Object.values(rt.sceneState.actions);
+  rt.stopAction(actions[0].id, 'failed');
+  rt.stopAction(actions[1].id, 'replaced');
+  assert.deepEqual(rt.sceneState.audio.se, []);
+  assert.deepEqual(rt.sceneState.audio.voices, []);
+  assert.deepEqual(actions.map(({ status, reason }) => [status, reason]), [
+    ['stopped', 'failed'], ['stopped', 'replaced'],
+  ]);
 });
 
 test('scene state records replacement and clear reasons for BGM actions', async () => {
@@ -599,6 +895,344 @@ test('BGM operations expose replacement and clear action provenance to hosts', a
   assert.equal(operations[2].actionId, operations[1].actionId);
   assert.equal(rt.sceneState.actions[operations[0].actionId].reason, 'replaced');
   assert.equal(rt.sceneState.actions[operations[1].actionId].reason, 'cleared');
+});
+
+test('a failed BGM crossfade preserves the playing track and records only the failed candidate', async () => {
+  const rt = new Runtime({ command: async (name, args) => {
+    if (name === 'play' && args[0] === 'bgm' && args[1] === 'broken') throw Error('decode failed');
+  } });
+  await assert.rejects(rt.run(program(`
+    asset bgm first = "asset/first.ogg"
+    asset bgm second = "asset/second.ogg"
+    asset bgm broken = "asset/broken.ogg"
+    bgm first
+    play bgm second crossfade 120
+    play bgm broken crossfade 240
+  `)), /decode failed/);
+  assert.equal(rt.sceneState.audio.bgm.asset, 'second');
+  const actions = Object.values(rt.sceneState.actions);
+  assert.deepEqual(actions.map(({ asset, status, reason }) => [asset, status, reason]), [
+    ['first', 'stopped', 'replaced'],
+    ['second', 'running', undefined],
+    ['broken', 'stopped', 'failed'],
+  ]);
+});
+
+test('failed presentation commands roll back only their draft and retain concurrent media completion', async () => {
+  let videoActionId;
+  let seActionId;
+  const rt = new Runtime({ command: async (name, args, runtime, operation) => {
+    if (name === 'play' && args[0] === 'video') videoActionId = operation.actionId;
+    if (name === 'play' && args[0] === 'se') seActionId = operation.actionId;
+    if (name === 'bg' && args[0] === 'broken') {
+      runtime.completeAction(videoActionId);
+      runtime.completeAction(seActionId);
+      assert.equal(runtime.sceneState.actions[videoActionId].status, 'complete', 'completed media must be visible during an in-flight presentation transaction');
+      assert.equal(runtime.sceneState.audio.se.length, 0, 'completed SE must leave the active list while the unrelated command is pending');
+      throw Error('background decode failed');
+    }
+  } });
+  await assert.rejects(rt.run(program(`
+    asset bg first = "asset/first.png"
+    asset bg broken = "asset/broken.png"
+    asset video intro = "asset/intro.mp4"
+    asset se click = "asset/click.wav"
+    bg first
+    play video intro async
+    play se click
+    bg broken
+  `)), /background decode failed/);
+  assert.equal(rt.sceneState.background.asset, 'first');
+  assert.equal(rt.sceneState.actions[videoActionId].status, 'complete');
+  assert.equal(rt.sceneState.actions[seActionId].status, 'complete');
+  assert.deepEqual(rt.sceneState.audio.se, [], 'rollback must retain the concurrent SE completion instead of resurrecting it');
+});
+
+test('failed presentation rollback retains newer progress from an unaffected concurrent BGM fade', async () => {
+  let bgmTransitionId;
+  const rt = new Runtime({ command: async (name, args, runtime, operation) => {
+    if (name === 'play' && args[0] === 'bgm') {
+      bgmTransitionId = operation.transitionId;
+      runtime.reportTransitionProgress(bgmTransitionId, 0.25);
+    }
+    if (name === 'bg' && args[0] === 'broken') {
+      runtime.reportTransitionProgress(bgmTransitionId, 0.4);
+      runtime.reportTransitionProgress(bgmTransitionId, 0.6);
+      runtime.reportTransitionProgress(bgmTransitionId, 0.7);
+      assert.equal(runtime.pendingSceneActionEvents.filter(event => event.type === 'progress' && event.id === bgmTransitionId).length, 1,
+        'the transaction journal should retain only the latest sample per live transition');
+      throw Error('background decode failed');
+    }
+  } });
+  await assert.rejects(rt.run(program(`
+    asset bg room = "asset/room.png"
+    asset bg broken = "asset/broken.png"
+    asset bgm music = "asset/music.ogg"
+    bg room
+    play bgm music crossfade 1000
+    bg broken
+  `)), /background decode failed/);
+  assert.equal(rt.sceneState.background.asset, 'room', 'the failed background candidate must roll back');
+  assert.equal(rt.sceneState.audio.bgm.transition.id, bgmTransitionId);
+  assert.equal(rt.sceneState.audio.bgm.transition.progress, 0.7,
+    'progress reported while the failed background was loading must survive its rollback');
+  assert.equal(rt.sceneState.actions[bgmTransitionId].progress, 0.7,
+    'the live BGM action and its transition must remain synchronized after rollback');
+});
+
+test('failed included presentation inside a selected branch restores only its own state', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-branch-include-rollback-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const assetsRoot = path.join(dir, 'assets');
+  await fs.mkdir(assetsRoot, { recursive: true });
+  await fs.writeFile(path.join(assetsRoot, 'room.png'), Buffer.from([0]));
+  await fs.writeFile(path.join(assetsRoot, 'broken.png'), Buffer.from([0]));
+  await fs.writeFile(path.join(assetsRoot, 'music.ogg'), Buffer.from([0]));
+  await fs.writeFile(path.join(dir, 'presentation.tds'), 'asset bg broken = "asset/broken.png"\nfn fail_background() -> none { bg broken }');
+  const source = `asset bg room = "asset/room.png"
+asset bgm music = "asset/music.ogg"
+include presentation.tds as presentation
+scene main {
+  bg room
+  play bgm music crossfade 1000
+  choice "continue?" {
+    "run included presentation" { presentation.fail_background() }
+    "skip" { wait 1 }
+  }
+}`;
+  await fs.writeFile(path.join(dir, 'main.tds'), source);
+  const packed = await pack(path.join(dir, 'main.tds'), path.join(dir, 'test.nsp.json'), { scenesRoot: dir, assetsRoot });
+  let transitionId;
+  const runtime = new Runtime({ choice: async () => 0, command: async (name, args, rt, operation) => {
+    if (name === 'play' && args[0] === 'bgm') {
+      transitionId = operation.transitionId;
+      rt.reportTransitionProgress(transitionId, 0.2);
+    }
+    if (name === 'bg' && args[0] === 'broken') {
+      rt.reportTransitionProgress(transitionId, 0.65);
+      throw Error('included background decode failed');
+    }
+  } });
+  await assert.rejects(runtime.run(packed.program), /included background decode failed/);
+  assert.equal(runtime.sceneState.background.asset, 'room', 'the included branch must rollback its failed background candidate');
+  assert.equal(runtime.sceneState.audio.bgm.asset, 'music');
+  assert.equal(runtime.sceneState.audio.bgm.transition.progress, 0.65,
+    'the progress of an unrelated BGM transition must survive rollback through the selected include branch');
+  assert.equal(runtime.sceneState.actions[transitionId].progress, 0.65);
+  assert.equal(runtime.sceneState.actions[transitionId].status, 'running');
+});
+
+test('BGM crossfade in a selected branch is retained as audio-clocked non-blocking state', async () => {
+  const operations = [];
+  let rt;
+  rt = new Runtime({ command: async (name, args, runtime, operation) => {
+    operations.push({ name, args, operation, time: runtime.sceneState.logicalTimeMs });
+  }, choice: async () => 0 });
+  await rt.run(program(`
+    asset bgm first = "asset/first.ogg"
+    asset bgm second = "asset/second.ogg"
+    scene main {
+      choice "music" {
+        "crossfade" { play bgm first\nplay bgm second crossfade 120\nwait 30 }
+        "leave" { wait 1 }
+      }
+    }
+  `));
+  const crossfade = operations.find(item => item.name === 'play' && item.args[1] === 'second');
+  assert.ok(crossfade);
+  assert.deepEqual(crossfade.operation.transition, { type: 'crossfade', durationMs: 120 });
+  assert.equal(Boolean(crossfade.operation.blocking), false);
+  assert.equal(rt.sceneState.logicalTimeMs, 30);
+  assert.equal(rt.sceneState.audio.bgm.asset, 'second');
+  assert.equal(rt.sceneState.audio.bgm.transition.progress, 0,
+    'script wait advances logical time but cannot synthesize progress for an audio-clocked fade');
+  assert.equal(rt.sceneState.actions[crossfade.operation.actionId].status, 'running');
+});
+
+test('a non-blocking BGM transition completes during a dialogue wait without advancing script time', async () => {
+  let rt;
+  let transitionId;
+  rt = new Runtime({ command: async (name, _args, runtime, operation) => {
+    if (name === 'play' && operation.transition?.type === 'crossfade') {
+      transitionId = operation.transitionId;
+      setTimeout(() => runtime.completeTransition(transitionId), 10);
+    }
+    if (name === 'say') await new Promise(resolve => setTimeout(resolve, 40));
+  } });
+  await rt.run(program(`
+    asset bgm first = "asset/first.ogg"
+    asset bgm second = "asset/second.ogg"
+    bgm first
+    play bgm second crossfade 20
+    say narrator "fade while waiting"
+  `));
+  assert.equal(rt.sceneState.logicalTimeMs, 0, 'dialogue input time is outside deterministic script time');
+  assert.equal(rt.sceneState.audio.bgm.transition.id, transitionId);
+  assert.equal(rt.sceneState.audio.bgm.transition.status, 'complete');
+  assert.equal(rt.sceneState.audio.bgm.transition.progress, 1);
+  assert.equal(rt.sceneState.actions[transitionId].status, 'running', 'the BGM action continues after its crossfade ends');
+});
+
+test('a stale BGM transition completion cannot finish the replacement transition', async () => {
+  const transitionIds = [];
+  let rt;
+  rt = new Runtime({ command: async (name, _args, runtime, operation) => {
+    if (name === 'play' && operation.transition?.type === 'crossfade') {
+      transitionIds.push(operation.transitionId);
+      const delay = transitionIds.length === 1 ? 10 : 30;
+      setTimeout(() => runtime.completeTransition(operation.transitionId), delay);
+    }
+    if (name === 'say') await new Promise(resolve => setTimeout(resolve, 50));
+  } });
+  await rt.run(program(`
+    asset bgm first = "asset/first.ogg"
+    asset bgm second = "asset/second.ogg"
+    asset bgm third = "asset/third.ogg"
+    bgm first
+    play bgm second crossfade 100
+    play bgm third crossfade 100
+    say narrator "latest fade wins"
+  `));
+  const [secondId, thirdId] = transitionIds;
+  assert.notEqual(secondId, thirdId);
+  assert.equal(rt.sceneState.audio.bgm.asset, 'third');
+  assert.equal(rt.sceneState.audio.bgm.transition.id, thirdId);
+  assert.equal(rt.sceneState.audio.bgm.transition.status, 'complete');
+  assert.equal(rt.sceneState.actions[secondId].status, 'stopped');
+  assert.equal(rt.sceneState.actions[secondId].reason, 'replaced');
+  assert.equal(rt.sceneState.actions[thirdId].status, 'running');
+});
+
+test('a failed outgoing BGM layer is retired without overwriting its replacement action', async () => {
+  const ids = {};
+  const rt = new Runtime({ command: async (name, args, runtime, operation) => {
+    if (name === 'play' && args[0] === 'bgm') ids[args[1]] = operation.actionId;
+    if (name === 'play' && args[0] === 'bgm' && args[1] === 'second') runtime.reportTransitionProgress(operation.transitionId, 0.5);
+    if (name === 'play' && args[0] === 'bgm' && args[1] === 'third') runtime.reportTransitionProgress(operation.transitionId, 0.4);
+  } });
+  await rt.run(program(`
+    asset bgm first = "asset/first.ogg"
+    asset bgm second = "asset/second.ogg"
+    asset bgm third = "asset/third.ogg"
+    play bgm first crossfade 100
+    play bgm second crossfade 100
+    play bgm third crossfade 100
+    say narrator "fade still running"
+  `));
+  const bgm = rt.sceneState.audio.bgm;
+  const progress = bgm.transition.progress;
+  rt.stopAction(ids.first, 'failed');
+  assert.equal(rt.sceneState.audio.bgm, bgm);
+  assert.equal(bgm.asset, 'third');
+  assert.equal(bgm.transition.status, 'running');
+  assert.equal(bgm.transition.progress, progress);
+  assert.deepEqual(bgm.layers.map(({ asset, gain, role }) => ({ asset, gain, role })), [
+    { asset: 'second', gain: 0.3, role: 'outgoing' },
+    { asset: 'third', gain: 0.4, role: 'incoming' },
+  ]);
+  assert.deepEqual([rt.sceneState.actions[ids.first].status, rt.sceneState.actions[ids.first].reason], ['stopped', 'replaced'],
+    'a late decoder failure removes only the already-replaced track and does not rewrite action history');
+  assert.equal(rt.sceneState.actions[ids.third].status, 'running');
+});
+
+test('SceneState models every audible BGM layer and interpolates gains through interrupted crossfades', async () => {
+  const snapshots = [];
+  const rt = new Runtime({ command: async (name, _args, runtime, operation) => {
+    if (name !== 'play' || operation.transition?.type !== 'crossfade') return;
+    if (operation.args[1] === 'second') runtime.reportTransitionProgress(operation.transitionId, 0.5);
+    else if (operation.args[1] === 'third') {
+      snapshots.push(runtime.sceneState.audio.bgm.layers.map(({ asset, gain, role }) => ({ asset, gain, role })));
+      runtime.reportTransitionProgress(operation.transitionId, 0.5);
+      snapshots.push(runtime.sceneState.audio.bgm.layers.map(({ asset, gain, role }) => ({ asset, gain, role })));
+      runtime.completeTransition(operation.transitionId);
+    }
+  } });
+  await rt.run(program(`
+    asset bgm first = "asset/first.ogg"
+    asset bgm second = "asset/second.ogg"
+    asset bgm third = "asset/third.ogg"
+    bgm first
+    play bgm second crossfade 100
+    play bgm third crossfade 100
+    say narrator "inspect final mix"
+  `));
+  assert.deepEqual(snapshots[0], [
+    { asset: 'first', gain: 0.5, role: 'outgoing' },
+    { asset: 'second', gain: 0.5, role: 'outgoing' },
+    { asset: 'third', gain: 0, role: 'incoming' },
+  ]);
+  assert.deepEqual(snapshots[1], [
+    { asset: 'first', gain: 0.25, role: 'outgoing' },
+    { asset: 'second', gain: 0.25, role: 'outgoing' },
+    { asset: 'third', gain: 0.5, role: 'incoming' },
+  ]);
+  assert.deepEqual(rt.sceneState.audio.bgm.layers.map(({ asset, gain, role }) => ({ asset, gain, role })), [
+    { asset: 'third', gain: 1, role: 'active' },
+  ], 'completion retires outgoing layers and leaves one full-gain active track');
+});
+
+test('scenario-time advancement does not retire BGM layers without audio-clock progress', async () => {
+  const rt = new Runtime({ command: async () => {} });
+  await rt.run(program(`
+    asset bgm first = "asset/first.ogg"
+    asset bgm second = "asset/second.ogg"
+    bgm first
+    play bgm second crossfade 100
+    wait 100
+    say narrator "fade settled"
+  `));
+  assert.equal(rt.sceneState.audio.bgm.transition.status, 'running');
+  assert.deepEqual(rt.sceneState.audio.bgm.layers.map(({ asset, gain, role }) => ({ asset, gain, role })), [
+    { asset: 'first', gain: 1, role: 'outgoing' },
+    { asset: 'second', gain: 0, role: 'incoming' },
+  ], 'only audio-clock progress may advance and retire externally clocked BGM layers');
+});
+
+test('a failed active BGM action clears the SceneState track but stale failures cannot clear its replacement', async () => {
+  const actionIds = [];
+  let rt;
+  rt = new Runtime({ command: async (name, _args, runtime, operation) => {
+    if (name === 'play' && operation.actionId) {
+      actionIds.push(operation.actionId);
+      if (actionIds.length === 1) setTimeout(() => runtime.stopAction(operation.actionId, 'failed'), 10);
+    }
+    if (name === 'say') await new Promise(resolve => setTimeout(resolve, 20));
+  } });
+  await rt.run(program(`
+    asset bgm first = "asset/first.ogg"
+    asset bgm second = "asset/second.ogg"
+    asset bgm third = "asset/third.ogg"
+    play bgm first crossfade 30
+    play bgm second crossfade 30
+    wait 25
+    say narrator "stale failure is ignored"
+  `));
+  const [firstId, secondId] = actionIds;
+  assert.equal(rt.sceneState.audio.bgm.asset, 'second');
+  assert.equal(rt.sceneState.actions[firstId].status, 'stopped');
+  assert.equal(rt.sceneState.actions[firstId].reason, 'replaced');
+  assert.equal(rt.sceneState.actions[secondId].status, 'running');
+});
+
+test('a late failure of the current BGM action clears active presentation state', async () => {
+  let actionId;
+  let rt;
+  rt = new Runtime({ command: async (name, _args, runtime, operation) => {
+    if (name === 'play' && operation.transition?.type === 'crossfade') {
+      actionId = operation.actionId;
+      setTimeout(() => runtime.stopAction(actionId, 'failed'), 5);
+    }
+    if (name === 'say') await new Promise(resolve => setTimeout(resolve, 15));
+  } });
+  await rt.run(program(`
+    asset bgm music = "asset/music.ogg"
+    play bgm music crossfade 30
+    wait 10
+    say narrator "BGM failed asynchronously"
+  `));
+  assert.equal(rt.sceneState.audio.bgm, null);
+  assert.deepEqual({ status: rt.sceneState.actions[actionId].status, reason: rt.sceneState.actions[actionId].reason },
+    { status: 'stopped', reason: 'failed' });
 });
 
 test('background operations expose replacement and clear provenance to hosts', async () => {
@@ -1295,6 +1929,98 @@ test('imported module declarations retain their source file provenance', async t
   assert.equal(analyzeScript(script).some((item) => item.file === 'child.tds'), false);
 });
 
+test('included functions receive static variable domains for timed-command validation', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-module-duration-domain-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.writeFile(path.join(dir, 'timing.tds'), 'fn animate() -> none { wait duration }\nfn animate_parameter(value: int) -> none { wait value }');
+  const script = await resolveProjectScript('include timing.tds as timing\nscene main { timing.animate() }', dir, new Set(), 'main.tds');
+  const globals = new Map([['duration', 'int']]);
+  globals.constraints = new Map([['duration', { type: 'int', min: -10n, max: -1n }]]);
+  const diagnostics = analyzeScript(script, 'main.tds', globals);
+  const error = diagnostics.find((item) => item.code === 'duration-range');
+  assert.ok(error);
+  assert.equal(error.severity, 'error');
+  assert.equal(error.file, 'timing.tds');
+  assert.throws(() => compile(script, globals), /演出時間の値域がすべて/);
+});
+
+test('aliased include call arguments receive static variable domains', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-module-parameter-domain-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.writeFile(path.join(dir, 'timing.tds'), 'fn animate(value: int) -> none { wait value }');
+  const script = await resolveProjectScript('include timing.tds as timing\nscene main { timing.animate(duration) }', dir, new Set(), 'main.tds');
+  const globals = new Map([['duration', 'int']]);
+  globals.constraints = new Map([['duration', { type: 'int', min: -10n, max: -1n }]]);
+  const diagnostic = analyzeScript(script, 'main.tds', globals).find(item => item.code === 'duration-range' && item.severity === 'error');
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.file, 'timing.tds');
+  assert.throws(() => compile(script, globals), /演出時間/);
+});
+
+test('aliased include analysis composes float move bounds and finite integer dispatch through expressions', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-module-composed-domains-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.writeFile(path.join(dir, 'motion.tds'), `
+fn shift(amount: float) -> none { move bg by x+(amount) }
+fn dispatch(route: int) -> none {
+  if route == 0 { wait 1 } elif route == 4 { wait 1 }
+}`);
+  const script = await resolveProjectScript(`include motion.tds as motion
+scene main {
+  motion.shift(float(offset))
+  motion.dispatch(route * 2)
+}`, dir, new Set(), 'main.tds');
+  const globals = new Map([['offset', 'int'], ['route', 'int']]);
+  globals.constraints = new Map([
+    ['offset', { type: 'int', min: 1000001n, max: 1000002n }],
+    ['route', { type: 'int', min: 0n, max: 2n, values: new Set([0n, 2n]) }],
+  ]);
+  const diagnostics = analyzeScript(script, 'main.tds', globals);
+  const offset = diagnostics.find(item => item.code === 'presentation-offset-range' && item.severity === 'error');
+  assert.ok(offset, 'the imported move helper must receive the converted offset interval');
+  assert.equal(offset.file, 'motion.tds');
+  assert.equal(diagnostics.some(item => item.code === 'non-exhaustive-condition'), false,
+    'the imported dispatcher must retain finite values transformed at its aliased callsite');
+  assert.throws(() => compile(script, globals), /±1000000 px/);
+});
+
+test('aliased include side effects invalidate the imported function global writes', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-module-effect-domain-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.writeFile(path.join(dir, 'mutate.tds'), 'fn set_low() -> none { set ratio = 0.25 }\nfn bump_counter() -> none { set counter = counter + 1 }');
+  const script = await resolveProjectScript(`include mutate.tds as module
+scene main {
+  if ratio == 0.25 {
+    module.set_low()
+    if ratio == 0.25 { wait 1 }
+  }
+}`, dir, new Set(), 'main.tds');
+  const globals = new Map([['ratio', 'float'], ['counter', 'int']]);
+  globals.constraints = new Map([
+    ['ratio', { type: 'float', floatMin: 0.25, floatMax: 0.5, floatValues: new Set([0.25, 0.5]) }],
+    ['counter', { type: 'int', min: 0n, max: 10n }],
+  ]);
+  const diagnostics = analyzeScript(script, 'main.tds', globals);
+  assert.equal(diagnostics.some(item => item.code === 'constant-condition' && item.line === 5), false);
+  const compiled = compile(script, globals);
+  const outer = compiled.scenes[0].instructions[0];
+  assert.equal(outer.op, 'if');
+  assert.equal(outer.body.find(instruction => instruction.op === 'if')?.condition.left.kind, 'load');
+
+  const unrelatedWrite = await resolveProjectScript(`include mutate.tds as module
+scene main {
+  module.bump_counter()
+  if ratio > 1.0 { wait 1 }
+}`, dir, new Set(), 'main.tds');
+  const withCounter = new Map([['ratio', 'float'], ['counter', 'int']]);
+  withCounter.constraints = new Map([
+    ['ratio', { type: 'float', floatMin: 0.25, floatMax: 0.5, floatValues: new Set([0.25, 0.5]) }],
+    ['counter', { type: 'int', min: 0n, max: 10n }],
+  ]);
+  const unrelatedDiagnostics = analyzeScript(unrelatedWrite, 'main.tds', withCounter);
+  assert.ok(unrelatedDiagnostics.some(item => item.code === 'constant-condition' && item.severity === 'warning'), 'an imported write to counter must preserve ratio facts');
+});
+
 test('aliased modules namespace imported functions, nested imports and interpolations end to end', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-module-runtime-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
@@ -1317,6 +2043,66 @@ test('aliased modules namespace imported functions, nested imports and interpola
     assert.equal(child.status, 0, child.stderr || child.error?.message);
     assert.equal(JSON.parse(child.stdout).globals.answer, Number(runtime.get('answer')));
   }
+});
+
+test('included BGM transition inside a selected branch coexists with a blocking timed effect', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-scene-state-include-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const assetsRoot = path.join(dir, 'assets');
+  await fs.mkdir(assetsRoot, { recursive: true });
+  await fs.writeFile(path.join(assetsRoot, 'first.ogg'), Buffer.from([0]));
+  await fs.writeFile(path.join(assetsRoot, 'second.ogg'), Buffer.from([0]));
+  await fs.writeFile(path.join(assetsRoot, 'broken.ogg'), Buffer.from([0]));
+  await fs.writeFile(path.join(dir, 'audio.tds'), 'fn duration() -> int { return 100 }');
+  const source = `asset bgm first = "asset/first.ogg"
+asset bgm second = "asset/second.ogg"
+asset bgm broken = "asset/broken.ogg"
+include audio.tds as audio
+scene main {
+  bgm first
+  choice "music" {
+    "play" { play bgm first\nplay bgm second crossfade audio.duration()\neffect fade black 40 }
+    "fail" { play bgm broken crossfade audio.duration() }
+  }
+}`;
+  await fs.writeFile(path.join(dir, 'main.tds'), source);
+  const packed = await pack(path.join(dir, 'main.tds'), path.join(dir, 'test.nsp.json'), { scenesRoot: dir, assetsRoot });
+  const operations = [];
+  const runtime = new Runtime({ command: async (name, args, rt, operation) => operations.push({ name, args, operation, state: rt.sceneState }), choice: async () => 0 });
+  await runtime.run(packed.program);
+  const music = operations.find(item => item.name === 'play' && item.args[1] === 'second');
+  assert.deepEqual(music.operation.transition, { type: 'crossfade', durationMs: 100 });
+  assert.equal(music.operation.blocking, undefined, 'BGM crossfade remains non-blocking');
+  assert.equal(runtime.sceneState.logicalTimeMs, 40, 'only the blocking effect advances scenario time');
+  assert.equal(runtime.sceneState.audio.bgm.asset, 'second');
+  assert.equal(runtime.sceneState.audio.bgm.transition.progress, 0,
+    'a concurrent blocking visual effect must not advance the audio-clocked BGM fade by script time');
+  assert.equal(Object.values(runtime.sceneState.actions).find(action => action.kind === 'effect').status, 'complete');
+
+  let failureRuntime;
+  failureRuntime = new Runtime({ command: async (name, args) => {
+    if (name === 'play' && args[0] === 'bgm' && args[1] === 'broken') throw Error('crossfade decode failed');
+  }, choice: async () => 1 });
+  await assert.rejects(failureRuntime.run(packed.program), /crossfade decode failed/);
+  assert.equal(failureRuntime.sceneState.audio.bgm.asset, 'first');
+  assert.deepEqual(Object.values(failureRuntime.sceneState.actions).map(({ asset, status, reason }) => [asset, status, reason]), [
+    ['first', 'running', undefined], ['broken', 'stopped', 'failed'],
+  ], 'a failed crossfade through an imported function and selected branch retains the prior BGM action');
+});
+
+test('imported function type errors retain caller source locations', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-module-type-error-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.writeFile(path.join(dir, 'numbers.tds'), 'fn increment(value: int) -> int { return value + 1 }\nfn broken() -> int { return "wrong" }');
+  const script = await resolveProjectScript('include numbers.tds as numbers\nscene main { say narrator str(numbers.increment("wrong")) }', dir, new Set(), 'main.tds');
+  const diagnostics = analyzeScript(script, 'main.tds');
+  const error = diagnostics.find((item) => item.severity === 'error');
+  assert.ok(error);
+  assert.equal(error.file, 'main.tds');
+  assert.equal(error.line, 2);
+  const importedError = diagnostics.find((item) => item.severity === 'error' && item.file === 'numbers.tds');
+  assert.ok(importedError);
+  assert.equal(importedError.line, 2);
 });
 
 test('module imports reject executable top-level commands and duplicate module paths', async t => {
@@ -1483,7 +2269,7 @@ test('JSON static variables are typed globals with exact integer values', async 
   const exhaustiveThresholdElse = analyzeScript(parse('if difficulty < 2 { wait 1 } elif difficulty >= 2 { wait 1 } else { wait 2 }'), 'constraint-int-range-else.tds', constrainedGlobals);
   assert.ok(exhaustiveThresholdElse.some((item) => item.code === 'unreachable-branch'));
   const assignmentResetsThreshold = analyzeScript(parse('if difficulty < 2 { set difficulty = difficulty + 1\nif difficulty < 2 { wait 1 } }'), 'constraint-int-range-assignment.tds', constrainedGlobals);
-  assert.equal(assignmentResetsThreshold.some((item) => item.code === 'constant-condition' && item.line === 2), false);
+  assert.ok(assignmentResetsThreshold.some((item) => item.code === 'constant-condition' && item.line === 2 && item.severity === 'warning'), 'the branch narrows difficulty to 1, so the assignment proves it is 2 afterward');
   const mayEscapeDiagnostics = analyzeScript(parse('set difficulty = difficulty + 1'), 'constraint-assignment.tds', constrainedGlobals);
   assert.equal(mayEscapeDiagnostics.find((item) => item.code === 'variable-constraint' && item.severity === 'warning')?.variable, 'difficulty');
   const outsideDiagnostics = analyzeScript(parse('set difficulty = difficulty + 10'), 'constraint-assignment-outside.tds', constrainedGlobals);

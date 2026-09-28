@@ -1,15 +1,20 @@
 #include "player.hpp"
 #include "runtime.hpp"
 #include "video.hpp"
+#include "scene_geometry.hpp"
+#include "scene_presentation.hpp"
+#include "audio_transition.hpp"
 #include <SDL3_image/SDL_image.h>
 #include <SDL3_ttf/SDL_ttf.h>
 #include <SDL3_mixer/SDL_mixer.h>
+#include <algorithm>
 #include <cmath>
 #include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <thread>
 using novel::json;
@@ -26,18 +31,44 @@ struct Engine {
     TTF_Font* font = nullptr;
     MIX_Mixer* mixer = nullptr;
     MIX_Track* bgm = nullptr;
-    std::vector<MIX_Audio*> audio;
+    struct AudioPlayback {
+        MIX_Track* track;
+        MIX_Audio* audio;
+        bool bgm;
+        bool pinned;
+        std::string type, asset;
+        int64_t fadeDurationFrames;
+        float fadeStartGain = 1, fadeTargetGain = 1;
+    };
+    std::vector<AudioPlayback> audio;
+    std::mutex stoppedAudioMutex;
+    std::vector<MIX_Track*> stoppedAudioTracks;
     std::map<std::string, SDL_Texture*> textures;
-    struct Sprite { SDL_Texture* texture; std::string position; float alpha = 1; float offsetX = 0; float offsetY = 0; };
+    struct Sprite {
+        SDL_Texture* texture;
+        std::string position, asset, pose;
+        float alpha = 1, offsetX = 0, offsetY = 0;
+        uint64_t visualOrder = 0;
+    };
     std::map<std::string, Sprite> characters, images;
+    uint64_t nextVisualOrder = 0;
     SDL_Texture *background = nullptr, *dialog = nullptr, *speakerSkin = nullptr, *choiceSkin = nullptr, *choiceActiveSkin = nullptr;
+    std::string backgroundAsset, bgmAsset, videoAsset;
     float backgroundOffsetX = 0, backgroundOffsetY = 0;
+    uint64_t logicalTimeMs = 0;
+    bool captureAnimationMidpoints = false;
+    json animationMidpoints = json::array();
     std::unique_ptr<Video> video;
     std::map<std::string, std::string> config;
     json gameScreens = json::object();
+    json playerControls = json::object();
+    json queuedLoad = nullptr;
+    std::string screenMusicAsset;
+    fs::path saveDirectory;
     std::string activeScreen;
     std::vector<std::string> screenHistory;
     int screenHover = 0;
+    int controlHover = -1;
     bool titleStarted = false;
     bool storyActive = false;
     std::string speaker, text;
@@ -199,6 +230,11 @@ struct Engine {
         const auto nativeUi = packageData.value("native_ui", json::object());
         gameScreens = readGameScreens(nativeUi);
         const auto theme = readUiTheme(nativeUi);
+        playerControls = theme.value("controls", json::object());
+        if (playerControls.empty()) playerControls = {{"enabled", true}, {"anchor", "dialogue-top-left"}, {"buttons", json::array({
+            {{"id", "save"}, {"action", "save"}, {"label", "Save"}, {"x", 0}, {"y", -44}, {"width", 84}, {"height", 36}},
+            {{"id", "load"}, {"action", "load"}, {"label", "Load"}, {"x", 92}, {"y", -44}, {"width", 84}, {"height", 36}},
+        })}};
         applyUiTheme(nativeUi, theme, false);
         width = number("window.width",960); height = number("window.height",680);
         window = SDL_CreateWindow(config.contains("window.title") ? config["window.title"].c_str() : "Novel Script",width,height,0);
@@ -220,10 +256,19 @@ struct Engine {
         }
         mixer = MIX_CreateMixerDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,nullptr);
         if (!mixer) throw std::runtime_error(SDL_GetError());
+        saveDirectory = root / "saves";
+        fs::create_directories(saveDirectory);
     }
     ~Engine() {
-        video.reset(); if (mixer) MIX_DestroyMixer(mixer);
-        for (auto* a : audio) MIX_DestroyAudio(a);
+        video.reset();
+        for (const auto& playback : audio) {
+            MIX_SetTrackStoppedCallback(playback.track, nullptr, nullptr);
+            MIX_StopTrack(playback.track, 0);
+            MIX_DestroyTrack(playback.track);
+            MIX_DestroyAudio(playback.audio);
+        }
+        audio.clear();
+        if (mixer) MIX_DestroyMixer(mixer);
         for (auto [key,t] : textures) SDL_DestroyTexture(t);
         if (font) TTF_CloseFont(font);
         if (renderer) SDL_DestroyRenderer(renderer);
@@ -328,19 +373,115 @@ struct Engine {
         if (!background) return;
         const float scaleX = float(width) / float(number("screen.width", 1280));
         const float scaleY = float(height) / float(number("screen.height", 720));
-        SDL_FRect rect{backgroundOffsetX * scaleX, backgroundOffsetY * scaleY, float(width), float(height)};
+        float sourceWidth = 0, sourceHeight = 0;
+        SDL_GetTextureSize(background, &sourceWidth, &sourceHeight);
+        const auto cover = native_player::backgroundCoverRect(
+            sourceWidth, sourceHeight, float(width), float(height),
+            backgroundOffsetX * scaleX, backgroundOffsetY * scaleY);
+        SDL_FRect rect{cover.x, cover.y, cover.width, cover.height};
         SDL_RenderTexture(renderer, background, nullptr, &rect);
     }
     const json& currentScreen() const { return gameScreens.at("screens").at(activeScreen); }
+    fs::path slotPath(int index) const { return saveDirectory / ("slot-" + std::to_string(index + 1) + ".json"); }
+    json readSlot(int index) const {
+        try { std::ifstream file(slotPath(index)); json value; file >> value; return value.value("version", 0) == 1 ? value : json(nullptr); }
+        catch (...) { return nullptr; }
+    }
+    json visibleScreenItems() const {
+        json items = currentScreen().value("items", json::array());
+        const auto role = currentScreen().value("role", std::string{});
+        if (role != "save-slots" && role != "load-slots") return items;
+        const auto layout = currentScreen().value("slotLayout", json{{"x",420},{"y",190},{"width",440},{"height",420},{"rowHeight",42},{"gap",8},{"count",8}});
+        const auto style = currentScreen().value("slotStyle", json::object());
+        for (int index = 0; index < layout.value("count", 8); ++index) {
+            const auto saved = readSlot(index);
+            std::string label = "Slot " + std::to_string(index + 1);
+            if (saved.is_object()) label += "  |  " + saved.value("speaker", std::string("Narrator")) + ": " + saved.value("text", std::string{});
+            else label += "  |  Empty";
+            const int row = index;
+            items.push_back({{"id", "__slot_" + std::to_string(index)}, {"slotIndex", index}, {"type", "button"},
+                {"label", label}, {"action", role == "save-slots" ? "save" : "load"},
+                {"image", style.value("image", std::string{})}, {"hoverImage", style.value("hoverImage", std::string{})},
+                {"fontSize", style.value("fontSize", 15)},
+                {"x", layout.value("x", 420)},
+                {"y", layout.value("y", 190) + row * (layout.value("rowHeight", 42) + layout.value("gap", 8))},
+                {"width", layout.value("width", 440)}, {"height", layout.value("rowHeight", 42)}});
+        }
+        return items;
+    }
+    std::string screenForRole(const std::string& role) const {
+        for (const auto& [id, screen] : gameScreens.at("screens").items()) if (screen.value("role", std::string{}) == role) return id;
+        return {};
+    }
+    void openSlotScreen(const std::string& action) {
+        const auto id = screenForRole(action == "save" ? "save-slots" : "load-slots");
+        if (id.empty()) return;
+        screenHistory.push_back(activeScreen); activeScreen = id; screenHover = 0;
+    }
+    void saveSlot(int index) {
+        if (runtime.currentSceneName.empty() || runtime.currentSourceFile.empty() || runtime.currentLine < 1) return;
+        json readonlyLocals = json::array(); for (const auto& frame : runtime.readonlyLocals) readonlyLocals.push_back(frame);
+        json loopScopes = json::array(); for (const auto frame : runtime.loopScopes) loopScopes.push_back(frame);
+        const json state = {{"version", 1}, {"file", runtime.currentSourceFile}, {"scene", runtime.currentSceneName},
+            {"line", runtime.currentLine}, {"variables", runtime.globals}, {"locals", runtime.locals},
+            {"readonlyLocals", readonlyLocals}, {"loopScopes", loopScopes},
+            {"presentation", presentationSnapshot()}, {"speaker", speaker}, {"text", text}};
+        const auto destination = slotPath(index); auto temporary = destination; temporary += ".tmp";
+        { std::ofstream file(temporary, std::ios::binary | std::ios::trunc); if (!file) throw std::runtime_error("Cannot create save slot"); file << state.dump(2); file.flush(); if (!file) throw std::runtime_error("Cannot write save slot"); }
+        std::error_code error; fs::rename(temporary, destination, error);
+        if (error) { fs::remove(destination, error); error.clear(); fs::rename(temporary, destination, error); }
+        if (error) throw std::runtime_error("Cannot replace save slot: " + error.message());
+    }
+    void loadSlot(int index) {
+        const auto saved = readSlot(index);
+        if (!saved.is_object() || !saved.contains("file") || !saved.contains("scene") || !saved.contains("line")) return;
+        activeScreen.clear(); screenHistory.clear();
+        if (runtime.currentSceneName.empty()) { queuedLoad = saved; titleStarted = true; storyActive = true; }
+        else runtime.pendingLoad = saved;
+    }
+    json takeQueuedLoad() { auto value = std::move(queuedLoad); queuedLoad = nullptr; return value; }
     SDL_FRect screenItemRect(const json& item) const {
         const float sx = float(width) / float(gameScreens.at("canvas").at("width").get<int>());
         const float sy = float(height) / float(gameScreens.at("canvas").at("height").get<int>());
         return { item.at("x").get<float>() * sx, item.at("y").get<float>() * sy, item.at("width").get<float>() * sx, item.at("height").get<float>() * sy };
     }
+    SDL_FRect playerControlRect(const json& item) {
+        const float sx = float(width) / number("screen.width", 1280), sy = float(height) / number("screen.height", 720);
+        const float dialogWidth = float(number("dialog.width", 900)), dialogHeight = float(number("dialog.height", 184));
+        const float dx = config.contains("dialog.x") ? float(number("dialog.x", 0)) : (float(width) - dialogWidth) / 2.0f;
+        const float dy = config.contains("dialog.y") ? float(number("dialog.y", 0)) : float(height) - dialogHeight - float(number("dialog.bottom", 26));
+        const bool anchored = playerControls.value("anchor", std::string("dialogue-top-left")) == "dialogue-top-left";
+        return {(anchored ? dx : 0.0f) + item.value("x", 0) * sx,
+            (anchored ? dy : 0.0f) + item.value("y", -44) * sy,
+            item.value("width", 84) * sx, item.value("height", 36) * sy};
+    }
+    json controlItems() const {
+        if (playerControls.value("enabled", true) == false) return json::array();
+        return playerControls.value("buttons", json::array());
+    }
+    void drawPlayerControls() {
+        const auto items = controlItems();
+        for (size_t i = 0; i < items.size(); ++i) {
+            const auto& item = items[i]; const auto rect = playerControlRect(item); const bool active = int(i) == controlHover;
+            const auto imageName = active ? item.value("hoverImage", item.value("image", std::string{})) : item.value("image", std::string{});
+            if (!imageName.empty()) SDL_RenderTexture(renderer, skinImage(imageName), nullptr, &rect);
+            else outlinedPanel(rect, active ? SDL_Color{44,61,73,248} : SDL_Color{17,24,31,230}, active ? SDL_Color{220,234,241,255} : SDL_Color{135,151,160,230}, active ? SDL_Color{197,219,230,255} : SDL_Color{100,119,130,220});
+            if (item.value("display", std::string{}) != "image") {
+                const auto labelText = active ? item.value("hoverLabel", item.value("label", item.value("action", std::string{}))) : item.value("label", item.value("action", std::string{}));
+                label(labelText, rect.x + 5, rect.y + (rect.h - 24) / 2, item.value("fontSize", 15), {245,247,248,255}, rect.w - 10, rect.h);
+            }
+        }
+    }
     void activateScreenItem(const json& item) {
+        if (item.contains("slotIndex")) {
+            const int index = item.at("slotIndex").get<int>();
+            if (item.value("action", std::string{}) == "save") saveSlot(index); else loadSlot(index);
+            return;
+        }
         const auto action = item.value("action", std::string{});
         if (action == "start") { activeScreen.clear(); titleStarted = true; storyActive = true; screenHistory.clear(); }
         else if (action == "resume") { activeScreen.clear(); screenHistory.clear(); }
+        else if (action == "save" || action == "load") openSlotScreen(action);
         else if (action == "open-screen") {
             const auto target = item.value("target", std::string{});
             if (!gameScreens.at("screens").contains(target)) throw std::runtime_error("Missing game screen: " + target);
@@ -355,6 +496,144 @@ struct Engine {
         activeScreen = gameScreens.at("initial").get<std::string>();
         while (!titleStarted) pump();
     }
+    static void SDLCALL audioTrackStopped(void* userdata, MIX_Track* track) {
+        auto* engine = static_cast<Engine*>(userdata);
+        std::lock_guard<std::mutex> lock(engine->stoppedAudioMutex);
+        engine->stoppedAudioTracks.push_back(track);
+    }
+    void cleanupStoppedAudio() {
+        std::vector<MIX_Track*> stopped;
+        {
+            std::lock_guard<std::mutex> lock(stoppedAudioMutex);
+            stopped.swap(stoppedAudioTracks);
+        }
+        std::vector<MIX_Track*> pinned;
+        for (auto* track : stopped) {
+            const auto found = std::find_if(audio.begin(), audio.end(), [track](const AudioPlayback& playback) { return playback.track == track; });
+            if (found == audio.end()) continue;
+            if (found->pinned) { pinned.push_back(track); continue; }
+            // BGM loops for its lifetime; if the selected incoming track stops
+            // unexpectedly, retire its still-fading outgoing layers as well.
+            // Otherwise SceneState reports no BGM while those layers remain audible.
+            if (bgm == found->track) stopBgm();
+            MIX_SetTrackStoppedCallback(found->track, nullptr, nullptr);
+            if (bgm == found->track) bgm = nullptr;
+            MIX_DestroyTrack(found->track);
+            MIX_DestroyAudio(found->audio);
+            audio.erase(found);
+        }
+        if (!pinned.empty()) {
+            std::lock_guard<std::mutex> lock(stoppedAudioMutex);
+            stoppedAudioTracks.insert(stoppedAudioTracks.end(), pinned.begin(), pinned.end());
+        }
+    }
+    static float currentBgmGain(const AudioPlayback& playback) {
+        const auto remaining = MIX_GetTrackFadeFrames(playback.track);
+        return native_player::gainFromRemainingFrames(playback.fadeStartGain, playback.fadeTargetGain,
+            playback.fadeDurationFrames, remaining);
+    }
+    json activeBgmGains() const {
+        json layers=json::array();
+        for(const auto& playback:audio) if(playback.bgm && MIX_TrackPlaying(playback.track))
+            layers.push_back({{"asset",playback.asset},{"gain",currentBgmGain(playback)}});
+        return layers;
+    }
+    json currentBgmProgress() const {
+        if (!bgm) return nullptr;
+        const auto current = std::find_if(audio.begin(), audio.end(), [this](const AudioPlayback& playback) { return playback.track == bgm; });
+        if (current == audio.end()) return nullptr;
+        const auto gain = currentBgmGain(*current);
+        const auto distance = current->fadeTargetGain - current->fadeStartGain;
+        return distance == 0 ? json(1.0f) : json(std::clamp((gain - current->fadeStartGain) / distance, 0.0f, 1.0f));
+    }
+    void stopBgm(int64_t fadeOutMs = 0, MIX_Track* keep = nullptr) {
+        for (auto& playback : audio) {
+            if (!playback.bgm || playback.track == keep || !MIX_TrackPlaying(playback.track)) continue;
+            const auto startGain = fadeOutMs > 0 ? currentBgmGain(playback) : 0.0f;
+            if (fadeOutMs > 0 && !MIX_SetTrackGain(playback.track, startGain)) throw std::runtime_error(SDL_GetError());
+            const auto frames = fadeOutMs > 0 ? MIX_TrackMSToFrames(playback.track, fadeOutMs) : 0;
+            if (!MIX_StopTrack(playback.track, frames)) throw std::runtime_error(SDL_GetError());
+            playback.fadeStartGain = startGain;
+            playback.fadeTargetGain = 0;
+            playback.fadeDurationFrames = frames;
+        }
+        bgm = keep;
+        if (!keep) bgmAsset.clear();
+    }
+    json presentationSnapshot() const {
+        json characterState = json::array();
+        for (const auto& [id, sprite] : characters) {
+            characterState.push_back({{"id", id}, {"pose", sprite.pose}, {"slot", sprite.position},
+                {"opacity", sprite.alpha}, {"offsetX", sprite.offsetX}, {"offsetY", sprite.offsetY},
+                {"visualOrder", sprite.visualOrder}});
+        }
+        json imageState = json::array();
+        for (const auto& [id, sprite] : images) {
+            imageState.push_back({{"asset", id}, {"slot", sprite.position}, {"opacity", sprite.alpha},
+                {"offsetX", sprite.offsetX}, {"offsetY", sprite.offsetY}, {"visualOrder", sprite.visualOrder}});
+        }
+        json activeMedia = json::array();
+        for (const auto& playback : audio) {
+            if (playback.bgm || !MIX_TrackPlaying(playback.track)) continue;
+            activeMedia.push_back({{"kind", playback.type}, {"asset", playback.asset}});
+        }
+        std::sort(activeMedia.begin(), activeMedia.end(), [](const json& left, const json& right) {
+            return std::pair(left.at("kind").get<std::string>(), left.at("asset").get<std::string>())
+                < std::pair(right.at("kind").get<std::string>(), right.at("asset").get<std::string>());
+        });
+        json bgmState = nullptr;
+        if (bgm && MIX_TrackPlaying(bgm)) {
+            const auto current = std::find_if(audio.begin(), audio.end(), [this](const AudioPlayback& playback) { return playback.track == bgm; });
+            if (current != audio.end()) {
+                const auto gain = currentBgmGain(*current);
+                const auto distance = current->fadeTargetGain - current->fadeStartGain;
+                const float progress = distance == 0 ? 1.0f
+                    : std::clamp((gain - current->fadeStartGain) / distance, 0.0f, 1.0f);
+                bgmState = {{"asset", bgmAsset}, {"transition", progress >= 1.0f ? "complete" : "running"}};
+            }
+        }
+        json backgroundState = nullptr;
+        if (background) backgroundState = {{"asset", backgroundAsset}, {"offsetX", backgroundOffsetX}, {"offsetY", backgroundOffsetY}};
+        json videoState = video ? json{{"asset", videoAsset}} : json(nullptr);
+        json effectState = overlay > 0 ? json{{"type", "fade"}, {"color", overlayColor.r > 127 ? "white" : "black"}, {"opacity", overlay}} : json(nullptr);
+        return {{"logicalTimeMs", logicalTimeMs}, {"background", backgroundState}, {"video", videoState},
+            {"characters", characterState}, {"images", imageState}, {"bgm", bgmState},
+            {"activeMedia", activeMedia}, {"effect", effectState}};
+    }
+    void restorePresentation(const json& state) {
+        characters.clear(); images.clear(); nextVisualOrder = 0;
+        background = nullptr; backgroundAsset.clear(); backgroundOffsetX = backgroundOffsetY = 0;
+        if (state.contains("background") && state["background"].is_object()) {
+            const auto& bg = state["background"];
+            backgroundAsset = bg.value("asset", std::string{});
+            backgroundOffsetX = bg.value("offsetX", 0.0f); backgroundOffsetY = bg.value("offsetY", 0.0f);
+            if (!backgroundAsset.empty()) background = image(asset("bg", backgroundAsset));
+        }
+        for (const auto& value : state.value("characters", json::array())) {
+            const auto id = value.at("id").get<std::string>(), pose = value.value("pose", std::string{});
+            Sprite sprite; sprite.texture = image(asset("char", id, pose)); sprite.asset = id; sprite.pose = pose;
+            sprite.position = value.value("slot", std::string("center")); sprite.alpha = value.value("opacity", 1.0f);
+            sprite.offsetX = value.value("offsetX", 0.0f); sprite.offsetY = value.value("offsetY", 0.0f);
+            sprite.visualOrder = value.value("visualOrder", uint64_t(++nextVisualOrder));
+            nextVisualOrder = std::max(nextVisualOrder, sprite.visualOrder); characters[id] = std::move(sprite);
+        }
+        for (const auto& value : state.value("images", json::array())) {
+            const auto id = value.at("asset").get<std::string>();
+            Sprite sprite; sprite.texture = image(asset("image", id)); sprite.asset = id;
+            sprite.position = value.value("slot", std::string("center")); sprite.alpha = value.value("opacity", 1.0f);
+            sprite.offsetX = value.value("offsetX", 0.0f); sprite.offsetY = value.value("offsetY", 0.0f);
+            sprite.visualOrder = value.value("visualOrder", uint64_t(++nextVisualOrder));
+            nextVisualOrder = std::max(nextVisualOrder, sprite.visualOrder); images[id] = std::move(sprite);
+        }
+        logicalTimeMs = state.value("logicalTimeMs", uint64_t(0));
+        const auto effect = state.value("effect", json(nullptr));
+        overlay = effect.is_object() ? effect.value("opacity", 0.0f) : 0.0f;
+        const auto effectColor = effect.is_object() ? effect.value("color", std::string("black")) : std::string("black");
+        overlayColor = effectColor == "white" ? SDL_Color{255,255,255,255} : SDL_Color{0,0,0,255};
+        stopBgm();
+        const auto bgmState = state.value("bgm", json(nullptr));
+        if (bgmState.is_object() && bgmState.contains("asset")) sound("bgm", bgmState.at("asset").get<std::string>());
+    }
     void pump() {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -364,16 +643,16 @@ struct Engine {
                 else if (activeScreen.empty() && storyActive && gameScreens.contains("screens") && gameScreens["screens"].contains("pause")) { activeScreen = "pause"; screenHover = 0; }
                 else if (!activeScreen.empty() && !screenHistory.empty()) { activeScreen = screenHistory.back(); screenHistory.pop_back(); screenHover = 0; }
             } else if (!activeScreen.empty() && e.type == SDL_EVENT_KEY_DOWN) {
-                const auto& items = currentScreen().at("items");
+                const auto items = visibleScreenItems();
                 if (!items.empty() && (e.key.scancode == SDL_SCANCODE_DOWN || e.key.scancode == SDL_SCANCODE_UP)) {
                     const int delta = e.key.scancode == SDL_SCANCODE_DOWN ? 1 : -1;
                     screenHover = (screenHover + delta + int(items.size())) % int(items.size());
                 } else if (!items.empty() && (e.key.scancode == SDL_SCANCODE_RETURN || e.key.scancode == SDL_SCANCODE_SPACE)) activateScreenItem(items.at(size_t(std::clamp(screenHover, 0, int(items.size()) - 1))));
             } else if (!activeScreen.empty() && e.type == SDL_EVENT_MOUSE_MOTION) {
-                const auto& items = currentScreen().at("items"); screenHover = -1;
+                const auto items = visibleScreenItems(); screenHover = -1;
                 for (size_t i = 0; i < items.size(); ++i) { const auto r = screenItemRect(items[i]); if (e.motion.x >= r.x && e.motion.x <= r.x + r.w && e.motion.y >= r.y && e.motion.y <= r.y + r.h) screenHover = int(i); }
             } else if (!activeScreen.empty() && e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-                const auto& items = currentScreen().at("items");
+                const auto items = visibleScreenItems();
                 for (size_t i = 0; i < items.size(); ++i) { const auto r = screenItemRect(items[i]); if (e.button.x >= r.x && e.button.x <= r.x + r.w && e.button.y >= r.y && e.button.y <= r.y + r.h) { screenHover = int(i); activateScreenItem(items[i]); break; } }
             } else if (e.type == SDL_EVENT_KEY_DOWN) {
                 if (options.empty()) next = true;
@@ -388,18 +667,32 @@ struct Engine {
                 if (e.motion.x >= view.x && e.motion.x <= view.x + view.w && e.motion.y >= view.y && e.motion.y <= view.y + view.h)
                     for (size_t i = 0; i < options.size(); ++i) { const auto box = choiceRect(i); if (e.motion.x >= box.x && e.motion.x <= box.x + box.w && e.motion.y >= box.y && e.motion.y <= box.y + box.h) hovered = int(i); }
             }
+            if (e.type == SDL_EVENT_MOUSE_MOTION && activeScreen.empty() && storyActive) {
+                const auto items = controlItems(); controlHover = -1;
+                for (size_t i = 0; i < items.size(); ++i) { const auto r = playerControlRect(items[i]); if (e.motion.x >= r.x && e.motion.x <= r.x + r.w && e.motion.y >= r.y && e.motion.y <= r.y + r.h) controlHover = int(i); }
+            }
             if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-                if (options.empty()) next = true;
-                else { const auto view = choiceViewport(); if (e.button.x >= view.x && e.button.x <= view.x + view.w && e.button.y >= view.y && e.button.y <= view.y + view.h) for (size_t i = 0; i < options.size(); ++i) { const auto box = choiceRect(i); if (e.button.x >= box.x && e.button.x <= box.x + box.w && e.button.y >= box.y && e.button.y <= box.y + box.h) selection = int(i); } }
+                bool controlActivated = false;
+                if (activeScreen.empty() && storyActive) {
+                    const auto items = controlItems();
+                    for (const auto& item : items) { const auto r = playerControlRect(item); if (e.button.x >= r.x && e.button.x <= r.x + r.w && e.button.y >= r.y && e.button.y <= r.y + r.h) { openSlotScreen(item.value("action", std::string{})); controlActivated = true; break; } }
+                }
+                if (!controlActivated) {
+                    if (options.empty()) next = true;
+                    else { const auto view = choiceViewport(); if (e.button.x >= view.x && e.button.x <= view.x + view.w && e.button.y >= view.y && e.button.y <= view.y + view.h) for (size_t i = 0; i < options.size(); ++i) { const auto box = choiceRect(i); if (e.button.x >= box.x && e.button.x <= box.x + box.w && e.button.y >= box.y && e.button.y <= box.y + box.h) selection = int(i); } }
+                }
             }
         }
-        if (video) { video->update(); if (video->finished) video.reset(); }
+        cleanupStoppedAudio();
+        if (video) { video->update(); if (video->finished) { video.reset(); videoAsset.clear(); } }
         SDL_SetRenderDrawColor(renderer,12,15,22,255); SDL_RenderClear(renderer);
         if (!activeScreen.empty()) {
             const auto& screen = currentScreen();
+            const auto screenMusic = screen.value("music", std::string{});
+            if (!screenMusic.empty() && screenMusic != screenMusicAsset) { sound("bgm", screenMusic); screenMusicAsset = screenMusic; }
             if (background) SDL_RenderTexture(renderer, background, nullptr, nullptr);
-            for (const auto& [id,s] : characters) sprite(s);
-            for (const auto& [id,s] : images) sprite(s);
+            for (const auto* s : native_player::spritesByVisualOrder(characters)) sprite(*s);
+            for (const auto* s : native_player::spritesByVisualOrder(images)) sprite(*s);
             const auto bgName = screen.value("background", std::string{});
             if (!bgName.empty()) { auto* bg = skinImage(bgName); SDL_RenderTexture(renderer, bg, nullptr, nullptr); }
             else { SDL_SetRenderDrawColor(renderer, 8, 12, 18, 175); SDL_RenderFillRect(renderer, nullptr); }
@@ -409,21 +702,21 @@ struct Engine {
             if (!title.empty()) label(title, 64 * sx, 42 * sy, int(34 * sy), {245,247,248,255}, float(width) - 128 * sx);
             const auto description = screen.value("description", std::string{});
             if (!description.empty()) label(description, 64 * sx, 112 * sy, int(21 * sy), {240,238,232,255}, std::min(560.0f, float(gameScreens.at("canvas").at("width").get<int>() - 128)) * sx, float(gameScreens.at("canvas").at("height").get<int>() - 150) * sy);
-            const auto& items = screen.at("items");
+            const auto items = visibleScreenItems();
             for (size_t i = 0; i < items.size(); ++i) {
                 const auto& item = items[i]; const auto rect = screenItemRect(item); const bool active = int(i) == screenHover;
-                const auto imageName = item.value("image", std::string{});
+                const auto imageName = active ? item.value("hoverImage", item.value("image", std::string{})) : item.value("image", std::string{});
                 if (!imageName.empty()) SDL_RenderTexture(renderer, skinImage(imageName), nullptr, &rect);
                 else outlinedPanel(rect, active ? SDL_Color{44,61,73,240} : SDL_Color{17,24,31,215}, active ? SDL_Color{205,221,230,255} : SDL_Color{135,151,160,210}, active ? SDL_Color{197,219,230,255} : SDL_Color{100,119,130,220});
-                label(item.value("label", std::string{}), rect.x + 12 * sx, rect.y + (rect.h - 28 * sy) / 2, int(22 * sy), {245,247,248,255}, rect.w - 24 * sx, rect.h);
+                if (item.value("display", std::string{}) != "image") label(active ? item.value("hoverLabel", item.value("label", std::string{})) : item.value("label", std::string{}), rect.x + 12 * sx, rect.y + (rect.h - 28 * sy) / 2, int(item.value("fontSize", 22) * sy), {245,247,248,255}, rect.w - 24 * sx, rect.h);
             }
             SDL_RenderPresent(renderer); SDL_Delay(8);
             if (automated) { activeScreen.clear(); titleStarted = true; }
             return;
         }
         renderBackground();
-        for (const auto& [id,s] : characters) sprite(s);
-        for (const auto& [id,s] : images) sprite(s);
+        for (const auto* s : native_player::spritesByVisualOrder(characters)) sprite(*s);
+        for (const auto* s : native_player::spritesByVisualOrder(images)) sprite(*s);
         if (number("ui.bottom_fog", 1)) bottomFog();
         const float dialogWidth = float(number("dialog.width", 900));
         const float dialogHeight = float(number("dialog.height", 184));
@@ -440,6 +733,7 @@ struct Engine {
         speakerLabel(speaker, dialogBox.x + float(number("dialog.speaker_x", 90)), dialogBox.y + float(number("dialog.speaker_y", -52)), number("dialog.speaker_size", number("font.size", 24)), color("dialog.speaker_color", col));
         dialogueLabel(text, textX, textY, number("dialog.text_size", number("font.size", 24)), col, textWidth, float(number("dialog.text_height", 0)));
         if (options.empty() && !text.empty()) label("竕ｫ", float(width) - 66, float(height) - 68, 34, {230,240,250,210}, 48);
+        drawPlayerControls();
         const auto choiceView = choiceViewport();
         SDL_Rect choiceClip{ int(choiceView.x), int(choiceView.y), int(choiceView.w), int(choiceView.h) };
         SDL_SetRenderClipRect(renderer, &choiceClip);
@@ -450,22 +744,65 @@ struct Engine {
             label(options[i], b.x + float(number("choice.text_x", 24)), b.y + float(number("choice.text_y", 12)), number("choice.text_size", 19), color("choice.text_color", {240,246,252,255}), float(number("choice.text_width", int(b.w) - 42)), float(number("choice.text_height", 0)));
         }
         SDL_SetRenderClipRect(renderer, nullptr);
-        if (video) SDL_RenderTexture(renderer,video->texture,nullptr,nullptr);
+        if (video) {
+            float sourceWidth = 0, sourceHeight = 0;
+            SDL_GetTextureSize(video->texture, &sourceWidth, &sourceHeight);
+            const auto fit = native_player::videoContainRect(sourceWidth, sourceHeight, float(width), float(height));
+            SDL_FRect videoRect{fit.x, fit.y, fit.width, fit.height};
+            SDL_RenderTexture(renderer, video->texture, nullptr, &videoRect);
+        }
         if (overlay>0) { SDL_SetRenderDrawColor(renderer,overlayColor.r,overlayColor.g,overlayColor.b,Uint8(255*overlay)); SDL_RenderFillRect(renderer,nullptr); }
         SDL_RenderPresent(renderer); SDL_Delay(8);
     }
     void delay(int64_t ms, std::function<void(float)> animate = {}) {
         if (ms<0 || ms>2147483647) throw std::runtime_error("Invalid duration");
         auto start = SDL_GetTicks();
-        do { float progress=ms ? std::min(1.0f,float(SDL_GetTicks()-start)/ms) : 1; if(animate) animate(progress); pump(); } while(SDL_GetTicks()-start<uint64_t(ms));
+        bool midpointCaptured = false;
+        do {
+            const auto elapsed = SDL_GetTicks()-start;
+            float progress=native_player::linearProgress(elapsed,ms);
+            if(animate) animate(progress);
+            if(captureAnimationMidpoints && animate && !midpointCaptured && progress>=0.48f && progress<=0.56f) {
+                animationMidpoints.push_back({{"durationMs",ms},{"progress",progress},{"state",presentationSnapshot()},{"bgmProgress",currentBgmProgress()},{"bgmLayers",activeBgmGains()}});
+                midpointCaptured = true;
+            }
+            pump();
+        } while(SDL_GetTicks()-start<uint64_t(ms));
         if(animate) animate(1);
+        logicalTimeMs += uint64_t(ms);
     }
-    MIX_Track* sound(const std::string& type,const std::string& id) {
-        if (type=="bgm" && bgm) MIX_StopTrack(bgm,0);
-        auto* a=MIX_LoadAudio(mixer,utf8Path(asset(type,id)).c_str(),true); if(!a) throw std::runtime_error(SDL_GetError()); audio.push_back(a);
-        auto* track=MIX_CreateTrack(mixer); if(!track || !MIX_SetTrackAudio(track,a)) throw std::runtime_error(SDL_GetError());
-        auto props=SDL_CreateProperties(); if(type=="bgm") {bgm=track;SDL_SetNumberProperty(props,MIX_PROP_PLAY_LOOPS_NUMBER,-1);}
-        bool ok=MIX_PlayTrack(track,props);SDL_DestroyProperties(props);if(!ok) throw std::runtime_error(SDL_GetError());
+    MIX_Track* sound(const std::string& type,const std::string& id,int64_t crossfadeMs=0,bool pinned=false) {
+        // Keep existing BGM layers until the replacement track has started,
+        // for both instant switches and crossfades. A failed candidate must
+        // never leave the scene state claiming that a stopped track is active.
+        auto* a=MIX_LoadAudio(mixer,utf8Path(asset(type,id)).c_str(),true); if(!a) throw std::runtime_error(SDL_GetError());
+        auto* track=MIX_CreateTrack(mixer);
+        if(!track) { MIX_DestroyAudio(a); throw std::runtime_error(SDL_GetError()); }
+        if(!MIX_SetTrackAudio(track,a)) { const auto error=SDL_GetError(); MIX_DestroyTrack(track); MIX_DestroyAudio(a); throw std::runtime_error(error); }
+        auto props=SDL_CreateProperties();
+        if(!props) { const auto error=SDL_GetError(); MIX_DestroyTrack(track); MIX_DestroyAudio(a); throw std::runtime_error(error); }
+        if(type=="bgm") {SDL_SetNumberProperty(props,MIX_PROP_PLAY_LOOPS_NUMBER,-1);if(crossfadeMs>0)SDL_SetNumberProperty(props,MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER,crossfadeMs);}
+        const auto fadeFrames = type=="bgm" && crossfadeMs>0 ? MIX_TrackMSToFrames(track,crossfadeMs) : 0;
+        audio.push_back({track,a,type=="bgm",pinned,type,id,fadeFrames,
+            type=="bgm" && crossfadeMs>0 ? 0.0f : 1.0f, 1.0f});
+        if (!MIX_SetTrackStoppedCallback(track, &Engine::audioTrackStopped, this)) {
+            const auto error=SDL_GetError(); audio.pop_back(); SDL_DestroyProperties(props); MIX_DestroyTrack(track); MIX_DestroyAudio(a); throw std::runtime_error(error);
+        }
+        const bool ok=MIX_PlayTrack(track,props);
+        SDL_DestroyProperties(props);
+        if(!ok) {
+            const auto error=SDL_GetError();
+            MIX_SetTrackStoppedCallback(track,nullptr,nullptr);
+            if(bgm==track) bgm=nullptr;
+            const auto found=std::find_if(audio.begin(),audio.end(),[track](const AudioPlayback& playback){return playback.track==track;});
+            if(found!=audio.end()) audio.erase(found);
+            MIX_DestroyTrack(track); MIX_DestroyAudio(a); throw std::runtime_error(error);
+        }
+        if(type=="bgm") {
+            if(crossfadeMs>0) stopBgm(crossfadeMs,track);
+            else stopBgm(0,track);
+            bgmAsset=id;
+        }
         return track;
     }
     void command(const std::string& name,const json& args) {
@@ -482,7 +819,7 @@ struct Engine {
                 if(parsed.ec!=std::errc{} || parsed.ptr!=option.data()+option.size()) throw std::runtime_error("Invalid pixel offset");
                 amount=double(integer);
             }
-            if(!std::isfinite(amount) || amount<0 || amount>1000000) throw std::runtime_error("Pixel offset must be between 0 and 1000000");
+            if(!std::isfinite(amount) || std::abs(amount)>1000000) throw std::runtime_error("Pixel offset magnitude must not exceed 1000000");
             return float(option[1]=='-'?-amount:amount);
         };
         if(name=="say") {
@@ -491,14 +828,31 @@ struct Engine {
                 try { auto actor=runtime.get(speaker); if(actor.is_object() && actor.contains("name") && actor.at("name").is_string())speaker=actor.at("name").get<std::string>(); }
                 catch(const std::runtime_error&) {}
             }
-            text=runtime.interpolate(args.at(1));next=false;if(automated)pump();else while(!next)pump();
+            text=runtime.interpolate(args.at(1));next=false;if(automated)pump();else while(!next && !runtime.pendingLoad.is_object())pump();
         }
         else if(name=="wait") delay(args.at(0).get<int64_t>());
-        else if(name=="bg") { background=image(asset("bg",s(0))); backgroundOffsetX=0; backgroundOffsetY=0; }
+        else if(name=="bg") { background=image(asset("bg",s(0))); backgroundAsset=s(0); backgroundOffsetX=0; backgroundOffsetY=0; }
         else if(name=="bgm") sound("bgm",s(0));
         else if(name=="play") {
-            if(s(0)=="video") {video=std::make_unique<Video>(renderer,utf8Path(asset("video",s(1))));if(args.size()>2 && s(2)=="blocking")while(video)pump();}
-            else { auto* track=sound(s(0),s(1)); if(s(0)=="voice" && args.size()>2 && s(2)=="blocking") while(MIX_TrackPlaying(track)) pump(); }
+            if(s(0)=="video") {video=std::make_unique<Video>(renderer,utf8Path(asset("video",s(1))));videoAsset=s(1);if(args.size()>2 && s(2)=="blocking")while(video)pump();}
+            else if(s(0)=="bgm") {
+                int64_t crossfadeMs=0;
+                if(args.size()>2) {
+                    if(args.size()!=4 || s(2)!="crossfade") throw std::runtime_error("BGM transition must use crossfade <ms>");
+                    crossfadeMs=args.at(3).get<int64_t>();
+                    if(crossfadeMs<0 || crossfadeMs>2147483647) throw std::runtime_error("Invalid BGM crossfade duration");
+                }
+                sound("bgm",s(1),crossfadeMs);
+            } else {
+                const bool blockingVoice=s(0)=="voice" && args.size()>2 && s(2)=="blocking";
+                auto* track=sound(s(0),s(1),0,blockingVoice);
+                if(blockingVoice) {
+                    while(MIX_TrackPlaying(track)) pump();
+                    const auto found=std::find_if(audio.begin(),audio.end(),[track](const AudioPlayback& playback){return playback.track==track;});
+                    if(found!=audio.end()) found->pinned=false;
+                    cleanupStoppedAudio();
+                }
+            }
         } else if(name=="move") {
             const auto kind=s(0);
             const bool isCharacter=kind=="character";
@@ -541,15 +895,15 @@ struct Engine {
             };
             if(duration) delay(duration,apply); else apply(1);
         } else if(name=="show") {
-            if(s(0)=="image") images[s(1)]={image(asset("image",s(1))),s(2)};
+            if(s(0)=="image") {
+                Sprite sprite; sprite.texture=image(asset("image",s(1))); sprite.position=s(2); sprite.asset=s(1); sprite.visualOrder=++nextVisualOrder;
+                images[s(1)]=std::move(sprite);
+            }
             else {
                 const auto dot=s(0).find('.');
                 if(dot==std::string::npos) throw std::runtime_error("show requires character.pose or image id");
                 const auto id=s(0).substr(0,dot), pose=s(0).substr(dot+1);
                 const auto position=s(1);
-                for(auto it=characters.begin();it!=characters.end();) {
-                    if(it->first!=id && it->second.position==position) it=characters.erase(it); else ++it;
-                }
                 float offsetX=0,offsetY=0; bool hasX=false,hasY=false;
                 size_t transitionIndex=2;
                 for(;transitionIndex<args.size();++transitionIndex) {
@@ -561,24 +915,96 @@ struct Engine {
                     if(option[0]=='x') hasX=true; else hasY=true;
                     if(option[0]=='x') offsetX=value; else offsetY=value;
                 }
-                characters[id]={image(asset("char",id,pose)),position,1.0f,offsetX,offsetY};
+                auto* texture=image(asset("char",id,pose));
+                for(auto it=characters.begin();it!=characters.end();) {
+                    if(it->first!=id && it->second.position==position) it=characters.erase(it); else ++it;
+                }
+                const auto existing=characters.find(id);
+                const auto order=existing==characters.end()?++nextVisualOrder:existing->second.visualOrder;
+                Sprite sprite; sprite.texture=texture; sprite.position=position; sprite.asset=id; sprite.pose=pose;
+                sprite.offsetX=offsetX; sprite.offsetY=offsetY; sprite.visualOrder=order;
+                characters[id]=std::move(sprite);
                 if(transitionIndex<args.size() && s(transitionIndex)=="fade")delay(args.at(transitionIndex+1).get<int64_t>(),[&](float t){characters.at(id).alpha=t;});
             }
         } else if(name=="hide") {
             const auto id=s(0);
             if(characters.contains(id) && args.size()>1 && s(1)=="fade")delay(args.at(2).get<int64_t>(),[&](float t){characters.at(id).alpha=1-t;});characters.erase(id);
         }
-        else if(name=="clear") {if(s(0)=="image")images.erase(s(1));else if(s(0)=="bg"){background=nullptr;backgroundOffsetX=0;backgroundOffsetY=0;}else if(s(0)=="bgm" && bgm)MIX_StopTrack(bgm,0);}
+        else if(name=="clear") {if(s(0)=="image")images.erase(s(1));else if(s(0)=="bg"){background=nullptr;backgroundAsset.clear();backgroundOffsetX=0;backgroundOffsetY=0;}else if(s(0)=="bgm")stopBgm();}
         else if(name=="effect") {overlayColor=s(1)=="white"?SDL_Color{255,255,255,255}:SDL_Color{0,0,0,255};delay(args.size()>2?args.at(2).get<int64_t>():500,[&](float t){overlay=1-t;});}
         else throw std::runtime_error("Unknown command: "+name);
         pump();
     }
 };
 namespace native_player {
-int run(const fs::path& packagePath, const std::string& mode) {
+static json debugValue(const json& entry) {
+    const auto type = entry.at("type").get<std::string>();
+    if (type == "str") return entry.at("value").get<std::string>();
+    if (type == "int") return novel::integer(entry.at("value").get<std::string>());
+    if (type == "float") return novel::floating(entry.at("value").get<std::string>());
+    auto value = json::parse(entry.at("value").get<std::string>());
+    if (type.starts_with("dict<") && type.ends_with(">")) {
+        const auto itemType = type.substr(5, type.size() - 6);
+        if (!value.is_object()) throw std::runtime_error("Debug dictionary value must be an object");
+        for (auto it = value.begin(); it != value.end(); ++it) {
+            if (itemType == "int") it.value() = novel::integer(novel::text(it.value()));
+            else if (itemType == "float") it.value() = novel::floating(novel::text(it.value()));
+            else if (itemType != "str" || !it.value().is_string()) throw std::runtime_error("Invalid debug dictionary element type");
+        }
+        return value;
+    }
+    if (type == "struct") {
+        if (!value.is_object() || !entry.contains("fields") || !entry.at("fields").is_object() || value.size() != entry.at("fields").size()) throw std::runtime_error("Invalid debug structure shape");
+        for (auto field = entry.at("fields").begin(); field != entry.at("fields").end(); ++field) {
+            if (!value.contains(field.key())) throw std::runtime_error("Missing debug structure field: " + field.key());
+            auto& current = value[field.key()];
+            const auto fieldType = field.value().get<std::string>();
+            if (fieldType == "int") current = novel::integer(novel::text(current));
+            else if (fieldType == "float") current = novel::floating(novel::text(current));
+            else if (fieldType != "str" || !current.is_string()) throw std::runtime_error("Invalid debug structure field: " + field.key());
+        }
+        return value;
+    }
+    throw std::runtime_error("Unsupported debug variable type: " + type);
+}
+
+int run(const fs::path& packagePath, const std::vector<std::string>& arguments) {
     try {
         std::ifstream file(packagePath);json package;file>>package;
         if(package.value("format","")!="novel-script-package" || package.at("version")!=1)throw std::runtime_error("Unsupported package format/version");
+        std::string mode;
+        json debug = nullptr;
+        for (size_t index = 0; index < arguments.size(); ++index) {
+            const auto& argument = arguments[index];
+            if (argument == "--headless" || argument == "--smoke" || argument == "--screen-smoke") { mode = argument; continue; }
+            if (argument == "--load-slot") {
+                if (index + 1 >= arguments.size()) throw std::runtime_error("Usage: --load-slot <1-100>");
+                size_t consumed = 0; const int slot = std::stoi(arguments[++index], &consumed);
+                if (consumed != arguments[index].size() || slot < 1 || slot > 100) throw std::runtime_error("Save slot number must be between 1 and 100");
+                std::ifstream savedFile(packagePath.parent_path() / "saves" / ("slot-" + std::to_string(slot) + ".json"));
+                if (!savedFile) throw std::runtime_error("Cannot open requested save slot");
+                debug = json::parse(savedFile);
+                if (!debug.is_object() || debug.value("version", 0) != 1 || !debug.contains("file") || !debug.contains("scene") || !debug.contains("line") || !debug.contains("variables")) throw std::runtime_error("Invalid save slot format");
+                continue;
+            }
+            if (argument == "--debug-start") {
+                if (index + 4 >= arguments.size()) throw std::runtime_error("Usage: --debug-start <file> <scene> <line-or-0> <variables-json>");
+                if (!package.value("debug", false)) throw std::runtime_error("Debug start requires a package built with --debug");
+                auto sourceFile = arguments[++index];
+                std::replace(sourceFile.begin(), sourceFile.end(), '\\', '/');
+                const auto sceneName = arguments[++index];
+                size_t consumed = 0;
+                const auto line = std::stoll(arguments[++index], &consumed);
+                if (consumed != arguments[index].size() || line < 0) throw std::runtime_error("Debug line must be a non-negative integer");
+                const auto supplied = json::parse(arguments[++index]);
+                if (!supplied.is_object()) throw std::runtime_error("Debug variables must be a JSON object");
+                json variables = json::object();
+                for (auto it = supplied.begin(); it != supplied.end(); ++it) variables[it.key()] = debugValue(it.value());
+                debug = {{"file", sourceFile}, {"scene", sceneName}, {"line", line ? json(line) : json(nullptr)}, {"variables", variables}};
+                continue;
+            }
+            throw std::runtime_error("Unknown player argument: " + argument);
+        }
         novel::Runtime runtime;
         runtime.load=[&](std::string name){
             if(name.ends_with(".txt")) throw std::runtime_error("Legacy .txt scene files are not supported");
@@ -600,6 +1026,13 @@ int run(const fs::path& packagePath, const std::string& mode) {
             mergeIncludes(result, result);
             return result;
         };
+        auto program = package.at("program");
+        if (debug.is_object()) {
+            const auto sourceFile = debug.at("file").get<std::string>();
+            if (!package.contains("files") || !package.at("files").contains(sourceFile)) throw std::runtime_error("Debug source file is not in this package: " + sourceFile);
+            program = runtime.load(sourceFile);
+        }
+        runtime.program = program;
         bool headless=mode=="--headless";
         if(headless){
             json transcript=json::array();
@@ -609,14 +1042,169 @@ int run(const fs::path& packagePath, const std::string& mode) {
                 transcript.push_back({{"name",n},{"args",recorded}});
             };
             runtime.choice=[](const std::string&,const std::vector<std::string>&){return size_t(0);};
-            runtime.run(package.at("program"));std::cout<<json{{"globals",runtime.globals},{"commands",transcript}}.dump()<<"\n";
+            runtime.run(program, debug);std::cout<<json{{"globals",runtime.globals},{"commands",transcript}}.dump()<<"\n";
         }else{
             Engine engine(runtime,fs::absolute(packagePath), package);
+            engine.captureAnimationMidpoints=mode=="--smoke";
+            json playbackTimings=json::array();
+            bool failedCrossfadeRetained=false;
+            bool failedInstantBgmRetained=false;
+            bool failedVideoReplacementRetained=false;
+            bool failedSpriteReplacementRetained=false;
+            bool failedBackgroundReplacementRetained=false;
+            bool failedSePlaybackRejected=false;
+            bool failedVoicePlaybackRejected=false;
+            bool failedIncomingBgmRetiredOutgoing=false;
+            bool pendingIncomingBgmFailureProbe=false;
+            bool repeatedImageRaised=false;
+            bool completedBgmCrossfadeAfterBlockingWait=false;
+            bool relativeCharacterMoveMatched=false;
+            bool relativeBackgroundMoveMatched=false;
+            bool characterSlotReplacementMatched=false;
+            bool bgmCrossfadeCompletedDuringBlockingVoice=false;
+            json presentationTrace=json::array();
+            int64_t lastBgmCrossfadeDurationMs=0;
+            MIX_Track* lastBgmCrossfadeTrack=nullptr;
             engine.automated = mode=="--smoke" || mode=="--screen-smoke";
-            if (!engine.automated || mode=="--screen-smoke") engine.runTitleScreen();
-            runtime.command=[&](const std::string& n,const json& a){engine.command(n,a);};
+            const bool tdsTitle = engine.gameScreens.contains("titleScene") && engine.gameScreens["titleScene"].is_object();
+            if ((!engine.automated || mode=="--screen-smoke") && !debug.is_object() && !tdsTitle) engine.runTitleScreen();
+            if (tdsTitle) engine.storyActive = true;
+            auto queuedLoad = engine.takeQueuedLoad();
+            if (queuedLoad.is_object()) {
+                debug = queuedLoad;
+                program = runtime.load(debug.at("file").get<std::string>());
+            }
+            runtime.beforeInstruction = [&](const json& instruction, const std::string& scene) {
+                runtime.currentSceneName = scene;
+                runtime.currentSourceFile = instruction.value("file", runtime.program.value("sourceFile", std::string{}));
+                runtime.currentLine = instruction.value("line", int64_t(0));
+            };
+            runtime.restorePresentation = [&](const json& state) { engine.restorePresentation(state); };
+            runtime.command=[&](const std::string& n,const json& a){
+                const auto started=SDL_GetTicks();
+                bool commandSucceeded=true;
+                try { if (!(n == "say" && runtime.pendingLoad.is_object())) engine.command(n,a); }
+                catch (...) {
+                    const bool expectedFailureProbe=mode=="--smoke" && n=="play" && a.size()>2
+                        && a.at(0)=="bgm" && a.at(1)=="broken_bgm" && a.at(2)=="crossfade";
+                    const bool expectedInstantBgmFailureProbe=mode=="--smoke" && n=="bgm" && a.size()>0
+                        && a.at(0)=="broken_bgm";
+                    const bool expectedVideoFailureProbe=mode=="--smoke" && n=="play" && a.size()>1
+                        && a.at(0)=="video" && a.at(1)=="broken_video";
+                    const bool expectedSpriteFailureProbe=mode=="--smoke" && n=="show" && a.size()>1
+                        && a.at(0)=="ghost.normal";
+                    const bool expectedBackgroundFailureProbe=mode=="--smoke" && n=="bg" && a.size()>0
+                        && a.at(0)=="broken_bg";
+                    const bool expectedSeFailureProbe=mode=="--smoke" && n=="play" && a.size()>1
+                        && a.at(0)=="se" && a.at(1)=="broken_se";
+                    const bool expectedVoiceFailureProbe=mode=="--smoke" && n=="play" && a.size()>1
+                        && a.at(0)=="voice" && a.at(1)=="broken_voice";
+                    if(expectedFailureProbe) {
+                        commandSucceeded=false;
+                        failedCrossfadeRetained=engine.bgm && MIX_TrackPlaying(engine.bgm);
+                        if(!failedCrossfadeRetained) throw std::runtime_error("Failed BGM crossfade stopped the previous Native track");
+                    } else if(expectedInstantBgmFailureProbe) {
+                        commandSucceeded=false;
+                        failedInstantBgmRetained=engine.bgm && MIX_TrackPlaying(engine.bgm);
+                        if(!failedInstantBgmRetained) throw std::runtime_error("Failed instant BGM replacement stopped the previous Native track");
+                    } else if(expectedVideoFailureProbe) {
+                        commandSucceeded=false;
+                        failedVideoReplacementRetained=engine.video && !engine.video->finished;
+                        if(!failedVideoReplacementRetained) throw std::runtime_error("Failed video replacement discarded the previous Native video");
+                    } else if(expectedSpriteFailureProbe) {
+                        commandSucceeded=false;
+                        failedSpriteReplacementRetained=engine.characters.contains("hero")
+                            && engine.characters.at("hero").position==a.at(1).get<std::string>()
+                            && !engine.characters.contains("ghost");
+                        if(!failedSpriteReplacementRetained) throw std::runtime_error("Failed sprite replacement discarded the previous Native slot occupant");
+                    } else if(expectedBackgroundFailureProbe) {
+                        commandSucceeded=false;
+                        failedBackgroundReplacementRetained=engine.background && engine.backgroundAsset=="room";
+                        if(!failedBackgroundReplacementRetained) throw std::runtime_error("Failed background replacement discarded the previous Native background");
+                    } else if(expectedSeFailureProbe) {
+                        commandSucceeded=false;
+                        failedSePlaybackRejected=true;
+                    } else if(expectedVoiceFailureProbe) {
+                        commandSucceeded=false;
+                        failedVoicePlaybackRejected=true;
+                    } else throw;
+                }
+                if(commandSucceeded && mode=="--smoke" && n=="play" && a.size()>1
+                   && (a.at(0)=="voice" || a.at(0)=="video" || a.at(0)=="se" || a.at(0)=="bgm")) {
+                    const std::string type=a.at(0).get<std::string>();
+                    const auto playbackMode=type=="bgm"?(a.size()>2 && a.at(2)=="crossfade"?"crossfade":"instant")
+                        :(a.size()>2?a.at(2).get<std::string>():(type=="se"?"nonblocking":"async"));
+                    playbackTimings.push_back({{"type",type},{"mode",playbackMode},{"elapsedMs",SDL_GetTicks()-started}});
+                }
+                if(commandSucceeded && mode=="--smoke" && n=="play" && a.size()>2
+                   && a.at(0)=="voice" && a.at(2)=="blocking" && lastBgmCrossfadeDurationMs>0) {
+                    bgmCrossfadeCompletedDuringBlockingVoice=engine.bgm && engine.bgm==lastBgmCrossfadeTrack
+                        && MIX_TrackPlaying(engine.bgm) && MIX_GetTrackFadeFrames(engine.bgm)==0;
+                    if(!bgmCrossfadeCompletedDuringBlockingVoice) throw std::runtime_error("Native BGM crossfade did not progress during blocking Voice playback");
+                }
+                if(commandSucceeded && mode=="--smoke" && n=="play" && a.size()>1
+                   && a.at(0)=="bgm" && a.at(1)=="simulate_late_failure") {
+                    if(!engine.bgm || !MIX_StopTrack(engine.bgm, 0)) throw std::runtime_error("Could not inject late incoming BGM failure");
+                    pendingIncomingBgmFailureProbe=true;
+                }
+                if(commandSucceeded && pendingIncomingBgmFailureProbe && mode=="--smoke" && n=="wait") {
+                    const bool liveBgm=std::any_of(engine.audio.begin(),engine.audio.end(),[](const Engine::AudioPlayback& playback) {
+                        return playback.bgm && MIX_TrackPlaying(playback.track);
+                    });
+                    failedIncomingBgmRetiredOutgoing=!engine.bgm && !liveBgm;
+                    if(!failedIncomingBgmRetiredOutgoing) throw std::runtime_error("Late incoming BGM failure left an outgoing Native layer playing");
+                    pendingIncomingBgmFailureProbe=false;
+                }
+                if(commandSucceeded && mode=="--smoke" && n=="play" && a.size()==4
+                   && a.at(0)=="bgm" && a.at(2)=="crossfade") {
+                    lastBgmCrossfadeDurationMs=a.at(3).get<int64_t>();
+                    lastBgmCrossfadeTrack=engine.bgm;
+                }
+                if(commandSucceeded && mode=="--smoke" && n=="wait" && lastBgmCrossfadeDurationMs>0
+                   && a.at(0).get<int64_t>()>=lastBgmCrossfadeDurationMs) {
+                    const auto bgmTrackCount=std::count_if(engine.audio.begin(),engine.audio.end(),[](const Engine::AudioPlayback& playback){return playback.bgm;});
+                    completedBgmCrossfadeAfterBlockingWait=engine.bgm && engine.bgm==lastBgmCrossfadeTrack
+                        && MIX_TrackPlaying(engine.bgm) && MIX_GetTrackFadeFrames(engine.bgm)==0 && bgmTrackCount==1;
+                }
+                if(commandSucceeded && mode=="--smoke" && n=="show" && a.size()>1
+                   && a.at(0)=="image" && a.at(1)=="first" && engine.images.contains("second")) {
+                    repeatedImageRaised=engine.images.at("first").visualOrder>engine.images.at("second").visualOrder;
+                    if(!repeatedImageRaised) throw std::runtime_error("Redisplaying a Native image did not raise it in visual order");
+                }
+                if(commandSucceeded && mode=="--smoke" && n=="move" && a.size()>1 && a.at(0)=="character" && a.at(1)=="friend") {
+                    const auto found=engine.characters.find("friend");
+                    relativeCharacterMoveMatched=found!=engine.characters.end()
+                        && std::abs(found->second.offsetX-(-4.25f))<0.001f
+                        && std::abs(found->second.offsetY-29.25f)<0.001f;
+                    if(!relativeCharacterMoveMatched) throw std::runtime_error("Native relative character movement produced an unexpected final offset");
+                }
+                if(commandSucceeded && mode=="--smoke" && n=="move" && a.size()==6
+                   && a.at(0)=="bg" && a.at(1)=="by" && a.at(2)=="x+" && a.at(3).is_number()
+                   && std::abs(a.at(3).get<double>()-6.5)<0.001 && a.at(4)=="y-" && a.at(5).is_number()
+                   && std::abs(a.at(5).get<double>()-3.25)<0.001) {
+                    relativeBackgroundMoveMatched=std::abs(engine.backgroundOffsetX-6.5f)<0.001f
+                        && std::abs(engine.backgroundOffsetY-(-3.25f))<0.001f;
+                    if(!relativeBackgroundMoveMatched) throw std::runtime_error("Native relative background movement produced an unexpected final offset");
+                }
+                if(commandSucceeded && mode=="--smoke" && n=="show" && a.size()>1
+                   && a.at(0)=="friend.normal" && a.at(1)=="left") {
+                    characterSlotReplacementMatched=engine.characters.contains("friend")
+                        && engine.characters.at("friend").position=="left"
+                        && !engine.characters.contains("hero");
+                    if(!characterSlotReplacementMatched) throw std::runtime_error("Native slot replacement left multiple characters visible in one position");
+                }
+                if (mode=="--smoke") presentationTrace.push_back({{"command",n},{"state",engine.presentationSnapshot()}});
+            };
             runtime.choice=[&](const std::string& p,const std::vector<std::string>& labels){engine.text=p;engine.options=labels;engine.choiceScroll=0;engine.hovered=labels.empty()?-1:0;engine.selection=engine.automated?0:-1;engine.pump();while(engine.selection<0)engine.pump();auto selected=engine.selection;engine.options.clear();engine.hovered=-1;return size_t(selected);};
-            try { runtime.run(package.at("program")); while(engine.video)engine.pump(); }
+            try {
+                runtime.run(program, debug);
+                while(engine.video)engine.pump();
+                if (mode == "--smoke") {
+                    for (int attempt = 0; attempt < 25 && !engine.audio.empty(); ++attempt) { engine.cleanupStoppedAudio(); SDL_Delay(4); }
+                    if (!engine.audio.empty()) throw std::runtime_error("Audio tracks did not release after all blocking and cleared playback ended");
+                    std::cout << json{{"playbackTimings",playbackTimings},{"presentationTrace",presentationTrace},{"animationMidpoints",engine.animationMidpoints},{"dialogue",{{"speaker",engine.speaker},{"text",engine.text}}},{"failedCrossfadeRetained",failedCrossfadeRetained},{"failedInstantBgmRetained",failedInstantBgmRetained},{"failedVideoReplacementRetained",failedVideoReplacementRetained},{"failedSpriteReplacementRetained",failedSpriteReplacementRetained},{"failedBackgroundReplacementRetained",failedBackgroundReplacementRetained},{"failedSePlaybackRejected",failedSePlaybackRejected},{"failedVoicePlaybackRejected",failedVoicePlaybackRejected},{"failedIncomingBgmRetiredOutgoing",failedIncomingBgmRetiredOutgoing},{"repeatedImageRaised",repeatedImageRaised},{"completedBgmCrossfadeAfterBlockingWait",completedBgmCrossfadeAfterBlockingWait},{"relativeCharacterMoveMatched",relativeCharacterMoveMatched},{"relativeBackgroundMoveMatched",relativeBackgroundMoveMatched},{"characterSlotReplacementMatched",characterSlotReplacementMatched},{"bgmCrossfadeCompletedDuringBlockingVoice",bgmCrossfadeCompletedDuringBlockingVoice}}.dump() << "\n";
+                }
+            }
             catch(const Quit&){}
         }
         return 0;

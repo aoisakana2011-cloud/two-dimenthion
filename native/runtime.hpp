@@ -1,5 +1,6 @@
 #pragma once
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <charconv>
 #include <cstdint>
 #include <functional>
@@ -87,13 +88,18 @@ inline bool matches(const json& v, const json& type) {
     for (const auto& value : v) if (!matches(value, type.at("value"))) return false;
     return true;
 }
-struct Signal { enum Kind { Next, Return, Goto } kind = Next; json value; };
+struct Signal { enum Kind { Next, Return, Goto, Restart } kind = Next; json value; };
 class Runtime {
 public:
     json globals = json::object(), program;
     std::function<void(const std::string&, const json&)> command;
     std::function<size_t(const std::string&, const std::vector<std::string>&)> choice;
     std::function<json(const std::string&)> load;
+    std::function<void(const json&, const std::string&)> beforeInstruction;
+    std::function<void(const json&)> restorePresentation;
+    json pendingLoad = nullptr;
+    std::string currentSceneName, currentSourceFile;
+    int64_t currentLine = 0;
     std::vector<json> locals;
     std::set<std::string> readonlyGlobals;
     std::vector<std::set<std::string>> readonlyLocals;
@@ -240,6 +246,7 @@ public:
     }
     Signal exec(const json& list, bool preserve = false) {
         for (const auto& c : list) {
+            if (beforeInstruction) beforeInstruction(c, currentSceneName);
             const auto op = c.at("op").get<std::string>();
             if (op == "declare") {
                 auto name = c.at("name").get<std::string>();
@@ -272,6 +279,7 @@ public:
             } else if (op == "command") {
                 json args = json::array(); for (const auto& a : c.at("args")) args.push_back(value(a));
                 command(c.at("name"), args);
+                if (pendingLoad.is_object()) { auto request = std::move(pendingLoad); pendingLoad = nullptr; return {Signal::Restart, std::move(request)}; }
             } else if (op == "call") value(json{{"kind", "call"}, {"name", c.at("name")}, {"args", c.at("args")}});
             else if (op == "return") return {Signal::Return, c.contains("value") ? value(c.at("value")) : json()};
             else if (op == "goto") return {Signal::Goto, c.at("scene")};
@@ -288,7 +296,7 @@ public:
                 auto r = scoped(c.at("options").at(selected).at("body")); if (r.kind != Signal::Next) return r;
             } else if (op == "while") {
                 size_t count = 0;
-                while (value(c.at("condition")).get<bool>()) { if (++count > 100000) throw std::runtime_error("Loop limit exceeded"); auto r = exec(c.at("body")); if (r.kind != Signal::Next) return r; }
+                while (value(c.at("condition")).get<bool>()) { if (++count > 100000) throw std::runtime_error("Loop limit exceeded"); auto r = exec(count == 1 && c.contains("debugBody") ? c.at("debugBody") : c.at("body")); if (r.kind != Signal::Next) return r; }
             } else if (op == "for") {
                 Int start = value(c.at("start")), stop = value(c.at("stop")), step = value(c.at("step"));
                 if (!step || (start < stop && step < 0) || (start > stop && step > 0)) throw std::runtime_error("Invalid for step");
@@ -298,7 +306,7 @@ public:
                     for (Int i = start; step > 0 ? i <= stop : i >= stop;) {
                         if (++count > 100000) throw std::runtime_error("Loop limit exceeded");
                         locals.back()[c.at("name").get<std::string>()] = i;
-                        auto r = exec(c.at("body")); if (r.kind != Signal::Next) { popLocal(); return r; }
+                        auto r = exec(count == 1 && c.contains("debugBody") ? c.at("debugBody") : c.at("body")); if (r.kind != Signal::Next) { popLocal(); return r; }
                         if ((step > 0 && i > INT64_MAX - step) || (step < 0 && i < INT64_MIN - step)) break;
                         i += step;
                     }
@@ -308,7 +316,43 @@ public:
         }
         return {};
     }
-    void run(json p) {
+    static json instructionsFromLine(const json& instructions, const std::string& file, int64_t line) {
+        for (size_t index = 0; index < instructions.size(); ++index) {
+            const auto& instruction = instructions.at(index);
+            const auto instructionFile = instruction.value("file", std::string());
+            if ((file.empty() || instructionFile.empty() || instructionFile == file)
+                && instruction.value("line", int64_t(0)) >= line) {
+                json suffix = json::array();
+                for (size_t next = index; next < instructions.size(); ++next) suffix.push_back(instructions.at(next));
+                return suffix;
+            }
+            std::vector<json> bodies;
+            const auto op = instruction.value("op", std::string());
+            if (op == "if") {
+                bodies.push_back(instruction.value("body", json::array()));
+                for (const auto& branch : instruction.value("elseIf", json::array())) bodies.push_back(branch.value("body", json::array()));
+                bodies.push_back(instruction.value("otherwise", json::array()));
+            } else if (op == "choice") {
+                for (const auto& option : instruction.value("options", json::array())) bodies.push_back(option.value("body", json::array()));
+            } else if (op == "for" || op == "while") bodies.push_back(instruction.value("body", json::array()));
+            for (const auto& body : bodies) {
+                auto suffix = instructionsFromLine(body, file, line);
+                if (!suffix.is_null()) {
+                    if (op == "for" || op == "while") {
+                        json resumed = instruction;
+                        resumed["debugBody"] = std::move(suffix);
+                        json result = json::array({std::move(resumed)});
+                        for (size_t next = index + 1; next < instructions.size(); ++next) result.push_back(instructions.at(next));
+                        return result;
+                    }
+                    for (size_t next = index + 1; next < instructions.size(); ++next) suffix.push_back(instructions.at(next));
+                    return suffix;
+                }
+            }
+        }
+        return nullptr;
+    }
+    void run(json p, json debug = nullptr) {
         bool transferred = false;
         for (;;) {
             if (p.at("version") != 2) throw std::runtime_error("Unsupported program version");
@@ -317,8 +361,45 @@ public:
             auto r = exec(p.at("globals"), transferred);
             std::map<std::string, json> scenes;
             for (const auto& s : p.at("scenes")) scenes[s.at("name")] = s.at("instructions");
-            if (r.kind == Signal::Next && !p.at("scenes").empty()) r = exec(p.at("scenes").at(0).at("instructions"));
-            while (r.kind == Signal::Goto && scenes.contains(r.value.get<std::string>())) r = exec(scenes.at(r.value.get<std::string>()));
+            if (!transferred && debug.is_object() && debug.contains("variables")) {
+                for (auto it = debug.at("variables").begin(); it != debug.at("variables").end(); ++it) globals[it.key()] = it.value();
+            }
+            if (!transferred && debug.is_object() && debug.contains("locals") && debug.at("locals").is_array()) {
+                locals = debug.at("locals").get<std::vector<json>>();
+                readonlyLocals.assign(locals.size(), std::set<std::string>{});
+                const auto readonly = debug.value("readonlyLocals", json::array());
+                for (size_t frame = 0; frame < std::min(readonly.size(), readonlyLocals.size()); ++frame)
+                    for (const auto& name : readonly.at(frame)) readonlyLocals[frame].insert(name.get<std::string>());
+                loopScopes.clear();
+                for (const auto& frame : debug.value("loopScopes", json::array())) {
+                    const auto index = frame.get<size_t>(); if (index < locals.size()) loopScopes.insert(index);
+                }
+            }
+            const json* first = p.at("scenes").empty() ? nullptr : &p.at("scenes").at(0);
+            if (!transferred && debug.is_object() && debug.contains("scene")) {
+                first = nullptr;
+                for (const auto& scene : p.at("scenes")) if (scene.value("name", std::string()) == debug.at("scene").get<std::string>()) { first = &scene; break; }
+                if (!first) throw std::runtime_error("Unknown debug scene: " + debug.at("scene").get<std::string>());
+            }
+            currentSceneName = first ? first->value("name", std::string()) : std::string();
+            if (!transferred && debug.is_object() && debug.contains("presentation") && restorePresentation) restorePresentation(debug.at("presentation"));
+            json instructions = json::array();
+            if (first) {
+                instructions = first->at("instructions");
+                if (!transferred && debug.is_object() && debug.contains("line") && !debug.at("line").is_null()) {
+                    const auto suffix = instructionsFromLine(instructions, debug.value("file", std::string()), debug.at("line").get<int64_t>());
+                    if (suffix.is_null()) throw std::runtime_error("Debug line has no executable instruction in the selected scene");
+                    instructions = suffix;
+                }
+            }
+            if (r.kind == Signal::Next && first) r = exec(instructions);
+            while (r.kind == Signal::Goto && scenes.contains(r.value.get<std::string>())) { currentSceneName = r.value.get<std::string>(); r = exec(scenes.at(currentSceneName)); }
+            if (r.kind == Signal::Restart) {
+                debug = std::move(r.value);
+                const auto file = debug.value("file", std::string());
+                if (file.empty() || !load) throw std::runtime_error("Save slot is missing its scenario file");
+                p = load(file); transferred = false; continue;
+            }
             if (r.kind == Signal::Next) return;
             if (r.kind != Signal::Goto || !load) throw std::runtime_error("Invalid scene transfer");
             p = load(r.value); transferred = true;

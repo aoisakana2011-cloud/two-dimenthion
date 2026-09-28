@@ -6,7 +6,7 @@
 
 - [構文リファレンス](syntax-draft.md): 文法、型、命令、完全例
 - [native player](native/README.md): native build・実行・headless検証
-- `Title/setting.txt`: 作品レイアウトと開始ファイルの設定
+- `Title/setting/setting.txt`: 作品レイアウトと開始ファイルの設定
 
 ## GUIエディター
 

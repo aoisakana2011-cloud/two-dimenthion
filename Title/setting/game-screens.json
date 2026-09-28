@@ -1,9 +1,5 @@
 {
   "version": 1,
-  "canvas": {
-    "width": 1280,
-    "height": 720
-  },
   "initial": "title",
   "screens": {
     "title": {

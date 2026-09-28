@@ -1,14 +1,18 @@
-include common.tds as common
-
 scene main {
-  bg museum_night
-  show akechi.normal left fade 350
-  say narrator "東京、二〇二六年。私は二十四歳。明智探偵事務所で、調査記録の整理を任されている。"
-  say narrator "その夜、都心の私立美術館に一通の予告状が届いた。"
-  say akechi "差出人は『二十面相』。今夜八時、展示中の《青い星図》をいただく、とある。"
-  say narrator "怪盗の名は、新聞にも警察資料にも何度も現れる。顔も年齢も、性別すら確かな記録がない。"
-  say akechi "現場を見に行こう。君も来るんだ。見たものを先入観で埋めないこと。"
-  say narrator "そのとき、封筒の裏に小さな文字があるのに気づいた。『本物を見分ける人を、ひとり連れてきて』。"
-  set clue = clue + 1
-  goto "chapters/01_invitation.tds"
+  choice {
+    "hello" {
+      goto A
+    }
+    "by" {
+      goto B
+    }
+  }
+}
+
+scene A {
+  say "hello"
+}
+
+scene B {
+  say "by"
 }

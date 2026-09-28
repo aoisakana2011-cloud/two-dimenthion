@@ -51,7 +51,7 @@ export interface Character extends NodeLocation {
   poses: Array<{ name: string; path: string; line?: number; column?: number }>;
 }
 export interface ExternalCharacter { poses: Set<string>; fields: Record<string, PrimitiveType>; definition?: Character; }
-export interface StructDef extends NodeLocation { kind: 'struct'; name: string; fields: Record<string, PrimitiveType>; }
+export interface StructDef extends NodeLocation { kind: 'struct'; name: string; fields: Record<string, PrimitiveType>; fieldLocations?: Record<string, NodeLocation>; }
 export interface FunctionDef extends NodeLocation { kind: 'function'; name: string; returnType: ValueType; params: Array<{ type: ValueType; name: string; line?: number; column?: number }>; body: Statement[]; }
 export interface Scene extends NodeLocation { kind: 'scene'; name: string; body: Statement[]; }
 export interface Include extends NodeLocation { path: string; alias: string; }

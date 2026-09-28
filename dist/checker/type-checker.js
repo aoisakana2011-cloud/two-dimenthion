@@ -4,6 +4,9 @@ exports.TypeCheckError = void 0;
 exports.inferValueType = inferValueType;
 exports.checkTypes = checkTypes;
 class TypeCheckError extends Error {
+    file;
+    line;
+    column;
 }
 exports.TypeCheckError = TypeCheckError;
 const ALLOWED_EXTENSIONS = {
@@ -279,7 +282,7 @@ const MAX_DURATION_MS = 2147483647n;
 function checkDuration(expression, variables, ctx, loc, label) {
     if (expressionType(expression, variables, ctx) !== 'int')
         return;
-    const value = staticValue(expression);
+    const value = staticValue(expression, ctx.knownNumbers);
     if (typeof value === 'bigint' && (value < 0n || value > MAX_DURATION_MS)) {
         throw new TypeCheckError(`${loc}: ${label} は 0 以上 2147483647 以下でなければなりません`);
     }
@@ -313,6 +316,11 @@ function characterOffsetEnd(args, start, loc, variables, ctx) {
         else {
             if (!args[index + 1] || !['int', 'float'].includes(String(expressionType(args[index + 1], variables, ctx))))
                 throw new TypeCheckError(`${loc}: 位置ずらしの式は int または float で指定してください`);
+            const amount = staticValue(args[index + 1], ctx.knownNumbers);
+            if (typeof amount === 'bigint' && (amount < -MAX_CHARACTER_OFFSET_PX || amount > MAX_CHARACTER_OFFSET_PX)
+                || typeof amount === 'number' && (!Number.isFinite(amount) || Math.abs(amount) > Number(MAX_CHARACTER_OFFSET_PX))) {
+                throw new TypeCheckError(`${loc}: 位置ずらしは ±${MAX_CHARACTER_OFFSET_PX} px 以内で指定してください`);
+            }
             index += 2;
         }
     }
@@ -364,6 +372,16 @@ function checkCommand(name, args, variables, ctx, locStr) {
                 throw new TypeCheckError(`${locStr}: 未知の再生種別 '${kind}' です`);
             const id = getArgStr(1);
             const asset = ctx.assets.get(id);
+            if (kind === 'bgm' && args.length > 2) {
+                if (args.length !== 4)
+                    throw new TypeCheckError(`${locStr}: BGM transition must use play bgm <id> crossfade <ms>`);
+                checkAudioTransition(args.slice(2), variables, ctx, locStr);
+            }
+            if (kind === 'bgm') {
+                if (!asset || asset.type !== kind)
+                    throw new TypeCheckError(`${locStr}: Unknown or mismatched BGM asset '${id}'`);
+                break;
+            }
             if (kind === 'voice' && args.length >= 3) {
                 if (args.length !== 3)
                     throw new TypeCheckError(`${locStr}: voice の引数は voice <id> [blocking|async] です`);
@@ -376,6 +394,12 @@ function checkCommand(name, args, variables, ctx, locStr) {
                 throw new TypeCheckError(`${locStr}: 未定義または型が異なるアセット '${id}' (期待: ${kind}) です`);
             if (args.length > (kind === 'video' ? 3 : 2))
                 throw new TypeCheckError(`${locStr}: play の引数が多すぎます`);
+            if (kind === 'bgm' && args.length > 2) {
+                if (args.length !== 4)
+                    throw new TypeCheckError(`${locStr}: BGM transition must use play bgm <id> crossfade <ms>`);
+                checkAudioTransition(args.slice(2), variables, ctx, locStr);
+                args = args.slice(0, 2);
+            }
             if (kind === 'video' && args.length >= 3) {
                 const mode = getArgStr(2);
                 if (mode !== 'blocking' && mode !== 'async')
@@ -499,33 +523,49 @@ function checkCommand(name, args, variables, ctx, locStr) {
         default: throw new TypeCheckError(`${locStr}: 未知の命令 '${name}' です`);
     }
 }
-function staticValue(expression) {
+function staticValue(expression, knownNumbers) {
+    if (expression.kind === 'variable')
+        return knownNumbers?.get(expression.name);
+    if (expression.kind === 'float') {
+        const value = Number(expression.value);
+        return Number.isFinite(value) ? value : undefined;
+    }
     if (expression.kind === 'literal')
         return typeof expression.value === 'string' ? expression.value : BigInt(expression.value);
     if (expression.kind === 'call') {
-        const argument = expression.args.length === 1 ? staticValue(expression.args[0]) : undefined;
+        const argument = expression.args.length === 1 ? staticValue(expression.args[0], knownNumbers) : undefined;
         if (expression.name === 'str' && typeof argument === 'bigint')
             return String(argument);
         if (expression.name === 'int' && typeof argument === 'string' && /^[+-]?\d+$/.test(argument))
             return BigInt(argument);
+        if (expression.name === 'int' && typeof argument === 'number' && Number.isFinite(argument))
+            return BigInt(Math.trunc(argument));
+        if (expression.name === 'float') {
+            if (typeof argument === 'string' && !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(argument))
+                return undefined;
+            const value = typeof argument === 'string' || typeof argument === 'bigint' || typeof argument === 'number' ? Number(argument) : NaN;
+            return Number.isFinite(value) ? value : undefined;
+        }
         return undefined;
     }
     if (expression.kind === 'unary') {
-        const value = staticValue(expression.value);
+        const value = staticValue(expression.value, knownNumbers);
         if (expression.operator === 'not' && typeof value === 'boolean')
             return !value;
         if ((expression.operator === '+' || expression.operator === '-') && typeof value === 'bigint')
+            return expression.operator === '-' ? -value : value;
+        if ((expression.operator === '+' || expression.operator === '-') && typeof value === 'number')
             return expression.operator === '-' ? -value : value;
         return undefined;
     }
     if (expression.kind !== 'binary')
         return undefined;
-    const left = staticValue(expression.left);
+    const left = staticValue(expression.left, knownNumbers);
     if (expression.operator === 'and' && typeof left === 'boolean')
-        return left ? staticValue(expression.right) : false;
+        return left ? staticValue(expression.right, knownNumbers) : false;
     if (expression.operator === 'or' && typeof left === 'boolean')
-        return left ? true : staticValue(expression.right);
-    const right = staticValue(expression.right);
+        return left ? true : staticValue(expression.right, knownNumbers);
+    const right = staticValue(expression.right, knownNumbers);
     if (left === undefined || right === undefined)
         return undefined;
     if (expression.operator === '==')
@@ -551,6 +591,19 @@ function staticValue(expression) {
             return left / right;
         if (expression.operator === '%' && right !== 0n)
             return left % right;
+    }
+    if (typeof left === 'number' && typeof right === 'number') {
+        if (expression.operator === '>')
+            return left > right;
+        if (expression.operator === '>=')
+            return left >= right;
+        if (expression.operator === '<')
+            return left < right;
+        if (expression.operator === '<=')
+            return left <= right;
+        const value = expression.operator === '+' ? left + right : expression.operator === '-' ? left - right
+            : expression.operator === '*' ? left * right : expression.operator === '/' && right !== 0 ? left / right : undefined;
+        return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
     }
     if (expression.operator === '+' && typeof left === 'string' && typeof right === 'string')
         return left + right;
@@ -639,6 +692,16 @@ function checkStatements(statements, variables, ctx, options) {
                     throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): let '${statement.name}' には初期値が必要です`);
                 }
                 variables.set(statement.name, statement.type);
+                // A local declaration may shadow a file-level constant. Drop the
+                // inherited numeric fact unless a scoped local evaluator can prove it.
+                if (ctx.locals) {
+                    ctx.knownNumbers?.delete(statement.name);
+                    if (statement.constant && statement.initial) {
+                        const numeric = staticValue(statement.initial, ctx.knownNumbers);
+                        if (typeof numeric === 'bigint' || typeof numeric === 'number' && Number.isFinite(numeric))
+                            ctx.knownNumbers?.set(statement.name, numeric);
+                    }
+                }
                 ctx.ambiguous?.delete(statement.name);
                 ctx.declaredLocals?.add(statement.name);
                 ctx.readonly?.delete(statement.name);
@@ -670,6 +733,7 @@ function checkStatements(statements, variables, ctx, options) {
                     if (!sameType(varType, exprType)) {
                         throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 変数 '${statement.target.name}' (${typeName(varType)}) に ${typeName(exprType)} は代入できません`);
                     }
+                    ctx.knownNumbers?.delete(statement.target.name);
                     if (ctx.knownStrings) {
                         const varType = variables.get(statement.target.name);
                         const assignedString = varType === 'str' ? knownStringValue(statement.value, ctx.knownStrings) : undefined;
@@ -728,21 +792,24 @@ function checkStatements(statements, variables, ctx, options) {
                 const branchVariables = [];
                 const branchReadonly = [];
                 const branchStrings = [];
+                const branchNumbers = [];
                 const branchStates = [];
                 const checkBranch = (body) => {
                     const branch = new Map(variables);
                     const readonly = new Set(ctx.readonly);
                     const strings = new Map(ctx.knownStrings);
+                    const numbers = new Map(ctx.knownNumbers);
                     const locals = ctx.locals ? new Set(ctx.locals) : undefined;
                     const declaredLocals = ctx.declaredLocals ? new Set(ctx.declaredLocals) : undefined;
                     const ambiguous = ctx.ambiguous ? new Set(ctx.ambiguous) : undefined;
-                    checkStatements(body, branch, { ...ctx, locals, declaredLocals, readonly, knownStrings: strings, ambiguous }, options);
+                    checkStatements(body, branch, { ...ctx, locals, declaredLocals, readonly, knownStrings: strings, knownNumbers: numbers, ambiguous }, options);
                     const fallsThrough = !exitsBlock(body);
-                    branchStates.push({ variables: branch, readonly, strings, locals, declaredLocals, ambiguous, fallsThrough });
+                    branchStates.push({ variables: branch, readonly, strings, numbers, locals, declaredLocals, ambiguous, fallsThrough });
                     if (fallsThrough) {
                         branchVariables.push(branch);
                         branchReadonly.push(readonly);
                         branchStrings.push(strings);
+                        branchNumbers.push(numbers);
                     }
                 };
                 checkBranch(statement.body);
@@ -756,13 +823,15 @@ function checkStatements(statements, variables, ctx, options) {
                     const variablesAfterIf = new Map(variables);
                     const readonlyAfterIf = new Set(ctx.readonly);
                     const stringsAfterIf = new Map(ctx.knownStrings);
+                    const numbersAfterIf = new Map(ctx.knownNumbers);
                     const localsAfterIf = ctx.locals ? new Set(ctx.locals) : undefined;
                     const declaredLocalsAfterIf = ctx.declaredLocals ? new Set(ctx.declaredLocals) : undefined;
                     const ambiguousAfterIf = ctx.ambiguous ? new Set(ctx.ambiguous) : undefined;
-                    branchStates.push({ variables: variablesAfterIf, readonly: readonlyAfterIf, strings: stringsAfterIf, locals: localsAfterIf, declaredLocals: declaredLocalsAfterIf, ambiguous: ambiguousAfterIf, fallsThrough: true });
+                    branchStates.push({ variables: variablesAfterIf, readonly: readonlyAfterIf, strings: stringsAfterIf, numbers: numbersAfterIf, locals: localsAfterIf, declaredLocals: declaredLocalsAfterIf, ambiguous: ambiguousAfterIf, fallsThrough: true });
                     branchVariables.push(variablesAfterIf);
                     branchReadonly.push(readonlyAfterIf);
                     branchStrings.push(stringsAfterIf);
+                    branchNumbers.push(numbersAfterIf);
                 }
                 if (ctx.declaredLocals)
                     for (const branch of branchStates)
@@ -800,6 +869,10 @@ function checkStatements(statements, variables, ctx, options) {
                         if (ctx.knownStrings) {
                             ctx.knownStrings.clear();
                             selected.strings.forEach((value, name) => ctx.knownStrings.set(name, value));
+                        }
+                        if (ctx.knownNumbers) {
+                            ctx.knownNumbers.clear();
+                            selected.numbers.forEach((value, name) => ctx.knownNumbers.set(name, value));
                         }
                         if (ctx.locals && selected.locals) {
                             ctx.locals.clear();
@@ -870,6 +943,19 @@ function checkStatements(statements, variables, ctx, options) {
                         if (!branchStrings.every((strings) => strings.has(name) && strings.get(name) === ctx.knownStrings.get(name)))
                             ctx.knownStrings.delete(name);
                 }
+                if (ctx.knownNumbers) {
+                    const names = new Set(branchNumbers.flatMap((numbers) => [...numbers.keys()]));
+                    for (const name of names) {
+                        const first = branchNumbers[0]?.get(name);
+                        if (first !== undefined && branchNumbers.every((numbers) => numbers.get(name) === first))
+                            ctx.knownNumbers.set(name, first);
+                        else
+                            ctx.knownNumbers.delete(name);
+                    }
+                    for (const name of [...ctx.knownNumbers.keys()])
+                        if (!branchNumbers.every((numbers) => numbers.has(name) && numbers.get(name) === ctx.knownNumbers.get(name)))
+                            ctx.knownNumbers.delete(name);
+                }
             }
             if (statement.kind === 'for') {
                 const startType = expressionType(statement.start, variables, ctx);
@@ -886,7 +972,9 @@ function checkStatements(statements, variables, ctx, options) {
                 loopLocals.add(statement.name);
                 const loopDeclaredLocals = ctx.declaredLocals ? new Set(ctx.declaredLocals) : undefined;
                 const loopAmbiguous = ctx.ambiguous ? new Set(ctx.ambiguous) : undefined;
-                checkStatements(statement.body, loopVars, { ...ctx, locals: loopLocals, declaredLocals: loopDeclaredLocals, readonly: loopReadonly, knownStrings: new Map(ctx.knownStrings), ambiguous: loopAmbiguous }, options);
+                const loopNumbers = new Map(ctx.knownNumbers);
+                loopNumbers.delete(statement.name);
+                checkStatements(statement.body, loopVars, { ...ctx, locals: loopLocals, declaredLocals: loopDeclaredLocals, readonly: loopReadonly, knownStrings: new Map(ctx.knownStrings), knownNumbers: loopNumbers, ambiguous: loopAmbiguous }, options);
                 if (ctx.declaredLocals)
                     loopDeclaredLocals?.forEach((name) => ctx.declaredLocals.add(name));
                 ctx.knownStrings?.clear();
@@ -934,7 +1022,7 @@ function checkStatements(statements, variables, ctx, options) {
                 const loopReadonly = ctx.readonly ? new Set(ctx.readonly) : new Set();
                 const loopDeclaredLocals = ctx.declaredLocals ? new Set(ctx.declaredLocals) : undefined;
                 const loopAmbiguous = ctx.ambiguous ? new Set(ctx.ambiguous) : undefined;
-                checkStatements(statement.body, loopVars, { ...ctx, locals: ctx.locals ? new Set(ctx.locals) : undefined, declaredLocals: loopDeclaredLocals, readonly: loopReadonly, knownStrings: new Map(ctx.knownStrings), ambiguous: loopAmbiguous }, options);
+                checkStatements(statement.body, loopVars, { ...ctx, locals: ctx.locals ? new Set(ctx.locals) : undefined, declaredLocals: loopDeclaredLocals, readonly: loopReadonly, knownStrings: new Map(ctx.knownStrings), knownNumbers: new Map(ctx.knownNumbers), ambiguous: loopAmbiguous }, options);
                 if (ctx.declaredLocals)
                     loopDeclaredLocals?.forEach((name) => ctx.declaredLocals.add(name));
                 // A dynamic while may execute zero times, but when it does execute its
@@ -971,7 +1059,7 @@ function checkStatements(statements, variables, ctx, options) {
                     if (labelType !== 'str')
                         throw new TypeCheckError(`${locStr}: 選択肢のラベルは str でなければなりません`);
                     // choice ブロック内では変数宣言を許可
-                    checkStatements(option.body, new Map(variables), { ...ctx, locals: new Set(), declaredLocals: new Set(), readonly: ctx.readonly ? new Set(ctx.readonly) : undefined, knownStrings: new Map(ctx.knownStrings) }, { ...options, allowDeclaration: true });
+                    checkStatements(option.body, new Map(variables), { ...ctx, locals: new Set(), declaredLocals: new Set(), readonly: ctx.readonly ? new Set(ctx.readonly) : undefined, knownStrings: new Map(ctx.knownStrings), knownNumbers: new Map(ctx.knownNumbers) }, { ...options, allowDeclaration: true });
                 }
                 ctx.knownStrings?.clear();
             }
@@ -1010,6 +1098,10 @@ function checkStatements(statements, variables, ctx, options) {
         catch (error) {
             if (!ctx.errors || !(error instanceof TypeCheckError))
                 throw error;
+            error.file = statement.file || ctx.file;
+            const location = error.message.match(/line\s+(\d+)\s*,\s*column\s+(\d+)/i);
+            error.line ??= Number(location?.[1]) || statement.line || 1;
+            error.column ??= Number(location?.[2]) || statement.column || 1;
             ctx.errors.push(error);
         }
     }
@@ -1324,6 +1416,7 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
         externalGlobals: new Set(externalGlobals.keys()),
         readonly: new Set([...externalGlobals.readonlyNames || []].filter((name) => externalGlobals.has(name))),
         knownStrings: new Map(),
+        knownNumbers: new Map(),
         ambiguous: new Set(),
         errors,
     };
@@ -1339,6 +1432,13 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
         });
     }
     const isImplicitScene = script.scenes.length === 0;
+    for (const statement of script.globals) {
+        if (statement.kind !== 'declare' || !statement.constant || !statement.initial)
+            continue;
+        const value = staticValue(statement.initial, ctx.knownNumbers);
+        if (typeof value === 'bigint' || typeof value === 'number' && Number.isFinite(value))
+            ctx.knownNumbers.set(statement.name, value);
+    }
     checkStatements(script.globals, globals, ctx, { allowGoto: isImplicitScene, allowChoice: isImplicitScene, allowReturn: false, allowDeclaration: true });
     // 関数の検証
     for (const fn of script.functions) {
@@ -1356,7 +1456,9 @@ function checkTypes(script, file = 'current', externalGlobals = new Map(), exter
             // Carry their statically known string templates into the function scope so
             // an interpolation such as `{template}` is checked for nested variables
             // and zero-argument calls even when it appears only inside the function.
-            const fnCtx = { ...ctx, currentFunction: fn, locals: paramNames, declaredLocals: new Set(paramNames), knownStrings: new Map(ctx.knownStrings), ambiguous: new Set() };
+            const fnNumbers = new Map(ctx.knownNumbers);
+            paramNames.forEach((name) => fnNumbers.delete(name));
+            const fnCtx = { ...ctx, currentFunction: fn, locals: paramNames, declaredLocals: new Set(paramNames), knownStrings: new Map(ctx.knownStrings), knownNumbers: fnNumbers, ambiguous: new Set() };
             checkStatements(fn.body, fnVars, { ...fnCtx, readonly: new Set([...ctx.readonly || []].filter((name) => !paramNames.has(name))) }, { allowGoto: false, allowChoice: false, allowReturn: true, allowDeclaration: true });
         });
     }

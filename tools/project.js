@@ -2,6 +2,42 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { parse, compile, tokenize } = require('../dist');
+const STANDARD_LIBRARY_PREFIX = 'std/';
+const STANDARD_LIBRARY_ROOT = path.resolve(__dirname, '../std');
+
+function isStandardLibraryInclude(includePath) {
+  return typeof includePath === 'string' && includePath.replaceAll('\\', '/').startsWith(STANDARD_LIBRARY_PREFIX);
+}
+
+async function resolveIncludeFile(includePath, scenesRoot) {
+  const name = sceneFile(includePath);
+  if (isStandardLibraryInclude(name)) return inside(STANDARD_LIBRARY_ROOT, name.slice(STANDARD_LIBRARY_PREFIX.length));
+  return inside(scenesRoot, name);
+}
+
+async function listStandardLibrary() {
+  const modules = [];
+  async function visit(directory, relative = '') {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) await visit(path.join(directory, entry.name), childRelative);
+      else if (entry.isFile() && entry.name.toLowerCase().endsWith('.tds')) {
+        const file = await inside(STANDARD_LIBRARY_ROOT, childRelative);
+        const declarations = scanTopLevelDeclarations(await fs.readFile(file, 'utf8'));
+        modules.push({ path: `${STANDARD_LIBRARY_PREFIX}${childRelative}`, functions: declarations.functions });
+      }
+    }
+  }
+  await visit(STANDARD_LIBRARY_ROOT);
+  return modules.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+async function readStandardLibraryFile(name) {
+  const normalized = sceneFile(name);
+  if (!isStandardLibraryInclude(normalized)) throw Error('Only bundled std/ modules can be opened here.');
+  const file = await resolveIncludeFile(normalized, '');
+  return { name: normalized, source: await fs.readFile(file, 'utf8') };
+}
 
 function sceneFile(name) {
   if (typeof name !== 'string') throw Error('不正なシーンパスです');
@@ -81,6 +117,7 @@ function tagLocations(value, file, seen = new Set()) {
 function scanTopLevelDeclarations(source) {
   const tokens = tokenize(source);
   const structs = [];
+  const functions = [];
   const includes = [];
   let depth = 0;
   for (let index = 0; index < tokens.length; index++) {
@@ -88,6 +125,10 @@ function scanTopLevelDeclarations(source) {
     if (depth === 0 && token.type === 'word' && token.value === 'struct') {
       const name = tokens[index + 1];
       if (name?.type === 'word') structs.push(name.value);
+    }
+    if (depth === 0 && token.type === 'word' && token.value === 'fn') {
+      const name = tokens[index + 1];
+      if (name?.type === 'word') functions.push(name.value);
     }
     if (depth === 0 && token.type === 'word' && token.value === 'include') {
       let includePath, cursor = index + 1;
@@ -116,7 +157,7 @@ function scanTopLevelDeclarations(source) {
     else if (token.value === '}') depth = Math.max(0, depth - 1);
     if (token.type === 'eof') break;
   }
-  return { structs, includes };
+  return { structs, functions, includes };
 }
 
 async function collectIncludedStructs(source, scenesRoot, seen = new Set()) {
@@ -125,7 +166,7 @@ async function collectIncludedStructs(source, scenesRoot, seen = new Set()) {
   for (const include of declarations.includes) {
     const name = sceneFile(include.path);
     if (seen.has(name)) throw Error(`include が循環しています: ${name}`);
-    const file = await inside(scenesRoot, name);
+    const file = await resolveIncludeFile(name, scenesRoot);
     const child = await collectIncludedStructs(await fs.readFile(file, 'utf8'), scenesRoot, new Set([...seen, name]));
     for (const struct of child) discovered.add(struct);
   }
@@ -171,7 +212,7 @@ async function resolveProjectScript(source, scenesRoot, seen = new Set(), source
     if (seen.has(name)) throw Error(`include が循環しています: ${name}`);
     if (includedPaths.has(name)) throw Error(`Module '${name}' is included more than once in '${sourceName}'`);
     includedPaths.add(name);
-    const file = await inside(scenesRoot, name);
+    const file = await resolveIncludeFile(name, scenesRoot);
     const child = await resolveProjectScript(await fs.readFile(file, 'utf8'), scenesRoot, new Set([...seen, name]), name, true);
     qualifyImportedFunctions(child, include.alias);
     for (const item of child.assets) { const key = `${item.file || name}:${item.name}`; if (!uniqueAssets.has(key)) { uniqueAssets.add(key); assets.push(item); } }
@@ -218,4 +259,4 @@ function projectContext(script, globalVariables, characters, sourceName = 'curre
   for (const character of script.characters) if (character.file && character.file !== sourceName) visibleCharacters.delete(character.name);
   return { globals, characters: visibleCharacters };
 }
-module.exports = { sceneFile, inside, assetPaths, gotos, validateProgram, resolveProjectScript, compileProject, tagLocations, projectContext };
+module.exports = { sceneFile, inside, assetPaths, gotos, validateProgram, resolveProjectScript, compileProject, tagLocations, projectContext, isStandardLibraryInclude, listStandardLibrary, readStandardLibraryFile };

@@ -16,8 +16,17 @@ html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#111;color:
 #bgm{display:none}
 #screen-overlay{position:absolute;z-index:100;inset:0;overflow:hidden;background-position:center;background-size:cover;color:#fff}
 #screen-overlay[hidden]{display:none}
+#player-controls{position:absolute;z-index:90;inset:0;pointer-events:none}
+.player-control-button{position:absolute;display:grid;place-items:center;overflow:hidden;padding:2px 10px;border:1px solid #b9c7ce88;border-radius:3px;color:#f3f3ef;background:#101820df;background-position:center;background-size:100% 100%;font:600 15px/1.1 "Yu Gothic UI",Meiryo,sans-serif;text-shadow:0 1px 3px #000;cursor:pointer;pointer-events:auto}
+.player-control-button:hover,.player-control-button:focus-visible{outline:1px solid #d7e8ee;border-color:#d7e8ee;background-color:#283b47}
+.player-control-button img{width:100%;height:100%;object-fit:fill}
 .game-screen-title{position:absolute;left:5%;top:7%;max-width:90%;color:#fff;font-size:36px;line-height:1.2;text-shadow:0 2px 8px #000b}
 .game-screen-description{position:absolute;max-width:calc(90% - 64px);color:#f0eee8;line-height:1.8;white-space:pre-wrap;text-shadow:0 1px 5px #000;pointer-events:none}
 .game-screen-button{position:absolute;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:4px 12px;border:1px solid #c8d6de88;border-radius:2px;color:#fff;background-color:#111820bd;background-position:center;background-size:100% 100%;font:500 22px/1.2 "Yu Gothic UI",Meiryo,sans-serif;text-shadow:0 1px 4px #000;cursor:pointer}
 .game-screen-button:hover,.game-screen-button:focus-visible{border-color:#fff;background-color:#263b4cdd;outline:1px solid #fff;outline-offset:1px}
+.game-save-slots{position:absolute;display:flex;flex-direction:column;overflow:auto;padding:2px;}
+.game-save-slot{flex:none;overflow:hidden;padding:4px 10px;border:1px solid #77818a;color:#ecece9;background-color:#171c20dd;background-position:center;background-size:100% 100%;font:500 15px/1.25 "Yu Gothic UI",Meiryo,sans-serif;text-align:left;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.game-save-slot:hover,.game-save-slot:focus-visible{border-color:#d4e6ec;background-color:#253845;outline:1px solid #d4e6ec}
+.game-save-slot:disabled{opacity:.48;cursor:default}
+.game-screen-notice{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);padding:9px 16px;border:1px solid #7d9ba7;background:#101a20ed;color:#e6eef1;font-size:14px;pointer-events:none}
 .game-screen-error{position:absolute;left:5%;right:5%;bottom:5%;padding:10px 14px;background:#301c1cdd;color:#ffdede;font-size:18px}

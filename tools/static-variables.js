@@ -116,9 +116,9 @@ async function readStaticVariables(dataRoot) {
       });
     } else if (source?.type === 'float' && (source.min !== undefined || source.max !== undefined || source.possibleValues !== undefined)) {
       table.constraints.set(item.name, { type: 'float',
-        ...(source.min !== undefined ? { min: parseFloatValue(source.min, item.name, 'min') } : {}),
-        ...(source.max !== undefined ? { max: parseFloatValue(source.max, item.name, 'max') } : {}),
-        ...(source.possibleValues !== undefined ? { values: new Set(source.possibleValues.map((value) => parseFloatValue(value, item.name, 'possibleValues'))) } : {}),
+        ...(source.min !== undefined ? { floatMin: parseFloatValue(source.min, item.name, 'min') } : {}),
+        ...(source.max !== undefined ? { floatMax: parseFloatValue(source.max, item.name, 'max') } : {}),
+        ...(source.possibleValues !== undefined ? (() => { const values = source.possibleValues.map((value) => parseFloatValue(value, item.name, 'possibleValues')); return { floatValues: new Set(values), values: new Set(values) }; })() : {}),
       });
     } else if (source?.type === 'str' && source.possibleValues !== undefined) {
       table.constraints.set(item.name, { type: 'str', values: new Set(source.possibleValues) });

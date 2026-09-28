@@ -186,7 +186,9 @@ class Parser {
         this.expect('{');
         this.skipLines();
         const fields = {};
+        const fieldLocations = {};
         while (!this.atValue('}')) {
+            const fieldToken = this.current;
             const field = this.expectIdentifier('Expected field name');
             this.expect(':');
             const type = this.expectWord('Expected field type');
@@ -195,12 +197,13 @@ class Parser {
             if (fields[field])
                 throw this.error(`Duplicate struct field '${field}'`);
             fields[field] = type;
+            fieldLocations[field] = { line: fieldToken.line, column: fieldToken.column };
             this.endLine();
             this.skipLines();
         }
         this.take();
         this.declaredStructs.add(name);
-        return { kind: 'struct', name, fields, line: start.line, column: start.column };
+        return { kind: 'struct', name, fields, fieldLocations, line: start.line, column: start.column };
     }
     parseFunction() {
         const start = this.take();
@@ -274,6 +277,16 @@ class Parser {
         if (token.type !== 'word')
             throw this.error('Expected command');
         const command = token.value;
+        const topLevelOnly = {
+            asset: 'asset 宣言はファイルのトップレベルでのみ使用できます',
+            character: 'character 宣言はファイルのトップレベルでのみ使用できます',
+            fn: '関数宣言はファイルのトップレベルでのみ使用できます',
+            include: 'include 宣言はファイルのトップレベルでのみ使用できます',
+            scene: 'scene 宣言はファイルのトップレベルでのみ使用できます',
+            struct: 'struct 宣言はファイルのトップレベルでのみ使用できます',
+        };
+        if (topLevelOnly[command])
+            throw this.error(topLevelOnly[command]);
         if (this.isQualifiedCallAhead()) {
             const name = this.parseQualifiedCallName();
             return { kind: 'call', name, args: this.parseCallArgs(), line: token.line, column: token.column };
@@ -482,6 +495,21 @@ class Parser {
         const args = [];
         while (!this.atLineEnd() && !this.atValue('}')) {
             const token = this.current;
+            const isCommandWord = token.type === 'word' && (() => {
+                switch (command) {
+                    case 'bg':
+                    case 'bgm': return args.length === 0;
+                    case 'show':
+                        if (args.some((argument) => argument.kind === 'literal' && argument.value === 'fade'))
+                            return false;
+                        return args.length < (args[0]?.kind === 'literal' && args[0].value === 'image' ? 3 : 2) || token.value === 'fade';
+                    case 'hide': return args.length === 0 || token.value === 'fade';
+                    case 'clear': return args.length === 0 || args[0]?.kind === 'literal' && args[0].value === 'image' && args.length === 1;
+                    case 'play': return args.length < 3;
+                    case 'effect': return args.length < 2;
+                    default: return false;
+                }
+            })();
             if (command === 'show' && args.length === 0 && token.type === 'word' && this.peekToken().value === '.') {
                 this.take();
                 this.expect('.');
@@ -506,7 +534,7 @@ class Parser {
                 this.take();
                 args.push({ kind: 'literal', value: token.value, line: token.line, column: token.column });
             }
-            else if (token.type === 'word' && ['bg', 'bgm', 'show', 'hide', 'clear', 'play', 'effect'].includes(command)) {
+            else if (isCommandWord) {
                 this.take();
                 args.push({ kind: 'literal', value: token.value, line: token.line, column: token.column });
             }

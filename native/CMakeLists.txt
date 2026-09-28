@@ -18,6 +18,9 @@ endif()
 add_executable(check_image check_image.cpp)
 target_link_libraries(novel_player PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf SDL3_image::SDL3_image SDL3_mixer::SDL3_mixer nlohmann_json::nlohmann_json)
 target_link_libraries(check_image PRIVATE SDL3::SDL3 SDL3_image::SDL3_image)
+add_executable(scene_geometry_test scene_geometry_test.cpp)
+add_executable(audio_transition_test audio_transition_test.cpp)
+target_link_libraries(audio_transition_test PRIVATE SDL3::SDL3 SDL3_mixer::SDL3_mixer)
 add_custom_command(TARGET novel_player POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory
   "${CMAKE_CURRENT_SOURCE_DIR}/engine_data"

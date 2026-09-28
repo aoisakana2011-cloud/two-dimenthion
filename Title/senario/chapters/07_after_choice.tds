@@ -1,9 +1,0 @@
-include common.tds as common
-
-scene main {
-  bg museum_night
-  say narrator "別々の手掛かりは、ひとつの夜へ集まりはじめた。二十面相の予告は、盗みの宣言ではない。"
-  say narrator "彼女は、人々が見ないことにした記録を、誰もが見ざるを得ない場所へ運ぼうとしていた。"
-  say narrator "けれど、その方法が正しいとは限らない。真実を明かすことと、誰かを傷つけないこと。その両方を選べるのだろうか。"
-  goto "chapters/08_last_exhibition.tds"
-}

@@ -1,4 +1,6 @@
 C:/Users/Owner/Desktop/Novel Editer/native/build/CMakeFiles/novel_player.dir
 C:/Users/Owner/Desktop/Novel Editer/native/build/CMakeFiles/check_image.dir
+C:/Users/Owner/Desktop/Novel Editer/native/build/CMakeFiles/scene_geometry_test.dir
+C:/Users/Owner/Desktop/Novel Editer/native/build/CMakeFiles/audio_transition_test.dir
 C:/Users/Owner/Desktop/Novel Editer/native/build/CMakeFiles/ALL_BUILD.dir
 C:/Users/Owner/Desktop/Novel Editer/native/build/CMakeFiles/ZERO_CHECK.dir

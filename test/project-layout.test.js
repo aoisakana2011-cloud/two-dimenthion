@@ -159,8 +159,14 @@ test('arbitrary title: editor CRUD, assets, project build and CLI use the same p
   const api=async(endpoint,method='GET',body)=>{const response=await fetch(base+endpoint,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});return {status:response.status,data:await response.json()};};
   const listing=(await api('/api/files')).data;
   assert.equal(listing.title,path.basename(dir));
-  assert.deepEqual(listing.files.filter(f=>!f.path.includes('/')).map(f=>f.path).sort(),['asset','senario']);
+  assert.deepEqual(listing.files.filter(f=>!f.path.includes('/')).map(f=>f.path).sort(),['asset','senario','setting']);
   assert.equal(listing.files.some(f=>f.path==='server.js'||f.path.startsWith('.novel')),false);
+  const conventionFile = await api('/api/setting-file?name=asset-folders.txt');
+  assert.equal(conventionFile.status,200);
+  const settingSave = await api('/api/setting-file','PUT',{name:'story-adaptation.md',source:'# Story rules\n'});
+  assert.equal(settingSave.status,200);
+  assert.equal(await fs.readFile(path.join(dir,'setting','story-adaptation.md'),'utf8'),'# Story rules\n');
+  assert.equal((await api('/api/setting-file','PUT',{name:'player-ui.json',source:'{ invalid json'})).status,400);
   assert.equal((await fetch(base+'/asset/pixel.png')).status,200);
   assert.equal((await api('/api/scene?name=main.tds')).data.source,source);
   const revisioned = (await api('/api/scene?name=main.tds')).data;
@@ -175,6 +181,17 @@ test('arbitrary title: editor CRUD, assets, project build and CLI use the same p
   assert.equal((await api('/api/compile','POST',{name:'main.tds',source})).data.ok,true);
   const build=(await api('/api/project-build','POST',{name:'main.tds'})).data;assert.equal(build.ok,true,build.error);
   assert.equal(build.path,'.novel/build/main.nsp.json');
+  assert.deepEqual((await api('/api/project-build-status','POST',{name:'main.tds'})).data,{built:true,changedFiles:[],reason:'up-to-date'});
+  await fs.writeFile(path.join(layout.scenesRoot,'chapter/next.tds'),`${await fs.readFile(path.join(layout.scenesRoot,'chapter/next.tds'),'utf8')}\n# changed`);
+  assert.deepEqual((await api('/api/project-build-status','POST',{name:'main.tds'})).data.changedFiles,['chapter/next.tds']);
+  await fs.writeFile(path.join(layout.scenesRoot,'chapter/next.tds'),'int result = 7');
+  await fs.writeFile(path.join(layout.scenesRoot,'added.tds'),'say narrator "added"');
+  assert.deepEqual((await api('/api/project-build-status','POST',{name:'main.tds'})).data.changedFiles,['added.tds']);
+  await fs.rm(path.join(layout.scenesRoot,'added.tds'));
+  await fs.rm(path.join(layout.scenesRoot,'chapter/next.tds'));
+  assert.deepEqual((await api('/api/project-build-status','POST',{name:'main.tds'})).data.changedFiles,['chapter/next.tds']);
+  await fs.writeFile(path.join(layout.scenesRoot,'chapter/next.tds'),'int result = 7');
+  assert.deepEqual((await api('/api/project-build-status','POST',{name:'main.tds'})).data,{built:true,changedFiles:[],reason:'up-to-date'});
   const originalNextSource=await fs.readFile(path.join(layout.scenesRoot,'chapter/next.tds'),'utf8');
   try {
     await fs.writeFile(path.join(layout.scenesRoot,'main.tds'),'asset image first = "asset/missing-first.png"\nasset image second = "asset/missing-second.png"');
