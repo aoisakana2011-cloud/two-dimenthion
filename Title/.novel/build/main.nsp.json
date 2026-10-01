@@ -4,57 +4,1073 @@
   "source": "main.tds",
   "program": {
     "version": 2,
-    "assets": [],
-    "characters": [],
-    "globals": [],
+    "assets": [
+      {
+        "kind": "asset",
+        "type": "bg",
+        "name": "bedroom",
+        "path": "asset/bg/room.jpg",
+        "line": 1,
+        "column": 1,
+        "file": "main.tds"
+      },
+      {
+        "kind": "asset",
+        "type": "bg",
+        "name": "kitchen",
+        "path": "asset/bg/ktichin.png",
+        "line": 2,
+        "column": 1,
+        "file": "main.tds"
+      },
+      {
+        "kind": "asset",
+        "type": "bg",
+        "name": "entrance",
+        "path": "asset/bg/home_entrance.jpg",
+        "line": 3,
+        "column": 1,
+        "file": "main.tds"
+      },
+      {
+        "kind": "asset",
+        "type": "bg",
+        "name": "street",
+        "path": "asset/bg/near_home.jpg",
+        "line": 4,
+        "column": 1,
+        "file": "main.tds"
+      },
+      {
+        "kind": "asset",
+        "type": "bg",
+        "name": "town",
+        "path": "asset/bg/town.jpg",
+        "line": 5,
+        "column": 1,
+        "file": "main.tds"
+      },
+      {
+        "kind": "asset",
+        "type": "bg",
+        "name": "school",
+        "path": "asset/bg/school.jpg",
+        "line": 6,
+        "column": 1,
+        "file": "main.tds"
+      },
+      {
+        "kind": "asset",
+        "type": "bgm",
+        "name": "morning",
+        "path": "asset/bgm/morning.mp3",
+        "line": 7,
+        "column": 1,
+        "file": "main.tds"
+      },
+      {
+        "kind": "asset",
+        "type": "bgm",
+        "name": "going_school",
+        "path": "asset/bgm/going_school.mp3",
+        "line": 8,
+        "column": 1,
+        "file": "main.tds"
+      },
+      {
+        "kind": "asset",
+        "type": "se",
+        "name": "cooking",
+        "path": "asset/se/cooking.mp3",
+        "line": 9,
+        "column": 1,
+        "file": "main.tds"
+      },
+      {
+        "kind": "asset",
+        "type": "se",
+        "name": "door",
+        "path": "asset/se/open_door.mp3",
+        "line": 10,
+        "column": 1,
+        "file": "main.tds"
+      }
+    ],
+    "characters": [
+      {
+        "kind": "character",
+        "name": "protagonist",
+        "poses": [],
+        "line": 12,
+        "column": 1,
+        "endLine": 14,
+        "endColumn": 1,
+        "file": "main.tds"
+      },
+      {
+        "kind": "character",
+        "name": "sister",
+        "poses": [
+          {
+            "name": "normal",
+            "path": "asset/char/sisiter_normal_cutout.png",
+            "line": 18,
+            "column": 3,
+            "file": "main.tds"
+          },
+          {
+            "name": "dere",
+            "path": "asset/char/sister_dere_cutout.png",
+            "line": 19,
+            "column": 3,
+            "file": "main.tds"
+          }
+        ],
+        "line": 16,
+        "column": 1,
+        "endLine": 20,
+        "endColumn": 1,
+        "file": "main.tds"
+      },
+      {
+        "kind": "character",
+        "name": "ayaka",
+        "poses": [
+          {
+            "name": "normal",
+            "path": "asset/char/ayaka_normal_cutout.png",
+            "line": 24,
+            "column": 3,
+            "file": "main.tds"
+          },
+          {
+            "name": "dere",
+            "path": "asset/char/ayaka_dere_cutout.png",
+            "line": 25,
+            "column": 3,
+            "file": "main.tds"
+          }
+        ],
+        "line": 22,
+        "column": 1,
+        "endLine": 26,
+        "endColumn": 1,
+        "file": "main.tds"
+      }
+    ],
+    "globals": [
+      {
+        "op": "declare",
+        "type": {
+          "kind": "struct",
+          "name": "character:protagonist"
+        },
+        "name": "protagonist",
+        "initial": {
+          "kind": "dict",
+          "entries": [
+            {
+              "key": "name",
+              "value": {
+                "kind": "literal",
+                "value": "僕"
+              }
+            }
+          ]
+        },
+        "line": 12
+      },
+      {
+        "op": "declare",
+        "type": {
+          "kind": "struct",
+          "name": "character:sister"
+        },
+        "name": "sister",
+        "initial": {
+          "kind": "dict",
+          "entries": [
+            {
+              "key": "name",
+              "value": {
+                "kind": "literal",
+                "value": "妹"
+              }
+            }
+          ]
+        },
+        "line": 16
+      },
+      {
+        "op": "declare",
+        "type": {
+          "kind": "struct",
+          "name": "character:ayaka"
+        },
+        "name": "ayaka",
+        "initial": {
+          "kind": "dict",
+          "entries": [
+            {
+              "key": "name",
+              "value": {
+                "kind": "literal",
+                "value": "綾瀬あやか"
+              }
+            }
+          ]
+        },
+        "line": 22
+      }
+    ],
     "functions": [],
     "scenes": [
       {
         "name": "main",
         "file": "main.tds",
-        "line": 1,
+        "line": 28,
         "instructions": [
           {
+            "op": "command",
+            "name": "bg",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "bedroom"
+              }
+            ],
+            "file": "main.tds",
+            "line": 29
+          },
+          {
+            "op": "command",
+            "name": "bgm",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "morning"
+              }
+            ],
+            "file": "main.tds",
+            "line": 30
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "目覚まし時計は、昨晩の命令通りにけたたましく鳴り始めた。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 31
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "それを止めるべく、僕は瞼を開ける。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 32
+          },
+          {
+            "op": "command",
+            "name": "clear",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "bg"
+              }
+            ],
+            "file": "main.tds",
+            "line": 34
+          },
+          {
+            "op": "command",
+            "name": "bg",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "kitchen"
+              }
+            ],
+            "file": "main.tds",
+            "line": 35
+          },
+          {
+            "op": "command",
+            "name": "play",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "se"
+              },
+              {
+                "kind": "literal",
+                "value": "cooking"
+              }
+            ],
+            "file": "main.tds",
+            "line": 36
+          },
+          {
+            "op": "command",
+            "name": "show",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "sister.normal"
+              },
+              {
+                "kind": "literal",
+                "value": "left"
+              },
+              {
+                "kind": "literal",
+                "value": "y+0"
+              },
+              {
+                "kind": "literal",
+                "value": "fade"
+              },
+              {
+                "kind": "integer",
+                "value": "250"
+              }
+            ],
+            "file": "main.tds",
+            "line": 37
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "予定通りに朝食を食べる。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 38
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "sister"
+              },
+              {
+                "kind": "literal",
+                "value": "ちょっと、ご飯を食べる前に歯磨きしたの？"
+              }
+            ],
+            "file": "main.tds",
+            "line": 39
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "protagonist"
+              },
+              {
+                "kind": "literal",
+                "value": "どっちみち後でするんだから、こっちのほうが効率がいい。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 40
+          },
+          {
+            "op": "command",
+            "name": "show",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "sister.dere"
+              },
+              {
+                "kind": "literal",
+                "value": "left"
+              },
+              {
+                "kind": "literal",
+                "value": "y+0"
+              },
+              {
+                "kind": "literal",
+                "value": "fade"
+              },
+              {
+                "kind": "integer",
+                "value": "180"
+              }
+            ],
+            "file": "main.tds",
+            "line": 41
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "sister"
+              },
+              {
+                "kind": "literal",
+                "value": "もう……お兄ちゃんは……。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 42
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "呆れたような視線を向けてくる妹をよそに、僕は朝食を口へ運ぶ。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 43
+          },
+          {
+            "op": "command",
+            "name": "clear",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "bg"
+              }
+            ],
+            "file": "main.tds",
+            "line": 45
+          },
+          {
+            "op": "command",
+            "name": "bg",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "entrance"
+              }
+            ],
+            "file": "main.tds",
+            "line": 46
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "protagonist"
+              },
+              {
+                "kind": "literal",
+                "value": "すまん。せっかくの入学式のところ悪いが、先に学校へ行っておいてくれないか。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 47
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "sister"
+              },
+              {
+                "kind": "literal",
+                "value": "何言ってるの。今日はお兄ちゃんの高校の入学式でしょ？ 私は中等部なんだから、いつもと変わらないし。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 48
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "protagonist"
+              },
+              {
+                "kind": "literal",
+                "value": "まぁ、ということで頼んだ。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 49
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "sister"
+              },
+              {
+                "kind": "literal",
+                "value": "わ、わかった……。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 50
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "妹を先に行かせるのには、もちろん理由がある。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 51
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "入学式当日に遅刻する。そんな、いかにも主人公らしいムーブを思いついてしまったのである。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 52
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "思いついてしまったものは仕方がない。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 53
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "sister"
+              },
+              {
+                "kind": "literal",
+                "value": "じゃあ、行ってくるね。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 54
+          },
+          {
+            "op": "command",
+            "name": "play",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "se"
+              },
+              {
+                "kind": "literal",
+                "value": "door"
+              }
+            ],
+            "file": "main.tds",
+            "line": 55
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "protagonist"
+              },
+              {
+                "kind": "literal",
+                "value": "行ってらっしゃい。あとで行くから。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 56
+          },
+          {
+            "op": "command",
+            "name": "hide",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "sister"
+              },
+              {
+                "kind": "literal",
+                "value": "fade"
+              },
+              {
+                "kind": "integer",
+                "value": "180"
+              }
+            ],
+            "file": "main.tds",
+            "line": 57
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "玄関の扉が閉まる。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 58
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "それから十五分ほど経ったところで、僕も家を出た。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 59
+          },
+          {
+            "op": "command",
+            "name": "play",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "se"
+              },
+              {
+                "kind": "literal",
+                "value": "door"
+              }
+            ],
+            "file": "main.tds",
+            "line": 60
+          },
+          {
+            "op": "command",
+            "name": "play",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "bgm"
+              },
+              {
+                "kind": "literal",
+                "value": "going_school"
+              },
+              {
+                "kind": "literal",
+                "value": "crossfade"
+              },
+              {
+                "kind": "integer",
+                "value": "900"
+              }
+            ],
+            "file": "main.tds",
+            "line": 61
+          },
+          {
+            "op": "command",
+            "name": "clear",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "bg"
+              }
+            ],
+            "file": "main.tds",
+            "line": 62
+          },
+          {
+            "op": "command",
+            "name": "bg",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "town"
+              }
+            ],
+            "file": "main.tds",
+            "line": 63
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "このくらい遅れて出れば、入学式の途中に教室へ滑り込むことになるだろう。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 64
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "むしろ少しくらい目立つほうが、主人公としては都合がいい。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 65
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "外へ出ると、朝は案外寒かった。もっとも、十五分早く出たところで寒さは変わらなかっただろう。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 66
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "さて。主人公が入学式に遅刻しているとなれば、登校中に何かしらのトラブルへ巻き込まれるのが定石である。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 67
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "というわけで、少し遅めに歩くことにした。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 68
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "歩幅はそのままに、ピッチだけを落とす。あくまで自然に。イベントを待っている人間だと思われてはいけない。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 69
+          },
+          {
+            "op": "command",
+            "name": "clear",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "bg"
+              }
+            ],
+            "file": "main.tds",
+            "line": 71
+          },
+          {
+            "op": "command",
+            "name": "bg",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "street"
+              }
+            ],
+            "file": "main.tds",
+            "line": 72
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "しばらく歩き、十字路に差しかかった。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 73
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "右手の塀の向こうに、見慣れないものが見える。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 74
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "明るい色の髪だ。高さからして、おそらく女の子だろう。ハーフなのだろうか。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 75
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "その頭は、かなりの速度でこちらへ近づいていた。歩いているというより、走っていると言ったほうが正しそうだ。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 76
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "残念ながら、食パンを咥えているかどうかまでは塀に隠れて確認できない。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 77
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "しかし、この状況。間違いない。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 78
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "そんなことを考えているうちに、僕たちは見事に『曲がり角でぶつかる直前の構図』になっていた。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 79
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "止まるべきか。止まらぬべきか。僕はそんな野暮なことは考えない。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 80
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "問題は――僕が転ぶか、相手を転ばせるかである。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 81
+          },
+          {
             "op": "choice",
+            "prompt": {
+              "kind": "literal",
+              "value": "主人公として、どう動く？"
+            },
             "options": [
               {
                 "label": {
                   "kind": "literal",
-                  "value": "hello"
+                  "value": "自分が転んで、彼女を受け止める"
                 },
                 "body": [
                   {
                     "op": "goto",
-                    "scene": "A",
+                    "scene": "collision_catch",
                     "file": "main.tds",
-                    "line": 4
+                    "line": 85
                   }
                 ]
               },
               {
                 "label": {
                   "kind": "literal",
-                  "value": "by"
+                  "value": "身をかわして、相手を転ばせる"
                 },
                 "body": [
                   {
                     "op": "goto",
-                    "scene": "B",
+                    "scene": "collision_dodge",
                     "file": "main.tds",
-                    "line": 7
+                    "line": 88
                   }
                 ]
               }
             ],
             "file": "main.tds",
-            "line": 2
+            "line": 83
           }
         ]
       },
       {
-        "name": "A",
+        "name": "collision_catch",
         "file": "main.tds",
-        "line": 12,
+        "line": 93,
         "instructions": [
           {
             "op": "command",
@@ -66,18 +1082,100 @@
               },
               {
                 "kind": "literal",
-                "value": "hello"
+                "value": "考える時間は、もうない。僕はとっさに両腕を広げた。"
               }
             ],
             "file": "main.tds",
-            "line": 13
+            "line": 94
+          },
+          {
+            "op": "command",
+            "name": "show",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayaka.normal"
+              },
+              {
+                "kind": "literal",
+                "value": "right"
+              },
+              {
+                "kind": "literal",
+                "value": "y+0"
+              },
+              {
+                "kind": "literal",
+                "value": "fade"
+              },
+              {
+                "kind": "integer",
+                "value": "160"
+              }
+            ],
+            "file": "main.tds",
+            "line": 95
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "次の瞬間、軽い衝撃。彼女を受け止めた勢いで、僕のほうが道路脇に尻もちをついた。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 96
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayaka"
+              },
+              {
+                "kind": "literal",
+                "value": "いった……。えっ、だ、大丈夫？ ごめん、前をよく見てなくて！"
+              }
+            ],
+            "file": "main.tds",
+            "line": 97
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "protagonist"
+              },
+              {
+                "kind": "literal",
+                "value": "こっちは大丈夫。君こそ怪我はない？"
+              }
+            ],
+            "file": "main.tds",
+            "line": 98
+          },
+          {
+            "op": "goto",
+            "scene": "collision_after",
+            "file": "main.tds",
+            "line": 99
           }
         ]
       },
       {
-        "name": "B",
+        "name": "collision_dodge",
         "file": "main.tds",
-        "line": 16,
+        "line": 102,
         "instructions": [
           {
             "op": "command",
@@ -89,71 +1187,1980 @@
               },
               {
                 "kind": "literal",
-                "value": "by"
+                "value": "考える時間は、もうない。僕は反射的に横へ飛びのいた。"
               }
             ],
             "file": "main.tds",
-            "line": 17
+            "line": 103
+          },
+          {
+            "op": "command",
+            "name": "show",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayaka.normal"
+              },
+              {
+                "kind": "literal",
+                "value": "right"
+              },
+              {
+                "kind": "literal",
+                "value": "y+0"
+              },
+              {
+                "kind": "literal",
+                "value": "fade"
+              },
+              {
+                "kind": "integer",
+                "value": "160"
+              }
+            ],
+            "file": "main.tds",
+            "line": 104
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "彼女は僕の鞄をつかみ、勢いを殺しきれないまま、二人そろって道路脇に転がった。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 105
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayaka"
+              },
+              {
+                "kind": "literal",
+                "value": "いたた……！ ちょっと、避けるなら避けるって言ってよ！"
+              }
+            ],
+            "file": "main.tds",
+            "line": 106
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "protagonist"
+              },
+              {
+                "kind": "literal",
+                "value": "言う時間があったら、もう少し格好よく避けてる。君は大丈夫？"
+              }
+            ],
+            "file": "main.tds",
+            "line": 107
+          },
+          {
+            "op": "goto",
+            "scene": "collision_after",
+            "file": "main.tds",
+            "line": 108
+          }
+        ]
+      },
+      {
+        "name": "collision_after",
+        "file": "main.tds",
+        "line": 111,
+        "instructions": [
+          {
+            "op": "command",
+            "name": "show",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayaka.dere"
+              },
+              {
+                "kind": "literal",
+                "value": "right"
+              },
+              {
+                "kind": "literal",
+                "value": "y+0"
+              },
+              {
+                "kind": "literal",
+                "value": "fade"
+              },
+              {
+                "kind": "integer",
+                "value": "180"
+              }
+            ],
+            "file": "main.tds",
+            "line": 112
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "彼女は制服についた埃を払い、僕の顔をまじまじと見た。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 113
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayaka"
+              },
+              {
+                "kind": "literal",
+                "value": "私は平気。……あなた、本当に大丈夫？ 入学式の日に救急車なんて、笑えないよ。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 114
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "protagonist"
+              },
+              {
+                "kind": "literal",
+                "value": "それは困る。遅刻して目立つ予定が、欠席で目立つことになる。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 115
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayaka"
+              },
+              {
+                "kind": "literal",
+                "value": "遅刻する予定？"
+              }
+            ],
+            "file": "main.tds",
+            "line": 116
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "しまった。口が滑った。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 117
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "protagonist"
+              },
+              {
+                "kind": "literal",
+                "value": "いや、今のは比喩で――。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 118
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayaka"
+              },
+              {
+                "kind": "literal",
+                "value": "ふうん。わざとゆっくり歩いてたのも、そういうこと？"
+              }
+            ],
+            "file": "main.tds",
+            "line": 119
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "この子、見ていたのか。いや、あの速度で走っていたのに？"
+              }
+            ],
+            "file": "main.tds",
+            "line": 120
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "protagonist"
+              },
+              {
+                "kind": "literal",
+                "value": "……君も、かなり急いでいるみたいだけど。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 121
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayaka"
+              },
+              {
+                "kind": "literal",
+                "value": "寝坊したの。目覚ましを止めた記憶はあるんだけど、二度寝したみたい。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 122
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "protagonist"
+              },
+              {
+                "kind": "literal",
+                "value": "それは主人公らしい。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 123
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayaka"
+              },
+              {
+                "kind": "literal",
+                "value": "主人公？"
+              }
+            ],
+            "file": "main.tds",
+            "line": 124
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "protagonist"
+              },
+              {
+                "kind": "literal",
+                "value": "いや、なんでもない。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 125
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "彼女の髪に、朝の光が差した。近くで見ると、淡い金色に見える。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 126
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayaka"
+              },
+              {
+                "kind": "literal",
+                "value": "綾瀬あやか。今日からこの学校の一年生。あなたは？"
+              }
+            ],
+            "file": "main.tds",
+            "line": 127
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "protagonist"
+              },
+              {
+                "kind": "literal",
+                "value": "僕は――。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 128
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "名乗ろうとしたところで、校舎の方から始業を知らせるチャイムが鳴った。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 129
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayaka"
+              },
+              {
+                "kind": "literal",
+                "value": "入学式、始まっちゃう！ 話は歩きながら。ほら、行くよ！"
+              }
+            ],
+            "file": "main.tds",
+            "line": 130
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "彼女は僕の返事を待たずに走り出した。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 131
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "遅刻して目立つ計画は、どうやら彼女と一緒に実現するらしい。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 132
+          },
+          {
+            "op": "command",
+            "name": "bg",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "school"
+              }
+            ],
+            "file": "main.tds",
+            "line": 134
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "校門をくぐると、式場へ向かう新入生の列はもうほとんど途切れていた。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 135
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayaka"
+              },
+              {
+                "kind": "literal",
+                "value": "あの、さっきは本当にごめんね。あと……助けてくれて、ありがとう。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 136
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "protagonist"
+              },
+              {
+                "kind": "literal",
+                "value": "どっちのこと？"
+              }
+            ],
+            "file": "main.tds",
+            "line": 137
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayaka"
+              },
+              {
+                "kind": "literal",
+                "value": "どっちも。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 138
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "あやかは少しだけ笑った。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 139
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "ayaka"
+              },
+              {
+                "kind": "literal",
+                "value": "続きは式のあとに聞かせて。遅刻の言い訳も、あなたの名前も。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 140
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "こうして僕は、入学式の途中に教室へ滑り込む代わりに、同じく遅刻した少女と式場の扉の前に立つことになった。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 141
+          },
+          {
+            "op": "command",
+            "name": "say",
+            "args": [
+              {
+                "kind": "literal",
+                "value": "narrator"
+              },
+              {
+                "kind": "literal",
+                "value": "主人公らしい出会いだったかどうかは、まだわからない。"
+              }
+            ],
+            "file": "main.tds",
+            "line": 142
           }
         ]
       }
     ],
-    "variables": []
+    "variables": [
+      {
+        "name": "protagonist",
+        "type": {
+          "kind": "struct",
+          "name": "character:protagonist"
+        },
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [
+          {
+            "scope": "global",
+            "container": "global",
+            "line": 12,
+            "column": 1,
+            "kind": "definition"
+          }
+        ],
+        "references": [
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 40,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 47,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 49,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 56,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_catch",
+            "line": 98,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_dodge",
+            "line": 107,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 115,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 118,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 121,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 123,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 125,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 128,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 137,
+            "column": 3,
+            "kind": "expression"
+          }
+        ],
+        "mutable": true
+      },
+      {
+        "name": "sister",
+        "type": {
+          "kind": "struct",
+          "name": "character:sister"
+        },
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [
+          {
+            "scope": "global",
+            "container": "global",
+            "line": 16,
+            "column": 1,
+            "kind": "definition"
+          }
+        ],
+        "references": [
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 37,
+            "column": 8,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 39,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 41,
+            "column": 8,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 42,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 48,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 50,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 54,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 57,
+            "column": 8,
+            "kind": "expression"
+          }
+        ],
+        "mutable": true
+      },
+      {
+        "name": "ayaka",
+        "type": {
+          "kind": "struct",
+          "name": "character:ayaka"
+        },
+        "scope": "global",
+        "definedIn": "global",
+        "definitions": [
+          {
+            "scope": "global",
+            "container": "global",
+            "line": 22,
+            "column": 1,
+            "kind": "definition"
+          }
+        ],
+        "references": [
+          {
+            "scope": "scene",
+            "container": "collision_catch",
+            "line": 95,
+            "column": 8,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_catch",
+            "line": 97,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_dodge",
+            "line": 104,
+            "column": 8,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_dodge",
+            "line": 106,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 112,
+            "column": 8,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 114,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 116,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 119,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 122,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 124,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 127,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 130,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 136,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 138,
+            "column": 3,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "collision_after",
+            "line": 140,
+            "column": 3,
+            "kind": "expression"
+          }
+        ],
+        "mutable": true
+      }
+    ]
   },
   "files": {
     "main.tds": {
       "version": 2,
-      "assets": [],
-      "characters": [],
-      "globals": [],
+      "assets": [
+        {
+          "kind": "asset",
+          "type": "bg",
+          "name": "bedroom",
+          "path": "asset/bg/room.jpg",
+          "line": 1,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "bg",
+          "name": "kitchen",
+          "path": "asset/bg/ktichin.png",
+          "line": 2,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "bg",
+          "name": "entrance",
+          "path": "asset/bg/home_entrance.jpg",
+          "line": 3,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "bg",
+          "name": "street",
+          "path": "asset/bg/near_home.jpg",
+          "line": 4,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "bg",
+          "name": "town",
+          "path": "asset/bg/town.jpg",
+          "line": 5,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "bg",
+          "name": "school",
+          "path": "asset/bg/school.jpg",
+          "line": 6,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "bgm",
+          "name": "morning",
+          "path": "asset/bgm/morning.mp3",
+          "line": 7,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "bgm",
+          "name": "going_school",
+          "path": "asset/bgm/going_school.mp3",
+          "line": 8,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "se",
+          "name": "cooking",
+          "path": "asset/se/cooking.mp3",
+          "line": 9,
+          "column": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "asset",
+          "type": "se",
+          "name": "door",
+          "path": "asset/se/open_door.mp3",
+          "line": 10,
+          "column": 1,
+          "file": "main.tds"
+        }
+      ],
+      "characters": [
+        {
+          "kind": "character",
+          "name": "protagonist",
+          "poses": [],
+          "line": 12,
+          "column": 1,
+          "endLine": 14,
+          "endColumn": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "character",
+          "name": "sister",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/sisiter_normal_cutout.png",
+              "line": 18,
+              "column": 3,
+              "file": "main.tds"
+            },
+            {
+              "name": "dere",
+              "path": "asset/char/sister_dere_cutout.png",
+              "line": 19,
+              "column": 3,
+              "file": "main.tds"
+            }
+          ],
+          "line": 16,
+          "column": 1,
+          "endLine": 20,
+          "endColumn": 1,
+          "file": "main.tds"
+        },
+        {
+          "kind": "character",
+          "name": "ayaka",
+          "poses": [
+            {
+              "name": "normal",
+              "path": "asset/char/ayaka_normal_cutout.png",
+              "line": 24,
+              "column": 3,
+              "file": "main.tds"
+            },
+            {
+              "name": "dere",
+              "path": "asset/char/ayaka_dere_cutout.png",
+              "line": 25,
+              "column": 3,
+              "file": "main.tds"
+            }
+          ],
+          "line": 22,
+          "column": 1,
+          "endLine": 26,
+          "endColumn": 1,
+          "file": "main.tds"
+        }
+      ],
+      "globals": [
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:protagonist"
+          },
+          "name": "protagonist",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "僕"
+                }
+              }
+            ]
+          },
+          "line": 12
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:sister"
+          },
+          "name": "sister",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "妹"
+                }
+              }
+            ]
+          },
+          "line": 16
+        },
+        {
+          "op": "declare",
+          "type": {
+            "kind": "struct",
+            "name": "character:ayaka"
+          },
+          "name": "ayaka",
+          "initial": {
+            "kind": "dict",
+            "entries": [
+              {
+                "key": "name",
+                "value": {
+                  "kind": "literal",
+                  "value": "綾瀬あやか"
+                }
+              }
+            ]
+          },
+          "line": 22
+        }
+      ],
       "functions": [],
       "scenes": [
         {
           "name": "main",
           "file": "main.tds",
-          "line": 1,
+          "line": 28,
           "instructions": [
             {
+              "op": "command",
+              "name": "bg",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "bedroom"
+                }
+              ],
+              "file": "main.tds",
+              "line": 29
+            },
+            {
+              "op": "command",
+              "name": "bgm",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "morning"
+                }
+              ],
+              "file": "main.tds",
+              "line": 30
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "目覚まし時計は、昨晩の命令通りにけたたましく鳴り始めた。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 31
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "それを止めるべく、僕は瞼を開ける。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 32
+            },
+            {
+              "op": "command",
+              "name": "clear",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "bg"
+                }
+              ],
+              "file": "main.tds",
+              "line": 34
+            },
+            {
+              "op": "command",
+              "name": "bg",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "kitchen"
+                }
+              ],
+              "file": "main.tds",
+              "line": 35
+            },
+            {
+              "op": "command",
+              "name": "play",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "se"
+                },
+                {
+                  "kind": "literal",
+                  "value": "cooking"
+                }
+              ],
+              "file": "main.tds",
+              "line": 36
+            },
+            {
+              "op": "command",
+              "name": "show",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "sister.normal"
+                },
+                {
+                  "kind": "literal",
+                  "value": "left"
+                },
+                {
+                  "kind": "literal",
+                  "value": "y+0"
+                },
+                {
+                  "kind": "literal",
+                  "value": "fade"
+                },
+                {
+                  "kind": "integer",
+                  "value": "250"
+                }
+              ],
+              "file": "main.tds",
+              "line": 37
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "予定通りに朝食を食べる。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 38
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "sister"
+                },
+                {
+                  "kind": "literal",
+                  "value": "ちょっと、ご飯を食べる前に歯磨きしたの？"
+                }
+              ],
+              "file": "main.tds",
+              "line": 39
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "protagonist"
+                },
+                {
+                  "kind": "literal",
+                  "value": "どっちみち後でするんだから、こっちのほうが効率がいい。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 40
+            },
+            {
+              "op": "command",
+              "name": "show",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "sister.dere"
+                },
+                {
+                  "kind": "literal",
+                  "value": "left"
+                },
+                {
+                  "kind": "literal",
+                  "value": "y+0"
+                },
+                {
+                  "kind": "literal",
+                  "value": "fade"
+                },
+                {
+                  "kind": "integer",
+                  "value": "180"
+                }
+              ],
+              "file": "main.tds",
+              "line": 41
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "sister"
+                },
+                {
+                  "kind": "literal",
+                  "value": "もう……お兄ちゃんは……。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 42
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "呆れたような視線を向けてくる妹をよそに、僕は朝食を口へ運ぶ。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 43
+            },
+            {
+              "op": "command",
+              "name": "clear",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "bg"
+                }
+              ],
+              "file": "main.tds",
+              "line": 45
+            },
+            {
+              "op": "command",
+              "name": "bg",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "entrance"
+                }
+              ],
+              "file": "main.tds",
+              "line": 46
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "protagonist"
+                },
+                {
+                  "kind": "literal",
+                  "value": "すまん。せっかくの入学式のところ悪いが、先に学校へ行っておいてくれないか。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 47
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "sister"
+                },
+                {
+                  "kind": "literal",
+                  "value": "何言ってるの。今日はお兄ちゃんの高校の入学式でしょ？ 私は中等部なんだから、いつもと変わらないし。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 48
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "protagonist"
+                },
+                {
+                  "kind": "literal",
+                  "value": "まぁ、ということで頼んだ。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 49
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "sister"
+                },
+                {
+                  "kind": "literal",
+                  "value": "わ、わかった……。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 50
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "妹を先に行かせるのには、もちろん理由がある。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 51
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "入学式当日に遅刻する。そんな、いかにも主人公らしいムーブを思いついてしまったのである。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 52
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "思いついてしまったものは仕方がない。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 53
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "sister"
+                },
+                {
+                  "kind": "literal",
+                  "value": "じゃあ、行ってくるね。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 54
+            },
+            {
+              "op": "command",
+              "name": "play",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "se"
+                },
+                {
+                  "kind": "literal",
+                  "value": "door"
+                }
+              ],
+              "file": "main.tds",
+              "line": 55
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "protagonist"
+                },
+                {
+                  "kind": "literal",
+                  "value": "行ってらっしゃい。あとで行くから。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 56
+            },
+            {
+              "op": "command",
+              "name": "hide",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "sister"
+                },
+                {
+                  "kind": "literal",
+                  "value": "fade"
+                },
+                {
+                  "kind": "integer",
+                  "value": "180"
+                }
+              ],
+              "file": "main.tds",
+              "line": 57
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "玄関の扉が閉まる。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 58
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "それから十五分ほど経ったところで、僕も家を出た。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 59
+            },
+            {
+              "op": "command",
+              "name": "play",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "se"
+                },
+                {
+                  "kind": "literal",
+                  "value": "door"
+                }
+              ],
+              "file": "main.tds",
+              "line": 60
+            },
+            {
+              "op": "command",
+              "name": "play",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "bgm"
+                },
+                {
+                  "kind": "literal",
+                  "value": "going_school"
+                },
+                {
+                  "kind": "literal",
+                  "value": "crossfade"
+                },
+                {
+                  "kind": "integer",
+                  "value": "900"
+                }
+              ],
+              "file": "main.tds",
+              "line": 61
+            },
+            {
+              "op": "command",
+              "name": "clear",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "bg"
+                }
+              ],
+              "file": "main.tds",
+              "line": 62
+            },
+            {
+              "op": "command",
+              "name": "bg",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "town"
+                }
+              ],
+              "file": "main.tds",
+              "line": 63
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "このくらい遅れて出れば、入学式の途中に教室へ滑り込むことになるだろう。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 64
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "むしろ少しくらい目立つほうが、主人公としては都合がいい。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 65
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "外へ出ると、朝は案外寒かった。もっとも、十五分早く出たところで寒さは変わらなかっただろう。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 66
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "さて。主人公が入学式に遅刻しているとなれば、登校中に何かしらのトラブルへ巻き込まれるのが定石である。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 67
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "というわけで、少し遅めに歩くことにした。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 68
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "歩幅はそのままに、ピッチだけを落とす。あくまで自然に。イベントを待っている人間だと思われてはいけない。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 69
+            },
+            {
+              "op": "command",
+              "name": "clear",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "bg"
+                }
+              ],
+              "file": "main.tds",
+              "line": 71
+            },
+            {
+              "op": "command",
+              "name": "bg",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "street"
+                }
+              ],
+              "file": "main.tds",
+              "line": 72
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "しばらく歩き、十字路に差しかかった。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 73
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "右手の塀の向こうに、見慣れないものが見える。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 74
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "明るい色の髪だ。高さからして、おそらく女の子だろう。ハーフなのだろうか。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 75
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "その頭は、かなりの速度でこちらへ近づいていた。歩いているというより、走っていると言ったほうが正しそうだ。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 76
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "残念ながら、食パンを咥えているかどうかまでは塀に隠れて確認できない。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 77
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "しかし、この状況。間違いない。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 78
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "そんなことを考えているうちに、僕たちは見事に『曲がり角でぶつかる直前の構図』になっていた。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 79
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "止まるべきか。止まらぬべきか。僕はそんな野暮なことは考えない。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 80
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "問題は――僕が転ぶか、相手を転ばせるかである。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 81
+            },
+            {
               "op": "choice",
+              "prompt": {
+                "kind": "literal",
+                "value": "主人公として、どう動く？"
+              },
               "options": [
                 {
                   "label": {
                     "kind": "literal",
-                    "value": "hello"
+                    "value": "自分が転んで、彼女を受け止める"
                   },
                   "body": [
                     {
                       "op": "goto",
-                      "scene": "A",
+                      "scene": "collision_catch",
                       "file": "main.tds",
-                      "line": 4
+                      "line": 85
                     }
                   ]
                 },
                 {
                   "label": {
                     "kind": "literal",
-                    "value": "by"
+                    "value": "身をかわして、相手を転ばせる"
                   },
                   "body": [
                     {
                       "op": "goto",
-                      "scene": "B",
+                      "scene": "collision_dodge",
                       "file": "main.tds",
-                      "line": 7
+                      "line": 88
                     }
                   ]
                 }
               ],
               "file": "main.tds",
-              "line": 2
+              "line": 83
             }
           ]
         },
         {
-          "name": "A",
+          "name": "collision_catch",
           "file": "main.tds",
-          "line": 12,
+          "line": 93,
           "instructions": [
             {
               "op": "command",
@@ -165,18 +3172,100 @@
                 },
                 {
                   "kind": "literal",
-                  "value": "hello"
+                  "value": "考える時間は、もうない。僕はとっさに両腕を広げた。"
                 }
               ],
               "file": "main.tds",
-              "line": 13
+              "line": 94
+            },
+            {
+              "op": "command",
+              "name": "show",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayaka.normal"
+                },
+                {
+                  "kind": "literal",
+                  "value": "right"
+                },
+                {
+                  "kind": "literal",
+                  "value": "y+0"
+                },
+                {
+                  "kind": "literal",
+                  "value": "fade"
+                },
+                {
+                  "kind": "integer",
+                  "value": "160"
+                }
+              ],
+              "file": "main.tds",
+              "line": 95
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "次の瞬間、軽い衝撃。彼女を受け止めた勢いで、僕のほうが道路脇に尻もちをついた。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 96
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayaka"
+                },
+                {
+                  "kind": "literal",
+                  "value": "いった……。えっ、だ、大丈夫？ ごめん、前をよく見てなくて！"
+                }
+              ],
+              "file": "main.tds",
+              "line": 97
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "protagonist"
+                },
+                {
+                  "kind": "literal",
+                  "value": "こっちは大丈夫。君こそ怪我はない？"
+                }
+              ],
+              "file": "main.tds",
+              "line": 98
+            },
+            {
+              "op": "goto",
+              "scene": "collision_after",
+              "file": "main.tds",
+              "line": 99
             }
           ]
         },
         {
-          "name": "B",
+          "name": "collision_dodge",
           "file": "main.tds",
-          "line": 16,
+          "line": 102,
           "instructions": [
             {
               "op": "command",
@@ -188,21 +3277,915 @@
                 },
                 {
                   "kind": "literal",
-                  "value": "by"
+                  "value": "考える時間は、もうない。僕は反射的に横へ飛びのいた。"
                 }
               ],
               "file": "main.tds",
-              "line": 17
+              "line": 103
+            },
+            {
+              "op": "command",
+              "name": "show",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayaka.normal"
+                },
+                {
+                  "kind": "literal",
+                  "value": "right"
+                },
+                {
+                  "kind": "literal",
+                  "value": "y+0"
+                },
+                {
+                  "kind": "literal",
+                  "value": "fade"
+                },
+                {
+                  "kind": "integer",
+                  "value": "160"
+                }
+              ],
+              "file": "main.tds",
+              "line": 104
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "彼女は僕の鞄をつかみ、勢いを殺しきれないまま、二人そろって道路脇に転がった。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 105
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayaka"
+                },
+                {
+                  "kind": "literal",
+                  "value": "いたた……！ ちょっと、避けるなら避けるって言ってよ！"
+                }
+              ],
+              "file": "main.tds",
+              "line": 106
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "protagonist"
+                },
+                {
+                  "kind": "literal",
+                  "value": "言う時間があったら、もう少し格好よく避けてる。君は大丈夫？"
+                }
+              ],
+              "file": "main.tds",
+              "line": 107
+            },
+            {
+              "op": "goto",
+              "scene": "collision_after",
+              "file": "main.tds",
+              "line": 108
+            }
+          ]
+        },
+        {
+          "name": "collision_after",
+          "file": "main.tds",
+          "line": 111,
+          "instructions": [
+            {
+              "op": "command",
+              "name": "show",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayaka.dere"
+                },
+                {
+                  "kind": "literal",
+                  "value": "right"
+                },
+                {
+                  "kind": "literal",
+                  "value": "y+0"
+                },
+                {
+                  "kind": "literal",
+                  "value": "fade"
+                },
+                {
+                  "kind": "integer",
+                  "value": "180"
+                }
+              ],
+              "file": "main.tds",
+              "line": 112
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "彼女は制服についた埃を払い、僕の顔をまじまじと見た。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 113
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayaka"
+                },
+                {
+                  "kind": "literal",
+                  "value": "私は平気。……あなた、本当に大丈夫？ 入学式の日に救急車なんて、笑えないよ。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 114
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "protagonist"
+                },
+                {
+                  "kind": "literal",
+                  "value": "それは困る。遅刻して目立つ予定が、欠席で目立つことになる。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 115
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayaka"
+                },
+                {
+                  "kind": "literal",
+                  "value": "遅刻する予定？"
+                }
+              ],
+              "file": "main.tds",
+              "line": 116
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "しまった。口が滑った。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 117
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "protagonist"
+                },
+                {
+                  "kind": "literal",
+                  "value": "いや、今のは比喩で――。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 118
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayaka"
+                },
+                {
+                  "kind": "literal",
+                  "value": "ふうん。わざとゆっくり歩いてたのも、そういうこと？"
+                }
+              ],
+              "file": "main.tds",
+              "line": 119
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "この子、見ていたのか。いや、あの速度で走っていたのに？"
+                }
+              ],
+              "file": "main.tds",
+              "line": 120
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "protagonist"
+                },
+                {
+                  "kind": "literal",
+                  "value": "……君も、かなり急いでいるみたいだけど。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 121
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayaka"
+                },
+                {
+                  "kind": "literal",
+                  "value": "寝坊したの。目覚ましを止めた記憶はあるんだけど、二度寝したみたい。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 122
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "protagonist"
+                },
+                {
+                  "kind": "literal",
+                  "value": "それは主人公らしい。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 123
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayaka"
+                },
+                {
+                  "kind": "literal",
+                  "value": "主人公？"
+                }
+              ],
+              "file": "main.tds",
+              "line": 124
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "protagonist"
+                },
+                {
+                  "kind": "literal",
+                  "value": "いや、なんでもない。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 125
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "彼女の髪に、朝の光が差した。近くで見ると、淡い金色に見える。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 126
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayaka"
+                },
+                {
+                  "kind": "literal",
+                  "value": "綾瀬あやか。今日からこの学校の一年生。あなたは？"
+                }
+              ],
+              "file": "main.tds",
+              "line": 127
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "protagonist"
+                },
+                {
+                  "kind": "literal",
+                  "value": "僕は――。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 128
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "名乗ろうとしたところで、校舎の方から始業を知らせるチャイムが鳴った。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 129
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayaka"
+                },
+                {
+                  "kind": "literal",
+                  "value": "入学式、始まっちゃう！ 話は歩きながら。ほら、行くよ！"
+                }
+              ],
+              "file": "main.tds",
+              "line": 130
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "彼女は僕の返事を待たずに走り出した。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 131
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "遅刻して目立つ計画は、どうやら彼女と一緒に実現するらしい。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 132
+            },
+            {
+              "op": "command",
+              "name": "bg",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "school"
+                }
+              ],
+              "file": "main.tds",
+              "line": 134
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "校門をくぐると、式場へ向かう新入生の列はもうほとんど途切れていた。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 135
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayaka"
+                },
+                {
+                  "kind": "literal",
+                  "value": "あの、さっきは本当にごめんね。あと……助けてくれて、ありがとう。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 136
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "protagonist"
+                },
+                {
+                  "kind": "literal",
+                  "value": "どっちのこと？"
+                }
+              ],
+              "file": "main.tds",
+              "line": 137
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayaka"
+                },
+                {
+                  "kind": "literal",
+                  "value": "どっちも。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 138
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "あやかは少しだけ笑った。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 139
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "ayaka"
+                },
+                {
+                  "kind": "literal",
+                  "value": "続きは式のあとに聞かせて。遅刻の言い訳も、あなたの名前も。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 140
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "こうして僕は、入学式の途中に教室へ滑り込む代わりに、同じく遅刻した少女と式場の扉の前に立つことになった。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 141
+            },
+            {
+              "op": "command",
+              "name": "say",
+              "args": [
+                {
+                  "kind": "literal",
+                  "value": "narrator"
+                },
+                {
+                  "kind": "literal",
+                  "value": "主人公らしい出会いだったかどうかは、まだわからない。"
+                }
+              ],
+              "file": "main.tds",
+              "line": 142
             }
           ]
         }
       ],
-      "variables": [],
+      "variables": [
+        {
+          "name": "protagonist",
+          "type": {
+            "kind": "struct",
+            "name": "character:protagonist"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 12,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 40,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 47,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 49,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 56,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_catch",
+              "line": 98,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_dodge",
+              "line": 107,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 115,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 118,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 121,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 123,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 125,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 128,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 137,
+              "column": 3,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "sister",
+          "type": {
+            "kind": "struct",
+            "name": "character:sister"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 16,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 37,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 39,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 41,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 42,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 48,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 50,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 54,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 57,
+              "column": 8,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "ayaka",
+          "type": {
+            "kind": "struct",
+            "name": "character:ayaka"
+          },
+          "scope": "global",
+          "definedIn": "global",
+          "definitions": [
+            {
+              "scope": "global",
+              "container": "global",
+              "line": 22,
+              "column": 1,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "scene",
+              "container": "collision_catch",
+              "line": 95,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_catch",
+              "line": 97,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_dodge",
+              "line": 104,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_dodge",
+              "line": 106,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 112,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 114,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 116,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 119,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 122,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 124,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 127,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 130,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 136,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 138,
+              "column": 3,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "collision_after",
+              "line": 140,
+              "column": 3,
+              "kind": "expression"
+            }
+          ],
+          "mutable": true
+        }
+      ],
       "includes": []
     }
   },
   "native_ui": {
     "native_ui_theme": "ui/player-ui.json",
+    "save_id": "spring-late-love",
     "game_screens": "ui/game-screens.json"
   }
 }

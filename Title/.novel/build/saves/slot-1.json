@@ -1,0 +1,51 @@
+{
+  "file": "main.tds",
+  "line": 32,
+  "locals": [],
+  "loopScopes": [],
+  "presentation": {
+    "activeMedia": [],
+    "audio": {
+      "volumeOverrides": {},
+      "volumes": {
+        "bgm": 1.0,
+        "se": 1.0,
+        "voice": 0.5
+      }
+    },
+    "background": {
+      "asset": "bedroom",
+      "offsetX": 0.0,
+      "offsetY": 0.0
+    },
+    "bgm": {
+      "asset": "morning",
+      "gain": 1.0,
+      "transition": "complete"
+    },
+    "characters": [],
+    "effect": null,
+    "images": [],
+    "logicalTimeMs": 0,
+    "ui": {
+      "dialogOpacity": 1.0
+    },
+    "video": null
+  },
+  "readonlyLocals": [],
+  "scene": "main",
+  "speaker": "",
+  "text": "それを止めるべく、僕は瞼を開ける。",
+  "variables": {
+    "ayaka": {
+      "name": "綾瀬あやか"
+    },
+    "protagonist": {
+      "name": "僕"
+    },
+    "sister": {
+      "name": "妹"
+    }
+  },
+  "version": 1
+}

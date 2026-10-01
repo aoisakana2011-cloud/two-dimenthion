@@ -7,6 +7,9 @@
     <ClCompile Include="C:\Users\Owner\Desktop\Novel Editer\native\player.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\Owner\Desktop\Novel Editer\native\screen_webview.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="C:\Users\Owner\Desktop\Novel Editer\native\CMakeLists.txt" />

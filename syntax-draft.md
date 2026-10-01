@@ -209,6 +209,15 @@ asset image logo = "asset/image/logo.png"
 
 パスは相対パスに限る。ドライブ名から始まるパス、先頭が `/` または `\\` のパス、`..` を含むパスは禁止される。型検査では拡張子を、プロジェクト検証ではファイルの存在とアセットルート内に収まることを確認する。
 
+音声の音量は `0.0`（無音）〜`1.0`（元の音量）で指定する。`bgm` / `se` / `voice` のアセット宣言には任意で基準音量を付けられる。
+
+```tds
+asset bgm peaceful = "asset/bgm/peaceful.ogg" volume 0.8
+asset voice greeting = "asset/voice/greeting.ogg" volume 0.5
+```
+
+基準の優先順位は、再生命令の `volume`、シナリオ内の持続設定、アセット宣言の音量、`setting/player-ui.json` のチャンネル既定値。値は乗算ではなく、より優先度の高い指定で置き換える。再生命令だけの音量はその再生に限り、以降の基準を変更しない。
+
 アセットIDは変更不能な専用参照であり、通常の `str` 変数として参照・代入しない。
 
 ## 6. キャラクター
@@ -625,9 +634,11 @@ bg school
 bgm peaceful
 clear bg
 clear bgm
+volume bgm 0.4
+dialog opacity 0.85
 ```
 
-`bg` と `bgm` は、それぞれ一致する種類のアセットIDを1個取る。
+`bg` と `bgm` は、それぞれ一致する種類のアセットIDを1個取る。`volume <bgm|se|voice> <float>` は以後の同チャンネルの基準音量を変更し、`dialog opacity <float>` は以後の会話欄の背景面の不透明度を変更する。どちらも値域は `0.0`〜`1.0`。
 
 ### 13.2 キャラクター表示
 
@@ -668,15 +679,22 @@ clear image logo
 play se door
 play voice greeting
 play bgm peaceful
+play voice greeting volume 0.5 blocking
+play bgm peaceful volume 0.8 crossfade 300
+play se door volume 0.25
 play video opening blocking
 play video opening async
 play video opening
 ```
 
 - `se`、`voice`、`bgm` は種別と一致するアセットIDを取る。
+- 音声再生命令には `volume <float>` を付けられる。この指定はその再生だけに適用し、`crossfade <int>` はBGMだけに指定できる。
+- `say narrator "一時的に薄い会話欄" opacity 0.6` はその台詞の表示中だけ会話欄の背景面を変更し、次の台詞で通常の設定へ戻す。文字自体の透明度は変更しない。
 - `voice` と動画のモードは `blocking` または `async`。Voiceは省略時 `async`。
 - `blocking` は終了まで待つ。
 - `async` またはモード省略は、メディアと並行して次の命令へ進む。
+
+再生機の `setting/player-ui.json` では `dialog.opacity` と `audio.bgm` / `audio.se` / `audio.voice` を既定値として設定する。どれも `0.0`〜`1.0`。未指定のチャンネルは1.0、voiceのみ0.5。音量の優先順位は「play行の一時指定 → シナリオのvolume設定 → アセット宣言のvolume → settingのチャンネル既定値」。`dialog.opacity` のsetting値が会話欄の初期値で、TDSの `dialog opacity` が再生中の基準を上書きする。
 
 ### 13.5 待機と画面効果
 
@@ -792,6 +810,36 @@ int result = calculate(3, 4)
 - 関数内では `choice` と `goto` を使用できない。
 - `return` は関数内だけで使用できる。
 
+### 17.1 再生中の状態問い合わせ
+
+`runtime.*` は、シナリオの静的な宣言ではなく、現在の再生状態を読む組み込みAPIの名前空間。
+現在使用できるのはキャラクター表示状態の問い合わせだけ。
+
+```tds
+character ayase {
+  name = "Ayase"
+  pose normal = "asset/ayase.png"
+}
+
+scene main {
+  if runtime.state.characters.exists("ayase") {
+    move character "ayase" by x+8
+  }
+  list[str] visible = runtime.state.characters.list()
+  say narrator str(list.length(visible))
+}
+```
+
+- `runtime.state.characters.exists(id: str) -> bool` は、キャラクター `id` が現在いずれかの配置枠に表示中なら `true`。
+- `runtime.state.characters.list() -> list[str]` は、表示中のキャラクターIDを重複なし・ID昇順で返す。返すlistは呼び出しごとの値で、実行状態そのものを変更しない。
+- キャラクター宣言済みかどうかではなく、現在表示中かどうかを判定する。未表示の宣言済みキャラクターは `exists` が `false`。
+- `show` による同一枠の置換、`hide` 完了、テスト再生時の復元状態を反映する。Browser版とNative版で同じ結果になる。
+- 関数内やincludeしたTDSモジュールからも呼び出せる。include aliasによる名前変換の対象ではない。
+- APIの値は実行時に評価するため、グローバル初期値や分岐条件で呼び出してもコンパイル時に固定されない。
+- キャラクターIDを変数から `move` に渡すときは `move character (id) by ...` のように括弧で式を明示する。従来の `move character ayase by ...` は固定IDを表す既存構文のまま。
+
+`compile.*` は静的解析、`ide.*` はエディタ補助の領域であり、ゲーム再生中に呼ぶTDS関数ではない。現時点ではこの2つの名前空間の実行APIは定義されていない。コンパイラの警告やIDE操作を再生用スクリプトから呼び出す構文として扱わない。
+
 ## 18. シーンとgoto
 
 ```tds
@@ -892,13 +940,15 @@ scene chapter1 {
 | 宣言 | `global <declaration>` | ファイルのトップレベルだけ |
 | 更新 | `set <target> = <expr>` | target は変数、辞書要素、struct／キャラクターフィールド |
 | 更新 | `unset <dict>[<str-expr>]` | 辞書要素だけ |
-| 会話 | `say [<speaker>] <str-expr>` | speaker はキャラクター、`narrator`、`none` |
+| 会話 | `say [<speaker>] <str-expr> [opacity <float>]` | speaker はキャラクター、`narrator`、`none`。opacityはこの台詞だけ |
 | 背景 | `bg <bg-id>` / `bgm <bgm-id>` | 種別が一致するアセットID |
 | 表示 | `show <character>.<pose> <far_left\|left\|center\|right\|far_right> [x±<px>] [y±<px>] [fade <ms>]` | 5スロットの立ち絵表示。x+は右、y+は下 |
 | 表示 | `hide <character> [fade <ms>]` | キャラクターを非表示 |
 | 移動 | `move character <id> by [x±<px>] [y±<px>] [over <ms>]` / `move bg by [x±<px>] [y±<px>] [over <ms>]` | x/yのいずれか必須。現在位置からの差分移動。時間付きはblocking |
 | 表示 | `show image <image-id> <far_left\|left\|center\|right\|far_right>` / `clear image <image-id>` | 一般画像。fade不可 |
-| 再生 | `play <se\|voice\|bgm> <id>` | 種別が一致するアセットID。voiceは `[blocking\|async]` を追加可能 |
+| 再生 | `play <se\|voice\|bgm> <id> [volume <float>] [crossfade <int>] [blocking\|async]` | 音量0.0〜1.0。crossfadeはbgmのみ |
+| 音量 | `volume <bgm\|se\|voice> <float>` | チャンネルの以後の基準音量。0.0〜1.0 |
+| UI | `dialog opacity <float>` | 会話欄の背景面の以後の不透明度。0.0〜1.0 |
 | 再生 | `play video <id> [blocking\|async]` | 省略時は `async` |
 | 演出 | `wait <int-expr>` / `effect fade <black\|white> [<int-expr>]` | 時間はミリ秒 |
 | 分岐 | `if <condition> { ... } [elif <condition> { ... }] [else { ... }]` | condition は `bool` 式 |

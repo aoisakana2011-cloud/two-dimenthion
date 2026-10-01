@@ -1,0 +1,36 @@
+<main class="screen sound-screen">
+  <div class="screen-dimmer"></div>
+  <header class="screen-header">
+    <div class="screen-title sound-title">音と表示</div>
+    <nav class="screen-tabs">
+      <button class="tab-button" data-action="save"><span class="tab-glyph">記</span><small class="tab-label">記録</small></button>
+      <button class="tab-button" data-action="load"><span class="tab-glyph">栞</span><small class="tab-label">再開</small></button>
+      <button class="tab-button" data-action="open-screen" data-target="system"><span class="tab-glyph">窓</span><small class="tab-label">表示</small></button>
+      <button class="tab-button tab-active" data-action="open-screen" data-target="sound"><span class="tab-glyph">音</span><small class="tab-label">音量</small></button>
+    </nav>
+  </header>
+  <section class="volume-panel">
+    <div class="volume-row volume-row-0"><div class="volume-name">全体の音量</div></div>
+    <div class="volume-row volume-row-1"><div class="volume-name">BGM</div></div>
+    <div class="volume-row volume-row-2"><div class="volume-name">効果音</div></div>
+    <div class="volume-row volume-row-4"><div class="volume-name">声</div></div>
+    <input class="audio-control audio-master" type="range" min="0" max="1" step="0.01" data-setting="audio.master" value="1" aria-label="全体の音量">
+    <input class="audio-control audio-bgm" type="range" min="0" max="1" step="0.01" data-setting="audio.bgm" value="1" aria-label="BGMの音量">
+    <input class="audio-control audio-se" type="range" min="0" max="1" step="0.01" data-setting="audio.se" value="1" aria-label="効果音の音量">
+    <input class="audio-control audio-voice" type="range" min="0" max="1" step="0.01" data-setting="audio.voice" value="0.5" aria-label="声の音量">
+    <input class="audio-mute audio-bgm-mute" type="checkbox" data-setting="audio.bgmMuted" aria-label="BGMを消音">
+    <input class="audio-mute audio-se-mute" type="checkbox" data-setting="audio.seMuted" aria-label="効果音を消音">
+    <input class="audio-mute audio-voice-mute" type="checkbox" data-setting="audio.voiceMuted" aria-label="声を消音">
+    <small class="audio-mute-label audio-bgm-mute-label">消音</small>
+    <small class="audio-mute-label audio-se-mute-label">消音</small>
+    <small class="audio-mute-label audio-voice-mute-label">消音</small>
+    <small class="dialog-opacity-label">会話欄の不透明度</small>
+    <input class="audio-control dialog-opacity-control" type="range" min="0" max="1" step="0.01" data-setting="ui.dialogOpacity" value="1" aria-label="会話欄の不透明度">
+  </section>
+  <div class="settings-footer sound-footer">
+    <button class="footer-button settings-back" data-action="back">メニューへ戻る</button>
+    <button class="footer-button settings-game" data-action="resume">物語へ戻る</button>
+    <button class="footer-button settings-title" data-action="open-screen" data-target="title">タイトルへ</button>
+    <button class="footer-button settings-quit" data-action="quit">終了</button>
+  </div>
+</main>

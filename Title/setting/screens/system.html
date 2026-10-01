@@ -1,0 +1,21 @@
+<main class="screen settings-screen">
+  <div class="screen-dimmer"></div>
+  <header class="screen-header">
+    <div class="screen-title">環境設定</div>
+    <nav class="screen-tabs">
+      <button class="tab-button" data-action="save"><span class="tab-glyph">記</span><small class="tab-label">記録</small></button>
+      <button class="tab-button" data-action="load"><span class="tab-glyph">栞</span><small class="tab-label">再開</small></button>
+      <button class="tab-button tab-active" data-action="open-screen" data-target="system"><span class="tab-glyph">窓</span><small class="tab-label">表示</small></button>
+      <button class="tab-button" data-action="open-screen" data-target="sound"><span class="tab-glyph">音</span><small class="tab-label">音量</small></button>
+    </nav>
+  </header>
+  <section class="system-options">
+    <div class="setting-row setting-row-0"><div class="setting-label">音量・表示の調整<small class="setting-help">物語を読みやすい環境に整えます。</small></div><div class="option-pair option-two"><button class="option option-selected" data-action="open-screen" data-target="sound">音量をひらく</button><button class="option" data-action="resume">物語へ戻る</button></div></div>
+  </section>
+  <div class="settings-footer">
+    <button class="footer-button settings-back" data-action="back">メニューへ戻る</button>
+    <button class="footer-button settings-game" data-action="resume">物語へ戻る</button>
+    <button class="footer-button settings-title" data-action="open-screen" data-target="title">タイトルへ</button>
+    <button class="footer-button settings-quit" data-action="quit">終了</button>
+  </div>
+</main>

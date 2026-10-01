@@ -17,40 +17,41 @@
     }
   },
   "dialog": {
-    "image": "",
-    "x": 72,
-    "y": 500,
-    "width": 1136,
-    "height": 190,
+    "image": "ui/dialogue-panel-romance.png",
+    "opacity": 0.88,
+    "x": 54,
+    "y": 520,
+    "width": 1172,
+    "height": 170,
     "message": {
-      "x": 38,
-      "y": 52,
-      "width": 1060,
-      "height": 112,
-      "size": 25,
+      "x": 42,
+      "y": 55,
+      "width": 1088,
+      "height": 105,
+      "size": 23,
       "color": [
-        245,
-        244,
-        239,
+        54,
+        48,
+        48,
         255
       ]
     },
     "nameplate": {
-      "x": 20,
+      "x": 18,
       "y": 8,
-      "width": 320,
-      "height": 38,
-      "image": "",
+      "width": 300,
+      "height": 43,
+      "image": "ui/speaker-plate-romance.png",
       "text": {
         "x": 0,
         "y": 0,
-        "width": 320,
-        "height": 38,
-        "size": 22,
+        "width": 300,
+        "height": 43,
+        "size": 21,
         "color": [
-          227,
-          232,
-          235,
+          61,
+          49,
+          51,
           255
         ]
       }
@@ -78,5 +79,10 @@
         255
       ]
     }
+  },
+  "audio": {
+    "bgm": 1.0,
+    "se": 1.0,
+    "voice": 0.5
   }
 }

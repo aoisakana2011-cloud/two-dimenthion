@@ -1,0 +1,9 @@
+# Safe, player-local UI settings. Values are normalized to 0..1.
+audio.master=1
+audio.bgm=1
+audio.se=1
+audio.voice=0.5
+audio.bgmMuted=false
+audio.seMuted=false
+audio.voiceMuted=false
+ui.dialogOpacity=1

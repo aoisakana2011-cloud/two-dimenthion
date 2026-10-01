@@ -160,6 +160,43 @@ public:
     void popLocal() { loopScopes.erase(locals.size()-1); locals.pop_back(); readonlyLocals.pop_back(); }
     json& declarationFrame() { for(size_t i=locals.size();i>0;--i) if(!loopScopes.contains(i-1))return locals[i-1];return globals; }
     std::map<std::string, json> functions;
+    // Authoritative query-facing occupancy; updated after successful presentation commands.
+    std::map<std::string, std::string> runtimeCharacterSlots;
+    void restoreRuntimeCharacters(const json& state) {
+        runtimeCharacterSlots.clear();
+        for (const auto& character : state.value("characters", json::array())) {
+            if (!character.is_object() || !character.contains("id") || !character.at("id").is_string()) continue;
+            runtimeCharacterSlots[character.at("id").get<std::string>()] = character.value("slot", std::string("center"));
+        }
+    }
+    void updateRuntimeCharacters(const std::string& name, const json& args) {
+        if (name == "show" && args.size() >= 2 && args.at(0).is_string() && args.at(1).is_string()) {
+            const auto reference = args.at(0).get<std::string>();
+            const auto separator = reference.find('.');
+            if (reference == "image" || separator == std::string::npos) return;
+            const auto id = reference.substr(0, separator), slot = args.at(1).get<std::string>();
+            for (auto it = runtimeCharacterSlots.begin(); it != runtimeCharacterSlots.end();) {
+                if (it->first != id && it->second == slot) it = runtimeCharacterSlots.erase(it);
+                else ++it;
+            }
+            runtimeCharacterSlots[id] = slot;
+        } else if (name == "hide" && !args.empty() && args.at(0).is_string()) {
+            runtimeCharacterSlots.erase(args.at(0).get<std::string>());
+        }
+    }
+    json runtimeStateCall(const std::string& name, const json& args) const {
+        if (name == "runtime.state.characters.exists") {
+            if (args.size() != 1 || !args.at(0).is_string()) throw std::runtime_error("runtime.state.characters.exists expects one str argument");
+            return runtimeCharacterSlots.contains(args.at(0).get<std::string>());
+        }
+        if (name == "runtime.state.characters.list") {
+            if (!args.empty()) throw std::runtime_error("runtime.state.characters.list expects no arguments");
+            json result = json::array();
+            for (const auto& [id, slot] : runtimeCharacterSlots) { (void)slot; result.push_back(id); }
+            return result;
+        }
+        throw std::runtime_error("Unknown runtime state API: " + name);
+    }
     json get(const std::string& name) const {
         for (auto i = locals.rbegin(); i != locals.rend(); ++i) if (i->contains(name)) return i->at(name);
         if (!globals.contains(name)) throw std::runtime_error("Undefined variable: " + name);
@@ -272,6 +309,7 @@ public:
         if (kind == "call") {
             json args = json::array(); for (const auto& a : e.at("args")) args.push_back(value(a));
             auto name = e.at("name").get<std::string>();
+            if (name == "runtime.state.characters.exists" || name == "runtime.state.characters.list") return runtimeStateCall(name, args);
             if (name == "str") return text(args.at(0));
             if (name == "int") {
                 if (args.at(0).is_number_float()) {
@@ -357,7 +395,9 @@ public:
                 }
             } else if (op == "command") {
                 json args = json::array(); for (const auto& a : c.at("args")) args.push_back(value(a));
-                command(c.at("name"), args);
+                const auto name = c.at("name").get<std::string>();
+                command(name, args);
+                updateRuntimeCharacters(name, args);
                 if (pendingLoad.is_object()) { auto request = std::move(pendingLoad); pendingLoad = nullptr; return {Signal::Restart, std::move(request)}; }
             } else if (op == "call") value(json{{"kind", "call"}, {"name", c.at("name")}, {"args", c.at("args")}});
             else if (op == "return") return {Signal::Return, c.contains("value") ? value(c.at("value")) : json()};
@@ -447,6 +487,8 @@ public:
     }
     void run(json p, json debug = nullptr) {
         bool transferred = false;
+        runtimeCharacterSlots.clear();
+        if (debug.is_object() && debug.contains("presentation")) restoreRuntimeCharacters(debug.at("presentation"));
         for (;;) {
             if (p.at("version") != 2) throw std::runtime_error("Unsupported program version");
             program = p; functions.clear();
@@ -475,7 +517,10 @@ public:
                 if (!first) throw std::runtime_error("Unknown debug scene: " + debug.at("scene").get<std::string>());
             }
             currentSceneName = first ? first->value("name", std::string()) : std::string();
-            if (!transferred && debug.is_object() && debug.contains("presentation") && restorePresentation) restorePresentation(debug.at("presentation"));
+            if (!transferred && debug.is_object() && debug.contains("presentation")) {
+                restoreRuntimeCharacters(debug.at("presentation"));
+                if (restorePresentation) restorePresentation(debug.at("presentation"));
+            }
             json instructions = json::array();
             if (first) {
                 instructions = first->at("instructions");
@@ -491,6 +536,8 @@ public:
                 debug = std::move(r.value);
                 const auto file = debug.value("file", std::string());
                 if (file.empty() || !load) throw std::runtime_error("Save slot is missing its scenario file");
+                runtimeCharacterSlots.clear();
+                if (debug.contains("presentation")) restoreRuntimeCharacters(debug.at("presentation"));
                 p = load(file); transferred = false; continue;
             }
             if (r.kind == Signal::Next) return;

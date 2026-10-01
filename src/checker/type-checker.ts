@@ -1,4 +1,5 @@
 import { AssetKind, Expr, ExternalCharacter, FunctionDef, NodeLocation, PrimitiveType, Script, Statement, ValueType } from '../parser';
+import { isRuntimeStateApi, RUNTIME_STATE_APIS } from '../language/builtins';
 
 export class TypeCheckError extends Error {
   file?: string;
@@ -262,6 +263,19 @@ function expressionType(expression: Expr, variables: Map<string, ValueType>, ctx
   }
 
   if (expression.kind === 'call') {
+    const runtimeApi = RUNTIME_STATE_APIS.get(expression.name);
+    if (runtimeApi) {
+      if (expression.args.length !== runtimeApi.parameters.length) {
+        throw new TypeCheckError(`${loc}: ${expression.name} requires ${runtimeApi.parameters.length} argument(s)`);
+      }
+      for (let index = 0; index < runtimeApi.parameters.length; index += 1) {
+        const actual = expressionType(expression.args[index], variables, ctx);
+        if (actual !== runtimeApi.parameters[index]) {
+          throw new TypeCheckError(`${loc}: ${expression.name} argument ${index + 1} must be ${runtimeApi.parameters[index]}`);
+        }
+      }
+      return runtimeApi.returns as ExtendedType;
+    }
     if (expression.name === 'list.length') {
       if (expression.args.length !== 1) throw new TypeCheckError(`${loc}: list.length は引数を1つ取ります`);
       const type = expressionType(expression.args[0], variables, ctx);
@@ -411,6 +425,22 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
   }
 
   switch (name) {
+    case 'volume': {
+      if (args.length !== 2) throw new TypeCheckError(`${locStr}: volume は volume <bgm|se|voice> <float 0.0..1.0> を指定してください`);
+      const kind = getArgStr(0);
+      if (!['bgm', 'se', 'voice'].includes(kind)) throw new TypeCheckError(`${locStr}: volume の対象は bgm、se、voice です`);
+      if (expressionType(args[1], variables, ctx) !== 'float') throw new TypeCheckError(`${locStr}: volume は float で指定してください`);
+      const value = staticValue(args[1], ctx.knownNumbers);
+      if (typeof value === 'number' && (value < 0 || value > 1)) throw new TypeCheckError(`${locStr}: volume は 0.0 から 1.0 の範囲です`);
+      break;
+    }
+    case 'dialog': {
+      if (args.length !== 2 || getArgStr(0) !== 'opacity') throw new TypeCheckError(`${locStr}: dialog は dialog opacity <float 0.0..1.0> を指定してください`);
+      if (expressionType(args[1], variables, ctx) !== 'float') throw new TypeCheckError(`${locStr}: dialog opacity は float で指定してください`);
+      const value = staticValue(args[1], ctx.knownNumbers);
+      if (typeof value === 'number' && (value < 0 || value > 1)) throw new TypeCheckError(`${locStr}: dialog opacity は 0.0 から 1.0 の範囲です`);
+      break;
+    }
     case 'bg': {
       if (args.length !== 1) throw new TypeCheckError(`${locStr}: コマンド 'bg' は引数を1つ取ります`);
       const id = getArgStr(0);
@@ -431,31 +461,26 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
       if (!['se', 'voice', 'video', 'bgm'].includes(kind)) throw new TypeCheckError(`${locStr}: 未知の再生種別 '${kind}' です`);
       const id = getArgStr(1);
       const asset = ctx.assets.get(id);
-      if (kind === 'bgm' && args.length > 2) {
-        if (args.length !== 4) throw new TypeCheckError(`${locStr}: BGM transition must use play bgm <id> crossfade <ms>`);
-        checkAudioTransition(args.slice(2), variables, ctx, locStr);
-      }
-      if (kind === 'bgm') {
-        if (!asset || asset.type !== kind) throw new TypeCheckError(`${locStr}: Unknown or mismatched BGM asset '${id}'`);
-        break;
-      }
-      if (kind === 'voice' && args.length >= 3) {
-        if (args.length !== 3) throw new TypeCheckError(`${locStr}: voice の引数は voice <id> [blocking|async] です`);
-        const mode = getArgStr(2);
-        if (mode !== 'blocking' && mode !== 'async') throw new TypeCheckError(`${locStr}: voice再生モードは blocking または async で指定してください`);
-        args = args.slice(0, 2);
-      }
       if (!asset || asset.type !== kind) throw new TypeCheckError(`${locStr}: 未定義または型が異なるアセット '${id}' (期待: ${kind}) です`);
-      if (args.length > (kind === 'video' ? 3 : 2)) throw new TypeCheckError(`${locStr}: play の引数が多すぎます`);
-      if (kind === 'bgm' && args.length > 2) {
-        if (args.length !== 4) throw new TypeCheckError(`${locStr}: BGM transition must use play bgm <id> crossfade <ms>`);
-        checkAudioTransition(args.slice(2), variables, ctx, locStr);
-        args = args.slice(0, 2);
+      const seen = new Set<string>();
+      for (let index = 2; index < args.length;) {
+        const option = getArgStr(index++);
+        if (seen.has(option)) throw new TypeCheckError(`${locStr}: play ${option} オプションが重複しています`);
+        seen.add(option);
+        if (option === 'volume') {
+          if (!['bgm', 'se', 'voice'].includes(kind) || index >= args.length) throw new TypeCheckError(`${locStr}: volume は音声再生だけに指定できます`);
+          const value = args[index++];
+          if (expressionType(value, variables, ctx) !== 'float') throw new TypeCheckError(`${locStr}: play volume は float で指定してください`);
+          const constant = staticValue(value, ctx.knownNumbers);
+          if (typeof constant === 'number' && (constant < 0 || constant > 1)) throw new TypeCheckError(`${locStr}: play volume は 0.0 から 1.0 の範囲です`);
+        } else if (option === 'crossfade') {
+          if (kind !== 'bgm' || index >= args.length) throw new TypeCheckError(`${locStr}: crossfade はBGM再生に指定してください`);
+          checkAudioTransition([{ kind: 'literal', value: 'crossfade' }, args[index++]], variables, ctx, locStr);
+        } else if (option === 'blocking' || option === 'async') {
+          if (kind !== 'voice' && kind !== 'video') throw new TypeCheckError(`${locStr}: 再生モードは voice/video に指定してください`);
+        } else throw new TypeCheckError(`${locStr}: play のオプション '${option}' は未対応です。BGMは crossfade、voice は blocking / async を使用してください`);
       }
-      if (kind === 'video' && args.length >= 3) {
-        const mode = getArgStr(2);
-        if (mode !== 'blocking' && mode !== 'async') throw new TypeCheckError(`${locStr}: video再生モードは blocking または async で指定してください`);
-      }
+      if ((kind === 'bgm' || kind === 'se') && seen.has('blocking') || (kind === 'bgm' || kind === 'se') && seen.has('async')) throw new TypeCheckError(`${locStr}: BGM/SE に blocking/async は指定できません`);
       break;
     }
     case 'show': {
@@ -493,7 +518,15 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
       const targetIndex = targetKind === 'character' ? 1 : -1;
       if (!['character', 'bg'].includes(targetKind)) throw new TypeCheckError(`${locStr}: move は move character <id> by x+5 y+5 [over <ms>] または move bg by x+5 y+5 [over <ms>] を使用してください`);
       const byIndex = targetKind === 'character' ? 2 : 1;
-      if (targetKind === 'character' && !ctx.characters.has(getArgStr(targetIndex))) throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${getArgStr(targetIndex)}' です`);
+      if (targetKind === 'character') {
+        const target = args[targetIndex];
+        const knownTarget = knownStringValue(target, ctx.knownStrings);
+        if (knownTarget !== undefined) {
+          if (!ctx.characters.has(knownTarget)) throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${knownTarget}' です`);
+        } else if (expressionType(target, variables, ctx) !== 'str') {
+          throw new TypeCheckError(`${locStr}: move character の対象はキャラクター名を表す str で指定してください`);
+        }
+      }
       if (getArgStr(byIndex) !== 'by') throw new TypeCheckError(`${locStr}: move の差分の前に by を指定してください`);
       const start = byIndex + 1;
       let index = characterOffsetEnd(args, start, locStr, variables, ctx);
@@ -534,13 +567,18 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
       break;
     }
     case 'say': {
-      if (args.length !== 2) throw new TypeCheckError(`${locStr}: say は話者と本文を指定してください`);
+      if (args.length !== 2 && args.length !== 4) throw new TypeCheckError(`${locStr}: say は話者、本文、必要なら opacity <float> を指定してください`);
       const speaker = getArgStr(0);
       if (speaker !== 'narrator' && speaker !== 'none' && !ctx.characters.has(speaker)) {
         throw new TypeCheckError(`${locStr}: 未定義の話者 '${speaker}' です`);
       }
       const textType = expressionType(args[1], variables, ctx);
       if (textType !== 'str') throw new TypeCheckError(`${locStr}: say の本文は str でなければなりません`);
+      if (args.length === 4) {
+        if (getArgStr(2) !== 'opacity' || expressionType(args[3], variables, ctx) !== 'float') throw new TypeCheckError(`${locStr}: say opacity は float で指定してください`);
+        const value = staticValue(args[3], ctx.knownNumbers);
+        if (typeof value === 'number' && (value < 0 || value > 1)) throw new TypeCheckError(`${locStr}: say opacity は 0.0 から 1.0 の範囲です`);
+      }
       break;
     }
     default: throw new TypeCheckError(`${locStr}: 未知の命令 '${name}' です`);
@@ -1222,6 +1260,9 @@ export function checkTypes(script: Script, file = 'current', externalGlobals = n
     if (!allowed.includes(ext)) {
       throw new TypeCheckError(`${getLocStr(asset)}: アセット '${asset.name}' (${asset.type}) の拡張子 '${ext}' は不正です`);
     }
+    if (asset.volume !== undefined && (!['bgm', 'se', 'voice'].includes(asset.type) || !Number.isFinite(asset.volume) || asset.volume < 0 || asset.volume > 1)) {
+      throw new TypeCheckError(`${getLocStr(asset)}: volume は音声アセットに限り 0.0 から 1.0 の範囲で指定できます`);
+    }
     declaredAssets.add(asset.name);
     });
   }
@@ -1257,6 +1298,9 @@ export function checkTypes(script: Script, file = 'current', externalGlobals = n
 
   for (const fn of script.functions) {
     capture(() => {
+    if (isRuntimeStateApi(fn.name)) {
+      throw new TypeCheckError(`${getLocStr(fn)}: '${fn.name}' is reserved for the runtime state API`);
+    }
     if (declaredFunctions.has(fn.name)) {
       throw new TypeCheckError(`${getLocStr(fn)}: 関数 '${fn.name}' が重複して宣言されています`);
     }

@@ -372,6 +372,9 @@ novel_script_native_SOURCE_DIR:STATIC=C:/Users/Owner/Desktop/Novel Editer/native
 //Path to a library.
 pkgcfg_lib_PKG_libavcodec_avcodec:FILEPATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/lib/avcodec.lib
 
+//The directory containing a CMake configuration file for unofficial-webview2.
+unofficial-webview2_DIR:PATH=C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/share/unofficial-webview2
+
 
 ########################
 # INTERNAL cache entries

@@ -52,6 +52,89 @@ async function run(source, host = {}) {
   await rt.run(program(source)); return rt;
 }
 
+test('runtime.state.characters exposes current presentation occupancy with shared Browser and Native semantics', async t => {
+  const source = `
+asset bg placeholder = "asset/placeholder.png"
+character ayase {
+  name = "Ayase"
+  pose normal = "asset/placeholder.png"
+}
+character mio {
+  name = "Mio"
+  pose normal = "asset/placeholder.png"
+}
+character zara {
+  name = "Zara"
+  pose normal = "asset/placeholder.png"
+}
+global bool initially_present = runtime.state.characters.exists("ayase")
+global list[str] initially_present_characters = runtime.state.characters.list()
+global bool found_after_show = false
+global bool found_missing = true
+global list[str] after_show = []
+global bool dynamic_move_succeeded = false
+global list[str] after_slot_replacement = []
+global list[str] after_hide = []
+global list[str] after_hide_all = []
+fn move_if_present(id: str) -> bool {
+  if runtime.state.characters.exists(id) {
+    move character (id) by x+1
+    return true
+  }
+  return false
+}
+scene main {
+  show zara.normal left
+  show ayase.normal right
+  set found_after_show = runtime.state.characters.exists("ayase")
+  set found_missing = runtime.state.characters.exists("ghost")
+  set after_show = runtime.state.characters.list()
+  set dynamic_move_succeeded = move_if_present("ayase")
+  show mio.normal left
+  set after_slot_replacement = runtime.state.characters.list()
+  hide ayase
+  set after_hide = runtime.state.characters.list()
+  hide mio
+  set after_hide_all = runtime.state.characters.list()
+}`;
+  const compiled = program(source);
+  const browser = await run(source);
+  assert.equal(browser.get('initially_present'), false);
+  assert.deepEqual(browser.get('initially_present_characters'), []);
+  assert.equal(browser.get('found_after_show'), true);
+  assert.equal(browser.get('found_missing'), false);
+  assert.deepEqual(browser.get('after_show'), ['ayase', 'zara']);
+  assert.equal(browser.get('dynamic_move_succeeded'), true);
+  assert.deepEqual(browser.get('after_slot_replacement'), ['ayase', 'mio']);
+  assert.deepEqual(browser.get('after_hide'), ['mio']);
+  assert.deepEqual(browser.get('after_hide_all'), []);
+  assert.deepEqual(Object.values(browser.sceneState.slots).filter(Boolean), []);
+
+  assert.throws(() => program('global bool bad = runtime.state.characters.exists(1)'), /argument 1 must be str/);
+  assert.throws(() => program('global list[str] bad = runtime.state.characters.list("extra")'), /requires 0 argument/);
+  assert.throws(() => program('global bool bad = runtime.state.characters.unknown()'), /unknown|未定義の関数/i);
+
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-runtime-state-parity-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const assetsRoot = path.join(root, 'asset'), scenesRoot = path.join(root, 'senario');
+  await fs.mkdir(assetsRoot); await fs.mkdir(scenesRoot);
+  await fs.writeFile(path.join(assetsRoot, 'placeholder.png'), tinyPng());
+  const scenario = path.join(scenesRoot, 'main.tds');
+  await fs.writeFile(scenario, source);
+  const packagePath = path.join(root, 'runtime-state.nsp.json');
+  await pack(scenario, packagePath, { scenesRoot, assetsRoot });
+  const native = spawnSync(exe, [packagePath, '--headless'], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(native.status, 0, native.stderr || native.error?.message);
+  const nativeGlobals = JSON.parse(native.stdout).globals;
+  for (const name of [
+    'initially_present', 'initially_present_characters', 'found_after_show', 'found_missing', 'after_show',
+    'dynamic_move_succeeded', 'after_slot_replacement', 'after_hide', 'after_hide_all',
+  ]) assert.deepEqual(nativeGlobals[name], browser.get(name), `Native and Browser runtime API result diverged for ${name}`);
+  assert.deepEqual(nativeGlobals.after_show, ['ayase', 'zara'], 'list() order is identifier-sorted and stable across runtimes');
+});
+
 test('bool, typed lists, for-in, indexing, and text intrinsics share precise value semantics', async () => {
   const source = `
 global bool active = true
@@ -1175,6 +1258,39 @@ test('a failed outgoing BGM layer is retired without overwriting its replacement
   assert.equal(rt.sceneState.actions[ids.third].status, 'running');
 });
 
+test('presentation defaults, persistent channel settings, and one-play overrides resolve in order', async () => {
+  const operations = [];
+  const rt = new Runtime({ command: async (name, args, runtime, operation) => {
+    operations.push({ name, args, gain: operation.gain, dialogOpacity: operation.dialogOpacity, temporary: operation.dialogOpacityTemporary });
+  } });
+  rt.configurePresentationDefaults({ audio: { bgm: 0.9, se: 0.8, voice: 0.5 }, dialog: { opacity: 0.7 } });
+  await rt.run(program(`
+    asset bgm track = "asset/track.ogg" volume 0.6
+    asset voice line = "asset/line.wav" volume 0.4
+    asset se click = "asset/click.wav"
+    scene main {
+      play bgm track
+      volume bgm 0.3
+      play bgm track volume 0.2
+      play bgm track
+      play voice line
+      play se click
+      dialog opacity 0.85
+      say narrator "one line" opacity 0.25
+      say narrator "next line"
+    }
+  `));
+  const plays = operations.filter(item => item.name === 'play');
+  assert.deepEqual(plays.map(item => [item.args[0], item.gain]), [
+    ['bgm', 0.6], ['bgm', 0.2], ['bgm', 0.3], ['voice', 0.4], ['se', 0.8],
+  ]);
+  const says = operations.filter(item => item.name === 'say');
+  assert.deepEqual(says.map(item => [item.dialogOpacity, item.temporary]), [[0.25, true], [undefined, undefined]]);
+  assert.equal(rt.sceneState.ui.dialogOpacity, 0.85);
+  assert.equal(rt.sceneState.audio.volumeOverrides.bgm, 0.3);
+  assert.deepEqual(rt.sceneState.audio.volumes, { bgm: 0.9, se: 0.8, voice: 0.5 });
+});
+
 test('SceneState models every audible BGM layer and interpolates gains through interrupted crossfades', async () => {
   const snapshots = [];
   const rt = new Runtime({ command: async (name, _args, runtime, operation) => {
@@ -1983,6 +2099,33 @@ test('imported module declarations retain their source file provenance', async t
   const script = await resolveProjectScript('include child.tds as shared\nscene start { wait 1 }', dir);
   assert.equal(script.globals.find((item) => item.name === 'shared').file, 'child.tds');
   assert.equal(analyzeScript(script).some((item) => item.file === 'child.tds'), false);
+});
+
+test('runtime state APIs remain unqualified inside imported TDS modules', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-runtime-state-module-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.writeFile(path.join(dir, 'probe.tds'), `
+fn has_character(id: str) -> bool { return runtime.state.characters.exists(id) }
+fn characters() -> list[str] { return runtime.state.characters.list() }
+`);
+  const script = await resolveProjectScript(`include probe.tds as probe
+character ayase {
+  name = "Ayase"
+  pose normal = "asset/ayase.png"
+}
+global bool visible = false
+global list[str] visible_ids = []
+scene main {
+  show ayase.normal left
+  set visible = probe.has_character("ayase")
+  set visible_ids = probe.characters()
+}`, dir, new Set(), 'main.tds');
+  const runtime = new Runtime({ command: async () => {}, choice: async () => 0 });
+  await runtime.run(compile(script));
+  assert.equal(runtime.get('visible'), true);
+  assert.deepEqual(runtime.get('visible_ids'), ['ayase']);
+  assert.equal(script.functions.find(fn => fn.name === 'probe.has_character').body[0].value.name,
+    'runtime.state.characters.exists');
 });
 
 test('included functions receive static variable domains for timed-command validation', async t => {

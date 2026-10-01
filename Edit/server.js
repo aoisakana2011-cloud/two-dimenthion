@@ -10,6 +10,7 @@ const path = require('node:path');
 const { readRecentProjects, rememberProject } = require('./recent-projects');
 const { ProjectChangeTracker } = require('./project-changes');
 const { defaultGameScreens, validateGameScreens, withSaveLoadScreens } = require('./game-screens');
+const screenDocumentCompiler = require('./screen-document');
 
 const EDIT_ROOT = __dirname;
 const REPO_ROOT = path.resolve(EDIT_ROOT, '..');
@@ -69,7 +70,7 @@ const DEFAULT_PLAYER_UI_THEME = Object.freeze({
     backdrop: { bottomFog: { enabled: false, color: [255, 250, 253, 255], height: 300 } },
   },
   dialog: {
-    image: '', x: 48, y: 500, width: 1184, height: 190,
+    image: '', opacity: 1, x: 48, y: 500, width: 1184, height: 190,
     message: { x: 28, y: 48, width: 1128, height: 112, size: 24, color: [255, 255, 255, 255] },
     nameplate: {
       x: 24, y: -46, width: 240, height: 40, image: '',
@@ -80,10 +81,16 @@ const DEFAULT_PLAYER_UI_THEME = Object.freeze({
     x: 330, y: 220, width: 620, height: 240, itemHeight: 48, gap: 10, image: '', activeImage: '',
     text: { x: 24, y: 0, width: 572, height: 48, size: 20, color: [255, 255, 255, 255] },
   },
+  audio: { bgm: 1, se: 1, voice: 0.5 },
 });
 
 function validatePlayerUiTheme(theme) {
   if (!(theme?.version === 1 && theme.screen && theme.dialog?.message && theme.dialog?.nameplate?.text && theme.choices)) throw Error('Invalid player UI theme shape.');
+  if (theme.dialog.opacity !== undefined && (!Number.isFinite(theme.dialog.opacity) || theme.dialog.opacity < 0 || theme.dialog.opacity > 1)) throw Error('Dialog opacity must be between 0.0 and 1.0.');
+  if (theme.audio !== undefined) {
+    if (!theme.audio || typeof theme.audio !== 'object' || Array.isArray(theme.audio)) throw Error('Invalid audio defaults.');
+    for (const kind of ['bgm', 'se', 'voice']) if (theme.audio[kind] !== undefined && (!Number.isFinite(theme.audio[kind]) || theme.audio[kind] < 0 || theme.audio[kind] > 1)) throw Error(`Invalid ${kind} volume.`);
+  }
   const controls = theme.controls;
   if (controls === undefined) return theme;
   if (!controls || typeof controls !== 'object' || Array.isArray(controls)
@@ -151,29 +158,75 @@ const GAME_SCREENS_PATH = 'game-screens.json';
 async function gameScreens() {
   const legacy = layout.legacySettings;
   const display = (await playerUiTheme()).theme.screen;
+  let value;
   try {
     const file = legacy
       ? await safeAssetPath('ui/game-screens.json')
       : await safeSettingPath(GAME_SCREENS_PATH);
-    const value = JSON.parse(await fs.readFile(file, 'utf8'));
-    const screens = withSaveLoadScreens(validateGameScreens(value));
-    if (!legacy) screens.canvas = { width: display.width, height: display.height };
-    return { path: legacy ? 'ui/game-screens.json' : `setting/${GAME_SCREENS_PATH}`, configured: true, screens };
+    value = JSON.parse(await fs.readFile(file, 'utf8'));
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
     const screens = defaultGameScreens();
     screens.canvas = { width: display.width, height: display.height };
-    return { path: legacy ? 'ui/game-screens.json' : `setting/${GAME_SCREENS_PATH}`, configured: false, screens };
+    return { path: legacy ? 'ui/game-screens.json' : `setting/${GAME_SCREENS_PATH}`, configured: false, screens, documents: {} };
   }
+  let screens = withSaveLoadScreens(validateGameScreens(value));
+  if (!legacy) screens.canvas = { width: display.width, height: display.height };
+  const documents = await readScreenDocuments(screens);
+  screens = screenDocumentCompiler.compileGameScreens(screens, documents, screens.canvas);
+  return { path: legacy ? 'ui/game-screens.json' : `setting/${GAME_SCREENS_PATH}`, configured: true, screens, documents };
 }
-async function updateGameScreens(value) {
+function screenDocumentReferences(value) {
+  const references = new Set();
+  if (value.stylesheet) references.add(value.stylesheet);
+  if (value.controlSettings) references.add(value.controlSettings);
+  for (const screen of Object.values(value.screens || {})) if (screen.template) references.add(screen.template);
+  for (const reference of references) {
+    const normalized = String(reference).replaceAll('\\', '/');
+    const ext = path.posix.extname(normalized).toLowerCase();
+    if (normalized !== reference || !normalized.startsWith('screens/') || normalized.split('/').some(part => !part || part === '.' || part === '..') || !['.html', '.css', '.txt'].includes(ext)) throw Error(`画面テンプレートのパスが不正です: ${reference}`);
+    if (reference === value.stylesheet && ext !== '.css' || value.controlSettings === reference && ext !== '.txt' || Object.values(value.screens || {}).some(screen => screen.template === reference) && ext !== '.html') throw Error(`画面テンプレートの拡張子が不正です: ${reference}`);
+  }
+  return [...references];
+}
+async function readScreenDocuments(value) {
+  const documents = {};
+  for (const reference of screenDocumentReferences(value)) documents[reference] = await fs.readFile(await safeSettingDocumentPath(reference), 'utf8');
+  return documents;
+}
+async function updateGameScreens(value, suppliedDocuments = {}) {
   validateGameScreens(value);
+  const references = screenDocumentReferences(value);
+  const documents = {};
+  for (const reference of references) {
+    const candidate = suppliedDocuments[reference];
+    if (candidate !== undefined) {
+      if (typeof candidate !== 'string' || candidate.length > (reference.endsWith('.css') ? 80_000 : reference.endsWith('.txt') ? 20_000 : 120_000)) throw Error(`画面文書のサイズまたは形式が不正です: ${reference}`);
+      documents[reference] = candidate;
+    } else {
+      try { documents[reference] = await fs.readFile(await safeSettingDocumentPath(reference), 'utf8'); }
+      catch (error) { if (error.code === 'ENOENT') throw Error(`画面文書がありません: ${reference}`); throw error; }
+    }
+  }
+  const display = (await playerUiTheme()).theme.screen;
+  screenDocumentCompiler.compileGameScreens(value, documents, value.canvas || display);
   const legacy = layout.legacySettings;
   const file = legacy
     ? await safeAssetPath('ui/game-screens.json', { createParents: true })
     : await safeSettingPath(GAME_SCREENS_PATH, { createParents: true });
   const stored = { ...value };
   if (!legacy) delete stored.canvas;
+  for (const screen of Object.values(stored.screens)) {
+    delete screen.uiTree;
+    delete screen.webDocument;
+    if (screen.template) {
+      delete screen.items;
+      delete screen.slotLayout;
+      delete screen.title;
+      delete screen.description;
+    }
+  }
+  for (const reference of references) await fs.writeFile(await safeSettingDocumentPath(reference, { createParents: true }), documents[reference], 'utf8');
   await fs.writeFile(file, JSON.stringify(stored, null, 2) + '\n', 'utf8');
   return { ok: true, ...(await gameScreens()) };
 }
@@ -1085,7 +1138,7 @@ async function safeAssetPath(relative, { createParents = false } = {}) {
 
 async function safeSettingPath(relative, { createParents = false } = {}) {
   const normalized = String(relative || '').replaceAll('\\', '/');
-  if (!normalized || normalized.split('/').some((part) => !part || part === '.' || part === '..') || !['.txt', '.md', '.json'].includes(path.posix.extname(normalized).toLowerCase())) {
+  if (!normalized || normalized.split('/').some((part) => !part || part === '.' || part === '..') || !['.txt', '.md', '.json', '.html', '.css'].includes(path.posix.extname(normalized).toLowerCase())) {
     throw outsideProjectPath('setting path');
   }
   const requested = path.resolve(SETTINGS_ROOT, normalized);
@@ -1109,7 +1162,7 @@ async function safeSettingDocumentPath(relative, { createParents = false } = {})
   if (!layout.legacySettings) return safeSettingPath(relative, { createParents });
   const normalized = String(relative || '').replaceAll('\\', '/');
   if (normalized === 'setting.txt') return safeSettingPath(normalized, { createParents });
-  if (!normalized || normalized.split('/').some((part) => !part || part === '.' || part === '..') || !['.txt', '.md', '.json'].includes(path.posix.extname(normalized).toLowerCase())) throw outsideProjectPath('setting document');
+  if (!normalized || normalized.split('/').some((part) => !part || part === '.' || part === '..') || !['.txt', '.md', '.json', '.html', '.css'].includes(path.posix.extname(normalized).toLowerCase())) throw outsideProjectPath('setting document');
   const root = path.resolve(PROJECT_ROOT, 'setting');
   const requested = path.resolve(root, normalized);
   if (!isPathInside(root, requested)) throw outsideProjectPath('setting document');
@@ -1518,7 +1571,7 @@ async function serveStatic(response, pathname) {
     return;
   }
   const relative = pathname === '/' ? 'index.html' : pathname.slice(1);
-  if (!['index.html', 'editor.js', 'styles.css', 'scrollbars.css', 'player.html', 'player.js', 'runtime.js', 'player.css', 'flow.html', 'flow.js', 'flow-layout.js', 'flow.css', 'engine.html', 'assets/desktop-icon.png', 'shared/formatter.js', 'docs/tds-language-and-editor-guide.md'].includes(relative)) {
+  if (!['index.html', 'editor.js', 'styles.css', 'scrollbars.css', 'player.html', 'player.js', 'runtime.js', 'screen-document.js', 'save-store.js', 'player.css', 'flow.html', 'flow.js', 'flow-layout.js', 'flow.css', 'engine.html', 'assets/desktop-icon.png', 'shared/formatter.js', 'docs/tds-language-and-editor-guide.md'].includes(relative)) {
     text(response, 404, 'Not found');
     return;
   }
@@ -1615,7 +1668,7 @@ async function handleApi(request, response, url) {
     catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
   }
   if (request.method === 'PUT' && url.pathname === '/api/game-screens') {
-    try { return json(response, 200, await updateGameScreens((await readJson(request)).screens)); }
+    try { const body = await readJson(request); return json(response, 200, await updateGameScreens(body.screens, body.documents || {})); }
     catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
   }
   if (request.method === 'GET' && url.pathname === '/api/browse') {

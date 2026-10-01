@@ -44,7 +44,7 @@ export type Statement = NodeLocation & (
   | { kind: 'goto'; scene: string }
 );
 
-export interface Asset extends NodeLocation { kind: 'asset'; type: AssetKind; name: string; path: string; }
+export interface Asset extends NodeLocation { kind: 'asset'; type: AssetKind; name: string; path: string; volume?: number; }
 export interface CharacterProperty extends NodeLocation { name: string; value: Expr; }
 export interface Character extends NodeLocation {
   kind: 'character';

@@ -1,0 +1,28 @@
+<main class="screen data-screen">
+  <div class="screen-dimmer"></div>
+  <header class="screen-header">
+    <div class="screen-title">物語のつづき</div>
+    <nav class="screen-tabs">
+      <button class="tab-button" data-action="save"><span class="tab-glyph">記</span><small class="tab-label">記録</small></button>
+      <button class="tab-button tab-active" data-action="load"><span class="tab-glyph">栞</span><small class="tab-label">再開</small></button>
+      <button class="tab-button" data-action="open-screen" data-target="system"><span class="tab-glyph">窓</span><small class="tab-label">表示</small></button>
+      <button class="tab-button" data-action="open-screen" data-target="sound"><span class="tab-glyph">音</span><small class="tab-label">音量</small></button>
+    </nav>
+  </header>
+  <div class="save-slot-grid" data-role="load-slots" data-count="12">
+    <button class="save-slot">
+      <img class="slot-thumbnail" data-slot-field="thumbnail" alt="">
+      <span class="slot-number" data-slot-field="number"></span>
+      <span class="slot-scene" data-slot-field="scene"></span>
+      <span class="slot-text" data-slot-field="text"></span>
+      <span class="slot-date" data-slot-field="saved-at"></span>
+      <span class="slot-status" data-slot-field="status"></span>
+    </button>
+  </div>
+  <div class="data-footer">
+    <small class="data-hint">読み返したい場面を選んでください。</small>
+    <button class="footer-button data-back" data-action="back">戻る</button>
+    <button class="footer-button data-title" data-action="open-screen" data-target="title">表紙へ</button>
+    <button class="footer-button data-quit" data-action="quit">終了</button>
+  </div>
+</main>

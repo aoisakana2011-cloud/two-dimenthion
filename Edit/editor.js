@@ -3587,6 +3587,8 @@ const syntaxRecipes = {
   say: { description: '本文が文字列リテラルから始まる式なら話者を省略でき、narrator として扱います。変数や関数呼び出しから始める場合は話者を指定します。', snippet: 'say "¦本文"\n' },
   bg: { description: 'asset bg で宣言済みの背景名を指定します。ここではパスを直接書きません。', snippet: 'bg ¦background\n' },
   bgm: { description: 'asset bgm で宣言済みの BGM 名を指定します。', snippet: 'bgm ¦music\n' },
+  volume: { description: 'bgm / se / voice の以後の基準音量を0.0〜1.0で設定します。play行のvolumeはその再生だけの指定です。', snippet: 'volume bgm ¦0.5\n' },
+  opacity: { description: 'dialog opacityは会話欄の背景面、say行末のopacityはその台詞だけの背景面の不透明度を0.0〜1.0で設定します。', snippet: 'dialog opacity ¦0.85\n' },
   show: { description: 'character の pose を表示します。位置は far_left / left / center / right / far_right を使えます。', snippet: 'show hero.normal center¦\n' },
   hide: { description: '表示中の立ち絵を消します。', snippet: 'hide ¦hero\n' },
   if: { description: '条件が真のときだけブロックを実行します。', snippet: 'if ¦condition {\n  \n}\n' },
@@ -3684,6 +3686,7 @@ async function showProjectSettings() {
   const theme = sourceTheme;
   const rgba = (value) => value.join(',');
   const integer = (name) => Number(playerFields[name].value);
+  const ratio = (name) => Number(playerFields[name].value);
   const playerGroup = (title) => {
     const group = document.createElement('section'); group.className = 'player-ui-settings-group';
     const groupTitle = document.createElement('h3'); groupTitle.textContent = title;
@@ -3694,10 +3697,17 @@ async function showProjectSettings() {
   playerField('画面高さ', 'screen_height', theme.screen.height, 'number', screenGroup);
   const dialogGroup = playerGroup('会話欄（画面基準）');
   playerField('会話欄画像', 'dialog_image', theme.dialog.image, 'text', dialogGroup);
+  playerField('会話欄の透過率 (0–1)', 'dialog_opacity', theme.dialog.opacity ?? 1, 'number', dialogGroup);
+  playerFields.dialog_opacity.min = '0'; playerFields.dialog_opacity.max = '1'; playerFields.dialog_opacity.step = '0.01';
   playerField('会話欄 X', 'dialog_x', theme.dialog.x ?? Math.round((1280 - theme.dialog.width) / 2), 'number', dialogGroup);
   playerField('会話欄 Y', 'dialog_y', theme.dialog.y, 'number', dialogGroup);
   playerField('会話欄幅', 'dialog_width', theme.dialog.width, 'number', dialogGroup);
   playerField('会話欄高さ', 'dialog_height', theme.dialog.height, 'number', dialogGroup);
+  const audioGroup = playerGroup('音量（0–1）');
+  for (const [kind, label, fallback] of [['bgm', 'BGM', 1], ['se', '効果音', 1], ['voice', 'ボイス', 0.5]]) {
+    playerField(`${label}音量`, `audio_${kind}`, theme.audio?.[kind] ?? fallback, 'number', audioGroup);
+    playerFields[`audio_${kind}`].min = '0'; playerFields[`audio_${kind}`].max = '1'; playerFields[`audio_${kind}`].step = '0.01';
+  }
   const messageGroup = playerGroup('本文（会話欄基準）');
   playerField('本文 X', 'dialog_text_x', theme.dialog.message.x, 'number', messageGroup); playerField('本文 Y', 'dialog_text_y', theme.dialog.message.y, 'number', messageGroup); playerField('本文幅', 'dialog_text_width', theme.dialog.message.width, 'number', messageGroup); playerField('本文高さ', 'dialog_text_height', theme.dialog.message.height, 'number', messageGroup); playerField('本文サイズ', 'dialog_text_size', theme.dialog.message.size, 'number', messageGroup); playerField('本文色 RGBA', 'dialog_text_color', rgba(theme.dialog.message.color), 'text', messageGroup);
   const speakerGroup = playerGroup('話者欄（会話欄基準）');
@@ -3750,6 +3760,7 @@ async function showProjectSettings() {
     previewDialog.style.width = `${integer('dialog_width') * scale}px`;
     previewDialog.style.height = `${integer('dialog_height') * scale}px`;
     previewDialog.style.backgroundImage = previewAsset(playerFields.dialog_image.value);
+    previewDialog.style.setProperty('--preview-opacity', String(ratio('dialog_opacity')));
     Object.assign(previewText.style, { left: `${integer('dialog_text_x') * scale}px`, top: `${integer('dialog_text_y') * scale}px`, width: `${integer('dialog_text_width') * scale}px`, height: `${integer('dialog_text_height') * scale}px`, fontSize: `${integer('dialog_text_size') * scale}px`, color: `rgba(${playerFields.dialog_text_color.value})` });
     Object.assign(previewSpeaker.style, { left: `${integer('speaker_x') * scale}px`, top: `${integer('speaker_y') * scale}px`, width: `${integer('speaker_width') * scale}px`, height: `${integer('speaker_height') * scale}px`, fontSize: `${integer('speaker_size') * scale}px`, color: `rgba(${playerFields.speaker_color.value})`, backgroundImage: previewAsset(playerFields.speaker_image.value) });
     Object.assign(previewChoice.style, { left: `${integer('choice_x') * scale}px`, top: `${integer('choice_y') * scale}px`, width: `${integer('choice_width') * scale}px`, height: `${integer('choice_height') * scale}px`, fontSize: `${integer('choice_text_size') * scale}px`, color: `rgba(${playerFields.choice_text_color.value})`, backgroundImage: previewAsset(playerFields.choice_image.value) });
@@ -3836,8 +3847,9 @@ async function showProjectSettings() {
     const rgbaValue = (name) => playerFields[name].value.split(',').map((part) => Number(part.trim()));
     await request('/api/player-ui', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ theme: {
       version: 1, screen: { width: integer('screen_width'), height: integer('screen_height'), backdrop: { bottomFog: { enabled: fog.checked, color: rgbaValue('fog_color'), height: integer('fog_height') } } },
-      dialog: { image: playerFields.dialog_image.value, x: integer('dialog_x'), y: integer('dialog_y'), width: integer('dialog_width'), height: integer('dialog_height'), message: { x: integer('dialog_text_x'), y: integer('dialog_text_y'), width: integer('dialog_text_width'), height: integer('dialog_text_height'), size: integer('dialog_text_size'), color: rgbaValue('dialog_text_color') }, nameplate: { x: integer('speaker_x'), y: integer('speaker_y'), width: integer('speaker_width'), height: integer('speaker_height'), image: playerFields.speaker_image.value, text: { x: 0, y: 0, width: integer('speaker_width'), height: integer('speaker_height'), size: integer('speaker_size'), color: rgbaValue('speaker_color') } } },
+      dialog: { image: playerFields.dialog_image.value, opacity: ratio('dialog_opacity'), x: integer('dialog_x'), y: integer('dialog_y'), width: integer('dialog_width'), height: integer('dialog_height'), message: { x: integer('dialog_text_x'), y: integer('dialog_text_y'), width: integer('dialog_text_width'), height: integer('dialog_text_height'), size: integer('dialog_text_size'), color: rgbaValue('dialog_text_color') }, nameplate: { x: integer('speaker_x'), y: integer('speaker_y'), width: integer('speaker_width'), height: integer('speaker_height'), image: playerFields.speaker_image.value, text: { x: 0, y: 0, width: integer('speaker_width'), height: integer('speaker_height'), size: integer('speaker_size'), color: rgbaValue('speaker_color') } } },
       choices: { x: integer('choice_x'), y: integer('choice_y'), width: integer('choice_width'), height: integer('choice_view_height'), itemHeight: integer('choice_height'), gap: integer('choice_gap'), image: playerFields.choice_image.value, activeImage: playerFields.choice_active_image.value, text: { x: integer('choice_text_x'), y: integer('choice_text_y'), width: integer('choice_width') - integer('choice_text_x') * 2, height: integer('choice_height'), size: integer('choice_text_size'), color: rgbaValue('choice_text_color') } },
+      audio: { bgm: ratio('audio_bgm'), se: ratio('audio_se'), voice: ratio('audio_voice') },
       controls: buildPlayerControls(),
     } }) });
     currentProjectRoot = updated.projectRoot || currentProjectRoot;
@@ -3885,6 +3897,7 @@ async function showGameScreenSettings() {
     request('/api/project'), request('/api/assets'), request('/api/game-screens'),
   ]);
   const config = loaded.screens;
+  const documents = { ...(loaded.documents || {}) };
   const dialog = document.createElement('section');
   dialog.className = 'editor-dialog game-screen-settings';
   dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true');
@@ -3894,7 +3907,8 @@ async function showGameScreenSettings() {
   const screenSelect = document.createElement('select'); screenSelect.setAttribute('aria-label', '編集する画面');
   const addScreen = document.createElement('button'); addScreen.type = 'button'; addScreen.textContent = '画面を追加';
   const addButton = document.createElement('button'); addButton.type = 'button'; addButton.textContent = 'ボタンを追加';
-  toolbar.append(screenSelect, addScreen, addButton);
+  const sourceModeButton = document.createElement('button'); sourceModeButton.type = 'button'; sourceModeButton.textContent = 'HTML/CSSで編集';
+  toolbar.append(screenSelect, addScreen, addButton, sourceModeButton);
   const workspace = document.createElement('div'); workspace.className = 'game-screen-workspace';
   const preview = document.createElement('div'); preview.className = 'game-screen-preview'; preview.setAttribute('aria-label', '画面プレビュー');
   const inspector = document.createElement('div'); inspector.className = 'game-screen-inspector';
@@ -3916,6 +3930,42 @@ async function showGameScreenSettings() {
     return rel ? '/asset/' + rel.split('/').map(encodeURIComponent).join('/') : '';
   };
   let selectedItem = null;
+  let sourceMode = Object.values(config.screens).some(screen => screen.template);
+  if (sourceMode) { sourceModeButton.textContent = 'HTML/CSSが正本'; sourceModeButton.disabled = true; addButton.disabled = true; }
+  const escapeText = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+  const createScreenDocument = (id, screen) => {
+    config.stylesheet ||= 'screens/shared.css';
+    const selector = `#legacy-${id}`;
+    const html = [`<main id="legacy-${id}">`];
+    const css = [`${selector} { position: relative; width: 100%; height: 100%; }`];
+    if (screen.title) { html.push(`<h1 id="legacy-${id}-title">${escapeText(screen.title)}</h1>`); css.push(`#legacy-${id}-title { position:absolute; left:64px; top:42px; width:90%; height:48px; color:#f5f7f8; font-size:34px; }`); }
+    if (screen.description) { html.push(`<p id="legacy-${id}-description">${escapeText(screen.description)}</p>`); css.push(`#legacy-${id}-description { position:absolute; left:64px; top:112px; width:560px; height:220px; color:#f0eee8; font-size:21px; }`); }
+    for (const [index, item] of (screen.items || []).entries()) {
+      const itemId = `legacy-${id}-button-${index}`;
+      if (item.action === 'open-screen') html.push(`<button id="${itemId}" data-action="open-screen" data-target="${escapeText(item.target)}">${escapeText(item.label)}</button>`);
+      else html.push(`<button id="${itemId}" data-action="${item.action}">${escapeText(item.label)}</button>`);
+      const image = item.image ? assetRelative(item.image) : '';
+      const hoverImage = item.hoverImage ? assetRelative(item.hoverImage) : image;
+      css.push(`#${itemId} { position:absolute; left:${item.x}px; top:${item.y}px; width:${item.width}px; height:${item.height}px; color:${item.color || '#f5f5f2'}; background-color:${item.backgroundColor || '#17212bd9'}; border:1px solid ${item.borderColor || '#8797a0'}; font-size:${item.fontSize || 22}px; text-align:center;${image ? ` background-image:url("asset/${image}"); background-size:100% 100%;` : ''} }`);
+      if (item.hoverColor || item.hoverBackgroundColor || item.hoverBorderColor || item.hoverImage) css.push(`#${itemId}:hover { color:${item.hoverColor || item.color || '#f5f5f2'}; background-color:${item.hoverBackgroundColor || item.backgroundColor || '#17212bd9'}; border-color:${item.hoverBorderColor || item.borderColor || '#8797a0'};${hoverImage ? ` background-image:url("asset/${hoverImage}"); background-size:100% 100%;` : ''} }`);
+    }
+    if (screen.role) {
+      const layout = screen.slotLayout || { x: 420, y: 190, width: 440, height: 420, rowHeight: 42, gap: 8, count: 8 };
+      html.push(`<div id="legacy-${id}-slots" data-role="${screen.role}" data-count="${layout.count}"></div>`);
+      css.push(`#legacy-${id}-slots { position:absolute; left:${layout.x}px; top:${layout.y}px; width:${layout.width}px; height:${layout.height}px; display:grid; grid-template-columns:repeat(1, 1fr); grid-auto-rows:${layout.rowHeight}px; gap:${layout.gap}px; }`);
+      css.push('.save-slot { width:100%; height:100%; color:#f5f5f2; background-color:#17212bd9; border:1px solid #8797a0; font-size:15px; text-align:left; }');
+      const slotStyle = screen.slotStyle || {};
+      const slotImage = slotStyle.image ? assetRelative(slotStyle.image) : '';
+      const slotHoverImage = slotStyle.hoverImage ? assetRelative(slotStyle.hoverImage) : slotImage;
+      const slotSelector = `.save-slot-${screen.role}`;
+      css.push(`${slotSelector} { color:${slotStyle.color || '#f5f5f2'}; background-color:${slotStyle.backgroundColor || '#17212bd9'}; border-color:${slotStyle.borderColor || '#8797a0'}; font-size:${slotStyle.fontSize || 15}px;${slotImage ? ` background-image:url("asset/${slotImage}"); background-size:100% 100%;` : ''} }`);
+      if (slotStyle.hoverColor || slotStyle.hoverBackgroundColor || slotStyle.hoverBorderColor || slotStyle.hoverImage) css.push(`${slotSelector}:hover { color:${slotStyle.hoverColor || slotStyle.color || '#f5f5f2'}; background-color:${slotStyle.hoverBackgroundColor || slotStyle.backgroundColor || '#17212bd9'}; border-color:${slotStyle.hoverBorderColor || slotStyle.borderColor || '#8797a0'};${slotHoverImage ? ` background-image:url("asset/${slotHoverImage}"); background-size:100% 100%;` : ''} }`);
+    }
+    html.push('</main>');
+    screen.template = `screens/${id}.html`;
+    documents[screen.template] = html.join('\n');
+    documents[config.stylesheet] = `${documents[config.stylesheet] || ''}\n${css.join('\n')}\n`;
+  };
   const selectedScreen = () => config.screens[screenSelect.value];
   const refreshScreenOptions = () => {
     screenSelect.replaceChildren();
@@ -3951,6 +4001,32 @@ async function showGameScreenSettings() {
     const scale = Math.min(preview.clientWidth / width, preview.clientHeight / height);
     preview.style.backgroundImage = screen.background ? `linear-gradient(#0002,#0002),url("${assetUrl(screen.background)}")` : 'none';
     preview.replaceChildren();
+    if (sourceMode && screen.template && window.NovelScreenDocument) {
+      try {
+        const controls = config.controlSettings && documents[config.controlSettings]
+          ? NovelScreenDocument.parseControlSettings(documents[config.controlSettings]) : {};
+        const compiled = NovelScreenDocument.compileScreenDocument(documents[screen.template] || '', documents[config.stylesheet] || '', config.canvas, Object.keys(config.screens), controls);
+        preview.append(NovelScreenDocument.buildWebScreen(documents[screen.template] || '', documents[config.stylesheet] || '', document, {
+          width, height, scaleX: scale, scaleY: scale, assetUrl,
+          controlDefaults: controls, canSave: true, canContinue: true,
+          saved: index => index === 0 ? { scene: 'main', text: 'ここに本文が表示されます。' } : null,
+          onAction: () => {},
+          slotField: (index, name) => {
+            const sample = index === 0;
+            return ({ number: String(index + 1).padStart(2, '0'), status: sample ? '記録あり' : '空き', scene: sample ? 'main' : '', speaker: sample ? '語り手' : '', text: sample ? 'ここに本文が表示されます。' : '', 'saved-at': sample ? '2026/09/30 12:00' : '' })[name] || '';
+          },
+          roleSlot: (button, index, node) => {
+            if (!node.children.length) {
+              button.classList.add('game-screen-preview-slot');
+              button.textContent = `Slot ${String(index + 1).padStart(2, '0')} · セーブ枠プレビュー`;
+            }
+          },
+        }));
+      } catch (error) {
+        status.textContent = `HTML/CSS: ${error.message}`;
+      }
+      return;
+    }
     if (screen.title) {
       const screenTitle = document.createElement('div'); screenTitle.className = 'game-screen-preview-title'; screenTitle.textContent = screen.title;
       Object.assign(screenTitle.style, { left: `${64 * scale}px`, top: `${42 * scale}px`, fontSize: `${34 * scale}px` }); preview.append(screenTitle);
@@ -3983,6 +4059,16 @@ async function showGameScreenSettings() {
   function renderInspector() {
     inspector.replaceChildren();
     const screen = selectedScreen();
+    if (sourceMode) {
+      const heading = document.createElement('h2'); heading.textContent = '画面HTML / 共通CSS'; inspector.append(heading);
+      const htmlLabel = document.createElement('label'); htmlLabel.textContent = screen.template || 'HTML';
+      const htmlInput = document.createElement('textarea'); htmlInput.className = 'game-screen-source'; htmlInput.setAttribute('aria-label', '画面HTML'); htmlInput.spellcheck = false; htmlInput.value = documents[screen.template] || '';
+      htmlInput.addEventListener('input', () => { documents[screen.template] = htmlInput.value; status.textContent = ''; render(); }); htmlLabel.append(htmlInput); inspector.append(htmlLabel);
+      const cssLabel = document.createElement('label'); cssLabel.textContent = config.stylesheet || '共通CSS';
+      const cssInput = document.createElement('textarea'); cssInput.className = 'game-screen-source game-screen-source-css'; cssInput.setAttribute('aria-label', '共通CSS'); cssInput.spellcheck = false; cssInput.value = documents[config.stylesheet] || '';
+      cssInput.addEventListener('input', () => { documents[config.stylesheet] = cssInput.value; status.textContent = ''; render(); }); cssLabel.append(cssInput); inspector.append(cssLabel);
+      return;
+    }
     const title = document.createElement('h2'); title.textContent = selectedItem ? '選択中のボタン' : '画面'; inspector.append(title);
     if (!selectedItem) {
       const bgmAssets = (assetData.assets || []).filter(asset => asset.type === 'bgm');
@@ -4043,7 +4129,7 @@ async function showGameScreenSettings() {
     field('ボタン文字', 'label', selectedItem.label);
     field('カーソル時の文字（任意）', 'hoverLabel', selectedItem.hoverLabel || '');
     for (const key of ['x', 'y', 'width', 'height']) field({ x: 'X', y: 'Y', width: '幅', height: '高さ' }[key], key, selectedItem[key], 'number');
-    selectField('動作', selectedItem.action, [['start', 'ゲーム開始'], ['resume', 'ゲームに戻る'], ['save', 'セーブ画面'], ['load', 'ロード画面'], ['open-screen', '別画面を開く'], ['back', '前の画面に戻る'], ['quit', '終了']], value => { selectedItem.action = value; if (value !== 'open-screen') delete selectedItem.target; renderInspector(); });
+    selectField('動作', selectedItem.action, [['start', 'ゲーム開始'], ['continue', '前回の続きから'], ['resume', 'ゲームに戻る'], ['save', 'セーブ画面'], ['load', 'ロード画面'], ['open-screen', '別画面を開く'], ['back', '前の画面に戻る'], ['quit', '終了']], value => { selectedItem.action = value; if (value !== 'open-screen') delete selectedItem.target; renderInspector(); });
     if (selectedItem.action === 'open-screen') selectField('移動先', selectedItem.target, Object.keys(config.screens).filter(id => id !== screenSelect.value).map(id => [id, id]), value => { selectedItem.target = value; });
     selectField('ボタン画像', selectedItem.image, [['', 'テーマ標準'], ...buttonAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { selectedItem.image = value; render(); });
     selectField('カーソル時の画像', selectedItem.hoverImage, [['', '通常画像を使用'], ...buttonAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { selectedItem.hoverImage = value; render(); });
@@ -4053,6 +4139,15 @@ async function showGameScreenSettings() {
     const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'ボタンを削除'; remove.onclick = () => { screen.items = screen.items.filter(item => item !== selectedItem); selectedItem = null; renderInspector(); render(); }; inspector.append(remove);
   }
   refreshScreenOptions();
+  sourceModeButton.addEventListener('click', () => {
+    if (!sourceMode) {
+      for (const [id, screen] of Object.entries(config.screens)) if (!screen.template) createScreenDocument(id, screen);
+      sourceMode = true; sourceModeButton.textContent = 'HTML/CSSが正本'; sourceModeButton.disabled = true; addButton.disabled = true;
+    } else {
+      sourceMode = false; sourceModeButton.textContent = 'HTML/CSSで編集'; addButton.disabled = false;
+    }
+    renderInspector(); render();
+  });
   screenSelect.addEventListener('change', () => { selectedItem = null; renderInspector(); render(); });
   addButton.addEventListener('click', () => {
     const screen = selectedScreen();
@@ -4063,11 +4158,12 @@ async function showGameScreenSettings() {
     let id = prompt('画面ID（英数字、_、-）', 'screen'); if (!id) return;
     id = id.trim(); if (!/^[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(id) || config.screens[id]) { status.textContent = '画面IDが不正か、すでに使われています。'; return; }
     config.screens[id] = { title: id, background: '', items: [{ id: 'back', type: 'button', label: '戻る', action: 'back', x: 64, y: 150, width: 300, height: 56 }] };
+    if (sourceMode) createScreenDocument(id, config.screens[id]);
     refreshScreenOptions(); screenSelect.value = id; selectedItem = null; renderInspector(); render();
   });
   save.addEventListener('click', async () => {
     save.disabled = true;
-    try { await request('/api/game-screens', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ screens: config }) }); status.textContent = '画面設定を保存しました。'; }
+    try { await request('/api/game-screens', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ screens: config, documents }) }); status.textContent = '画面設定を保存しました。'; }
     catch (error) { status.textContent = error.message; }
     finally { save.disabled = false; }
   });

@@ -1,7 +1,7 @@
 import { Asset, Character, Expr, ExternalCharacter, FunctionDef, Script, Statement, ValueType } from '../parser';
 import { assertAnalyzed } from '../checker/analyzer';
 import { inferValueType } from '../checker/type-checker';
-import { isPureBuiltin } from '../language/builtins';
+import { isNonMutatingBuiltin } from '../language/builtins';
 
 export type CompiledExpr =
   | { kind: 'integer'; value: string }
@@ -480,7 +480,7 @@ function compiledForConstraints(
 function hasImpureCall(expression: CompiledExpr | undefined): boolean {
   if (!expression) return false;
   if (expression.kind === 'literal') return typeof expression.value === 'string' && hasInterpolation(expression.value);
-  if (expression.kind === 'call') return !isPureBuiltin(expression.name) || expression.args.some(hasImpureCall);
+  if (expression.kind === 'call') return !isNonMutatingBuiltin(expression.name) || expression.args.some(hasImpureCall);
   if (expression.kind === 'binary') return hasImpureCall(expression.left) || hasImpureCall(expression.right);
   if (expression.kind === 'unary') return hasImpureCall(expression.value);
   if (expression.kind === 'index') return hasImpureCall(expression.target) || hasImpureCall(expression.key);
@@ -705,7 +705,7 @@ function writtenVariables(instructions: Instruction[], effects: Map<string, Set<
 function functionWrites(functions: Instruction[], globalNames: Set<string>): Map<string, Set<string>> {
   const direct = new Map<string, Set<string>>(), calls = new Map<string, Set<string>>();
   const walk = (instructions: Instruction[], writes: Set<string>, invoked: Set<string>, locals = new Set<string>()): void => {
-    const recordCall = (name: string) => { if (name === '*') globalNames.forEach((variable) => writes.add(variable)); else if (!isPureBuiltin(name)) invoked.add(name); };
+    const recordCall = (name: string) => { if (name === '*') globalNames.forEach((variable) => writes.add(variable)); else if (!isNonMutatingBuiltin(name)) invoked.add(name); };
     for (const instruction of instructions) {
       if (instruction.op === 'declare') {
         visitExpressionCalls(instruction.initial, recordCall);

@@ -1,6 +1,6 @@
 'use strict';
 const { sceneFile } = require('./project');
-const { isPureBuiltin } = require('../dist/language/builtins');
+const { isBuiltinFunction, isPureBuiltin, isRuntimeStateApi } = require('../dist/language/builtins');
 
 function constant(expr, constants = new Map()) {
   if (!expr) return undefined;
@@ -406,7 +406,9 @@ function validateVariableFlow(files, entry) {
             dictionaryClosed: dictionaryClosedForExpression(arg, state, closedResults),
           });
         }
-        const result = isPureBuiltin(expr.name) ? builtinResult(expr.name, argumentFacts) : invoke(expr.name, state, argumentFacts);
+        const result = isPureBuiltin(expr.name) ? builtinResult(expr.name, argumentFacts)
+          : isRuntimeStateApi(expr.name) ? { strings: [], dictionaries: [], aliases: [], dictionaryKeys: undefined, dictionaryClosed: undefined }
+            : invoke(expr.name, state, argumentFacts);
         callResults.set(expr, result.strings);
         dictionaryResults.set(expr, result.dictionaries);
         aliasResults.set(expr, result.aliases);

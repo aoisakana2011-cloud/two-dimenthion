@@ -147,7 +147,21 @@ class Parser {
         const pathToken = this.expect('string', 'Asset path must be a string');
         this.rejectUnknownEscapes(pathToken);
         const path = pathToken.value;
-        return { kind: 'asset', type, name, path, line: start.line, column: start.column };
+        let volume;
+        if (!this.atLineEnd()) {
+            if (!['bgm', 'se', 'voice'].includes(type))
+                throw this.error(`asset ${type} は volume を指定できません`);
+            this.expectWordValue('volume');
+            if (this.current.type !== 'number' || !/[.eE]/.test(this.current.value))
+                throw this.error('asset volume は float リテラルで指定してください（例: 0.5）');
+            const value = Number(this.take().value);
+            if (!Number.isFinite(value) || value < 0 || value > 1)
+                throw this.error('asset volume は 0.0 から 1.0 の範囲で指定してください');
+            volume = value;
+            if (!this.atLineEnd())
+                throw this.error('asset 宣言の volume オプションが重複しているか不正です');
+        }
+        return { kind: 'asset', type, name, path, ...(volume === undefined ? {} : { volume }), line: start.line, column: start.column };
     }
     parseCharacter() {
         const start = this.take();
@@ -271,8 +285,16 @@ class Parser {
         if (KEYWORDS.has(first.value) && first.value !== 'list')
             throw new ParseError(`予約語 '${first.value}' は関数名として使用できません`, first);
         const parts = [first.value];
-        while (this.optional('.'))
-            parts.push(this.expectIdentifier('Expected qualified function name'));
+        while (this.optional('.')) {
+            const part = this.expect('word', 'Expected qualified function name');
+            // `list` is a type keyword but also a natural method name in namespaces
+            // such as runtime.state.characters.list(). Keep the exception scoped to
+            // qualified call segments; declarations and bare identifiers stay reserved.
+            if (KEYWORDS.has(part.value) && part.value !== 'list') {
+                throw new ParseError(`Reserved keyword '${part.value}' cannot be used as a function name`, part);
+            }
+            parts.push(part.value);
+        }
         return parts.join('.');
     }
     parseStatement() {
@@ -454,13 +476,20 @@ class Parser {
                 else {
                     throw this.error('say 命令の引数が不正です');
                 }
+                const args = [
+                    { kind: 'literal', value: speaker, line: token.line, column: token.column },
+                    textExpr,
+                ];
+                if (!this.atLineEnd()) {
+                    const opacityToken = this.current;
+                    this.expectWordValue('opacity');
+                    args.push({ kind: 'literal', value: 'opacity', line: opacityToken.line, column: opacityToken.column });
+                    args.push(this.parseExpression());
+                }
                 return {
                     kind: 'command',
                     name: 'say',
-                    args: [
-                        { kind: 'literal', value: speaker, line: token.line, column: token.column },
-                        textExpr,
-                    ],
+                    args,
                     line: token.line,
                     column: token.column,
                     endLine: this.current.line,
@@ -512,7 +541,9 @@ class Parser {
                         return args.length < (args[0]?.kind === 'literal' && args[0].value === 'image' ? 3 : 2) || token.value === 'fade';
                     case 'hide': return args.length === 0 || token.value === 'fade';
                     case 'clear': return args.length === 0 || args[0]?.kind === 'literal' && args[0].value === 'image' && args.length === 1;
-                    case 'play': return args.length < 3;
+                    case 'play': return args.length < 2 || args.length === 2 || ['crossfade', 'blocking', 'async', 'volume', 'dissolve', 'later'].includes(token.value);
+                    case 'volume': return args.length === 0;
+                    case 'dialog': return args.length === 0 || args.length === 1 && args[0]?.kind === 'literal' && args[0].value === 'opacity';
                     case 'effect': return args.length < 2;
                     default: return false;
                 }

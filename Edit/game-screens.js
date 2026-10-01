@@ -1,7 +1,7 @@
 'use strict';
 
 const SCREEN_ID = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/;
-const ACTIONS = new Set(['start', 'resume', 'save', 'load', 'open-screen', 'back', 'quit']);
+const ACTIONS = new Set(['start', 'continue', 'resume', 'save', 'load', 'open-screen', 'back', 'quit']);
 
 function emptyScreenSlots() {
   return { x: 420, y: 190, width: 440, height: 420, rowHeight: 42, gap: 8, count: 8 };
@@ -72,6 +72,7 @@ function validateGameScreens(value) {
   if (!value || value.version !== 1 || canvas && (!Number.isInteger(canvas.width) || !Number.isInteger(canvas.height) || canvas.width < 320 || canvas.width > 4096 || canvas.height < 180 || canvas.height > 4096) || typeof value.initial !== 'string' || !value.screens || typeof value.screens !== 'object' || Array.isArray(value.screens)) {
     throw new Error('画面設定の形式が不正です。');
   }
+  if (value.saveId !== undefined && (typeof value.saveId !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(value.saveId))) throw new Error('saveIdは英数字・_・-で64文字以内にしてください。');
   const screenIds = Object.keys(value.screens);
   if (!screenIds.length || screenIds.length > 24 || !SCREEN_ID.test(value.initial) || !Object.hasOwn(value.screens, value.initial)) {
     throw new Error('開始画面または画面数が不正です。');
@@ -85,10 +86,20 @@ function validateGameScreens(value) {
       throw new Error('TDSタイトルシーンのファイルまたはscene名が不正です。');
     }
   }
+  const screenDocument = (reference, extension) => {
+    if (reference === undefined) return;
+    if (typeof reference !== 'string' || reference.replaceAll('\\', '/') !== reference || !reference.startsWith('screens/') || reference.split('/').some(part => !part || part === '.' || part === '..') || !reference.toLowerCase().endsWith(extension)) {
+      throw new Error(`画面文書のパスが不正です: ${reference}`);
+    }
+  };
+  screenDocument(value.stylesheet, '.css');
+  screenDocument(value.controlSettings, '.txt');
   const roles = new Set();
   for (const [screenId, screen] of Object.entries(value.screens)) {
     if (!SCREEN_ID.test(screenId) || !screen || typeof screen !== 'object' || Array.isArray(screen)) throw new Error(`画面 '${screenId}' の定義が不正です。`);
-    if (typeof (screen.title ?? '') !== 'string' || typeof (screen.description ?? '') !== 'string' || (screen.description?.length || 0) > 2000 || typeof (screen.background ?? '') !== 'string' || !Array.isArray(screen.items) || screen.items.length > 100) throw new Error(`画面 '${screenId}' の項目が不正です。`);
+    if (typeof (screen.title ?? '') !== 'string' || typeof (screen.description ?? '') !== 'string' || (screen.description?.length || 0) > 2000 || typeof (screen.background ?? '') !== 'string' || screen.items !== undefined && (!Array.isArray(screen.items) || screen.items.length > 100) || !screen.template && !Array.isArray(screen.items)) throw new Error(`画面 '${screenId}' の項目が不正です。`);
+    screen.items ||= [];
+    screenDocument(screen.template, '.html');
     if (screen.role !== undefined) {
       if (!['save-slots', 'load-slots'].includes(screen.role) || roles.has(screen.role)) throw new Error(`画面 '${screenId}' のroleが不正または重複しています。`);
       roles.add(screen.role);
@@ -126,7 +137,7 @@ function validateGameScreens(value) {
       if (item.action === 'open-screen' && (typeof item.target !== 'string' || !Object.hasOwn(value.screens, item.target))) throw new Error(`ボタン '${item.id}' の遷移先画面がありません。`);
     }
   }
-  if (!value.titleScene && !value.screens[value.initial].items.some(item => item.action === 'start')) throw new Error('開始画面には「ゲーム開始」ボタンまたはTDSタイトルシーンが必要です。');
+  if (!value.titleScene && !value.screens[value.initial].template && !value.screens[value.initial].items.some(item => item.action === 'start')) throw new Error('開始画面には「ゲーム開始」ボタンまたはTDSタイトルシーンが必要です。');
   return value;
 }
 

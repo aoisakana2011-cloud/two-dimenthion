@@ -365,9 +365,9 @@ scene main {
   assert.deepEqual(branchScopedBrowserLines, ['ready']);
   await fs.writeFile(path.join(scenesRoot, 'timed-helper.tds'), 'fn fade_for(duration: int) -> none { effect fade black duration }');
   const timedSource = `asset bg room = "asset/pixel.png"
-asset bgm music = "asset/tone.wav"
+asset bgm music = "asset/tone.wav" volume 0.6
 asset se click = "asset/tone.wav"
-asset voice greeting = "asset/tone.wav"
+asset voice greeting = "asset/tone.wav" volume 0.4
 asset video clip = "asset/clip.mp4"
 character timed_hero {
   name = "Timed Hero"
@@ -382,11 +382,13 @@ scene main {
       show timed_hero.normal left fade 10
       move character timed_hero by x+5 y-3 over 10
       play video clip async
-      play bgm music crossfade 900
-      play se click
-      play voice greeting async
+      volume voice 0.35
+      volume bgm 0.45
+      play bgm music volume 0.55 crossfade 900
+      play se click volume 0.25
+      play voice greeting volume 0.5 async
       timed.fade_for(duration)
-      play voice greeting blocking
+      play voice greeting volume 0.5 blocking
     }
     "skip" { wait 1 }
   }
@@ -400,7 +402,8 @@ scene main {
   const timedChoiceBodyLine = timedSource.split('\n').findIndex(line => line.trim() === '"run" {') + 1;
   const timedBrowserCommands = [];
   let timedBrowserAtDialogue = null;
-  const presentationCommandNames = new Set(['bg', 'bgm', 'show', 'hide', 'move', 'play', 'clear', 'effect', 'say', 'wait']);
+  const presentationCommandNames = new Set(['bg', 'bgm', 'show', 'hide', 'move', 'play', 'volume', 'clear', 'effect', 'say', 'wait']);
+  const stableFloat = value => Math.round(Number(value) * 1e6) / 1e6;
   const toPresentationSnapshot = state => ({
     logicalTimeMs: state.logicalTimeMs,
     background: state.background ? { asset: state.background.asset, offsetX: state.background.offsetX || 0, offsetY: state.background.offsetY || 0 } : null,
@@ -411,11 +414,31 @@ scene main {
     images: Object.values(state.images).map(image => ({
       asset: image.asset, slot: image.slot, opacity: 1, offsetX: 0, offsetY: 0, visualOrder: image.visualOrder,
     })).sort((left, right) => left.asset.localeCompare(right.asset)),
-    bgm: state.audio.bgm ? { asset: state.audio.bgm.asset, transition: state.audio.bgm.transition.status } : null,
+    bgm: state.audio.bgm ? { asset: state.audio.bgm.asset, transition: state.audio.bgm.transition.status, ...(state.audio.bgm.transition.status === 'complete' ? { gain: stableFloat(state.audio.bgm.gain) } : {}) } : null,
+    audio: {
+      volumes: Object.fromEntries(Object.entries(state.audio.volumes).map(([kind, gain]) => [kind, stableFloat(gain)])),
+      volumeOverrides: Object.fromEntries(Object.entries(state.audio.volumeOverrides).map(([kind, gain]) => [kind, stableFloat(gain)])),
+    },
+    ui: { dialogOpacity: state.ui.dialogOpacity },
     activeMedia: [...state.audio.se.map(({ asset }) => ({ kind: 'se', asset })), ...state.audio.voices.map(({ asset }) => ({ kind: 'voice', asset }))]
       .sort((left, right) => `${left.kind}:${left.asset}`.localeCompare(`${right.kind}:${right.asset}`)),
     effect: state.effects.find(item => item.transition.status === 'running')?.type || null,
   });
+  const normalizeNativePresentationTrace = trace => trace.map(item => ({
+    ...item,
+    state: {
+      ...item.state,
+      bgm: item.state.bgm ? {
+        asset: item.state.bgm.asset,
+        transition: item.state.bgm.transition,
+        ...(item.state.bgm.transition === 'complete' ? { gain: stableFloat(item.state.bgm.gain) } : {}),
+      } : null,
+      audio: {
+        volumes: Object.fromEntries(Object.entries(item.state.audio.volumes).map(([kind, gain]) => [kind, stableFloat(gain)])),
+        volumeOverrides: Object.fromEntries(Object.entries(item.state.audio.volumeOverrides).map(([kind, gain]) => [kind, stableFloat(gain)])),
+      },
+    },
+  }));
   const failureSource = `asset bg room = "asset/pixel.png"
 character hero {
   name = "Hero"
@@ -748,8 +771,8 @@ scene main {
         commandLog.push({ name, args });
         if (name === 'play' && args[0] === 'bgm') bgmTransitionId = operation.transitionId;
         if (name === 'play' && args[0] === 'video') setTimeout(() => runtime.completeAction(operation.actionId), 400);
-        if (name === 'play' && (args[0] === 'se' || args[0] === 'voice') && args[2] !== 'blocking') concurrentAudioIds.push(operation.actionId);
-        if (name === 'play' && args[0] === 'voice' && args[2] === 'blocking') {
+        if (name === 'play' && (args[0] === 'se' || args[0] === 'voice') && !args.includes('blocking')) concurrentAudioIds.push(operation.actionId);
+        if (name === 'play' && args[0] === 'voice' && args.includes('blocking')) {
           await new Promise(resolve => setTimeout(resolve, 1050));
           if (bgmTransitionId) runtime.completeTransition(bgmTransitionId);
           for (const actionId of concurrentAudioIds) runtime.completeAction(actionId);
@@ -796,9 +819,11 @@ scene main {
   assert.equal(timedDebugStates.effect.background.asset, 'room');
   assert.deepEqual([timedDebugStates.effect.characters.timed_hero.offsetX, timedDebugStates.effect.characters.timed_hero.offsetY], [5, -3]);
   assert.equal(timedDebugStates.effect.audio.bgm.transition.status, 'running');
+  assert.deepEqual(timedDebugStates.effect.audio.volumeOverrides, { voice: 0.35, bgm: 0.45 });
   assert.equal(Object.values(timedDebugStates.effect.actions).filter(action => action.kind === 'se').length, 1);
   assert.equal(Object.values(timedDebugStates.effect.actions).filter(action => action.kind === 'voice' && !action.blocking).length, 1);
   assert.ok(Object.values(timedDebugStates.say.actions).some(action => action.kind === 'voice' && action.blocking && action.status === 'complete'));
+  assert.equal(timedDebugStates.say.audio.bgm.gain, 0.55, 'a play-line float overrides both the scenario channel baseline and asset default');
   const timedDebugNative = spawnSync(exe, [timedPackagePath, '--headless', '--debug-start', 'timed-main.tds', 'main', String(timedChoiceBodyLine), '{}'], { encoding: 'utf8', timeout: 10000 });
   assert.equal(timedDebugNative.status, 0, timedDebugNative.stderr || timedDebugNative.error?.message);
   assert.deepEqual(JSON.parse(timedDebugNative.stdout).commands, toJsonValue(timedDebugCommands), 'debug-start within a selected choice branch must preserve the include call and timed state change in both runtimes');
@@ -806,8 +831,9 @@ scene main {
     ['bg', 'room'], ['show', 'timed_hero.normal', 'left', 'fade', 10n],
     ['move', 'character', 'timed_hero', 'by', 'x+5', 'y-3', 'over', 10n],
     ['play', 'video', 'clip', 'async'],
-    ['play', 'bgm', 'music', 'crossfade', 900n], ['play', 'se', 'click'], ['play', 'voice', 'greeting', 'async'],
-    ['effect', 'fade', 'black', 45n], ['play', 'voice', 'greeting', 'blocking'],
+    ['volume', 'voice', 0.35], ['volume', 'bgm', 0.45],
+    ['play', 'bgm', 'music', 'volume', 0.55, 'crossfade', 900n], ['play', 'se', 'click', 'volume', 0.25], ['play', 'voice', 'greeting', 'volume', 0.5, 'async'],
+    ['effect', 'fade', 'black', 45n], ['play', 'voice', 'greeting', 'volume', 0.5, 'blocking'],
     ['say', 'narrator', 'continued after the blocking effect'], ['clear', 'bgm'],
   ]);
   const timedStart = Date.now();
@@ -823,9 +849,10 @@ scene main {
   const timedDebugPlayback = JSON.parse(timedDebugVisual.stdout);
   assert.equal(timedDebugPlayback.bgmCrossfadeCompletedDuringBlockingVoice, true, 'the nonblocking BGM transition must complete while the start-line branch waits for Voice');
   assert.ok(timedDebugPlayback.playbackTimings.some(item => item.type === 'voice' && item.mode === 'blocking' && item.elapsedMs >= 800), 'the selected debug branch must block for the Voice asset');
-  assert.deepEqual(timedDebugTrace, timedDebugPlayback.presentationTrace,
+  const normalizedTimedNativeTrace = normalizeNativePresentationTrace(timedDebugPlayback.presentationTrace);
+  assert.deepEqual(timedDebugTrace, normalizedTimedNativeTrace,
     'Browser SceneState and Native rendered state must match after every debug-start command, including logical time, visible sprites, active audio, transitions and clears');
-  const blockingVoiceLine = timedSource.split('\n').findIndex(line => line.trim() === 'play voice greeting blocking') + 1;
+  const blockingVoiceLine = timedSource.split('\n').findIndex(line => line.trim() === 'play voice greeting volume 0.5 blocking') + 1;
   assert.ok(blockingVoiceLine > 0, 'the timed fixture must retain a source line for its blocking Voice command');
   const voiceStartCommands = [], voiceStartTrace = [];
   const voiceStartStates = {};
@@ -835,7 +862,7 @@ scene main {
   await voiceStartBrowser.run(timedPackage.program, { scene: 'main', line: blockingVoiceLine });
   assert.equal(voiceStartChoiceCalled, false, 'a start line inside the selected choice body must bypass the choice prompt');
   assert.deepEqual(voiceStartCommands.map(({ name, args }) => [name, ...args]), [
-    ['play', 'voice', 'greeting', 'blocking'], ['say', 'narrator', 'continued after the blocking effect'], ['clear', 'bgm'],
+    ['play', 'voice', 'greeting', 'volume', 0.5, 'blocking'], ['say', 'narrator', 'continued after the blocking effect'], ['clear', 'bgm'],
   ], 'starting at the blocking Voice line must skip earlier timed effects but retain following scene commands');
   assert.ok(Object.values(voiceStartStates.play.actions).some(action => action.kind === 'voice' && action.blocking && action.status === 'complete'),
     'debug-start must wait for and complete the selected blocking Voice');
@@ -917,7 +944,8 @@ scene next {
     'the retained media history marks both nonblocking tracks complete rather than deleting their audit records');
   const transferNative = spawnSync(exe, [transferPackagePath, '--smoke', '--debug-start', 'main.tds', 'main', String(transferLine), '{}'], { encoding: 'utf8', timeout: 15000, env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' } });
   assert.equal(transferNative.status, 0, transferNative.stderr || transferNative.error?.message);
-  assert.deepEqual(JSON.parse(transferNative.stdout).presentationTrace, transferBrowserTrace,
+  const normalizedTransferNativeTrace = normalizeNativePresentationTrace(JSON.parse(transferNative.stdout).presentationTrace);
+  assert.deepEqual(normalizedTransferNativeTrace, transferBrowserTrace,
     'debug-start must preserve background, sprite, BGM transition, naturally ended SE/Voice, and blocking-effect time across external goto in Browser and Native');
   console.log(`PASS native SDL smoke: Voice ${playbackTime('voice', 'blocking')}ms blocking, SE ${playbackTime('se', 'nonblocking')}ms nonblocking, video ${playbackTime('video', 'blocking')}ms blocking/${playbackTime('video', 'async')}ms async, BGM crossfade ${crossfades.map(item => `${item.elapsedMs}ms`).join('/')}; debug-start parity`);
   await fs.rm(root, { recursive: true, force: true });

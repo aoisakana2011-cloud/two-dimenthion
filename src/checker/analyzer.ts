@@ -1,6 +1,6 @@
 import { Expr, ExternalCharacter, FunctionDef, NodeLocation, Script, Statement, ValueType } from '../parser';
 import { checkTypes, TypeCheckError } from './type-checker';
-import { isPureBuiltin } from '../language/builtins';
+import { isNonMutatingBuiltin, isPureBuiltin, isRuntimeStateApi } from '../language/builtins';
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info';
 
@@ -1395,7 +1395,7 @@ let activeGlobalNames: ReadonlySet<string> = new Set();
 const activeFunctionCallStack = new Set<string>();
 
 function callChangesState(name: string): boolean {
-  if (isPureBuiltin(name)) return false;
+  if (isNonMutatingBuiltin(name)) return false;
   const effects = activeFunctionEffects.get(name);
   return !effects || effects.has('*') || effects.size > 0;
 }
@@ -1532,8 +1532,8 @@ function functionEffects(functions: readonly FunctionDef[], globals: ReadonlySet
           const target = statement.target;
           if (target.kind === 'variable' && !locals.has(target.name) && globals.has(target.name)) writes.add(target.name);
         }
-        if (statement.kind === 'call' && !isPureBuiltin(statement.name)) invoked.add(statement.name);
-        for (const expression of statementExpressions(statement)) expressionCalls(expression).forEach((name) => { if (!isPureBuiltin(name)) invoked.add(name); });
+        if (statement.kind === 'call' && !isNonMutatingBuiltin(statement.name)) invoked.add(statement.name);
+        for (const expression of statementExpressions(statement)) expressionCalls(expression).forEach((name) => { if (!isNonMutatingBuiltin(name)) invoked.add(name); });
         for (const body of nested(statement)) walk(body, new Set(locals));
       }
     };
@@ -2030,7 +2030,129 @@ function analyzeVariableConstraints(statements: Statement[], file: string, out: 
   }
 }
 
-type CharacterPlacementState = Map<string, string>;
+interface CharacterPlacementState {
+  slots: Map<string, string>;
+  presence: Map<string, boolean>;
+  presenceDependencies: Map<string, Set<string>>;
+}
+
+function characterNameFact(name: string): string { return `character:${name}`; }
+function characterExpressionFact(expression: Expr): string { return `expression:${expressionKey(expression)}`; }
+
+function isStableCharacterExpression(expression: Expr): boolean {
+  if (expression.kind === 'literal') return typeof expression.value === 'string';
+  if (expression.kind === 'variable') return true;
+  if (expression.kind === 'binary' && expression.operator === '+') return isStableCharacterExpression(expression.left) && isStableCharacterExpression(expression.right);
+  if (expression.kind === 'index') return isStableCharacterExpression(expression.target) && isStableCharacterExpression(expression.key);
+  return false;
+}
+
+function characterExpressionVariables(expression: Expr, result = new Set<string>()): Set<string> {
+  if (expression.kind === 'variable') result.add(expression.name);
+  else if (expression.kind === 'binary') {
+    characterExpressionVariables(expression.left, result);
+    characterExpressionVariables(expression.right, result);
+  } else if (expression.kind === 'unary') characterExpressionVariables(expression.value, result);
+  else if (expression.kind === 'index') {
+    characterExpressionVariables(expression.target, result);
+    characterExpressionVariables(expression.key, result);
+  } else if (expression.kind === 'call') expression.args.forEach((argument) => characterExpressionVariables(argument, result));
+  else if (expression.kind === 'list') expression.items.forEach((item) => characterExpressionVariables(item, result));
+  else if (expression.kind === 'dict') expression.entries.forEach((entry) => characterExpressionVariables(entry.value, result));
+  return result;
+}
+
+function invalidateCharacterExpressionFacts(state: CharacterPlacementState, variables?: ReadonlySet<string>): void {
+  for (const [fact, dependencies] of state.presenceDependencies) {
+    if (!variables || [...dependencies].some((name) => variables.has(name))) {
+      state.presence.delete(fact);
+      state.presenceDependencies.delete(fact);
+    }
+  }
+}
+
+function assignedRootVariable(target: Extract<Statement, { kind: 'set' | 'unset' }>['target']): string | undefined {
+  let current: Expr = target;
+  while (current.kind === 'index') current = current.target;
+  return current.kind === 'variable' ? current.name : undefined;
+}
+
+function runtimeCharacterQueryKey(expression: Expr): string | undefined {
+  if (expression.kind !== 'call' || expression.name !== 'runtime.state.characters.exists' || expression.args.length !== 1) return undefined;
+  const target = expression.args[0];
+  if (target.kind === 'literal' && typeof target.value === 'string') return characterNameFact(target.value);
+  return isStableCharacterExpression(target) ? characterExpressionFact(target) : undefined;
+}
+
+function knownCharacterCondition(expression: Expr, state: CharacterPlacementState): boolean | undefined {
+  const key = runtimeCharacterQueryKey(expression);
+  if (key) return state.presence.get(key);
+  if (expression.kind === 'unary' && expression.operator === 'not') {
+    const value = knownCharacterCondition(expression.value, state);
+    return value === undefined ? undefined : !value;
+  }
+  if (expression.kind === 'binary' && expression.operator === 'and') {
+    const left = knownCharacterCondition(expression.left, state), right = knownCharacterCondition(expression.right, state);
+    if (left === false || right === false) return false;
+    if (left === true && right === true) return true;
+  }
+  if (expression.kind === 'binary' && expression.operator === 'or') {
+    const left = knownCharacterCondition(expression.left, state), right = knownCharacterCondition(expression.right, state);
+    if (left === true || right === true) return true;
+    if (left === false && right === false) return false;
+  }
+  return undefined;
+}
+
+function refineCharacterCondition(state: CharacterPlacementState, expression: Expr, truth: boolean): CharacterPlacementState {
+  const key = runtimeCharacterQueryKey(expression);
+  if (key) {
+    state.presence.set(key, truth);
+    if (key.startsWith('expression:')) state.presenceDependencies.set(key, characterExpressionVariables(expression.kind === 'call' ? expression.args[0] : expression));
+  }
+  else if (expression.kind === 'unary' && expression.operator === 'not') refineCharacterCondition(state, expression.value, !truth);
+  else if (expression.kind === 'binary' && expression.operator === 'and' && truth) {
+    refineCharacterCondition(state, expression.left, true);
+    refineCharacterCondition(state, expression.right, true);
+  } else if (expression.kind === 'binary' && expression.operator === 'or' && !truth) {
+    refineCharacterCondition(state, expression.left, false);
+    refineCharacterCondition(state, expression.right, false);
+  }
+  return state;
+}
+
+function functionMayChangeCharacterPresence(name: string, visiting = new Set<string>()): boolean {
+  if (isPureBuiltin(name) || isRuntimeStateApi(name)) return false;
+  const fn = activeFunctionDefinitions.get(name);
+  if (!fn) return true;
+  if (visiting.has(name)) return false;
+  const next = new Set(visiting); next.add(name);
+  const visit = (statements: Statement[]): boolean => statements.some((statement) => {
+    if (statement.kind === 'command' && (statement.name === 'show' || statement.name === 'hide')) return true;
+    if (statement.kind === 'call' && functionMayChangeCharacterPresence(statement.name, next)) return true;
+    if (statementExpressions(statement).some((expression) => [...expressionCalls(expression)].some(call => functionMayChangeCharacterPresence(call, next)))) return true;
+    return nested(statement).some(visit);
+  });
+  return visit(fn.body);
+}
+
+function cloneCharacterPlacementState(state: CharacterPlacementState): CharacterPlacementState {
+  return {
+    slots: new Map(state.slots),
+    presence: new Map(state.presence),
+    presenceDependencies: new Map([...state.presenceDependencies].map(([fact, names]) => [fact, new Set(names)])),
+  };
+}
+
+function mergeCharacterPlacementStates(states: CharacterPlacementState[]): CharacterPlacementState {
+  const merged = cloneCharacterPlacementState(states[0]);
+  for (const [slot, character] of merged.slots) if (states.some((state) => state.slots.get(slot) !== character)) merged.slots.delete(slot);
+  for (const [fact, value] of merged.presence) if (states.some((state) => state.presence.get(fact) !== value)) {
+    merged.presence.delete(fact);
+    merged.presenceDependencies.delete(fact);
+  }
+  return merged;
+}
 
 /**
  * Track only statically known character/position pairs.  The runtime replaces
@@ -2039,62 +2161,101 @@ type CharacterPlacementState = Map<string, string>;
  * are deliberately ignored to avoid claiming more certainty than the script
  * provides.
  */
-function analyzeCharacterPlacements(statements: Statement[], file: string, out: Diagnostic[], initial = new Map<string, string>(), emitted = new Set<string>()): CharacterPlacementState[] {
+function analyzeCharacterPlacements(statements: Statement[], file: string, out: Diagnostic[], initial: CharacterPlacementState = { slots: new Map(), presence: new Map(), presenceDependencies: new Map() }, emitted = new Set<string>()): CharacterPlacementState[] {
   const analyze = (items: Statement[], incoming: CharacterPlacementState): CharacterPlacementState[] => {
-    let states: CharacterPlacementState[] = [new Map(incoming)];
+    let states: CharacterPlacementState[] = [cloneCharacterPlacementState(incoming)];
     for (const statement of items) {
       const next: CharacterPlacementState[] = [];
       for (const state of states) {
+        const calledFunctions = statementExpressions(statement).flatMap((expression) => [...expressionCalls(expression)]);
+        if (statement.kind === 'call') calledFunctions.push(statement.name);
+        for (const name of calledFunctions) {
+          if (functionMayChangeCharacterPresence(name)) {
+            state.slots.clear();
+            state.presence.clear();
+            state.presenceDependencies.clear();
+          } else if (!isNonMutatingBuiltin(name)) {
+            const writes = activeFunctionEffects.get(name);
+            invalidateCharacterExpressionFacts(state, writes && !writes.has('*') ? writes : undefined);
+          }
+        }
+        if (statement.kind === 'declare') invalidateCharacterExpressionFacts(state, new Set([statement.name]));
+        else if (statement.kind === 'set' || statement.kind === 'unset') {
+          const root = assignedRootVariable(statement.target);
+          if (root) invalidateCharacterExpressionFacts(state, new Set([root]));
+        }
         const command = statement.kind === 'command' ? statement : undefined;
         if (command?.name === 'show' && command.args[0]?.kind === 'literal' && typeof command.args[0].value === 'string'
           && command.args[0].value !== 'image' && command.args[1]?.kind === 'literal' && typeof command.args[1].value === 'string') {
           const match = /^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(command.args[0].value);
           const position = command.args[1].value;
           if (match) {
-            const previous = state.get(position);
+            const previous = state.slots.get(position);
             const character = match[1];
             const key = `${statement.line ?? 1}:${statement.column ?? 1}:${position}:${character}:${previous ?? ''}`;
             if (previous && previous !== character && !emitted.has(key)) {
               emitted.add(key);
               out.push(diagnostic(file, 'character-slot-conflict', 'warning', `position '${position}' already contains character '${previous}'; showing '${character}' replaces it`, statement));
             }
-            state.set(position, character);
+            invalidateCharacterExpressionFacts(state);
+            if (previous && previous !== character) state.presence.set(characterNameFact(previous), false);
+            state.slots.set(position, character);
+            state.presence.set(characterNameFact(character), true);
           }
         } else if (command?.name === 'hide' && command.args[0]?.kind === 'literal' && typeof command.args[0].value === 'string') {
           const character = command.args[0].value;
-          if (![...state.values()].includes(character)) {
+          if (![...state.slots.values()].includes(character)) {
             const key = `${statement.line ?? 1}:${statement.column ?? 1}:${character}`;
             if (!emitted.has(key)) {
               emitted.add(key);
               out.push(diagnostic(file, 'hide-unshown-character', 'warning', `character '${character}' is hidden before it is statically shown`, statement));
             }
           }
-          for (const [position, occupant] of state) if (occupant === character) state.delete(position);
+          invalidateCharacterExpressionFacts(state);
+          state.presence.set(characterNameFact(character), false);
+          for (const [position, occupant] of state.slots) if (occupant === character) state.slots.delete(position);
         } else if (command?.name === 'move' && command.args[0]?.kind === 'literal' && command.args[0].value === 'character'
-          && command.args[1]?.kind === 'literal' && typeof command.args[1].value === 'string'
-          && ![...state.values()].includes(command.args[1].value)) {
-          const character = command.args[1].value;
-          const key = `${statement.line ?? 1}:${statement.column ?? 1}:${character}`;
-          if (!emitted.has(key)) {
-            emitted.add(key);
-            out.push(diagnostic(file, 'move-unshown-character', 'warning', `character '${character}' is moved before it is statically shown`, statement));
+          && command.args[1]) {
+          const target = command.args[1];
+          const character = target.kind === 'literal' && typeof target.value === 'string' ? target.value : undefined;
+          const fact = character === undefined ? characterExpressionFact(target) : characterNameFact(character);
+          const known = state.presence.get(fact);
+          if (known === false || known === undefined && (character === undefined || ![...state.slots.values()].includes(character))) {
+            const label = character ?? (target.kind === 'variable' ? target.name : 'dynamic character');
+            const key = `${statement.line ?? 1}:${statement.column ?? 1}:${label}`;
+            if (!emitted.has(key)) {
+              emitted.add(key);
+              const message = character === undefined
+                ? `dynamic character '${label}' is moved without proof that it is currently visible; guard it with runtime.state.characters.exists(...)`
+                : `character '${label}' is moved before it is statically shown`;
+              out.push(diagnostic(file, 'move-unshown-character', 'warning', message, statement));
+            }
           }
         }
 
         if (statement.kind === 'if') {
-          const branchStates: CharacterPlacementState[] = [];
-          branchStates.push(...analyze(statement.body, new Map(state)));
-          for (const branch of statement.elseIf) branchStates.push(...analyze(branch.body, new Map(state)));
-          if (statement.otherwise.length) branchStates.push(...analyze(statement.otherwise, new Map(state)));
-          else branchStates.push(new Map(state));
-          next.push(...branchStates);
+          const branches = [{ expression: statement.condition.expression, body: statement.body }, ...statement.elseIf.map((branch) => ({ expression: branch.condition.expression, body: branch.body }))];
+          let remaining: CharacterPlacementState[] = [cloneCharacterPlacementState(state)];
+          for (const branch of branches) {
+            const unmatched: CharacterPlacementState[] = [];
+            for (const candidate of remaining) {
+              const value = knownCharacterCondition(branch.expression, candidate);
+              if (value !== false) next.push(...analyze(branch.body, refineCharacterCondition(cloneCharacterPlacementState(candidate), branch.expression, true)));
+              if (value !== true) unmatched.push(refineCharacterCondition(candidate, branch.expression, false));
+            }
+            remaining = unmatched;
+          }
+          if (statement.otherwise.length) for (const candidate of remaining) next.push(...analyze(statement.otherwise, candidate));
+          else next.push(...remaining);
         } else if (statement.kind === 'choice') {
           if (!statement.options.length) next.push(state);
-          for (const option of statement.options) next.push(...analyze(option.body, new Map(state)));
+          for (const option of statement.options) next.push(...analyze(option.body, cloneCharacterPlacementState(state)));
         } else if (statement.kind === 'while' || statement.kind === 'for' || statement.kind === 'forEach') {
           // A loop may execute zero times. Keep the incoming state and also
           // inspect one body execution for conflicts inside the loop.
-          next.push(state, ...analyze(statement.body, new Map(state)));
+          const bodyState = cloneCharacterPlacementState(state);
+          if (statement.kind === 'for' || statement.kind === 'forEach') invalidateCharacterExpressionFacts(bodyState, new Set([statement.name]));
+          next.push(state, ...analyze(statement.body, bodyState));
         } else if (statement.kind !== 'goto' && statement.kind !== 'return') {
           next.push(state);
         }
@@ -2107,10 +2268,13 @@ function analyzeCharacterPlacements(statements: Statement[], file: string, out: 
       // Avoid path explosion while preserving all facts common to the paths.
       const unique = new Map<string, CharacterPlacementState>();
       for (const state of states) {
-        const key = [...state.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([position, character]) => `${position}=${character}`).join('|');
+        const slots = [...state.slots.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([position, character]) => `${position}=${character}`).join('|');
+        const presence = [...state.presence.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([fact, value]) => `${fact}=${value}`).join('|');
+        const key = `${slots}#${presence}`;
         unique.set(key, state);
       }
-      states = [...unique.values()].slice(0, 64);
+      states = [...unique.values()];
+      if (states.length > 64) states = [mergeCharacterPlacementStates(states)];
     }
     return states;
   };
@@ -2197,7 +2361,16 @@ function analyzeAssetReplacements(
             : undefined;
         const assetName = asset?.kind === 'literal' && typeof asset.value === 'string' ? asset.value : undefined;
         if (assetName !== undefined) {
-          if (current !== undefined && current !== assetName) {
+          const fadeDuration = command?.args[3];
+          const positiveFadeDuration = fadeDuration?.kind === 'literal'
+            && ((typeof fadeDuration.value === 'number' && fadeDuration.value > 0)
+              || (typeof fadeDuration.value === 'bigint' && fadeDuration.value > 0n));
+          const intentionalBgmCrossfade = kind === 'bgm'
+            && command?.name === 'play'
+            && command.args[2]?.kind === 'literal'
+            && command.args[2].value === 'crossfade'
+            && positiveFadeDuration;
+          if (current !== undefined && current !== assetName && !intentionalBgmCrossfade) {
             const key = `${statement.line ?? 1}:${statement.column ?? 1}:${kind}:${current}:${assetName}`;
             if (!emitted.has(key)) {
               emitted.add(key);

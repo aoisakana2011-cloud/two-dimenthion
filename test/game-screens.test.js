@@ -32,3 +32,17 @@ test('front-end validation constrains title scene paths, slot geometry, and butt
   config.screens.title.items[0].display = 'animation';
   assert.throws(() => validateGameScreens(config));
 });
+
+test('HTML template screens may omit legacy JSON buttons while JSON-only screens still require them', () => {
+  const templated = {
+    version: 1,
+    initial: 'title',
+    screens: { title: { template: 'screens/title.html', background: '' } },
+  };
+  assert.deepEqual(validateGameScreens(templated).screens.title.items, []);
+  assert.throws(() => validateGameScreens({
+    version: 1,
+    initial: 'title',
+    screens: { title: { background: '', items: [] } },
+  }), /ゲーム開始/);
+});

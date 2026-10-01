@@ -5702,3 +5702,130 @@ events:
         - "/bin"
       CMAKE_FIND_ROOT_PATH: "C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows"
 ...
+
+---
+events:
+  -
+    kind: "find_package-v1"
+    backtrace:
+      - ".vcpkg/scripts/buildsystems/vcpkg.cmake:939 (_find_package)"
+      - "CMakeLists.txt:11 (find_package)"
+    name: "unofficial-webview2"
+    configs:
+      -
+        filename: "unofficial-webview2Config.cmake"
+        kind: "cmake"
+      -
+        filename: "unofficial-webview2-config.cmake"
+        kind: "cmake"
+    version_request:
+      exact: false
+    settings:
+      required: "required_explicit"
+      quiet: false
+      global: false
+      policy_scope: true
+      bypass_provider: false
+      names:
+        - "unofficial-webview2"
+      path_suffixes:
+        - ""
+      paths:
+        CMAKE_FIND_USE_CMAKE_PATH: true
+        CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+        CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+        CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+        CMAKE_FIND_USE_INSTALL_PREFIX: true
+        CMAKE_FIND_USE_PACKAGE_ROOT_PATH: true
+        CMAKE_FIND_USE_CMAKE_PACKAGE_REGISTRY: true
+        CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY: true
+        CMAKE_FIND_ROOT_PATH_MODE: "BOTH"
+    candidates:
+      -
+        path: "C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/unofficial-webview2Config.cmake"
+        mode: "config"
+        reason: "no_exist"
+      -
+        path: "C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/unofficial-webview2-config.cmake"
+        mode: "config"
+        reason: "no_exist"
+      -
+        path: "C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/unofficial-webview2Config.cmake"
+        mode: "config"
+        reason: "no_exist"
+      -
+        path: "C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug/unofficial-webview2-config.cmake"
+        mode: "config"
+        reason: "no_exist"
+      -
+        path: "C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/unofficial-webview2Config.cmake"
+        mode: "config"
+        reason: "no_exist"
+      -
+        path: "C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/unofficial-webview2-config.cmake"
+        mode: "config"
+        reason: "no_exist"
+      -
+        path: "C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/share/unofficial-webview2/unofficial-webview2Config.cmake"
+        mode: "config"
+        reason: "no_exist"
+    found:
+      path: "C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/share/unofficial-webview2/unofficial-webview2-config.cmake"
+      mode: "config"
+      version: ""
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug"
+        - "C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows"
+      ENV{PATH}:
+        - "C:\\Users\\Owner\\Desktop\\Novel Editer\\node_modules\\.bin"
+        - "C:\\Users\\Owner\\Desktop\\node_modules\\.bin"
+        - "C:\\Users\\Owner\\node_modules\\.bin"
+        - "C:\\Users\\node_modules\\.bin"
+        - "C:\\node_modules\\.bin"
+        - "C:\\Program Files\\nodejs\\node_modules\\npm\\node_modules\\@npmcli\\run-script\\lib\\node-gyp-bin"
+        - "C:\\Users\\Owner\\.codex\\tmp\\arg0\\codex-arg0uNFxvb"
+        - "C:\\VulkanSDK\\1.4.357.0\\Bin"
+        - "C:\\Users\\Owner\\AppData\\Local\\Programs\\Python\\Python311"
+        - "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.3\\bin\\x64"
+        - "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.3\\bin"
+        - "C:\\WINDOWS\\system32"
+        - "C:\\WINDOWS"
+        - "C:\\WINDOWS\\System32\\Wbem"
+        - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\WINDOWS\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\NvDLISR"
+        - "C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common"
+        - "C:\\Program Files\\Microsoft SQL Server\\170\\Tools\\Binn\\"
+        - "C:\\Program Files\\Microsoft SQL Server\\Client SDK\\ODBC\\170\\Tools\\Binn\\"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
+        - "C:\\Program Files\\CMake\\bin"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\Git-Xet\\"
+        - "C:\\Program Files\\dotnet\\"
+        - "C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2026.2.1\\"
+        - "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64"
+        - "C:\\Program Files\\nodejs\\"
+        - "C:\\Program Files\\Tailscale\\"
+        - "C:\\msys64\\ucrt64\\bin"
+        - "C:\\Users\\Owner\\AppData\\Local\\Programs\\Microsoft VS Code\\bin"
+        - "C:\\Users\\Owner\\AppData\\Local\\Programs\\Ollama"
+        - "C:\\Users\\Owner\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin"
+        - "C:\\Users\\Owner\\.dotnet\\tools"
+        - "C:\\Users\\Owner\\Downloads\\ngrok-v3-stable-windows-amd64"
+        - "C:\\Users\\Owner\\Downloads\\ffmpeg-9.0.1-full_build\\ffmpeg\\bin"
+        - "C:\\Users\\Owner\\AppData\\Roaming\\npm"
+        - "C:\\Users\\Owner\\AppData\\Local\\Programs\\Antigravity IDE\\bin"
+        - "C:\\Program Files\\Tesseract-OCR"
+        - "C:\\Users\\Owner\\AppData\\Local\\Programs\\Devin\\bin"
+        - "C:\\Users\\Owner\\AppData\\Roaming\\Programs\\Zero Install"
+        - "c:\\Users\\Owner\\.vscode\\extensions\\openai.chatgpt-26.917.62051-win32-x64\\bin\\windows-x86_64"
+      CMAKE_INSTALL_PREFIX: "C:/Program Files (x86)/novel_script_native"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "C:/Program Files"
+        - "C:/Program Files (x86)"
+        - "C:/Program Files/CMake"
+        - "C:/Program Files (x86)/novel_script_native"
+      CMAKE_FIND_ROOT_PATH: "C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows/debug;C:/Users/Owner/Desktop/Novel Editer/native/vcpkg_installed/x64-windows"
+...

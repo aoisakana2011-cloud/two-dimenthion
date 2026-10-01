@@ -597,7 +597,7 @@ function hasImpureCall(expression) {
     if (expression.kind === 'literal')
         return typeof expression.value === 'string' && hasInterpolation(expression.value);
     if (expression.kind === 'call')
-        return !(0, builtins_1.isPureBuiltin)(expression.name) || expression.args.some(hasImpureCall);
+        return !(0, builtins_1.isNonMutatingBuiltin)(expression.name) || expression.args.some(hasImpureCall);
     if (expression.kind === 'binary')
         return hasImpureCall(expression.left) || hasImpureCall(expression.right);
     if (expression.kind === 'unary')
@@ -857,7 +857,7 @@ function functionWrites(functions, globalNames) {
     const walk = (instructions, writes, invoked, locals = new Set()) => {
         const recordCall = (name) => { if (name === '*')
             globalNames.forEach((variable) => writes.add(variable));
-        else if (!(0, builtins_1.isPureBuiltin)(name))
+        else if (!(0, builtins_1.isNonMutatingBuiltin)(name))
             invoked.add(name); };
         for (const instruction of instructions) {
             if (instruction.op === 'declare') {

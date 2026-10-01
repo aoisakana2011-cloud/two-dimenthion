@@ -7,6 +7,7 @@ const { inferValueType } = require('../dist/checker/type-checker');
 const { projectLayout, projectOption, layoutForInput, entryFile, positionalArguments, assertProjectDirectory, ensureProjectDirectory } = require('./project-layout');
 const { readStaticVariables } = require('./static-variables');
 const { validateGameScreens } = require('../Edit/game-screens');
+const screenDocumentCompiler = require('../Edit/screen-document');
 
 async function projectGlobalVariables(scenesRoot, dataRoot) {
   const table = new Map();
@@ -175,11 +176,17 @@ async function pack(input, output, roots = {}) {
     if (path.resolve(themeSource) !== themeTarget) await fs.copyFile(themeSource, themeTarget);
     const theme = JSON.parse(await fs.readFile(themeSource, 'utf8'));
     if (theme.version !== 1) throw Error('Unsupported native UI theme version');
-    const themeDirectory = layout.legacySettings ? path.posix.dirname(sourceThemePath.replaceAll('\\', '/')) : '';
+    const themeDirectory = path.posix.dirname(nativeUi.native_ui_theme.replaceAll('\\', '/'));
+    const themedImagePath = (imageName) => {
+      const normalized = imageName.replaceAll('\\', '/').replace(/^\.\//, '');
+      return themeDirectory && themeDirectory !== '.' && (normalized === themeDirectory || normalized.startsWith(`${themeDirectory}/`))
+        ? normalized
+        : path.posix.join(themeDirectory, normalized);
+    };
     const themedImageNames = [theme?.dialog?.image, theme?.dialog?.nameplate?.image, theme?.choices?.image, theme?.choices?.activeImage].filter((value) => typeof value === 'string' && value.length > 0);
     const controlImageNames = (theme?.controls?.buttons || []).flatMap(button => [button.image, button.hoverImage]).filter((value) => typeof value === 'string' && value.length > 0);
     for (const [imageName, relative] of [
-      ...themedImageNames.map(imageName => [imageName, path.posix.join(themeDirectory, imageName)]),
+      ...themedImageNames.map(imageName => [imageName, themedImagePath(imageName)]),
       ...controlImageNames.map(imageName => [imageName, imageName]),
     ]) {
       const source = await inside(assetsRoot, relative);
@@ -202,7 +209,7 @@ async function pack(input, output, roots = {}) {
     }
     if (hasScreens) {
       const screensSource = await inside(screensRoot, screensPath);
-      const screens = withSaveLoadScreens(validateGameScreens(JSON.parse(await fs.readFile(screensSource, 'utf8'))));
+      let screens = withSaveLoadScreens(validateGameScreens(JSON.parse(await fs.readFile(screensSource, 'utf8'))));
       if (screens.titleScene && path.posix.normalize(screens.titleScene.file.replaceAll('\\', '/')).toLowerCase() === entry.toLowerCase()) {
         const selected = program.scenes.findIndex(scene => scene.name === screens.titleScene.scene);
         if (selected < 0) throw new Error(`Title scene '${screens.titleScene.scene}' was not found in '${entry}'`);
@@ -217,6 +224,16 @@ async function pack(input, output, roots = {}) {
         }
         screens.canvas = { width: display.width, height: display.height };
       }
+      const references = new Set([screens.stylesheet, screens.controlSettings, ...Object.values(screens.screens).map(screen => screen.template)].filter(Boolean));
+      const documents = {};
+      for (const reference of references) {
+        const normalized = String(reference).replaceAll('\\', '/');
+        const extension = path.posix.extname(normalized).toLowerCase();
+        if (!normalized.startsWith('screens/') || normalized.split('/').some(part => !part || part === '.' || part === '..') || !['.html', '.css', '.txt'].includes(extension) || reference === screens.stylesheet && extension !== '.css' || reference === screens.controlSettings && extension !== '.txt' || Object.values(screens.screens).some(screen => screen.template === reference) && extension !== '.html') throw new Error(`Invalid screen document path: ${reference}`);
+        documents[reference] = await fs.readFile(await inside(layout.settingsRoot, normalized), 'utf8');
+      }
+      screens = screenDocumentCompiler.compileGameScreens(screens, documents, screens.canvas);
+      if (screens.saveId) nativeUi.save_id = screens.saveId;
       const target = path.resolve(path.dirname(destination), 'asset', 'ui', 'game-screens.json');
       await ensureOutputDirectory(path.dirname(target));
       await assertOutputFile(target);
@@ -228,6 +245,13 @@ async function pack(input, output, roots = {}) {
       nativeUi.game_screens = 'ui/game-screens.json';
       for (const screen of Object.values(screens.screens)) {
         const imageNames = [screen.background, screen.slotStyle?.image, screen.slotStyle?.hoverImage, ...screen.items.flatMap(item => [item.image || '', item.hoverImage || ''])].filter(Boolean);
+        const collectTreeImages = node => {
+          if (node.attrs?.src) imageNames.push(node.attrs.src);
+          const image = node.style?.['background-image'] || (String(node.style?.background || '').startsWith('url(') ? node.style.background : '');
+          for (const match of image.matchAll(/url\(["']?([^"')]+)["']?\)/g)) imageNames.push(match[1]);
+          for (const child of node.children || []) collectTreeImages(child);
+        };
+        for (const node of screen.uiTree || []) collectTreeImages(node);
         for (const imageName of imageNames) {
           const relative = imageName.replace(/^asset[\\/]/i, '').replaceAll('\\', '/');
           const imageSource = await inside(assetsRoot, relative);

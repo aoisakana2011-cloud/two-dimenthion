@@ -557,11 +557,15 @@ html.electron-desktop .menu-bar, html.electron-desktop .menu-popup, html.electro
 .game-screen-inspector label { display:grid; grid-template-columns:68px minmax(0,1fr); align-items:center; gap:7px; color:#aaa; font-size:10px; }
 .game-screen-inspector input,.game-screen-inspector select,.game-screen-inspector textarea,.game-screen-toolbar select { box-sizing:border-box; width:100%; min-width:0; height:26px; padding:3px 6px; border:1px solid #454545; border-radius:2px; color:#ddd; background:#1f1f1f; font:11px "Segoe UI","Yu Gothic UI",sans-serif; }
 .game-screen-inspector textarea { height:72px; resize:vertical; }
+.game-screen-source { min-height:190px; height:190px !important; resize:vertical; font:12px/1.5 ui-monospace,Consolas,monospace !important; tab-size:2; white-space:pre; }
+.game-screen-source-css { min-height:150px; height:150px !important; }
 .game-screen-settings footer { flex:none; align-items:center; gap:12px; }
 .game-screen-status { flex:1; color:#9d9d9d; font-size:10px; }
 @media(max-width:760px) { .game-screen-workspace { grid-template-columns:minmax(0,1fr); overflow:auto; } .game-screen-preview { max-height:none; } .game-screen-inspector { max-height:220px; } }
 .player-ui-preview { position:relative; width:100%; margin-top:12px; overflow:hidden; border:1px solid #3c3c3c; background:linear-gradient(#243447,#10151d); user-select:none; }
-.player-ui-preview-dialog { position:absolute; box-sizing:border-box; border:1px dashed #75beff; background-repeat:no-repeat; background-size:100% 100%; cursor:move; }
+.player-ui-preview-dialog { position:absolute; box-sizing:border-box; border:1px dashed #75beff; background-repeat:no-repeat; background-size:100% 100%; cursor:move; isolation:isolate; }
+.player-ui-preview-dialog::before { content:""; position:absolute; inset:0; z-index:0; background:inherit; opacity:var(--preview-opacity,1); pointer-events:none; }
+.player-ui-preview-dialog>* { z-index:1; }
 .player-ui-preview-message { position:absolute; overflow:hidden; white-space:pre-wrap; pointer-events:none; }
 .player-ui-preview-speaker { position:absolute; display:grid; place-items:center; overflow:hidden; background-repeat:no-repeat; background-size:100% 100%; pointer-events:none; }
 .player-ui-preview-choice { position:absolute; display:grid; align-items:center; overflow:hidden; padding-left:8px; background-repeat:no-repeat; background-size:100% 100%; pointer-events:none; }

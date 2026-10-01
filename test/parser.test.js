@@ -321,6 +321,34 @@ test('supports explicit blocking and async voice playback modes', () => {
   assert.throws(() => checkTypes(parse('asset voice greeting = "asset/voice.wav"\nplay voice greeting later')), /voice/);
 });
 
+test('supports float audio defaults, persistent mix levels, and momentary playback overrides', () => {
+  const source = `
+asset bgm music = "asset/music.ogg" volume 0.75
+asset voice greeting = "asset/voice.wav" volume 0.5
+asset se click = "asset/click.wav"
+float momentary = 0.25
+scene main {
+  volume bgm 0.4
+  dialog opacity 0.8
+  say narrator "一行だけ" opacity 0.6
+  play voice greeting volume momentary blocking
+  play bgm music volume 0.9 crossfade 250
+  play se click volume 0.2
+}
+`;
+  const parsed = parse(source);
+  checkTypes(parsed);
+  const compiled = compile(parsed);
+  assert.equal(compiled.assets.find(asset => asset.name === 'music').volume, 0.75);
+  assert.equal(compiled.assets.find(asset => asset.name === 'greeting').volume, 0.5);
+  assert.equal(compiled.scenes[0].instructions.find(instruction => instruction.op === 'command' && instruction.name === 'say').args[2].value, 'opacity');
+  assert.throws(() => parse('asset bgm music = "asset/music.ogg" volume 1.2'), /0.0 から 1.0/);
+  assert.throws(() => checkTypes(parse('asset bgm music = "asset/music.ogg"\nscene main { play bgm music volume 2.0 }')), /0.0 から 1.0/);
+  assert.throws(() => checkTypes(parse('scene main { dialog opacity 1.5 }')), /0.0 から 1.0/);
+  assert.throws(() => checkTypes(parse('const float too_loud = 1.5\nscene main { volume bgm too_loud }')), /0.0 から 1.0/);
+  assert.throws(() => checkTypes(parse('const float too_opaque = 1.2\nscene main { say narrator "test" opacity too_opaque }')), /0.0 から 1.0/);
+});
+
 test('parses and type-checks named structs with field access', () => {
   const script = parse(`
     struct User {
@@ -767,6 +795,76 @@ test('warns about statically conflicting character slots without rejecting inten
   assert.equal(conflicts[0].severity, 'warning');
 });
 
+test('runtime character existence refines only reachable branches for dynamic move checks', () => {
+  const diagnostics = analyzeScript(parse(`
+fn guarded(id: str) -> none {
+  if runtime.state.characters.exists(id) {
+    move character (id) by x+1
+  } else {
+    move character (id) by x+1
+  }
+}
+character ayase {
+  name = "Ayase"
+  pose normal = "asset/ayase.png"
+}
+scene main {
+  show ayase.normal left
+  if runtime.state.characters.exists("ayase") {
+    move character "ayase" by x+1
+  } else {
+    move character "ayase" by x+1
+  }
+}`));
+  const warnings = diagnostics.filter(item => item.code === 'move-unshown-character');
+  assert.equal(warnings.length, 1, 'the false branch for the parameter is unsafe; the proven true and impossible branches are not');
+  assert.match(warnings[0].message, /id/);
+});
+
+test('character-presence path overflow joins facts instead of dropping feasible paths', () => {
+  const parameters = Array.from({ length: 7 }, (_, index) => `id${index + 1}: str`).join(', ');
+  const guards = Array.from({ length: 7 }, (_, index) => `if runtime.state.characters.exists(id${index + 1}) { wait 1 }`).join('\n');
+  const diagnostics = analyzeScript(parse(`fn stress(${parameters}) -> none {
+${guards}
+  if runtime.state.characters.exists(id1) { wait 1 }
+  else { move character id1 by x+1 }
+}`));
+  assert.ok(diagnostics.some(item => item.code === 'move-unshown-character'),
+    'after the state cap, the false id1 path must remain possible rather than being unsoundly discarded');
+});
+
+test('character-existence facts are invalidated by dependent writes but survive unrelated writes', () => {
+  const diagnostics = analyzeScript(parse(`
+global str target = "ayase"
+global int unrelated = 0
+character ayase {
+  name = "Ayase"
+  pose normal = "asset/ayase.png"
+}
+fn replace_target() -> none { set target = text.trim("ghost") }
+fn safe_with_unrelated_write(id: str) -> none {
+  if runtime.state.characters.exists(id) {
+    set unrelated = 1
+    move character (id) by x+1
+  }
+}
+scene main {
+  show ayase.normal left
+  if runtime.state.characters.exists(target) {
+    set target = text.trim("ghost")
+    move character (target) by x+1
+  }
+  set target = "ayase"
+  if runtime.state.characters.exists(target) {
+    replace_target()
+    move character (target) by x+1
+  }
+}`));
+  const warnings = diagnostics.filter(item => item.code === 'move-unshown-character');
+  assert.equal(warnings.length, 2, 'both a direct assignment and a called function that rewrites the queried value must invalidate the proof');
+  assert.ok(warnings.every(item => /target/.test(item.message)));
+});
+
 test('warns when hide targets a character that is not currently shown', () => {
   const diagnostics = analyzeScript(parse(`
     character hero {
@@ -926,11 +1024,13 @@ test('warns when background or BGM is replaced without an explicit clear', () =>
     asset bg second = "asset/second.png"
     asset bgm calm = "asset/calm.ogg"
     asset bgm tense = "asset/tense.ogg"
+    asset bgm transition = "asset/transition.ogg"
     scene main {
       bg first
       bg second
       bgm calm
       play bgm tense
+      play bgm transition crossfade 900
       clear bg
       clear bgm
       bg second
@@ -943,6 +1043,34 @@ test('warns when background or BGM is replaced without an explicit clear', () =>
   assert.equal(bgm.length, 1);
   assert.ok(background[0].message.includes("'first' is replaced by 'second'"));
   assert.ok(bgm[0].message.includes("'calm' is replaced by 'tense'"));
+});
+
+test('does not warn when a positive-duration BGM crossfade intentionally replaces the active track', () => {
+  const diagnostics = analyzeScript(parse(`
+    asset bgm calm = "asset/calm.ogg"
+    asset bgm next = "asset/next.ogg"
+    scene main {
+      bgm calm
+      play bgm next crossfade 900
+    }
+  `));
+  assert.equal(diagnostics.some((item) => item.code === 'bgm-replacement'), false);
+});
+
+test('still warns when BGM crossfade duration can be zero or is not statically positive', () => {
+  const zero = analyzeScript(parse(`
+    asset bgm calm = "asset/calm.ogg"
+    asset bgm next = "asset/next.ogg"
+    scene main { bgm calm\nplay bgm next crossfade 0 }
+  `));
+  const variable = analyzeScript(parse(`
+    int duration = 900
+    asset bgm calm = "asset/calm.ogg"
+    asset bgm next = "asset/next.ogg"
+    scene main { bgm calm\nplay bgm next crossfade duration }
+  `));
+  assert.equal(zero.filter((item) => item.code === 'bgm-replacement').length, 1);
+  assert.equal(variable.filter((item) => item.code === 'bgm-replacement').length, 1);
 });
 
 test('warns when a new video replaces an active async video layer', () => {

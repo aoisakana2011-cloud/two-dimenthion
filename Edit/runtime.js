@@ -69,7 +69,8 @@
       slots: Object.fromEntries(DEFAULT_SLOTS.map(slot => [slot, null])),
       images: Object.create(null),
       video: null,
-      audio: { bgm: null, se: [], voices: [] },
+      audio: { bgm: null, se: [], voices: [], volumes: { bgm: 1, se: 1, voice: 0.5 }, volumeOverrides: {} },
+      ui: { dialogOpacity: 1 },
       effects: [],
       choices: [],
       transfers: [],
@@ -173,7 +174,7 @@
     [state.background, state.characters, state.images, state.audio, state.effects].forEach(visit);
     return owners;
   }
-  function startBgmState(state, asset, transition, actionId) {
+  function startBgmState(state, asset, transition, actionId, targetGain = 1) {
     const duration = transition.durationMs;
     const crossfading = transition.type === 'crossfade' && duration > 0;
     const current = state.audio.bgm;
@@ -188,11 +189,11 @@
       transition: { ...bgmTransition, interpolation: { property: 'gain', from: layer.gain ?? 1, to: 0 } },
     })) : [];
     const incoming = {
-      asset, actionId, gain: crossfading ? 0 : 1, role: crossfading ? 'incoming' : 'active',
-      transition: { ...bgmTransition, interpolation: { property: 'gain', from: crossfading ? 0 : 1, to: 1 } },
+      asset, actionId, gain: crossfading ? 0 : targetGain, role: crossfading ? 'incoming' : 'active',
+      transition: { ...bgmTransition, interpolation: { property: 'gain', from: crossfading ? 0 : targetGain, to: targetGain } },
     };
     layers.push(incoming);
-    bgmTransition.interpolation = { property: 'gain', from: incoming.gain, to: 1 };
+    bgmTransition.interpolation = { property: 'gain', from: incoming.gain, to: targetGain };
     state.audio.bgm = { asset, gain: incoming.gain, transition: bgmTransition, actionId, layers };
   }
   function pruneBgmLayers(state, id) {
@@ -278,8 +279,30 @@
     }
     return null;
   }
-  function sceneStateCommand(state, name, args) {
+  function sceneStateCommand(state, name, args, program, defaults) {
     const op = { name, args: copy(args) };
+    const boundedUnit = (value, label) => {
+      const number = floating(value);
+      if (number < 0 || number > 1) throw Error(`${label} must be between 0.0 and 1.0`);
+      return number;
+    };
+    const playbackOptions = (kind, assetName, options) => {
+      const definition = program?.assets?.find(item => item.type === kind && item.name === assetName);
+      const gain = options.volume ?? state.audio.volumeOverrides[kind] ?? definition?.volume ?? state.audio.volumes[kind] ?? defaults?.audio?.[kind] ?? 1;
+      return { gain: boundedUnit(gain, 'Audio volume'), mode: options.mode };
+    };
+    if (name === 'volume') {
+      const volume = boundedUnit(args[1], 'Audio volume');
+      state.audio.volumeOverrides[args[0]] = volume;
+      op.volume = volume;
+    } else if (name === 'dialog') {
+      const opacity = boundedUnit(args[1], 'Dialog opacity');
+      state.ui.dialogOpacity = opacity;
+      op.dialogOpacity = opacity;
+    } else if (name === 'say' && args.length === 4) {
+      op.dialogOpacity = boundedUnit(args[3], 'Dialog opacity');
+      op.dialogOpacityTemporary = true;
+    }
     if (name === 'move') {
       const move = moveOptions(args);
       const current = move.targetKind === 'bg' ? state.background : state.characters[move.target];
@@ -316,34 +339,56 @@
       op.transitionId = actionId;
       op.transition = transition;
       if (replacedActionId) op.replacedActionId = replacedActionId;
-      startBgmState(state, args[0], transition, actionId);
-      registerAction(state, { id: actionId, kind: 'bgm', asset: args[0], startedAt: state.logicalTimeMs, blocking: false });
+      const { gain } = playbackOptions('bgm', args[0], {});
+      op.gain = gain;
+      startBgmState(state, args[0], transition, actionId, gain);
+      registerAction(state, { id: actionId, kind: 'bgm', asset: args[0], gain, startedAt: state.logicalTimeMs, blocking: false });
     } else if (name === 'play' && args[0] === 'bgm') {
       const actionId = `bgm:${++state.revision}`;
       const replacedActionId = state.audio.bgm?.actionId;
-      const transition = transitionFrom(args, 2);
+      const options = {};
+      for (let index = 2; index < args.length;) {
+        const option = args[index++];
+        if (option === 'volume') options.volume = args[index++];
+        else if (option === 'crossfade') options.transition = transitionWith('crossfade', args[index++]);
+        else throw Error(`Unknown BGM option '${option}'`);
+      }
+      const transition = options.transition || transitionWith('instant', 0);
+      const { gain } = playbackOptions('bgm', args[1], options);
       stopAction(state, replacedActionId, 'replaced', { replacedBy: actionId });
       op.actionId = actionId;
       op.transitionId = actionId;
       op.transition = transition;
+      op.gain = gain;
       if (replacedActionId) op.replacedActionId = replacedActionId;
-      startBgmState(state, args[1], transition, actionId);
-      registerAction(state, { id: actionId, kind: 'bgm', asset: args[1], startedAt: state.logicalTimeMs, blocking: false });
+      startBgmState(state, args[1], transition, actionId, gain);
+      registerAction(state, { id: actionId, kind: 'bgm', asset: args[1], gain, startedAt: state.logicalTimeMs, blocking: false });
     } else if (name === 'play' && args[0] === 'se') {
+      const options = {};
+      for (let index = 2; index < args.length;) { const option = args[index++]; if (option === 'volume') options.volume = args[index++]; else throw Error(`Unknown SE option '${option}'`); }
+      const { gain } = playbackOptions('se', args[1], options);
       const actionId = `se:${++state.revision}`;
       op.actionId = actionId;
-      state.audio.se.push({ actionId, asset: args[1], startedAt: state.logicalTimeMs, transition: beginTransition(state, { type: 'instant', durationMs: 0 }) });
-      registerAction(state, { id: actionId, kind: 'se', asset: args[1], startedAt: state.logicalTimeMs, blocking: false });
+      op.gain = gain;
+      state.audio.se.push({ actionId, asset: args[1], gain, startedAt: state.logicalTimeMs, transition: beginTransition(state, { type: 'instant', durationMs: 0 }) });
+      registerAction(state, { id: actionId, kind: 'se', asset: args[1], gain, startedAt: state.logicalTimeMs, blocking: false });
     } else if (name === 'play' && args[0] === 'voice') {
+      const options = {};
+      for (let index = 2; index < args.length;) { const option = args[index++]; if (option === 'volume') options.volume = args[index++]; else if (option === 'blocking' || option === 'async') options.mode = option; else throw Error(`Unknown voice option '${option}'`); }
+      const { gain, mode } = playbackOptions('voice', args[1], options);
       const actionId = `voice:${++state.revision}`;
-      const blocking = args[2] === 'blocking';
+      const blocking = mode === 'blocking';
       op.actionId = actionId;
       op.blocking = blocking;
-      state.audio.voices.push({ actionId, asset: args[1], startedAt: state.logicalTimeMs, transition: beginTransition(state, { type: 'instant', durationMs: 0 }) });
-      registerAction(state, { id: actionId, kind: 'voice', asset: args[1], startedAt: state.logicalTimeMs, blocking });
+      op.mode = mode || 'async';
+      op.gain = gain;
+      state.audio.voices.push({ actionId, asset: args[1], gain, startedAt: state.logicalTimeMs, transition: beginTransition(state, { type: 'instant', durationMs: 0 }) });
+      registerAction(state, { id: actionId, kind: 'voice', asset: args[1], gain, startedAt: state.logicalTimeMs, blocking });
     } else if (name === 'play' && args[0] === 'video') {
       const actionId = `video:${++state.revision}`;
-      const blocking = args[2] === 'blocking';
+      const mode = args[2] === 'blocking' || args[2] === 'async' ? args[2] : args[4] === 'blocking' || args[4] === 'async' ? args[4] : 'async';
+      const blocking = mode === 'blocking';
+      op.mode = mode;
       if (state.video?.actionId) op.replacedActionId = state.video.actionId;
       op.actionId = actionId;
       op.blocking = blocking;
@@ -436,7 +481,21 @@
     return op;
   }
   class Runtime {
-    constructor(host = {}) { this.host = host; this.globals = Object.create(null); this.frames = [this.globals]; this.loopFrames = new WeakSet(); this.readonlyFrames = new WeakMap(); this.functions = new Map(); this.program = null; this.currentSceneName = ''; this.sceneState = createSceneState(); this.pendingSceneActionEvents = null; this.transitionProgressNotifications = new WeakMap(); }
+    constructor(host = {}) { this.host = host; this.globals = Object.create(null); this.frames = [this.globals]; this.loopFrames = new WeakSet(); this.readonlyFrames = new WeakMap(); this.functions = new Map(); this.program = null; this.currentSceneName = ''; this.presentationDefaults = { audio: { bgm: 1, se: 1, voice: 0.5 }, dialog: { opacity: 1 } }; this.sceneState = createSceneState(); this.pendingSceneActionEvents = null; this.transitionProgressNotifications = new WeakMap(); }
+    configurePresentationDefaults(theme = {}) {
+      this.presentationDefaults = {
+        audio: { bgm: 1, se: 1, voice: 0.5, ...(theme.audio || {}) },
+        dialog: { opacity: 1, ...(theme.dialog || {}) },
+      };
+      for (const kind of ['bgm', 'se', 'voice']) {
+        const value = Number(this.presentationDefaults.audio[kind]);
+        if (!Number.isFinite(value) || value < 0 || value > 1) throw Error(`Invalid ${kind} volume default`);
+        this.presentationDefaults.audio[kind] = value;
+      }
+      const opacity = Number(this.presentationDefaults.dialog.opacity);
+      if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) throw Error('Invalid dialog opacity default');
+      this.presentationDefaults.dialog.opacity = opacity;
+    }
     notifySceneState(event) {
       Promise.resolve(this.host.sceneState?.(this.sceneState, event, this)).catch(() => {});
     }
@@ -663,6 +722,14 @@
       throw Error(`未知の式 '${x.kind}' です`);
     }
     async call(name, args) {
+      if (name === 'runtime.state.characters.exists') {
+        if (args.length !== 1 || typeof args[0] !== 'string') throw Error('runtime.state.characters.exists expects one str argument');
+        return Object.values(this.sceneState.slots).includes(args[0]);
+      }
+      if (name === 'runtime.state.characters.list') {
+        if (args.length !== 0) throw Error('runtime.state.characters.list expects no arguments');
+        return [...new Set(Object.values(this.sceneState.slots).filter(value => typeof value === 'string'))].sort();
+      }
       const fn = this.functions.get(name);
       if (!fn) throw Error(`未定義の関数 '${name}' です`);
       const saved = this.frames, local = Object.create(null);
@@ -714,7 +781,7 @@
           if (transactional) this.pendingSceneActionEvents = [];
           let operation;
           try {
-            operation = sceneStateCommand(this.sceneState, c.name, args);
+            operation = sceneStateCommand(this.sceneState, c.name, args, this.program, this.presentationDefaults);
             await this.host.command(c.name, args, this, operation);
             // Commit replacement of the old video only after the adapter
             // confirms that the candidate playback started successfully.
@@ -827,6 +894,8 @@
       // The lexical-frame copier intentionally produces plain objects, so use
       // the structure-preserving clone for persisted scene snapshots.
       this.sceneState = debug?.sceneState ? cloneSceneValue(debug.sceneState) : createSceneState();
+      this.sceneState.audio.volumes = { ...this.presentationDefaults.audio };
+      this.sceneState.ui.dialogOpacity = this.presentationDefaults.dialog.opacity;
       let restored = false;
       const recordTransfer = async (target, external) => {
         const transfer = { target, external, at: this.sceneState.logicalTimeMs };

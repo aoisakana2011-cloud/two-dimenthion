@@ -2,7 +2,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { parse, compile, tokenize } = require('../dist');
-const { isPureBuiltin } = require('../dist/language/builtins');
+const { isBuiltinFunction } = require('../dist/language/builtins');
 const STANDARD_LIBRARY_PREFIX = 'std/';
 const STANDARD_LIBRARY_ROOT = path.resolve(__dirname, '../std');
 
@@ -176,7 +176,7 @@ async function collectIncludedStructs(source, scenesRoot, seen = new Set()) {
 
 function qualifyImportedFunctions(script, alias) {
   const names = new Map(script.functions.map((fn) => [fn.name, `${alias}.${fn.name}`]));
-  const qualifyCall = (name) => names.get(name) || (isPureBuiltin(name) ? name : name.includes('.') ? `${alias}.${name}` : name);
+  const qualifyCall = (name) => names.get(name) || (isBuiltinFunction(name) ? name : name.includes('.') ? `${alias}.${name}` : name);
   const visit = (value) => {
     if (!value || typeof value !== 'object') return;
     if (Array.isArray(value)) { value.forEach(visit); return; }

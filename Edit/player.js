@@ -6,20 +6,84 @@ let activeGameScreen = null;
 let gameStarted = false;
 let gameStartHandler = null;
 let saveStoragePrefix = '';
+let saveStore = null;
+const saveSlotCache = new Map();
+const saveSlotStates = new Map();
+const saveThumbnailUrls = new Map();
 let currentExecution = null;
 let resumeAtLaunch = null;
 let pendingScreenMusic = '';
 const bgmLayers = new Set();
 const bgmAnimationIds = new WeakMap();
 const bgmGainNodes = new WeakMap();
+const uiAudioRoutes = new WeakMap();
 const bgmAutomations = new Map();
+const activeUiAudio = new Set();
+let userUiSettings = Object.create(null);
+let audioBuses = null;
+let currentDialogBaseOpacity = 1;
+function applyDialogOpacity(base) {
+  currentDialogBaseOpacity = Number.isFinite(Number(base)) ? Number(base) : 1;
+  $('dialogue')?.style.setProperty('--dialog-opacity', String(currentDialogBaseOpacity * Number(userUiSettings['ui.dialogOpacity'] ?? 1)));
+}
 let nextBgmAnimationId = 0;
 let bgmAudioContext = null;
 function getBgmAudioContext() {
   const AudioContextType = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextType) return null;
-  try { return bgmAudioContext ||= new AudioContextType(); }
+  try {
+    if (!bgmAudioContext) {
+      bgmAudioContext = new AudioContextType();
+      const master = bgmAudioContext.createGain();
+      const buses = Object.fromEntries(['bgm', 'se', 'voice'].map(kind => [kind, bgmAudioContext.createGain()]));
+      for (const bus of Object.values(buses)) bus.connect(master);
+      master.connect(bgmAudioContext.destination);
+      audioBuses = { master, ...buses };
+      applyUiAudioMix();
+    }
+    return bgmAudioContext;
+  }
   catch { return null; }
+}
+function settingOn(key) { return Boolean(userUiSettings[key] ?? gameScreenConfig?.controlDefaults?.[key] ?? false); }
+function settingGain(kind) { return settingOn(`audio.${kind}Muted`) ? 0 : Number(userUiSettings[`audio.${kind}`] ?? gameScreenConfig?.controlDefaults?.[`audio.${kind}`] ?? (kind === 'voice' ? 0.5 : 1)); }
+function applyUiAudioMix() {
+  if (audioBuses && bgmAudioContext) {
+    const now = bgmAudioContext.currentTime;
+    audioBuses.master.gain.setTargetAtTime(Number(userUiSettings['audio.master'] ?? gameScreenConfig?.controlDefaults?.['audio.master'] ?? 1), now, 0.015);
+    for (const kind of ['bgm', 'se', 'voice']) audioBuses[kind].gain.setTargetAtTime(settingGain(kind), now, 0.015);
+  }
+  for (const audio of activeUiAudio) {
+    if (!audio.isConnected || bgmGainNodes.has(audio) || uiAudioRoutes.has(audio)) continue;
+    const base = Number(audio.dataset.userGain ?? 1);
+    const kind = audio.dataset.audioKind || 'se';
+    audio.volume = Math.max(0, Math.min(1, base * Number(userUiSettings['audio.master'] ?? 1) * settingGain(kind)));
+  }
+}
+async function loadUiSettings() {
+  const defaults = gameScreenConfig?.controlDefaults || {};
+  const stored = await saveStore.readPreference('ui-settings') || {};
+  userUiSettings = Object.create(null);
+  for (const [key, fallback] of Object.entries(defaults)) {
+    const value = stored[key];
+    userUiSettings[key] = typeof fallback === 'boolean'
+      ? (typeof value === 'boolean' ? value : fallback)
+      : (Number.isFinite(value) && value >= 0 && value <= 1 ? value : fallback);
+  }
+  applyDialogOpacity(currentDialogBaseOpacity);
+  applyUiAudioMix();
+}
+function updateUiSetting(key, value) {
+  const fallback = gameScreenConfig?.controlDefaults?.[key];
+  if (typeof fallback === 'boolean') { if (typeof value !== 'boolean') return; }
+  else if (typeof fallback !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) return;
+  userUiSettings[key] = value;
+  void saveStore.writePreference('ui-settings', { ...userUiSettings }).catch(error => {
+    const notice = document.createElement('div'); notice.className = 'game-screen-error';
+    notice.textContent = `設定を保存できませんでした: ${error.message}`; $('screen-overlay').append(notice);
+  });
+  if (key === 'ui.dialogOpacity') applyDialogOpacity(currentDialogBaseOpacity);
+  applyUiAudioMix();
 }
 function primeBgmAudioContext() {
   const context = getBgmAudioContext();
@@ -43,8 +107,8 @@ async function connectBgmAudio(audio, initialGain) {
     const gain = context.createGain();
     gain.gain.setValueAtTime(initialGain, context.currentTime);
     source.connect(gain);
-    gain.connect(context.destination);
-    bgmGainNodes.set(audio, { context, source, gain, value: initialGain });
+    gain.connect(audioBuses?.bgm || context.destination);
+    bgmGainNodes.set(audio, { context, source, gain, value: initialGain, kind: 'bgm' });
     audio.volume = 1;
     return true;
   } catch {
@@ -57,6 +121,27 @@ function disconnectBgmAudio(audio) {
   route.source.disconnect();
   route.gain.disconnect();
   bgmGainNodes.delete(audio);
+}
+async function connectUiAudio(audio, kind, baseGain) {
+  const context = getBgmAudioContext();
+  if (!context || context.state === 'closed') return false;
+  try {
+    if (context.state === 'suspended') await Promise.race([context.resume(), new Promise(resolve => setTimeout(resolve, 200))]);
+    if (context.state !== 'running') return false;
+    const source = context.createMediaElementSource(audio);
+    const gain = context.createGain();
+    gain.gain.value = baseGain;
+    source.connect(gain);
+    gain.connect(audioBuses?.[kind] || context.destination);
+    uiAudioRoutes.set(audio, { source, gain });
+    audio.volume = 1;
+    return true;
+  } catch { return false; }
+}
+function disconnectUiAudio(audio) {
+  const route = uiAudioRoutes.get(audio);
+  if (route) { route.source.disconnect(); route.gain.disconnect(); uiAudioRoutes.delete(audio); }
+  activeUiAudio.delete(audio);
 }
 function uiAsset(themePath, image) {
   if (!image) return '';
@@ -71,7 +156,10 @@ function applyPlayerUi(themePath, theme) {
   const { screen, dialog, choices } = theme;
   const stage = $('stage'), dialogue = $('dialogue'), speaker = $('speaker'), speakerText = $('speaker-text'), text = $('text'), choiceBox = $('choices');
   stage.style.width = `${screen.width}px`; stage.style.height = `${screen.height}px`;
-  Object.assign(dialogue.style, { left: `${dialog.x}px`, top: `${dialog.y}px`, right: 'auto', bottom: 'auto', width: `${dialog.width}px`, height: `${dialog.height}px`, minHeight: '0', padding: '0', border: dialog.image ? '0' : '1px solid #8ab8d8', borderRadius: dialog.image ? '0' : '12px', background: uiBackground(themePath, dialog.image, '#07111ddd') });
+  Object.assign(dialogue.style, { left: `${dialog.x}px`, top: `${dialog.y}px`, right: 'auto', bottom: 'auto', width: `${dialog.width}px`, height: `${dialog.height}px`, minHeight: '0', padding: '0', borderRadius: dialog.image ? '0' : '12px' });
+  dialogue.style.setProperty('--dialog-background', uiBackground(themePath, dialog.image, '#07111ddd'));
+  dialogue.style.setProperty('--dialog-border', dialog.image ? '0' : '1px solid #8ab8d8');
+  applyDialogOpacity(dialog.opacity ?? 1);
   Object.assign(text.style, { position: 'absolute', left: `${dialog.message.x}px`, top: `${dialog.message.y}px`, width: `${dialog.message.width}px`, height: `${dialog.message.height}px`, overflowX: 'hidden', overflowY: 'auto', fontSize: `${dialog.message.size}px`, color: `rgba(${dialog.message.color.join(',')})` });
   Object.assign(speaker.style, { position: 'absolute', display: 'grid', placeItems: 'center', left: `${dialog.nameplate.x}px`, top: `${dialog.nameplate.y}px`, width: `${dialog.nameplate.width}px`, height: `${dialog.nameplate.height}px`, color: `rgba(${dialog.nameplate.text.color.join(',')})`, fontSize: `${dialog.nameplate.text.size}px`, background: uiBackground(themePath, dialog.nameplate.image, '#1d344dcc'), borderRadius: dialog.nameplate.image ? '0' : '6px' });
   Object.assign(speakerText.style, { position: 'absolute', left: `${dialog.nameplate.text.x || 0}px`, top: `${dialog.nameplate.text.y || 0}px`, width: `${dialog.nameplate.text.width}px`, height: `${dialog.nameplate.text.height}px`, display: 'grid', placeItems: 'center', overflow: 'hidden' });
@@ -179,8 +267,9 @@ function playScreenMusic(assetPath) {
   $('bgm')?.remove();
   const audio = document.createElement('audio'); audio.id = 'bgm'; audio.loop = true;
   const asset = runtime.program?.assets?.find(item => item.type === 'bgm' && item.name === pendingScreenMusic);
-  audio.src = asset ? url('bgm', pendingScreenMusic) : screenAsset(pendingScreenMusic); document.body.append(audio); bgmLayers.add(audio);
-  audio.play().catch(() => { /* Browser autoplay requires a user gesture. */ });
+  audio.dataset.audioKind = 'bgm'; audio.dataset.userGain = '1'; activeUiAudio.add(audio);
+  audio.src = asset ? url('bgm', pendingScreenMusic) : screenAsset(pendingScreenMusic); document.body.append(audio); bgmLayers.add(audio); applyUiAudioMix();
+  connectBgmAudio(audio, 1).then(() => audio.play()).catch(() => { /* Browser autoplay requires a user gesture. */ });
 }
 function resumeScreenMusic() {
   const audio = $('bgm');
@@ -230,12 +319,29 @@ function decodeSave(value) {
   return JSON.parse(value, (_key, item) => item && typeof item === 'object' && Object.keys(item).length === 1 && typeof item.__novelInteger === 'string'
     ? NovelRuntime.integer(item.__novelInteger) : item);
 }
-function slotStorageKey(index) { return `${saveStoragePrefix}:slot:${index}`; }
+function isLoadableSave(saved) {
+  return saved?.version === 1 && typeof saved.file === 'string' && saved.file.length > 0
+    && (!saved.saveId || saved.saveId === (gameScreenConfig?.saveId || ''))
+    && typeof saved.scene === 'string' && saved.scene.length > 0
+    && Number.isSafeInteger(saved.line) && saved.line >= 1
+    && saved.variables !== null && typeof saved.variables === 'object' && !Array.isArray(saved.variables);
+}
 function readSaveSlot(index) {
-  try {
-    const raw = localStorage.getItem(slotStorageKey(index));
-    return raw ? decodeSave(raw) : null;
-  } catch { return null; }
+  return saveSlotCache.get(index) || null;
+}
+function saveSlotState(index) {
+  return readSaveSlot(index) ? 'ready' : saveSlotStates.get(index) || 'empty';
+}
+function latestSaveSlotIndex() {
+  const count = gameScreenConfig?.screens?.[screenForRole('load-slots')]?.slotLayout?.count || 8;
+  let latest = -1, latestTime = -1;
+  for (let index = 0; index < count; index++) {
+    const saved = readSaveSlot(index);
+    if (!saved) continue;
+    const timestamp = Number.isFinite(saved.savedAt) ? saved.savedAt : 0;
+    if (timestamp > latestTime) { latest = index; latestTime = timestamp; }
+  }
+  return latest;
 }
 function screenForRole(role) {
   return Object.entries(gameScreenConfig?.screens || {}).find(([, screen]) => screen.role === role)?.[0] || '';
@@ -248,6 +354,44 @@ function openSlotScreen(action) {
 function formatSavedAt(timestamp) {
   try { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(timestamp)); }
   catch { return ''; }
+}
+function saveSlotField(index, field) {
+  const saved = readSaveSlot(index);
+  switch (field) {
+    case 'thumbnail': return saveThumbnailUrls.get(index) || '';
+    case 'number': return String(index + 1).padStart(2, '0');
+    case 'status': return ({ ready: '記録あり', empty: '空き', corrupt: '破損', incompatible: '非対応' })[saveSlotState(index)];
+    case 'scene': return saved?.scene || '';
+    case 'speaker': return saved?.speaker || '';
+    case 'text': return saved?.text || '';
+    case 'saved-at': return saved?.savedAt ? formatSavedAt(saved.savedAt) : '';
+    default: return '';
+  }
+}
+async function captureSaveThumbnail() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 320; canvas.height = 180;
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#101a22'; context.fillRect(0, 0, canvas.width, canvas.height);
+  const stage = $('stage').getBoundingClientRect();
+  const sx = canvas.width / stage.width, sy = canvas.height / stage.height;
+  const background = $('background');
+  const source = /url\(["']?([^"')]+)["']?\)/.exec(background.style.backgroundImage)?.[1];
+  const draw = async (url, rect, fit = 'contain') => {
+    if (!url) return;
+    const image = new Image(); image.src = url;
+    try { await image.decode(); } catch { return; }
+    const x = (rect.left - stage.left) * sx, y = (rect.top - stage.top) * sy;
+    const width = rect.width * sx, height = rect.height * sy;
+    if (fit === 'cover') {
+      const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight);
+      const cropW = width / scale, cropH = height / scale;
+      context.drawImage(image, (image.naturalWidth - cropW) / 2, (image.naturalHeight - cropH) / 2, cropW, cropH, x, y, width, height);
+    } else context.drawImage(image, x, y, width, height);
+  };
+  if (source) await draw(source, stage, 'cover');
+  for (const element of document.querySelectorAll('#characters img, #images img')) await draw(element.src, element.getBoundingClientRect());
+  return new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
 }
 function showSlotList(overlay, screen, scaleX, scaleY) {
   const layout = screen.slotLayout || { x: 420, y: 190, width: 440, height: 420, rowHeight: 42, gap: 8, count: 8 };
@@ -289,12 +433,12 @@ function showSlotList(overlay, screen, scaleX, scaleY) {
   }
   overlay.append(list);
 }
-function saveGameToSlot(index, overlay = $('screen-overlay')) {
+async function saveGameToSlot(index, overlay = $('screen-overlay')) {
   const execution = currentExecution;
   if (!execution?.file || !execution.scene || !execution.line) return;
   try {
     const snapshot = {
-      version: 1, file: execution.file, scene: execution.scene, line: execution.line,
+      version: 1, saveId: gameScreenConfig?.saveId || '', file: execution.file, scene: execution.scene, line: execution.line,
       variables: runtime.globals, locals: runtime.frames.slice(1),
       readonlyLocals: runtime.frames.slice(1).map(frame => [...(runtime.readonlyFrames.get(frame) || [])]),
       sceneState: runtime.sceneState,
@@ -303,7 +447,14 @@ function saveGameToSlot(index, overlay = $('screen-overlay')) {
     };
     const encoded = encodeSave(snapshot);
     if (encoded.length > 3_500_000) throw Error('セーブデータが大きすぎます。変数または演出状態を減らしてください。');
-    localStorage.setItem(slotStorageKey(index), encoded);
+    const thumbnail = await captureSaveThumbnail();
+    await saveStore.writeSlot(index, encoded, { scene: snapshot.scene, speaker: snapshot.speaker, text: snapshot.text, savedAt: snapshot.savedAt }, thumbnail);
+    saveSlotCache.set(index, snapshot);
+    saveSlotStates.set(index, 'ready');
+    const previousThumbnail = saveThumbnailUrls.get(index);
+    if (previousThumbnail) URL.revokeObjectURL(previousThumbnail);
+    if (thumbnail) saveThumbnailUrls.set(index, URL.createObjectURL(thumbnail));
+    else saveThumbnailUrls.delete(index);
     showGameScreen(activeGameScreen, { push: false });
     const notice = document.createElement('div'); notice.className = 'game-screen-notice'; notice.textContent = `Slot ${String(index + 1).padStart(2, '0')} に保存しました`;
     $('screen-overlay').append(notice);
@@ -314,12 +465,37 @@ function saveGameToSlot(index, overlay = $('screen-overlay')) {
 }
 function loadGameSlot(index) {
   const saved = readSaveSlot(index);
-  if (!saved || saved.version !== 1 || typeof saved.file !== 'string' || typeof saved.scene !== 'string' || !Number.isSafeInteger(saved.line) || saved.line < 1) return;
+  if (!saved) return;
   try {
-    localStorage.setItem(`${saveStoragePrefix}:resume`, encodeSave(saved));
+    sessionStorage.setItem(`${saveStoragePrefix}:resume-slot`, String(index));
     location.reload();
   } catch (error) {
     const notice = document.createElement('div'); notice.className = 'game-screen-error'; notice.textContent = `ロードできませんでした: ${error.message}`; $('screen-overlay').append(notice);
+  }
+}
+async function activateGameScreenAction(action, target, node) {
+  const overlay = $('screen-overlay');
+  const slotIndex = node?.attrs?.['data-slot-index'];
+  if (slotIndex !== undefined) {
+    if (action === 'save') saveGameToSlot(Number(slotIndex), overlay);
+    else loadGameSlot(Number(slotIndex));
+  } else if (action === 'start') {
+    primeBgmAudioContext(); resumeScreenMusic(); overlay.hidden = true; activeGameScreen = null; screenHistory.length = 0;
+    try { await gameStartHandler?.(); } catch (error) { $('speaker-text').textContent = 'PLAYER ERROR'; $('text').textContent = error.message; }
+  } else if (action === 'continue') {
+    const index = latestSaveSlotIndex();
+    if (index >= 0) loadGameSlot(index);
+  } else if (action === 'resume') {
+    overlay.hidden = true; activeGameScreen = null; screenHistory.length = 0;
+  } else if (action === 'save' || action === 'load') openSlotScreen(action);
+  else if (action === 'open-screen') showGameScreen(target);
+  else if (action === 'back') {
+    const previous = screenHistory.pop();
+    if (previous) showGameScreen(previous, { push: false });
+    else if (gameStarted) { overlay.hidden = true; activeGameScreen = null; }
+  } else if (action === 'quit') {
+    if (window.opener) window.close();
+    else location.assign('/');
   }
 }
 function showGameScreen(id, { push = true } = {}) {
@@ -341,9 +517,46 @@ function showGameScreen(id, { push = true } = {}) {
     Object.assign(description.style, { left: `${64 * scaleX}px`, top: `${112 * scaleY}px`, width: `${Math.min(560, gameScreenConfig.canvas.width - 128) * scaleX}px`, fontSize: `${21 * scaleY}px` }); overlay.append(description);
   }
   if (screen.music) playScreenMusic(screen.music);
+  if (screen.webDocument) {
+    overlay.append(NovelScreenDocument.buildWebScreen(screen.webDocument.markup, screen.webDocument.stylesheet, document, {
+      width: gameScreenConfig.canvas.width, height: gameScreenConfig.canvas.height, scaleX, scaleY,
+      assetUrl: screenAsset, saved: readSaveSlot, slotField: saveSlotField,
+      slotState: saveSlotState,
+      canSave: Boolean(currentExecution?.line), canContinue: latestSaveSlotIndex() >= 0,
+      settings: userUiSettings, controlDefaults: gameScreenConfig.controlDefaults,
+      onSettingChange: updateUiSetting,
+      onAction: (action, target, slotIndex) => { void activateGameScreenAction(action, target, slotIndex == null ? null : { attrs: { 'data-slot-index': String(slotIndex) } }); },
+    }));
+    overlay.querySelector('button:not(:disabled)')?.focus();
+    return;
+  }
+  if (Array.isArray(screen.uiTree)) {
+    overlay.append(NovelScreenDocument.buildScreenDom(screen.uiTree, document, {
+      scaleX, scaleY, assetUrl: screenAsset,
+      settings: userUiSettings, controlDefaults: gameScreenConfig.controlDefaults,
+      disableContinue: latestSaveSlotIndex() < 0,
+      onSettingChange: updateUiSetting,
+      onAction: (action, target, _event, node) => { void activateGameScreenAction(action, target, node); },
+      slotField: saveSlotField,
+      roleSlot: (button, index, node) => {
+        const saved = readSaveSlot(index);
+        if (!node.children.length) {
+          button.classList.add('game-save-slot');
+          button.textContent = saved
+            ? `Slot ${String(index + 1).padStart(2, '0')} | ${saved.speaker || 'Narrator'}: ${saved.text || 'No text'}`
+            : `Slot ${String(index + 1).padStart(2, '0')} | Empty`;
+        }
+        button.setAttribute('aria-label', `${String(index + 1).padStart(2, '0')} ${saved ? `${saved.scene || ''} ${saved.text || ''}` : '空き'}`);
+        button.disabled = node.attrs['data-action'] === 'load' ? !saved : !currentExecution?.line;
+      },
+    }));
+    overlay.querySelector('button:not(:disabled)')?.focus();
+    return;
+  }
   for (const item of screen.items || []) {
     if (item.type !== 'button') continue;
     const button = document.createElement('button'); button.type = 'button'; button.className = 'game-screen-button'; button.setAttribute('aria-label', item.label);
+    if (item.action === 'continue' && latestSaveSlotIndex() < 0) button.disabled = true;
     const label = document.createElement('span'); label.textContent = item.label; button.append(label);
     if (item.display === 'image') label.hidden = true;
     Object.assign(button.style, { left: `${item.x * scaleX}px`, top: `${item.y * scaleY}px`, width: `${item.width * scaleX}px`, height: `${item.height * scaleY}px`, fontSize: `${(item.fontSize || 22) * scaleY}px` });
@@ -362,26 +575,7 @@ function showGameScreen(id, { push = true } = {}) {
     };
     button.addEventListener('pointerenter', () => setButtonState(true)); button.addEventListener('pointerleave', () => setButtonState(false));
     button.addEventListener('focus', () => setButtonState(true)); button.addEventListener('blur', () => setButtonState(false));
-    button.addEventListener('click', async () => {
-      if (item.action === 'start') {
-        primeBgmAudioContext();
-        resumeScreenMusic();
-        overlay.hidden = true; activeGameScreen = null; screenHistory.length = 0;
-        try { await gameStartHandler?.(); } catch (error) { $('speaker-text').textContent = 'PLAYER ERROR'; $('text').textContent = error.message; }
-      } else if (item.action === 'resume') {
-        overlay.hidden = true; activeGameScreen = null; screenHistory.length = 0;
-      } else if (item.action === 'save' || item.action === 'load') {
-        openSlotScreen(item.action);
-      } else if (item.action === 'open-screen') showGameScreen(item.target);
-      else if (item.action === 'back') {
-        const previous = screenHistory.pop();
-        if (previous) showGameScreen(previous, { push: false });
-        else if (gameStarted) { overlay.hidden = true; activeGameScreen = null; }
-      } else if (item.action === 'quit') {
-        overlay.replaceChildren();
-        const message = document.createElement('div'); message.className = 'game-screen-error'; message.textContent = 'この再生画面はブラウザーから自動終了できません。ウィンドウを閉じてください。'; overlay.append(message);
-      }
-    });
+    button.addEventListener('click', () => { void activateGameScreenAction(item.action, item.target); });
     overlay.append(button);
   }
   if (screen.role === 'save-slots' || screen.role === 'load-slots') showSlotList(overlay, screen, scaleX, scaleY);
@@ -513,6 +707,7 @@ function stopBgm() {
     }
     bgmAutomations.delete(audio);
     disconnectBgmAudio(audio);
+    activeUiAudio.delete(audio);
     audio.pause();
     audio.removeAttribute('src');
     audio.load();
@@ -522,6 +717,7 @@ function stopBgm() {
 }
 async function playBgm(name, transition, operation, runtime) {
   const duration = transition?.type === 'crossfade' ? Number(transition.durationMs) || 0 : 0;
+  const targetGain = Math.max(0, Math.min(1, Number(operation?.gain ?? 1)));
   const audioFailed = audio => {
     if (!audio.hasAttribute('src')) return;
     const failedCurrentBgm = runtime?.sceneState.audio.bgm?.actionId === operation?.actionId;
@@ -538,6 +734,7 @@ async function playBgm(name, transition, operation, runtime) {
     if (audio !== $('bgm')) audio.remove();
     bgmLayers.delete(audio);
     disconnectBgmAudio(audio);
+    activeUiAudio.delete(audio);
     // A failed incoming song invalidates its whole crossfade: outgoing layers
     // were already fading toward silence and must not keep playing invisibly
     // after SceneState drops the failed current BGM.
@@ -548,14 +745,16 @@ async function playBgm(name, transition, operation, runtime) {
     const previous = $('bgm');
     const audio = document.createElement('audio');
     audio.loop = true;
-    audio.volume = 1;
+    audio.dataset.audioKind = 'bgm'; audio.dataset.userGain = String(targetGain); activeUiAudio.add(audio);
+    audio.volume = targetGain;
     audio.src = url('bgm', name);
     audio.onerror = () => audioFailed(audio);
     try {
-      await connectBgmAudio(audio, 1);
+      await connectBgmAudio(audio, targetGain);
       await audio.play();
     } catch (error) {
       disconnectBgmAudio(audio);
+      activeUiAudio.delete(audio);
       audio.removeAttribute('src');
       audio.load();
       throw error;
@@ -565,22 +764,26 @@ async function playBgm(name, transition, operation, runtime) {
     previous?.replaceWith(audio);
     if (!audio.isConnected) document.body.append(audio);
     bgmLayers.add(audio);
+    applyUiAudioMix();
     return;
   }
   const audio = document.createElement('audio');
   audio.loop = true;
+  audio.dataset.audioKind = 'bgm'; audio.dataset.userGain = String(targetGain); activeUiAudio.add(audio);
   audio.volume = 0;
   audio.src = url('bgm', name);
   audio.dataset.playerBgm = 'true';
   audio.onerror = () => audioFailed(audio);
   document.body.append(audio);
   bgmLayers.add(audio);
+  applyUiAudioMix();
   try {
     await connectBgmAudio(audio, 0);
     await audio.play();
   } catch (error) {
     bgmLayers.delete(audio);
     disconnectBgmAudio(audio);
+    activeUiAudio.delete(audio);
     audio.remove();
     throw error;
   }
@@ -588,7 +791,7 @@ async function playBgm(name, transition, operation, runtime) {
     if (previous !== audio && !previous.paused) animateBgmGain(previous, 0, duration, true);
   }
   audio.dataset.bgmCrossfadeStarted = 'true';
-  animateBgmGain(audio, 1, duration, false, () => runtime?.completeTransition(operation?.transitionId),
+  animateBgmGain(audio, targetGain, duration, false, () => runtime?.completeTransition(operation?.transitionId),
     progress => runtime?.reportTransitionProgress(operation?.transitionId, progress));
 }
 
@@ -598,6 +801,10 @@ async function media(type, name, mode, operation, runtime) {
     await playBgm(name, operation?.transition, operation, runtime);
   } else {
     const a = new Audio(src);
+    const kind = type === 'voice' ? 'voice' : 'se';
+    const gain = Math.max(0, Math.min(1, Number(operation?.gain ?? 1)));
+    a.dataset.audioKind = kind; a.dataset.userGain = String(gain); activeUiAudio.add(a);
+    a.volume = gain * Number(userUiSettings['audio.master'] ?? 1) * settingGain(kind);
     let resolveEnded, rejectEnded, settled = false;
     const ended = new Promise((resolve, reject) => { resolveEnded = resolve; rejectEnded = reject; });
     ended.catch(() => {});
@@ -608,6 +815,7 @@ async function media(type, name, mode, operation, runtime) {
       a.removeAttribute('src');
       a.load();
       a.remove();
+      disconnectUiAudio(a);
       runtime?.stopAction(operation?.actionId, 'failed');
       rejectEnded(error);
     };
@@ -615,11 +823,12 @@ async function media(type, name, mode, operation, runtime) {
       if (settled) return;
       settled = true;
       a.remove();
+      disconnectUiAudio(a);
       runtime?.completeAction(operation?.actionId);
       resolveEnded();
     };
     a.onerror = () => fail(Error('Audio playback failed'));
-    try { await a.play(); }
+    try { await connectUiAudio(a, kind, gain); await a.play(); }
     catch (error) { fail(error); throw error; }
     if (mode === 'blocking') await ended;
   }
@@ -775,8 +984,10 @@ async function command(c) {
   } else if (n === 'bgm') {
     await media('bgm', a[0], undefined, c.operation, c.runtime);
   } else if (n === 'play') {
-    if (a[0] === 'video') await playVideo(a[1], a[2], c.operation, c.runtime);
-    else await media(a[0], a[1], a[2], c.operation, c.runtime);
+    if (a[0] === 'video') await playVideo(a[1], c.operation?.mode, c.operation, c.runtime);
+    else await media(a[0], a[1], c.operation?.mode, c.operation, c.runtime);
+  } else if (n === 'dialog') {
+    $('dialogue').style.setProperty('--dialog-opacity', String(c.operation?.dialogOpacity ?? a[1]));
   } else if (n === 'effect') {
     await applyEffect(a[0], a[1], a[2], c.runtime, c.operation?.actionId);
   } else if (n === 'show' && a[0] === 'image') {
@@ -859,7 +1070,10 @@ const runtime = new NovelRuntime.Runtime({
       $('speaker-text').textContent = speaker;
       $('text').textContent = await rt.textAsync(args[1]);
       $('text').scrollTop = 0;
-      await new Promise(resolve => { $('next').onclick = () => { $('next').onclick = null; resolve(); }; });
+      const restoreOpacity = rt.sceneState.ui?.dialogOpacity ?? playerTheme?.dialog?.opacity ?? 1;
+      if (operation?.dialogOpacityTemporary) applyDialogOpacity(operation.dialogOpacity);
+      try { await new Promise(resolve => { $('next').onclick = () => { $('next').onclick = null; resolve(); }; }); }
+      finally { if (operation?.dialogOpacityTemporary) applyDialogOpacity(restoreOpacity); }
     } else if (name === 'wait') {
       if (args[0] < 0n || args[0] > 2147483647n) throw Error('待機時間が不正です');
       await new Promise(resolve => setTimeout(resolve, Number(args[0])));
@@ -884,6 +1098,7 @@ let launchVariables = Object.create(null);
 let launchDebug = null;
 async function restorePlayerState(state, rt) {
   const bg = state.background;
+  applyDialogOpacity(state.ui?.dialogOpacity ?? playerTheme?.dialog?.opacity ?? 1);
   $('background').style.backgroundImage = bg?.asset ? `url("${url('bg', bg.asset)}")` : 'none';
   $('background').style.transform = `translate(${Number(bg?.offsetX) || 0}px, ${Number(bg?.offsetY) || 0}px)`;
   $('characters').replaceChildren(); $('images').replaceChildren();
@@ -905,8 +1120,8 @@ async function restorePlayerState(state, rt) {
   const bgm = state.audio?.bgm;
   stopBgm();
   if (bgm?.asset) {
-    const audio = $('bgm'); audio.loop = true; audio.src = url('bgm', bgm.asset); audio.volume = Number(bgm.gain ?? 1);
-    try { await connectBgmAudio(audio, audio.volume); await audio.play(); bgmLayers.add(audio); }
+    const audio = $('bgm'); audio.loop = true; audio.dataset.audioKind = 'bgm'; audio.dataset.userGain = String(Number(bgm.gain ?? 1)); activeUiAudio.add(audio); audio.src = url('bgm', bgm.asset); audio.volume = Number(bgm.gain ?? 1);
+    try { await connectBgmAudio(audio, audio.volume); await audio.play(); bgmLayers.add(audio); applyUiAudioMix(); }
     catch { /* Audio may remain blocked until the next input after a reload. */ }
   }
   document.body.dataset.sceneRevision = String(state.revision || 0);
@@ -921,6 +1136,7 @@ async function launchGame() {
 (async () => {
   const ui = await (await fetch('/api/player-ui')).json();
   applyPlayerUi(ui.path, ui.theme);
+  runtime.configurePresentationDefaults(ui.theme);
   const settings = await (await fetch('/api/scene-config')).json();
   launchName = debugParams.get('source') || settings.start_file;
   const projectInfo = await (await fetch('/api/project')).json();
@@ -990,12 +1206,31 @@ async function launchGame() {
   } : null;
   const menu = await (await fetch('/api/game-screens')).json();
   gameScreenConfig = menu.screens;
+  saveStore = await NovelSaveStore.open({ namespace: `${gameScreenConfig.saveId || projectInfo.projectRoot || location.origin}:${debugSession ? 'test' : 'game'}`, legacyPrefix: saveStoragePrefix });
+  await Promise.all(Array.from({ length: 100 }, async (_, index) => {
+    const encoded = await saveStore.readSlot(index);
+    if (!encoded) return;
+    try {
+      const saved = decodeSave(encoded);
+      if (!isLoadableSave(saved)) {
+        saveSlotStates.set(index, saved?.version !== 1 || saved?.saveId && saved.saveId !== (gameScreenConfig.saveId || '') ? 'incompatible' : 'corrupt');
+        return;
+      }
+      saveSlotCache.set(index, saved);
+      saveSlotStates.set(index, 'ready');
+      const thumbnail = await saveStore.readThumbnail(index);
+      if (thumbnail instanceof Blob) saveThumbnailUrls.set(index, URL.createObjectURL(thumbnail));
+    } catch { saveSlotStates.set(index, 'corrupt'); /* Preserve damaged bytes for recovery. */ }
+  }));
+  await loadUiSettings();
   if (!debugSession) {
     try {
+      const slotPointer = sessionStorage.getItem(`${saveStoragePrefix}:resume-slot`);
+      if (slotPointer !== null) sessionStorage.removeItem(`${saveStoragePrefix}:resume-slot`);
       const rawResume = localStorage.getItem(`${saveStoragePrefix}:resume`);
-      if (rawResume) {
-        localStorage.removeItem(`${saveStoragePrefix}:resume`);
-        resumeAtLaunch = decodeSave(rawResume);
+      if (rawResume) localStorage.removeItem(`${saveStoragePrefix}:resume`);
+      if (slotPointer !== null || rawResume) {
+        resumeAtLaunch = slotPointer !== null && /^\d+$/.test(slotPointer) ? readSaveSlot(Number(slotPointer)) : decodeSave(rawResume);
         if (resumeAtLaunch?.version === 1 && typeof resumeAtLaunch.file === 'string' && typeof resumeAtLaunch.scene === 'string'
           && /^[A-Za-z_][A-Za-z0-9_]*$/.test(resumeAtLaunch.scene) && Number.isSafeInteger(resumeAtLaunch.line) && resumeAtLaunch.line > 0) {
           launchName = resumeAtLaunch.file;

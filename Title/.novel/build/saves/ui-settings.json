@@ -1,0 +1,10 @@
+{
+  "audio.bgm": 1,
+  "audio.bgmMuted": false,
+  "audio.master": 1,
+  "audio.se": 1,
+  "audio.seMuted": false,
+  "audio.voice": 0.5,
+  "audio.voiceMuted": false,
+  "ui.dialogOpacity": 1
+}
