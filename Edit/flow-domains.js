@@ -489,7 +489,7 @@ function writes(statements, out = new Set()) {
     if (statement.kind === 'if') {
       writes(statement.body, out); statement.elseIf.forEach((branch) => writes(branch.body, out)); writes(statement.otherwise, out);
     } else if (statement.kind === 'choice') statement.options.forEach((option) => writes(option.body, out));
-    else if (statement.kind === 'for' || statement.kind === 'forEach' || statement.kind === 'while') writes(statement.body, out);
+    else if (statement.kind === 'for' || statement.kind === 'forEach' || statement.kind === 'while' || statement.kind === 'parallel') writes(statement.body, out);
   }
   return out;
 }
@@ -541,7 +541,7 @@ function functionWriteEffects(script) {
           statement.elseIf.forEach((branch) => visitBlock(branch.body));
           visitBlock(statement.otherwise);
         } else if (statement.kind === 'choice') statement.options.forEach((option) => visitBlock(option.body));
-        else if (statement.kind === 'for' || statement.kind === 'forEach' || statement.kind === 'while') visitBlock(statement.body);
+        else if (statement.kind === 'for' || statement.kind === 'forEach' || statement.kind === 'while' || statement.kind === 'parallel') visitBlock(statement.body);
       }
     };
     visitBlock(fn.body);
@@ -638,7 +638,7 @@ function functionLocalNames(fn, out = new Set(fn.params.map((param) => param.nam
         visit(statement.body); statement.elseIf.forEach((branch) => visit(branch.body)); visit(statement.otherwise);
       } else if (statement.kind === 'choice') statement.options.forEach((option) => visit(option.body));
       else if (statement.kind === 'forEach') { out.add(statement.name); visit(statement.body); }
-      else if (statement.kind === 'for' || statement.kind === 'while') visit(statement.body);
+      else if (statement.kind === 'for' || statement.kind === 'while' || statement.kind === 'parallel') visit(statement.body);
     }
   };
   visit(fn.body);
@@ -786,7 +786,7 @@ function runFunctionEach(statement, state, iterables, mutableNames, context) {
 }
 
 function runFunctionStatement(statement, input, mutableNames, context) {
-  const stateful = ['declare', 'set', 'unset', 'call', 'return', 'command', 'choice', 'if', 'for', 'forEach', 'while'].includes(statement.kind);
+  const stateful = ['declare', 'set', 'unset', 'call', 'return', 'command', 'choice', 'if', 'for', 'forEach', 'while', 'parallel'].includes(statement.kind);
   const states = stateful ? [input] : taintCalls(statement, [input], mutableNames, context.effects, context);
   const result = [];
   for (const state of states) {
@@ -829,6 +829,8 @@ function runFunctionStatement(statement, input, mutableNames, context) {
         result.push(...runFunctionEach(statement, iterable.state, iterable.values, mutableNames, context));
     } else if (statement.kind === 'while') {
       result.push(...runFunctionWhile(statement, [state], mutableNames, context));
+    } else if (statement.kind === 'parallel') {
+      result.push(...runFunctionBlock(statement.body, [normal(state)], mutableNames, context).map(path => normal(path.state)));
     } else if (statement.kind === 'return') {
       const values = statement.value ? evaluateWithEffects(statement.value, state, context) : [{ state, values: single(null) }];
       result.push(...values.map((path) => ({ state: path.state, returned: true, transfer: false, value: path.values })));
@@ -1064,7 +1066,7 @@ function executeEach(statement, state, iterables, mutableNames, effects, context
 }
 
 function execute(statement, states, mutableNames, effects, context) {
-  states = ['declare', 'set', 'unset', 'call', 'command', 'choice', 'if', 'for', 'forEach', 'while'].includes(statement.kind)
+  states = ['declare', 'set', 'unset', 'call', 'command', 'choice', 'if', 'for', 'forEach', 'while', 'parallel'].includes(statement.kind)
     ? states : taintCalls(statement, states, mutableNames, effects, context);
   const result = [];
   for (const state of states) {
@@ -1103,6 +1105,8 @@ function execute(statement, states, mutableNames, effects, context) {
         result.push(...executeEach(statement, iterable.state, iterable.values, mutableNames, effects, context));
     } else if (statement.kind === 'while') {
       result.push(...runWhile(statement, [state], mutableNames, effects, context));
+    } else if (statement.kind === 'parallel') {
+      result.push(...runBlock(statement.body, [state], mutableNames, effects, context));
     } else if (statement.kind === 'command') {
       result.push(...executeCommandEffects(statement, state, context));
     } else if (statement.kind === 'call') {
@@ -1148,6 +1152,7 @@ function atLine(block, states, line, mutableNames, effects, context) {
         return option ? atLine(option.body, choiceStates, line, mutableNames, effects, context) : choiceStates;
       }
       if (statement.kind === 'forEach') return atEachLine(statement, states, line, mutableNames, effects, context);
+      if (statement.kind === 'parallel') return atLine(statement.body, states, line, mutableNames, effects, context);
       if (statement.kind === 'for' || statement.kind === 'while') {
         return statement.kind === 'for'
           ? atForLine(statement, states, line, mutableNames, effects, context)
@@ -1220,7 +1225,7 @@ function collectTemplateTypes(script, staticDeclarations, externalCharacters, ex
         visit(statement.body);
         statement.elseIf.forEach((branch) => visit(branch.body));
         visit(statement.otherwise);
-      } else if (statement.kind === 'while') visit(statement.body);
+      } else if (statement.kind === 'while' || statement.kind === 'parallel') visit(statement.body);
       else if (statement.kind === 'choice') statement.options.forEach((option) => visit(option.body));
     }
   };

@@ -7,7 +7,7 @@ asset/se/      効果音
 asset/voice/   セリフ音声
 asset/image/   その他の画像
 asset/video/   動画
-asset/ui/      画面設定から参照するUI画像素材
+asset/ui/      画面設定から参照するUI画像素材（用途別の配置は asset/ui/README.md）
 
 シナリオと画面設定からの素材参照は asset/ を基準にした相対パスで記述します。
 設定ファイル本体や文章による制作規約は setting/ に置きます。

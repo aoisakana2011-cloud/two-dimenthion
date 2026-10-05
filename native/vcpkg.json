@@ -7,7 +7,6 @@
     { "name": "sdl3-image", "features": ["png", "jpeg", "webp"] },
     { "name": "sdl3-mixer", "features": ["libflac", "libvorbis", "mpg123"] },
     "ffmpeg",
-    "nlohmann-json",
-    "webview2"
+    "nlohmann-json"
   ]
 }

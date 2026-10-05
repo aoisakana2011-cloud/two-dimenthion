@@ -878,6 +878,8 @@ function functionWrites(functions, globalNames) {
                 visitExpressionCalls(instruction.target, recordCall);
             if (instruction.op === 'command')
                 instruction.args.forEach((argument) => visitExpressionCalls(argument, recordCall));
+            if (instruction.op === 'parallel')
+                walk(instruction.body, writes, invoked, new Set(locals));
             if (instruction.op === 'return')
                 visitExpressionCalls(instruction.value, recordCall);
             if (instruction.op === 'if') {
@@ -987,6 +989,8 @@ function optimizeInstructions(instructions, effects, constants = new Map(), opti
                 invalidateExpression(item.target);
             if (item.op === 'command')
                 item.args.forEach(invalidateExpression);
+            if (item.op === 'parallel')
+                invalidateAssigned(item.body);
             if (item.op === 'return')
                 invalidateExpression(item.value);
             if (item.op === 'if') {
@@ -1552,6 +1556,7 @@ class Compiler {
             case 'set': return { op: 'set', target: this.assignable(statement.target), value: this.expr(statement.value) };
             case 'unset': return { op: 'unset', target: this.assignable(statement.target) };
             case 'command': return { op: 'command', name: statement.name, args: statement.args.map((v) => this.expr(v)) };
+            case 'parallel': return { op: 'parallel', body: this.statements(statement.body) };
             case 'if': return {
                 op: 'if',
                 condition: this.expr(statement.condition.expression),

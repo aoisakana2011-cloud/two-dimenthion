@@ -1,5 +1,5 @@
 import { AssetKind, Expr, ExternalCharacter, FunctionDef, NodeLocation, PrimitiveType, Script, Statement, ValueType } from '../parser';
-import { isRuntimeStateApi, RUNTIME_STATE_APIS } from '../language/builtins';
+import { runtimeStateApi } from '../language/builtins';
 
 export class TypeCheckError extends Error {
   file?: string;
@@ -127,7 +127,7 @@ function expressionType(expression: Expr, variables: Map<string, ValueType>, ctx
         for (const field of fields) {
           if (!current || typeof current === 'string' || current.kind !== 'struct') throw new TypeCheckError(`${loc}: 補間対象 '${path}' の '${field}' はフィールド参照できません`);
           const next: PrimitiveType | undefined = ctx.structs.get(current.name)?.[field];
-          if (!next) throw new TypeCheckError(`${loc}: 補間対象 '${path}' にフィールド '${field}' はありません`);
+          if (!next) throw new TypeCheckError(`${loc}: 補間対象 '${path}' にフィールチE'${field}' はありません`);
           current = next;
         }
       }
@@ -153,7 +153,7 @@ function expressionType(expression: Expr, variables: Map<string, ValueType>, ctx
       if (left === 'str' && right === 'str') return 'str';
       if (left === 'int' && right === 'int') return 'int';
       if (left === 'float' && right === 'float') return 'float';
-      throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): '+' の左右の型が一致していません (${typeName(left)} と ${typeName(right)})`);
+      throw new TypeCheckError(`${loc}: \u578b\u30a8\u30e9\u30fc (${ctx.file}): '+' \u306e\u5de6\u53f3\u306e\u578b\u304c\u4e00\u81f4\u3057\u3066\u3044\u307e\u305b\u3093 (${typeName(left)} \u3068 ${typeName(right)})`);
     }
 
     if (['-', '*', '/', '%'].includes(op)) {
@@ -185,7 +185,7 @@ function expressionType(expression: Expr, variables: Map<string, ValueType>, ctx
       return 'bool';
     }
 
-    throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 未知の演算子 '${op}' です`);
+    throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 未知の演算孁E'${op}' です`);
   }
 
   if (expression.kind === 'unary') {
@@ -199,7 +199,7 @@ function expressionType(expression: Expr, variables: Map<string, ValueType>, ctx
     }
     if (op === '-' || op === '+') {
       if (inner !== 'int' && inner !== 'float') {
-        throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 単項 '${op}' の対象は数値でなければなりません`);
+        throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 単頁E'${op}' の対象は数値でなければなりません`);
       }
       return inner;
     }
@@ -211,7 +211,7 @@ function expressionType(expression: Expr, variables: Map<string, ValueType>, ctx
     const keyType = expressionType(expression.key, variables, ctx);
     if (typeof targetType !== 'string' && targetType.kind === 'struct' && expression.key.kind === 'literal' && typeof expression.key.value === 'string') {
       const field = ctx.structs.get(targetType.name)?.[expression.key.value];
-      if (!field) throw new TypeCheckError(`${loc}: struct '${targetType.name}' にフィールド '${expression.key.value}' はありません`);
+      if (!field) throw new TypeCheckError(`${loc}: struct '${targetType.name}' にフィールチE'${expression.key.value}' はありません`);
       return field;
     }
     if (typeof targetType !== 'string' && targetType.kind === 'list') {
@@ -236,7 +236,7 @@ function expressionType(expression: Expr, variables: Map<string, ValueType>, ctx
     const types = expression.entries.map((entry) => expressionType(entry.value, variables, ctx));
     if (expected && typeof expected !== 'string') {
       if (expected.kind === 'struct') return { kind: 'dict', value: 'int' }; // Fields are checked against the struct declaration below.
-      if (expected.kind !== 'dict') throw new TypeCheckError(`${loc}: dict の値を ${typeName(expected)} に代入できません`);
+      if (expected.kind !== 'dict') throw new TypeCheckError(`${loc}: dict の値めE${typeName(expected)} に代入できません`);
       if (types.some((type) => type !== expected.value)) throw new TypeCheckError(`${loc}: 辞書の値の型は ${expected.value} に統一してください`);
       return expected;
     }
@@ -263,7 +263,7 @@ function expressionType(expression: Expr, variables: Map<string, ValueType>, ctx
   }
 
   if (expression.kind === 'call') {
-    const runtimeApi = RUNTIME_STATE_APIS.get(expression.name);
+    const runtimeApi = runtimeStateApi(expression.name);
     if (runtimeApi) {
       if (expression.args.length !== runtimeApi.parameters.length) {
         throw new TypeCheckError(`${loc}: ${expression.name} requires ${runtimeApi.parameters.length} argument(s)`);
@@ -277,7 +277,7 @@ function expressionType(expression: Expr, variables: Map<string, ValueType>, ctx
       return runtimeApi.returns as ExtendedType;
     }
     if (expression.name === 'list.length') {
-      if (expression.args.length !== 1) throw new TypeCheckError(`${loc}: list.length は引数を1つ取ります`);
+      if (expression.args.length !== 1) throw new TypeCheckError(`${loc}: list.length は引数めEつ取ります`);
       const type = expressionType(expression.args[0], variables, ctx);
       if (typeof type === 'string' || type.kind !== 'list') throw new TypeCheckError(`${loc}: list.length の引数はlist型である必要があります`);
       return 'int';
@@ -328,7 +328,7 @@ function expressionType(expression: Expr, variables: Map<string, ValueType>, ctx
       throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 未定義の関数 '${expression.name}' です`);
     }
     if (expression.args.length !== fn.params.length) {
-      throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 関数 '${expression.name}' の引数の個数が一致しません (期待: ${fn.params.length}, 実際: ${expression.args.length})`);
+      throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 関数 '${expression.name}' の引数の個数が一致しません (期征E ${fn.params.length}, 実際: ${expression.args.length})`);
     }
     for (let i = 0; i < fn.params.length; i++) {
       const argType = expressionType(expression.args[i], variables, ctx, fn.params[i].type);
@@ -356,7 +356,7 @@ function checkCondition(expression: Expr, variables: Map<string, ValueType>, ctx
   const loc = getLocStr(expression);
   const type = expressionType(expression, variables, ctx);
   if (type !== 'bool') {
-    throw new TypeCheckError(`${loc}: 型エラー (${ctx.file}): 条件式には比較演算子（== / != / > / >= / < / <=）または論理式が必要です`);
+    throw new TypeCheckError(`${loc}: \u578b\u30a8\u30e9\u30fc (${ctx.file}): \u6761\u4ef6\u5f0f\u306b\u306f\u6bd4\u8f03\u6f14\u7b97\u5b50(== / != / > / >= / < / <=)\u307e\u305f\u306f\u8ad6\u7406\u5f0f\u304c\u5fc5\u8981\u3067\u3059`);
   }
 }
 
@@ -366,7 +366,7 @@ function checkDuration(expression: Expr, variables: Map<string, ValueType>, ctx:
   if (expressionType(expression, variables, ctx) !== 'int') return;
   const value = staticValue(expression, ctx.knownNumbers);
   if (typeof value === 'bigint' && (value < 0n || value > MAX_DURATION_MS)) {
-    throw new TypeCheckError(`${loc}: ${label} は 0 以上 2147483647 以下でなければなりません`);
+    throw new TypeCheckError(`${loc}: ${label} は 0 以丁E2147483647 以下でなければなりません`);
   }
 }
 
@@ -386,7 +386,7 @@ function characterOffsetEnd(args: Expr[], start: number, loc: string, variables:
     const value = arg.kind === 'literal' && typeof arg.value === 'string' ? arg.value : '';
     const match = /^([xy])([+-])(\d+)?$/.exec(value);
     if (!match) break;
-    if (axes.has(match[1])) throw new TypeCheckError(`${loc}: 位置ずらしは x / y をそれぞれ1回だけ指定できます`);
+    if (axes.has(match[1])) throw new TypeCheckError(`${loc}: \u4f4d\u7f6e\u305a\u3089\u3057\u306f x / y \u3092\u305d\u308c\u305e\u308c1\u56de\u3060\u3051\u6307\u5b9a\u3067\u304d\u307e\u3059`);
     axes.add(match[1]);
     if (match[3]) {
       if (BigInt(match[3]) > MAX_CHARACTER_OFFSET_PX) throw new TypeCheckError(`${loc}: 位置ずらしは ±${MAX_CHARACTER_OFFSET_PX} px 以内で指定してください`);
@@ -419,6 +419,42 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
     if (a && a.kind === 'literal' && typeof a.value === 'string') return a.value;
     throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): コマンド '${name}' の第 ${idx + 1} 引数はリテラル識別子でなければなりません`);
   };
+  const findAsset = (kind: string, reference: string) => {
+    const byName = ctx.assets.get(reference);
+    if (byName?.type === kind) return byName;
+    const normalized = reference.replaceAll('\\', '/').replace(/^asset\//, '').toLocaleLowerCase('en-US');
+    const matches = [...ctx.assets.values()].filter((asset) => asset.type === kind && (
+      asset.path.replaceAll('\\', '/').replace(/^asset\//, '').toLocaleLowerCase('en-US') === normalized
+      || asset.path.replaceAll('\\', '/').split('/').at(-1)?.toLocaleLowerCase('en-US') === normalized
+    ));
+    if (matches.length > 1) throw new TypeCheckError(`${locStr}: アセチE��吁E"${reference}" が褁E��の${kind}素材に一致します。asset宣言のIDを指定してください`);
+    return matches[0];
+  };
+  const validateOnlySuffix = () => {
+    const positions = args.flatMap((arg, index) => arg.kind === 'literal' && arg.value === '--only' ? [index] : []);
+    if (positions.length > 1 || positions.length === 1 && positions[0] !== args.length - 1) {
+      throw new TypeCheckError(`${locStr}: --only may appear once at the end of a display command`);
+    }
+    const layers = args.flatMap((arg, index) => arg.kind === 'literal' && arg.value === '--layer' ? [index] : []);
+    if (layers.length > 1) throw new TypeCheckError(`${locStr}: --layer may appear only once`);
+    for (const index of layers) {
+      const expectedIndex = positions.length ? args.length - 3 : args.length - 2;
+      if (index !== expectedIndex) throw new TypeCheckError(`${locStr}: --layer must be the final display option (before --only when present)`);
+      const value = args[index + 1];
+      if (!value || value.kind === 'literal' && ['--only', '--layer'].includes(String(value.value))) throw new TypeCheckError(`${locStr}: --layer requires a numeric value from 0 to less than 8`);
+      const type = expressionType(value, variables, ctx);
+      if (type !== 'int' && type !== 'float') throw new TypeCheckError(`${locStr}: --layer must be numeric`);
+      const layer = staticValue(value, ctx.knownNumbers);
+      if (typeof layer === 'number' && (!Number.isFinite(layer) || layer < 0 || layer >= 8)
+        || typeof layer === 'bigint' && (layer < 0n || layer >= 8n)) throw new TypeCheckError(`${locStr}: --layer は 0 以丁E8 未満で持E��してください`);
+      if (typeof layer === 'number' && Math.abs(Math.round(layer * 1000) - layer * 1000) > 1e-7) throw new TypeCheckError(`${locStr}: --layer は小数第3位まで持E��できます`);
+    }
+  };
+  const displayArgsWithoutOptions = () => args.filter((arg, index) => {
+    const previous = args[index - 1];
+    return !(arg.kind === 'literal' && ['--only', '--layer'].includes(String(arg.value)))
+      && !(previous?.kind === 'literal' && previous.value === '--layer');
+  });
 
   if (name === 'show' && args[0]?.kind === 'literal' && args[0].value !== 'image' && !/^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$/.test(String(args[0].value))) {
     throw new TypeCheckError(`${locStr}: show は show <character>.<pose> <position> または show image <id> <position> を使用してください`);
@@ -435,32 +471,56 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
       break;
     }
     case 'dialog': {
-      if (args.length !== 2 || getArgStr(0) !== 'opacity') throw new TypeCheckError(`${locStr}: dialog は dialog opacity <float 0.0..1.0> を指定してください`);
-      if (expressionType(args[1], variables, ctx) !== 'float') throw new TypeCheckError(`${locStr}: dialog opacity は float で指定してください`);
-      const value = staticValue(args[1], ctx.knownNumbers);
-      if (typeof value === 'number' && (value < 0 || value > 1)) throw new TypeCheckError(`${locStr}: dialog opacity は 0.0 から 1.0 の範囲です`);
+      if (getArgStr(0) === 'visible') {
+        if (args.length !== 2 || expressionType(args[1], variables, ctx) !== 'bool') throw new TypeCheckError(`${locStr}: dialog visible は true また�E false を指定してください`);
+      } else {
+        if (args.length !== 2 || getArgStr(0) !== 'opacity') throw new TypeCheckError(`${locStr}: dialog opacity <float 0.0..1.0> また�E dialog visible <bool> を指定してください`);
+        if (expressionType(args[1], variables, ctx) !== 'float') throw new TypeCheckError(`${locStr}: dialog opacity は float で持E��してください`);
+        const value = staticValue(args[1], ctx.knownNumbers);
+        if (typeof value === 'number' && (value < 0 || value > 1)) throw new TypeCheckError(`${locStr}: dialog opacity は 0.0 から 1.0 の篁E��です`);
+      }
+      break;
+    }
+    case 'layer': {
+      const target = getArgStr(0);
+      if (args.length !== 2 || !['background', 'video', 'character', 'image', 'fog', 'dialogue', 'controls', 'menu'].includes(target)
+        || !['int', 'float'].includes(String(expressionType(args[1], variables, ctx)))) {
+        throw new TypeCheckError(`${locStr}: layer <background|video|character|image|fog|dialogue|controls|menu> <0..7.999> を指定してください`);
+      }
+      const layer = staticValue(args[1], ctx.knownNumbers);
+      if (typeof layer === 'number' && (!Number.isFinite(layer) || layer < 0 || layer >= 8)
+        || typeof layer === 'bigint' && (layer < 0n || layer >= 8n)) throw new TypeCheckError(`${locStr}: layer は 0 以丁E8 未満で持E��してください`);
+      if (typeof layer === 'number' && Math.abs(Math.round(layer * 1000) - layer * 1000) > 1e-7) throw new TypeCheckError(`${locStr}: layer は小数第3位まで持E��できます`);
       break;
     }
     case 'bg': {
-      if (args.length !== 1) throw new TypeCheckError(`${locStr}: コマンド 'bg' は引数を1つ取ります`);
+      validateOnlySuffix();
+      const displayArgs = displayArgsWithoutOptions();
+      if (displayArgs.length !== 1 && displayArgs.length !== 3) throw new TypeCheckError(`${locStr}: bg <ID> [fade|wipe-left|wipe-right|wipe-up|wipe-down <ms>] [--only] を指定してください`);
       const id = getArgStr(0);
-      const asset = ctx.assets.get(id);
+      const asset = findAsset('bg', id);
       if (!asset || asset.type !== 'bg') throw new TypeCheckError(`${locStr}: 未定義または型が異なる背景アセット '${id}' です`);
+      if (displayArgs.length === 3) {
+        if (!['fade', 'crossfade', 'wipe-left', 'wipe-right', 'wipe-up', 'wipe-down'].includes(getArgStr(1))) throw new TypeCheckError(`${locStr}: 未対応�E背景遷移 '${getArgStr(1)}' です`);
+        if (expressionType(displayArgs[2], variables, ctx) !== 'int') throw new TypeCheckError(`${locStr}: 背景遷移時間は int ミリ秒で持E��してください`);
+        checkDuration(displayArgs[2], variables, ctx, locStr, '背景遷移時間');
+      }
       break;
     }
     case 'bgm': {
-      if (args.length !== 1) throw new TypeCheckError(`${locStr}: コマンド 'bgm' は引数を1つ取ります`);
+      if (args.length !== 1) throw new TypeCheckError(`${locStr}: コマンチE'bgm' は引数めEつ取ります`);
       const id = getArgStr(0);
-      const asset = ctx.assets.get(id);
+      const asset = findAsset('bgm', id);
       if (!asset || asset.type !== 'bgm') throw new TypeCheckError(`${locStr}: 未定義または型が異なるBGMアセット '${id}' です`);
       break;
     }
     case 'play': {
-      if (args.length < 2) throw new TypeCheckError(`${locStr}: コマンド 'play' は最低2つの引数を取ります`);
+      validateOnlySuffix();
+      if (args.length < 2) throw new TypeCheckError(`${locStr}: コマンチE'play' は最佁Eつの引数を取ります`);
       const kind = getArgStr(0);
       if (!['se', 'voice', 'video', 'bgm'].includes(kind)) throw new TypeCheckError(`${locStr}: 未知の再生種別 '${kind}' です`);
       const id = getArgStr(1);
-      const asset = ctx.assets.get(id);
+      const asset = findAsset(kind, id);
       if (!asset || asset.type !== kind) throw new TypeCheckError(`${locStr}: 未定義または型が異なるアセット '${id}' (期待: ${kind}) です`);
       const seen = new Set<string>();
       for (let index = 2; index < args.length;) {
@@ -473,17 +533,50 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
           if (expressionType(value, variables, ctx) !== 'float') throw new TypeCheckError(`${locStr}: play volume は float で指定してください`);
           const constant = staticValue(value, ctx.knownNumbers);
           if (typeof constant === 'number' && (constant < 0 || constant > 1)) throw new TypeCheckError(`${locStr}: play volume は 0.0 から 1.0 の範囲です`);
+        } else if (option === 'opacity') {
+          if (kind !== 'video' || index >= args.length || expressionType(args[index], variables, ctx) !== 'float') throw new TypeCheckError(`${locStr}: opacity は play video に 0.0..1.0 の float で持E��してください`);
+          const constant = staticValue(args[index++], ctx.knownNumbers);
+          if (typeof constant === 'number' && (constant < 0 || constant > 1)) throw new TypeCheckError(`${locStr}: video opacity は 0.0 から 1.0 の篁E��です`);
         } else if (option === 'crossfade') {
           if (kind !== 'bgm' || index >= args.length) throw new TypeCheckError(`${locStr}: crossfade はBGM再生に指定してください`);
           checkAudioTransition([{ kind: 'literal', value: 'crossfade' }, args[index++]], variables, ctx, locStr);
+        } else if (option === '--only') {
+          if (kind !== 'video') throw new TypeCheckError(`${locStr}: --only は play video にのみ持E��できます`);
+        } else if (option === '--layer') {
+          if (kind !== 'video' || index >= args.length) throw new TypeCheckError(`${locStr}: --layer is supported only by play video and requires a value`);
+          const layerValue = args[index++];
+          const layerType = expressionType(layerValue, variables, ctx);
+          if (layerType !== 'int' && layerType !== 'float') throw new TypeCheckError(`${locStr}: --layer must be numeric`);
+          const layer = staticValue(layerValue, ctx.knownNumbers);
+          if (typeof layer === 'number' && (!Number.isFinite(layer) || layer < 0 || layer >= 8 || Math.abs(Math.round(layer * 1000) - layer * 1000) > 1e-7) || typeof layer === 'bigint' && (layer < 0n || layer >= 8n)) throw new TypeCheckError(`${locStr}: --layer must be from 0 to 7.999 in 0.001 steps`);
+        } else if (option === 'character') {
+          if (kind !== 'voice' || index >= args.length) throw new TypeCheckError(`${locStr}: character は play voice のみに持E��できます`);
+          const characterId = getArgStr(index++);
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(characterId) || !ctx.characters.has(characterId)) throw new TypeCheckError(`${locStr}: play voice character '${characterId}' は定義済みcharacterが忁E��です`);
         } else if (option === 'blocking' || option === 'async') {
           if (kind !== 'voice' && kind !== 'video') throw new TypeCheckError(`${locStr}: 再生モードは voice/video に指定してください`);
-        } else throw new TypeCheckError(`${locStr}: play のオプション '${option}' は未対応です。BGMは crossfade、voice は blocking / async を使用してください`);
+        } else throw new TypeCheckError(`${locStr}: play のオプション '${option}' は未対応です、EGMは crossfade、voice は blocking / async を使用してください`);
       }
-      if ((kind === 'bgm' || kind === 'se') && seen.has('blocking') || (kind === 'bgm' || kind === 'se') && seen.has('async')) throw new TypeCheckError(`${locStr}: BGM/SE に blocking/async は指定できません`);
+      if (seen.has('blocking') && seen.has('async')) throw new TypeCheckError(`${locStr}: play cannot combine blocking and async`);
+      if ((kind === 'bgm' || kind === 'se') && seen.has('blocking') || (kind === 'bgm' || kind === 'se') && seen.has('async')) throw new TypeCheckError(`${locStr}: BGM/SE に blocking/async は持E��できません`);
+      break;
+    }
+    case 'camera': {
+      if (getArgStr(0) === 'reset') {
+        if (args.length !== 1 && !(args.length === 3 && getArgStr(1) === 'over' && expressionType(args[2], variables, ctx) === 'int')) throw new TypeCheckError(`${locStr}: camera reset [over <ms>] を指定してください`);
+        if (args[2]) checkDuration(args[2], variables, ctx, locStr, 'camera の時間');
+      } else {
+        if (args.length !== 5 && args.length !== 7 || getArgStr(0) !== 'zoom' || getArgStr(2) !== 'at' || args.length === 7 && getArgStr(5) !== 'over') throw new TypeCheckError(`${locStr}: camera zoom <float> at <x:int> <y:int> [over <ms>] を指定してください`);
+        if (expressionType(args[1], variables, ctx) !== 'float' || expressionType(args[3], variables, ctx) !== 'int' || expressionType(args[4], variables, ctx) !== 'int') throw new TypeCheckError(`${locStr}: camera の倍率は float、焦点座標�E int px で持E��してください`);
+        if (args.length === 7 && expressionType(args[6], variables, ctx) !== 'int') throw new TypeCheckError(`${locStr}: camera の移動時間�E over <ms> で持E��してください`);
+        const zoom = staticValue(args[1], ctx.knownNumbers);
+        if (typeof zoom === 'number' && (zoom < 0.1 || zoom > 8)) throw new TypeCheckError(`${locStr}: camera zoom は 0.1..8.0 です`);
+        if (args.length === 7) checkDuration(args[6], variables, ctx, locStr, 'camera の時間');
+      }
       break;
     }
     case 'show': {
+      validateOnlySuffix();
       const poseReference = args.length ? /^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(getArgStr(0)) : null;
       if (poseReference) {
         if (args.length < 2) throw new TypeCheckError(`${locStr}: show は show <character>.<pose> <position> で指定してください`);
@@ -492,17 +585,19 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
         if (!['far_left', 'left', 'center', 'right', 'far_right'].includes(pos)) throw new TypeCheckError(`${locStr}: 不正な表示位置 '${pos}' です`);
         const charDef = ctx.characters.get(charName);
         if (!charDef) throw new TypeCheckError(`${locStr}: 未定義のキャラクター '${charName}' です`);
-        if (!charDef.has(pose)) throw new TypeCheckError(`${locStr}: キャラクター '${charName}' にポーズ '${pose}' はありません`);
-        const transitionStart = characterOffsetEnd(args, 2, locStr, variables, ctx);
-        checkFade(args.slice(transitionStart), variables, ctx, locStr);
+        if (!charDef.has(pose)) throw new TypeCheckError(`${locStr}: \u30ad\u30e3\u30e9\u30af\u30bf\u30fc '${charName}' \u306b\u30dd\u30fc\u30ba '${pose}' \u306f\u3042\u308a\u307e\u305b\u3093`);
+        const displayArgs = displayArgsWithoutOptions();
+        const transitionStart = characterOffsetEnd(displayArgs, 2, locStr, variables, ctx);
+        checkFade(displayArgs.slice(transitionStart), variables, ctx, locStr);
         break;
       }
       if (args.length < 2) throw new TypeCheckError(`${locStr}: コマンド 'show' の引数が不足しています`);
       const targetKind = getArgStr(0);
       if (targetKind === 'image') {
-        if (args.length !== 3) throw new TypeCheckError(`${locStr}: show image は画像と位置を指定してください`);
+        const displayArgs = displayArgsWithoutOptions();
+        if (displayArgs.length !== 3) throw new TypeCheckError(`${locStr}: show image <id> <position> [--only]`);
         const imgName = getArgStr(1);
-        const asset = ctx.assets.get(imgName);
+        const asset = findAsset('image', imgName);
         if (!asset || asset.type !== 'image') throw new TypeCheckError(`${locStr}: 未定義の画像アセット '${imgName}' です`);
         if (args.length >= 3) {
           const pos = getArgStr(2);
@@ -570,7 +665,7 @@ function checkCommand(name: string, args: Expr[], variables: Map<string, ValueTy
       if (args.length !== 2 && args.length !== 4) throw new TypeCheckError(`${locStr}: say は話者、本文、必要なら opacity <float> を指定してください`);
       const speaker = getArgStr(0);
       if (speaker !== 'narrator' && speaker !== 'none' && !ctx.characters.has(speaker)) {
-        throw new TypeCheckError(`${locStr}: 未定義の話者 '${speaker}' です`);
+        throw new TypeCheckError(`${locStr}: 未定義の話老E'${speaker}' です`);
       }
       const textType = expressionType(args[1], variables, ctx);
       if (textType !== 'str') throw new TypeCheckError(`${locStr}: say の本文は str でなければなりません`);
@@ -688,12 +783,12 @@ function checkStatements(
         throw new TypeCheckError(`${locStr}: global 宣言はファイルのトップレベルでのみ使用できます`);
       }
       if (!options.allowDeclaration) {
-        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): scene 直下での変数宣言は禁止されています（選択肢ブロック内またはグローバルで宣言してください）`);
+        throw new TypeCheckError(`${locStr}: \u578b\u30a8\u30e9\u30fc (${ctx.file}): scene \u76f4\u4e0b\u3067\u306e\u5909\u6570\u5ba3\u8a00\u306f\u7981\u6b62\u3055\u308c\u3066\u3044\u307e\u3059`);
       }
       const duplicateLocal = ctx.declaredLocals?.has(statement.name) || ctx.locals?.has(statement.name) || false;
       const shadowsScenarioVariable = variables.has(statement.name) && !ctx.currentFunction;
       if (duplicateLocal || shadowsScenarioVariable) {
-        throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 変数 '${statement.name}' は既に宣言されています。再宣言せず set を使用してください`);
+        throw new TypeCheckError(`${locStr}: \u578b\u30a8\u30e9\u30fc (${ctx.file}): \u5909\u6570 '${statement.name}' \u306f\u65e2\u306b\u5ba3\u8a00\u3055\u308c\u3066\u3044\u307e\u3059\u3002\u518d\u5ba3\u8a00\u305b\u305a set \u3092\u4f7f\u7528\u3057\u3066\u304f\u3060\u3055\u3044`);
       }
       if (statement.initial) {
         const actual = expressionType(statement.initial, variables, ctx, statement.type === 'infer' ? undefined : statement.type);
@@ -705,9 +800,9 @@ function checkStatements(
           for (const [field, fieldType] of Object.entries(fields)) {
             const entry = statement.initial.entries.find((e) => e.key === field);
             if (!entry) throw new TypeCheckError(`${locStr}: struct '${statement.type.name}' のフィールド '${field}' が不足しています`);
-            if (expressionType(entry.value, variables, ctx) !== fieldType) throw new TypeCheckError(`${locStr}: フィールド '${field}' の型が一致しません`);
+            if (expressionType(entry.value, variables, ctx) !== fieldType) throw new TypeCheckError(`${locStr}: \u30d5\u30a3\u30fc\u30eb\u30c9 '${field}' \u306e\u578b\u304c\u4e00\u81f4\u3057\u307e\u305b\u3093`);
           }
-          for (const key of keys) if (!fields[key]) throw new TypeCheckError(`${locStr}: struct '${statement.type.name}' にフィールド '${key}' はありません`);
+          for (const key of keys) if (!fields[key]) throw new TypeCheckError(`${locStr}: struct '${statement.type.name}' にフィールチE'${key}' はありません`);
         }
         if (statement.type === 'infer') {
           if (actual === 'none') {
@@ -719,7 +814,7 @@ function checkStatements(
           statement.type = actual;
         }
         if ((typeof statement.type === 'string' || statement.type.kind === 'dict' || statement.type.kind === 'list') && !sameType(statement.type, actual)) {
-          throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): ${statement.name} は ${typeName(statement.type)} ですが、${typeName(actual)} が代入されています`);
+          throw new TypeCheckError(`${locStr}: \u578b\u30a8\u30e9\u30fc (${ctx.file}): ${statement.name} \u306f ${typeName(statement.type)} \u3067\u3059\u304c\u3001${typeName(actual)} \u304c\u4ee3\u5165\u3055\u308c\u3066\u3044\u307e\u3059`);
         }
       }
       if (statement.type === 'infer') {
@@ -812,6 +907,48 @@ function checkStatements(
 
     if (statement.kind === 'command') {
       checkCommand(statement.name, statement.args, variables, ctx, locStr);
+    }
+
+    if (statement.kind === 'parallel') {
+      if (!statement.body.length) throw new TypeCheckError(`${locStr}: parallel block requires at least one timed visual command`);
+      const targets = new Set<string>();
+      for (const child of statement.body) {
+        if (child.kind !== 'command') throw new TypeCheckError(`${getLocStr(child)}: parallel blocks accept timed visual commands only`);
+        checkCommand(child.name, child.args, variables, ctx, getLocStr(child));
+        const args = child.args;
+        if (args.some((arg) => arg.kind === 'literal' && arg.value === '--only')) throw new TypeCheckError(`${getLocStr(child)}: --only is not supported inside parallel blocks`);
+        const word = (index: number) => args[index]?.kind === 'literal' ? String(args[index].value) : '';
+        let target = '';
+        let timed = false;
+        if (child.name === 'bg') {
+          const start = args.findIndex((arg, index) => index > 0 && arg.kind === 'literal' && ['fade', 'crossfade', 'wipe-left', 'wipe-right', 'wipe-up', 'wipe-down'].includes(String(arg.value)));
+          timed = start >= 0;
+          target = 'background-transition';
+        } else if (child.name === 'show') {
+          const image = word(0) === 'image';
+          const id = image ? word(1) : word(0).split('.')[0];
+          const fadeIndex = args.findIndex((arg) => arg.kind === 'literal' && arg.value === 'fade');
+          timed = !image && fadeIndex >= 0;
+          target = image ? `image:${id}` : `visibility:${id}`;
+        } else if (child.name === 'hide') {
+          const id = word(0);
+          timed = word(1) === 'fade';
+          target = `visibility:${id}`;
+        } else if (child.name === 'move') {
+          const kind = word(0), id = word(1);
+          timed = args.some((arg) => arg.kind === 'literal' && arg.value === 'over');
+          target = kind === 'bg' ? 'background-offset' : `offset:${id}`;
+        } else if (child.name === 'camera') {
+          timed = args.some((arg) => arg.kind === 'literal' && arg.value === 'over');
+          target = 'camera';
+        } else if (child.name === 'effect') {
+          timed = word(0) === 'fade';
+          target = 'overlay';
+        }
+        if (!timed) throw new TypeCheckError(`${getLocStr(child)}: parallel blocks require a timed visual command`);
+        if (target && targets.has(target)) throw new TypeCheckError(`${getLocStr(child)}: parallel block has multiple animations targeting ${target}`);
+        if (target) targets.add(target);
+      }
     }
 
     if (statement.kind === 'if') {
@@ -1020,7 +1157,7 @@ function checkStatements(
       if (!options.allowChoice) {
         throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 関数内で choice は使用できません`);
       }
-      if (!statement.options.length) throw new TypeCheckError(`${locStr}: choice には1つ以上の選択肢が必要です`);
+      if (!statement.options.length) throw new TypeCheckError(`${locStr}: choice \u306b\u306f1\u3064\u4ee5\u4e0a\u306e\u9078\u629e\u80a2\u304c\u5fc5\u8981\u3067\u3059`);
       if (statement.prompt) {
         const promptType = expressionType(statement.prompt, variables, ctx);
         if (promptType !== 'str') throw new TypeCheckError(`${locStr}: choice の質問文は str でなければなりません`);
@@ -1028,7 +1165,7 @@ function checkStatements(
       for (const option of statement.options) {
         const labelType = expressionType(option.label, variables, ctx);
         if (labelType !== 'str') throw new TypeCheckError(`${locStr}: 選択肢のラベルは str でなければなりません`);
-        // choice ブロック内では変数宣言を許可
+        // choice ブロチE��冁E��は変数宣言を許可
          checkStatements(option.body, new Map(variables), { ...ctx, locals: new Set(), declaredLocals: new Set(), readonly: ctx.readonly ? new Set(ctx.readonly) : undefined, knownStrings: new Map(ctx.knownStrings), knownNumbers: new Map(ctx.knownNumbers) }, { ...options, allowDeclaration: true });
       }
       ctx.knownStrings?.clear();
@@ -1049,7 +1186,7 @@ function checkStatements(
         if (!statement.value) throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 値を返す必要があります`);
         const actualReturn = expressionType(statement.value, variables, ctx, expectedReturn);
         if (!sameType(expectedReturn, actualReturn)) {
-          throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 戻り値の型が一致しません (期待: ${typeName(expectedReturn)}, 実際: ${typeName(actualReturn)})`);
+          throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 戻り値の型が一致しません (期征E ${typeName(expectedReturn)}, 実際: ${typeName(actualReturn)})`);
         }
       }
     }
@@ -1058,7 +1195,7 @@ function checkStatements(
       if (!options.allowGoto) {
         throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 関数内で goto は使用できません`);
       }
-      // 同一ファイル内シーンまたは外部ファイル
+      // 同一ファイル冁E��ーンまた�E外部ファイル
       const target = statement.scene;
       if (!target.includes('/') && !/\.(tds|txt)$/i.test(target) && !ctx.scenes.has(target)) {
         throw new TypeCheckError(`${locStr}: 型エラー (${ctx.file}): 存在しないシーン '${target}' への goto です`);
@@ -1185,7 +1322,7 @@ function checkRecursion(functions: FunctionDef[], initialStrings = new Map<strin
     callGraph.set(fn.name, called);
   }
 
-  // サイクル検出 (DFS)
+  // サイクル検�E (DFS)
   const visited = new Set<string>();
   const recStack = new Set<string>();
 
@@ -1199,7 +1336,7 @@ function checkRecursion(functions: FunctionDef[], initialStrings = new Map<strin
       if (!visited.has(neighbor)) {
         dfs(neighbor, path);
       } else if (recStack.has(neighbor)) {
-        throw new TypeCheckError(`関数の再帰呼び出しは禁止されています (${[...path, neighbor].join(' -> ')})`);
+        throw new TypeCheckError(`\u95a2\u6570\u306e\u518d\u5e30\u547c\u3073\u51fa\u3057\u306f\u7981\u6b62\u3055\u308c\u3066\u3044\u307e\u3059(${[...path, neighbor].join(' -> ')})`);
       }
     }
     recStack.delete(node);
@@ -1214,7 +1351,7 @@ function checkRecursion(functions: FunctionDef[], initialStrings = new Map<strin
 }
 
 export function checkTypes(script: Script, file = 'current', externalGlobals = new Map<string, ValueType>(), externalCharacters: ExternalCharacters = new Map(), errors?: TypeCheckError[]): void {
-  // 1. 重複宣言チェック
+  // 1. 重褁E��言チェチE��
   const declaredGlobals = new Set<string>();
   const declaredFunctions = new Set<string>();
   const declaredScenes = new Set<string>();
@@ -1240,7 +1377,7 @@ export function checkTypes(script: Script, file = 'current', externalGlobals = n
       if (declaredStructs.has(struct.name)) throw new TypeCheckError(`${getLocStr(struct)}: struct '${struct.name}' が重複しています`);
       declaredStructs.add(struct.name);
       for (const [field, fieldType] of Object.entries(struct.fields)) {
-        if (fieldType !== 'int' && fieldType !== 'float' && fieldType !== 'str' && fieldType !== 'bool') throw new TypeCheckError(`${getLocStr(struct)}: struct フィールド '${field}' の型が不正です`);
+        if (fieldType !== 'int' && fieldType !== 'float' && fieldType !== 'str' && fieldType !== 'bool') throw new TypeCheckError(`${getLocStr(struct)}: struct フィールチE'${field}' の型が不正です`);
       }
     });
   }
@@ -1250,9 +1387,9 @@ export function checkTypes(script: Script, file = 'current', externalGlobals = n
     if (declaredAssets.has(asset.name)) {
       throw new TypeCheckError(`${getLocStr(asset)}: アセット '${asset.name}' が重複して宣言されています`);
     }
-    // パス検証 (項目23)
+    // パス検証 (頁E��23)
     if (!validAssetPath(asset.path)) {
-      throw new TypeCheckError(`${getLocStr(asset)}: アセットパス '${asset.path}' はプロジェクト外を参照できません`);
+      throw new TypeCheckError(`${getLocStr(asset)}: \u30a2\u30bb\u30c3\u30c8\u30d1\u30b9 '${asset.path}' \u306f\u30d7\u30ed\u30b8\u30a7\u30af\u30c8\u5916\u3092\u53c2\u7167\u3067\u304d\u307e\u305b\u3093`);
     }
     const dotIdx = asset.path.lastIndexOf('.');
     const ext = dotIdx >= 0 ? asset.path.slice(dotIdx).toLowerCase() : '';
@@ -1287,10 +1424,13 @@ export function checkTypes(script: Script, file = 'current', externalGlobals = n
       if (poses.has(pose.name)) {
         throw new TypeCheckError(`${getLocStr(char)}: キャラクター '${char.name}' の表情 '${pose.name}' が重複しています`);
       }
-      if (!validAssetPath(pose.path)) {
-        throw new TypeCheckError(`${getLocStr(char)}: 表情パス '${pose.path}' はプロジェクト外を参照できません`);
+      if (pose.yOffset !== undefined && (!Number.isInteger(pose.yOffset) || Math.abs(pose.yOffset) > Number(MAX_CHARACTER_OFFSET_PX))) {
+        throw new TypeCheckError(`${getLocStr(pose)}: pose y_offset must be an integer within ±${MAX_CHARACTER_OFFSET_PX} px`);
       }
-      if (!ALLOWED_EXTENSIONS.char.some(ext => pose.path.toLowerCase().endsWith(ext))) throw new TypeCheckError(`表情 '${pose.name}' の拡張子が不正です`);
+      if (!validAssetPath(pose.path)) {
+        throw new TypeCheckError(`${getLocStr(char)}: \u8868\u793a\u30d1\u30b9 '${pose.path}' \u306f\u30d7\u30ed\u30b8\u30a7\u30af\u30c8\u5916\u3092\u53c2\u7167\u3067\u304d\u307e\u305b\u3093`);
+      }
+      if (!ALLOWED_EXTENSIONS.char.some(ext => pose.path.toLowerCase().endsWith(ext))) throw new TypeCheckError(`表惁E'${pose.name}' の拡張子が不正です`);
       poses.add(pose.name);
     }
     });
@@ -1298,7 +1438,7 @@ export function checkTypes(script: Script, file = 'current', externalGlobals = n
 
   for (const fn of script.functions) {
     capture(() => {
-    if (isRuntimeStateApi(fn.name)) {
+    if (runtimeStateApi(fn.name)) {
       throw new TypeCheckError(`${getLocStr(fn)}: '${fn.name}' is reserved for the runtime state API`);
     }
     if (declaredFunctions.has(fn.name)) {
@@ -1320,7 +1460,7 @@ export function checkTypes(script: Script, file = 'current', externalGlobals = n
   // 2. 再帰検査
   capture(() => checkRecursion(script.functions, staticGlobalStrings(script.globals)));
 
-  // 3. コンテキスト構築
+  // 3. コンチE��スト構篁E
   const globals = new Map(externalGlobals);
   const functions = new Map<string, FunctionDef>();
   const scenes = new Set<string>(script.scenes.map((s) => s.name));
@@ -1360,12 +1500,12 @@ export function checkTypes(script: Script, file = 'current', externalGlobals = n
     errors,
   };
 
-  // グローバル文（変数宣言）の検証
+  // グローバル斁E��変数宣言�E��E検証
   for (const stmt of script.globals) {
     capture(() => {
       if (stmt.kind === 'declare') {
         if (declaredGlobals.has(stmt.name)) {
-          throw new TypeCheckError(`${getLocStr(stmt)}: グローバル変数 '${stmt.name}' が重複して宣言されています`);
+          throw new TypeCheckError(`${getLocStr(stmt)}: \u30b0\u30ed\u30fc\u30d0\u30eb\u5909\u6570 '${stmt.name}' \u304c\u91cd\u8907\u3057\u3066\u5ba3\u8a00\u3055\u308c\u3066\u3044\u307e\u3059`);
         }
         declaredGlobals.add(stmt.name);
       }
@@ -1402,7 +1542,7 @@ export function checkTypes(script: Script, file = 'current', externalGlobals = n
     });
   }
 
-  // シーンの検証（scene直下での変数宣言は禁止）
+  // シーンの検証�E�Ecene直下での変数宣言は禁止�E�E
   for (const scene of script.scenes) {
     const sceneVars = new Map(globals);
     // A scene runs after the file globals, just like a function call. Keep

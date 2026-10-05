@@ -4,25 +4,32 @@
 #include "scene_geometry.hpp"
 #include "scene_presentation.hpp"
 #include "audio_transition.hpp"
-#include "screen_webview.hpp"
 #include <SDL3_image/SDL_image.h>
 #include <SDL3_ttf/SDL_ttf.h>
 #include <SDL3_mixer/SDL_mixer.h>
 #include <algorithm>
 #include <cmath>
 #include <charconv>
+#include <cctype>
 #include <cstdlib>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
+#include <iterator>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <regex>
+#include <set>
 #include <sstream>
 #include <thread>
 #include <unordered_map>
+#include <string_view>
+#include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -78,7 +85,7 @@ static void migrateLegacySaves(const fs::path& packagePath, const fs::path& save
     if (fs::equivalent(legacy,saveDirectory,error) && !error) return;
     error.clear();
     if (!fs::is_directory(legacy,error)) return;
-    for (int index = 1; index <= 100; ++index) {
+    for (int index = 1; index <= 120; ++index) {
         for (const auto& name : {"slot-" + std::to_string(index) + ".json", "thumb-slot-" + std::to_string(index) + ".png"}) {
             const auto source = legacy / name, destination = saveDirectory / name;
             if (fs::is_regular_file(source,error)) {
@@ -110,53 +117,136 @@ struct Engine {
         std::string type, asset;
         int64_t fadeDurationFrames;
         float fadeStartGain = 1, fadeTargetGain = 1;
+        std::string voiceCharacter;
+        float sourceGain = 1;
     };
     std::vector<AudioPlayback> audio;
+    std::unordered_map<SDL_JoystickID, SDL_Gamepad*> gamepads;
     std::mutex stoppedAudioMutex;
     std::vector<MIX_Track*> stoppedAudioTracks;
     std::map<std::string, SDL_Texture*> textures;
+    struct AnimatedTexture {
+        IMG_Animation* animation = nullptr;
+        Uint64 startedAt = 0;
+        int currentFrame = -1;
+        int repeatCount = -1; // -1 means repeat indefinitely; GIF count is additional repeats after the first play.
+        bool finished = false;
+    };
+    std::map<std::string, AnimatedTexture> animatedTextures;
+    uint64_t animatedFrameChanges = 0;
+    uint64_t animatedFiniteAnimationsCompleted = 0;
+    std::vector<int> animatedGifRepeatCounts;
+    int gifRepeatCount(const fs::path& path) const {
+        auto extension = path.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        if (extension != ".gif") return -1;
+        std::ifstream input(path, std::ios::binary);
+        if (!input) return 0;
+        const std::vector<unsigned char> data((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+        const std::string_view identifier = "NETSCAPE2.0";
+        for (size_t i = 0; i + identifier.size() + 5 < data.size(); ++i) {
+            if (!std::equal(identifier.begin(), identifier.end(), data.begin() + i)) continue;
+            // Application data follows the 11-byte identifier as sub-blocks:
+            // size=3, id=1, little-endian repeat count, terminator.
+            const size_t block = i + identifier.size();
+            for (size_t j = block; j + 4 < data.size() && j < block + 32; ++j) {
+                if (data[j] == 3 && data[j + 1] == 1) return int(data[j + 2]) | (int(data[j + 3]) << 8);
+                if (data[j] == 0) break;
+            }
+            return 0;
+        }
+        return 0; // GIF without a loop extension plays once.
+    }
     struct Sprite {
         SDL_Texture* texture;
         std::string position, asset, pose;
         float alpha = 1, offsetX = 0, offsetY = 0;
         uint64_t visualOrder = 0;
+        std::optional<double> layer;
     };
     std::map<std::string, Sprite> characters, images;
     uint64_t nextVisualOrder = 0;
     SDL_Texture *background = nullptr, *dialog = nullptr, *speakerSkin = nullptr, *choiceSkin = nullptr, *choiceActiveSkin = nullptr;
+    SDL_Texture *previousBackground = nullptr;
+    float previousBackgroundOffsetX = 0, previousBackgroundOffsetY = 0;
+    float backgroundTransitionProgress = 1.0f;
+    std::string backgroundTransitionType;
+    SDL_Surface* lastStoryFrame = nullptr;
     std::string backgroundAsset, bgmAsset, videoAsset;
+    std::string lastVoiceAsset;
+    std::string lastVoiceCharacter;
     float backgroundOffsetX = 0, backgroundOffsetY = 0;
     uint64_t logicalTimeMs = 0;
     bool captureAnimationMidpoints = false;
     json animationMidpoints = json::array();
+    std::vector<std::string> lastRenderedCategories;
+    struct ParallelTrack { int64_t duration; std::function<void(float)> update; };
     std::unique_ptr<Video> video;
     std::map<std::string, std::string> config;
+    std::map<std::string, double> renderLayers{{"background",0},{"video",1},{"character",2},{"image",3},{"fog",4},{"dialogue",5},{"controls",6},{"menu",7}};
+    std::optional<double> backgroundLayer, videoLayer;
     std::map<std::string, float> audioVolumeOverrides;
     json uiSettingValues = json::object();
-    std::map<std::string, bool> audioTagSeen;
     fs::path uiSettingsPath;
+    fs::path baseFontPath;
+    fs::path activeFontPath;
+    int baseFontSize = 24;
+    int baseWindowWidth = 960, baseWindowHeight = 680;
     std::string draggedUiSetting;
+    static const std::vector<std::string>& legacyShortcutActions() {
+        static const std::vector<std::string> actions{"none","system","save","load","replay-voice","auto","clear-text","fullscreen","skip","quick-save","history","quick-load"};
+        return actions;
+    }
+    const std::vector<std::string>& shortcutActions() const {
+        return configuredShortcutActions.empty() ? legacyShortcutActions() : configuredShortcutActions;
+    }
+    std::string shortcutActionLabel(const std::string& action) const {
+        const auto configured = configuredShortcutActionLabels.find(action);
+        if (configured != configuredShortcutActionLabels.end()) return configured->second;
+        static const std::map<std::string,std::string> labels{{"none","無効"},{"system","システム"},{"save","セーブ"},{"load","ロード"},{"replay-voice","最後のボイス再生"},{"auto","オートプレイ"},{"clear-text","テキスト消去"},{"fullscreen","フルスクリーン切替"},{"skip","スキップ"},{"quick-save","クイックセーブ"},{"history","テキスト履歴"},{"quick-load","クイックロード"}};
+        const auto found=labels.find(action); return found==labels.end()?action:found->second;
+    }
+    std::string screenFocusedSetting;
     json gameScreens = json::object();
+    std::vector<std::string> configuredShortcutActions;
+    std::map<std::string, std::string> configuredShortcutActionLabels;
+    bool hasControlSchema = false;
     json playerControls = json::object();
     json queuedLoad = nullptr;
     std::string screenMusicAsset;
     fs::path saveDirectory;
-    std::unique_ptr<native_player::ScreenWebView> screenWebView;
     struct CachedSlot { fs::file_time_type modified; json value; std::string state; };
     mutable std::unordered_map<int, CachedSlot> slotCache;
     std::string activeScreen;
     std::vector<std::string> screenHistory;
+    mutable std::map<std::string, int> slotPages;
+    int selectedSlotIndex = -1;
+    int deleteArmedSlotIndex = -1;
     int screenHover = 0;
+    fs::path captureNextScreenFrame;
     int controlHover = -1;
     bool titleStarted = false;
     bool storyActive = false;
+    bool videoBlocksStory = false;
+    std::string visualOnlyKind, visualOnlyId;
+    float videoOpacity = 1.0f;
+    bool dialogueVisible = true;
+    float cameraZoom = 1.0f, cameraFocusX = 640.0f, cameraFocusY = 360.0f;
     std::string speaker, text;
+    std::vector<std::pair<std::string, std::string>> dialogueHistory;
+    int dialogueHistoryScroll = 0;
     std::vector<std::string> options;
     int selection = -1;
     int hovered = -1;
     float choiceScroll = 0.0f;
     bool next = false;
     bool automated = false;
+    bool autoPlayActive = false;
+    bool skipActive = false;
+    bool holdActive = false;
+    bool cursorHidden = false;
+    Uint64 lastMouseActivity = 0;
+    std::set<std::string> seenSayLines;
     int width = 960, height = 680;
     float overlay = 0;
     float dialogueOpacityOverride = -1.0f;
@@ -164,6 +254,26 @@ struct Engine {
     fs::path root;
     novel::Runtime& runtime;
     int number(const std::string& key, int fallback) { return config.contains(key) ? std::stoi(config[key]) : fallback; }
+    double renderLayer(const std::string& category, std::optional<double> overrideValue = std::nullopt) const {
+        const auto found = renderLayers.find(category);
+        return overrideValue.value_or(found == renderLayers.end() ? 0.0 : found->second);
+    }
+    static double checkedRenderLayer(const json& value) {
+        if (!value.is_number()) throw std::runtime_error("Layer value must be numeric");
+        const double layer = value.get<double>();
+        if (!std::isfinite(layer) || layer < 0 || layer >= 8 || std::abs(layer * 1000.0 - std::round(layer * 1000.0)) > 1e-7)
+            throw std::runtime_error("Layer value must be between 0 and 7.999 in 0.001 steps");
+        return layer;
+    }
+    static std::optional<double> commandLayer(const json& args) {
+        for (size_t index = 0; index < args.size(); ++index) {
+            if (args.at(index).is_string() && args.at(index).get<std::string>() == "--layer") {
+                if (index + 1 >= args.size()) throw std::runtime_error("--layer requires a numeric value");
+                return checkedRenderLayer(args.at(index + 1));
+            }
+        }
+        return std::nullopt;
+    }
     SDL_Color color(const std::string& key, SDL_Color fallback) {
         if (!config.contains(key)) return fallback;
         std::istringstream in(config[key]); int r,g,b,a; char c;
@@ -173,6 +283,34 @@ struct Engine {
     SDL_Texture* image(const fs::path& path) {
         auto key = utf8Path(path); if (textures.contains(key)) return textures[key];
         SDL_Texture* t = nullptr;
+        auto extension = path.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        if (extension == ".png" || extension == ".gif" || extension == ".webp") {
+            if (auto* animation = IMG_LoadAnimation(key.c_str())) {
+                if (animation->count > 1) {
+                    t = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, animation->w, animation->h);
+                    if (!t) { IMG_FreeAnimation(animation); throw std::runtime_error("Cannot create animated image texture " + key + ": " + SDL_GetError()); }
+                    if (!SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND)) { SDL_DestroyTexture(t); IMG_FreeAnimation(animation); throw std::runtime_error("Cannot enable animated image alpha " + key + ": " + SDL_GetError()); }
+                    textures[key] = t;
+                    const int repeats = gifRepeatCount(path);
+                    if (path.extension() == ".gif" && repeats >= 0) animatedGifRepeatCounts.push_back(repeats);
+                    animatedTextures.emplace(key, AnimatedTexture{animation, SDL_GetTicks(), -1, repeats, false});
+                    return t;
+                }
+                if (animation->count == 1 && animation->frames && animation->frames[0]) {
+                    auto* rgba = SDL_ConvertSurface(animation->frames[0], SDL_PIXELFORMAT_RGBA32);
+                    IMG_FreeAnimation(animation);
+                    if (!rgba) throw std::runtime_error("Cannot convert image " + key + ": " + SDL_GetError());
+                    t = SDL_CreateTextureFromSurface(renderer, rgba);
+                    SDL_DestroySurface(rgba);
+                    if (!t) throw std::runtime_error("Cannot create image texture " + key + ": " + SDL_GetError());
+                    if (!SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND)) { SDL_DestroyTexture(t); throw std::runtime_error("Cannot enable image alpha " + key + ": " + SDL_GetError()); }
+                    textures[key] = t;
+                    return t;
+                }
+                IMG_FreeAnimation(animation);
+            }
+        }
         if (auto* surface = IMG_Load(key.c_str())) {
             // Keep the source alpha channel explicit so transparent character
             // poses remain transparent on every renderer and image format.
@@ -186,11 +324,60 @@ struct Engine {
         if (!t) throw std::runtime_error("Cannot load image " + key + ": " + SDL_GetError());
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND); textures[key] = t; return t;
     }
+    void updateAnimatedTextures() {
+        const Uint64 now = SDL_GetTicks();
+        for (auto& [key, animated] : animatedTextures) {
+            const auto* animation = animated.animation;
+            Uint64 totalDelay = 0;
+            for (int i = 0; i < animation->count; ++i) totalDelay += Uint64(std::max(1, animation->delays[i]));
+            if (totalDelay <= 0) continue;
+            const Uint64 elapsed = now - animated.startedAt;
+            if (animated.repeatCount >= 0) {
+                const Uint64 totalDuration = totalDelay * (Uint64(animated.repeatCount) + 1);
+                if (elapsed >= totalDuration && !animated.finished) {
+                    animated.finished = true;
+                    ++animatedFiniteAnimationsCompleted;
+                }
+            }
+            Uint64 frameTime = animated.finished ? totalDelay - 1 : elapsed % totalDelay;
+            int frameIndex = 0;
+            while (frameIndex + 1 < animation->count && frameTime >= std::max(1, animation->delays[frameIndex])) {
+                frameTime -= std::max(1, animation->delays[frameIndex]);
+                ++frameIndex;
+            }
+            if (frameIndex == animated.currentFrame) continue;
+            auto* rgba = SDL_ConvertSurface(animation->frames[frameIndex], SDL_PIXELFORMAT_RGBA32);
+            if (!rgba) throw std::runtime_error("Cannot convert animated image " + key + ": " + SDL_GetError());
+            const bool updated = SDL_UpdateTexture(textures.at(key), nullptr, rgba->pixels, rgba->pitch);
+            SDL_DestroySurface(rgba);
+            if (!updated) throw std::runtime_error("Cannot update animated image " + key + ": " + SDL_GetError());
+            if (animated.currentFrame >= 0) ++animatedFrameChanges;
+            animated.currentFrame = frameIndex;
+        }
+    }
+    std::string resolveAssetId(const std::string& type, const std::string& id) const {
+        const auto normalized = [](std::string value) {
+            std::replace(value.begin(),value.end(),char(92),'/');
+            if(value.starts_with("asset/")) value.erase(0,6);
+            std::transform(value.begin(),value.end(),value.begin(),[](unsigned char c){return char(std::tolower(c));});
+            return value;
+        };
+        std::string match;
+        for(const auto& a:runtime.program.at("assets")) if(a.at("type")==type) {
+            const auto path=a.at("path").get<std::string>(), leaf=fs::u8path(path).filename().generic_string();
+            if(a.at("name")==id || normalized(path)==normalized(id) || normalized(leaf)==normalized(id)) {
+                if(!match.empty() && match!=a.at("name").get<std::string>()) throw std::runtime_error("Ambiguous asset filename: "+id);
+                match=a.at("name").get<std::string>();
+            }
+        }
+        if(match.empty()) throw std::runtime_error("Unknown asset: "+id);
+        return match;
+    }
     fs::path asset(const std::string& type, const std::string& id, const std::string& pose = "") {
         std::string relative;
         if (type == "char") {
             for (const auto& c : runtime.program.at("characters")) if (c.at("name") == id) for (const auto& p : c.at("poses")) if (p.at("name") == pose) relative = p.at("path");
-        } else for (const auto& a : runtime.program.at("assets")) if (a.at("type") == type && a.at("name") == id) relative = a.at("path");
+        } else { const auto resolvedId=resolveAssetId(type,id); for(const auto& a:runtime.program.at("assets")) if(a.at("type")==type && a.at("name")==resolvedId) { relative=a.at("path"); break; } }
         std::replace(relative.begin(), relative.end(), '\\', '/');
         if (relative.starts_with("asset/")) relative.erase(0, 6);
         if (relative.empty()) throw std::runtime_error("Unknown asset: " + id);
@@ -198,6 +385,15 @@ struct Engine {
         auto rel = resolved.lexically_relative(base);
         if (rel.empty() || rel.is_absolute() || *rel.begin() == "..") throw std::runtime_error("Asset outside package");
         return resolved;
+    }
+    float poseYOffset(const std::string& id, const std::string& pose) const {
+        for (const auto& character : runtime.program.at("characters")) {
+            if (character.at("name") != id) continue;
+            for (const auto& definition : character.at("poses")) {
+                if (definition.at("name") == pose) return definition.value("yOffset", 0.0f);
+            }
+        }
+        return 0.0f;
     }
     SDL_Texture* skinImage(const std::string& relative) {
         if (relative.empty() || fs::path(relative).is_absolute() || relative.find("..") != std::string::npos) return nullptr;
@@ -221,10 +417,19 @@ struct Engine {
         if (!file) throw std::runtime_error("Cannot open game screen configuration: " + relative);
         json value; file >> value;
         if (value.value("version", 0) != 1 || !value.contains("canvas") || !value.contains("screens") || !value.contains("initial") || !value["screens"].contains(value["initial"].get<std::string>())) throw std::runtime_error("Invalid game screen configuration");
+        const auto scaleMode = value.value("scaleMode", std::string("contain"));
+        if (scaleMode != "contain" && scaleMode != "cover" && scaleMode != "stretch") throw std::runtime_error("Invalid game screen scaleMode");
         return value;
     }
     void applyUiTheme(const json& nativeUi, const json& theme, bool loadImages) {
         if (theme.empty()) return;
+        if (theme.contains("layers")) {
+            if (!theme.at("layers").is_object()) throw std::runtime_error("Invalid render layers");
+            for (const auto& [category, value] : theme.at("layers").items()) {
+                if (!renderLayers.contains(category)) throw std::runtime_error("Unknown render layer category: " + category);
+                renderLayers[category] = checkedRenderLayer(value);
+            }
+        }
         const auto themeFile = nativeUi.at("native_ui_theme").get<std::string>();
         const auto themeDirectory = fs::path(themeFile).parent_path();
         const auto imagePath = [&](const std::string& name) {
@@ -314,7 +519,12 @@ struct Engine {
         }
     }
     Engine(novel::Runtime& rt, const fs::path& package, const json& packageData) : root(package.parent_path()), runtime(rt) {
-        if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) || !TTF_Init() || !MIX_Init()) throw std::runtime_error(SDL_GetError());
+        if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD) || !TTF_Init() || !MIX_Init()) throw std::runtime_error(SDL_GetError());
+        int gamepadCount = 0;
+        if (SDL_JoystickID* gamepadIds = SDL_GetGamepads(&gamepadCount)) {
+            for (int index = 0; index < gamepadCount; ++index) if (SDL_Gamepad* gamepad = SDL_OpenGamepad(gamepadIds[index])) gamepads.emplace(gamepadIds[index], gamepad);
+            SDL_free(gamepadIds);
+        }
         fs::path data = fs::u8path(SDL_GetBasePath()) / "engine_data";
         std::ifstream file(data / "engine.txt"); std::string line;
         while (std::getline(file, line)) {
@@ -324,6 +534,14 @@ struct Engine {
         }
         const auto nativeUi = packageData.value("native_ui", json::object());
         gameScreens = readGameScreens(nativeUi);
+        const auto controlSchema = gameScreens.value("controlSchema", json::object());
+        hasControlSchema = controlSchema.contains("settings") && controlSchema.at("settings").is_object();
+        if (controlSchema.value("shortcutActions", json::array()).is_array()) {
+            for (const auto& action : controlSchema.value("shortcutActions", json::array())) if (action.is_string()) configuredShortcutActions.push_back(action.get<std::string>());
+        }
+        if (controlSchema.value("shortcutActionLabels", json::object()).is_object()) {
+            for (const auto& [action, label] : controlSchema.value("shortcutActionLabels", json::object()).items()) if (label.is_string()) configuredShortcutActionLabels[action] = label.get<std::string>();
+        }
         const auto theme = readUiTheme(nativeUi);
         playerControls = theme.value("controls", json::object());
         if (playerControls.empty()) playerControls = {{"enabled", true}, {"anchor", "dialogue-top-left"}, {"buttons", json::array({
@@ -332,17 +550,19 @@ struct Engine {
         })}};
         applyUiTheme(nativeUi, theme, false);
         width = number("window.width",960); height = number("window.height",680);
+        baseWindowWidth = width; baseWindowHeight = height;
         window = SDL_CreateWindow(config.contains("window.title") ? config["window.title"].c_str() : "Novel Script",width,height,0);
         renderer = SDL_CreateRenderer(window,nullptr);
         if (!window || !renderer) throw std::runtime_error(SDL_GetError());
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
         fs::path fontPath = fs::u8path(config.contains("font.path") ? config["font.path"] : "C:/Windows/Fonts/meiryo.ttc");
         if (fontPath.is_relative()) fontPath = data / fontPath;
-        font = TTF_OpenFont(utf8Path(fontPath).c_str(), number("font.size",24));
+        baseFontPath = fontPath; activeFontPath = fontPath; baseFontSize = number("font.size",24);
+        font = TTF_OpenFont(utf8Path(baseFontPath).c_str(), baseFontSize);
         if (!font) throw std::runtime_error(SDL_GetError());
         applyUiTheme(nativeUi, theme, true);
         if (gameScreens.contains("screens")) for (const auto& [id, screen] : gameScreens.at("screens").items()) {
-            const auto backgroundName = screen.value("background", std::string{});
+            const auto backgroundName = screenBackground(screen);
             if (!backgroundName.empty()) skinImage(backgroundName);
             for (const auto& item : screen.at("items")) {
                 const auto imageName = item.value("image", std::string{});
@@ -354,43 +574,55 @@ struct Engine {
         saveDirectory = saveDirectoryFor(package,packageData);
         migrateLegacySaves(package,saveDirectory);
         uiSettingsPath = saveDirectory / "ui-settings.json";
-        #ifdef _WIN32
-        if (std::string(SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "") != "dummy") {
-            const auto handle = SDL_GetPointerProperty(SDL_GetWindowProperties(window),SDL_PROP_WINDOW_WIN32_HWND_POINTER,nullptr);
-            if (handle) screenWebView = std::make_unique<native_player::ScreenWebView>(handle,root,saveDirectory);
-        }
-        #endif
         uiSettingValues = json::object();
-        const std::map<std::string, json> allowedUiSettings = {
-            {"audio.master", 1.0}, {"audio.bgm", 1.0}, {"audio.se", 1.0}, {"audio.voice", 0.5},
-            {"audio.bgmMuted", false}, {"audio.seMuted", false}, {"audio.voiceMuted", false}, {"ui.dialogOpacity", 1.0},
-        };
         const auto declaredUiSettings = gameScreens.value("controlDefaults", json::object());
-        for (const auto& [key, safeDefault] : allowedUiSettings) {
-            const auto candidate = declaredUiSettings.find(key);
-            if (candidate != declaredUiSettings.end() && ((safeDefault.is_boolean() && candidate->is_boolean()) || (safeDefault.is_number() && candidate->is_number() && std::isfinite(candidate->get<double>()) && candidate->get<double>() >= 0 && candidate->get<double>() <= 1))) uiSettingValues[key] = *candidate;
-            else uiSettingValues[key] = safeDefault;
+        if (hasControlSchema) {
+            for (const auto& [key, rule] : controlSchema.at("settings").items()) {
+                const auto candidate = declaredUiSettings.find(key);
+                if (candidate != declaredUiSettings.end() && matchesControlSettingRule(rule, *candidate)) uiSettingValues[key] = *candidate;
+            }
+        } else {
+            const std::map<std::string, json> legacyDefaults = {
+                {"audio.master", 1.0}, {"audio.bgm", 1.0}, {"audio.se", 1.0}, {"audio.voice", 0.5},
+                {"audio.bgmMuted", false}, {"audio.seMuted", false}, {"audio.voiceMuted", false}, {"ui.dialogOpacity", 1.0},
+                {"ui.skipUnseen", false}, {"ui.autoAfterChoice", true}, {"ui.skipAfterChoice", true}, {"ui.autoSpeed", 0.45},
+                {"ui.textSpeed", 1.0}, {"ui.fullscreen", false}, {"ui.effects", true}, {"ui.cursorHideDelay", 1.0},
+                {"ui.fontFamily", "default"},
+            };
+            for (const auto& [key, fallback] : legacyDefaults) {
+                const auto candidate = declaredUiSettings.find(key);
+                uiSettingValues[key] = candidate != declaredUiSettings.end() && isLegacyControlValueValid(key, *candidate, fallback) ? *candidate : fallback;
+            }
+            for (const auto& [key, candidate] : declaredUiSettings.items()) {
+                const bool isShortcut = std::regex_match(key,std::regex(R"(ui\.shortcut\.F(?:[1-9]|1[0-2]))"));
+                if (isShortcut && candidate.is_string() && std::find(shortcutActions().begin(),shortcutActions().end(),candidate.get<std::string>())!=shortcutActions().end()) uiSettingValues[key]=candidate;
+                if (!std::regex_match(key, std::regex(R"(audio\.voice\.[A-Za-z_][A-Za-z0-9_]*(\.muted)?)"))) continue;
+                if (key.ends_with(".muted")) { if (candidate.is_boolean()) uiSettingValues[key] = candidate; continue; }
+                if (candidate.is_number() && std::isfinite(candidate.get<double>()) && candidate.get<double>() >= 0 && candidate.get<double>() <= 1) uiSettingValues[key] = candidate;
+            }
         }
         try {
             std::ifstream preferences(uiSettingsPath);
             if (preferences) {
                 json saved; preferences >> saved;
-                if (saved.is_object()) for (const auto& [key, fallback] : uiSettingValues.items()) {
-                    if (!saved.contains(key)) continue;
-                    const auto& candidate = saved.at(key);
-                    if (fallback.is_boolean() && candidate.is_boolean()) uiSettingValues[key] = candidate;
-                    else if (fallback.is_number() && candidate.is_number()) {
-                        const double value = candidate.get<double>();
-                        if (std::isfinite(value) && value >= 0 && value <= 1) uiSettingValues[key] = value;
+                if (saved.is_object()) {
+                    for (const auto& [key, fallback] : uiSettingValues.items()) {
+                        if (saved.contains(key) && isValidUiSettingValue(key, saved.at(key))) uiSettingValues[key] = saved.at(key);
                     }
                 }
             }
         } catch (...) { /* Invalid preference files fall back to safe defaults. */ }
+        applyUiFontFamily(uiSettingValues.value("ui.fontFamily", std::string("default")));
+        lastMouseActivity = SDL_GetTicks();
+        if (uiSettingValues.value("ui.fullscreen",false)) SDL_SetWindowFullscreen(window,true);
         applyUiAudioSettings();
     }
     ~Engine() {
-        screenWebView.reset();
+        for (const auto& [id, gamepad] : gamepads) SDL_CloseGamepad(gamepad);
+        gamepads.clear();
         video.reset();
+        for (auto& [key, animated] : animatedTextures) if (animated.animation) IMG_FreeAnimation(animated.animation);
+        animatedTextures.clear();
         for (const auto& playback : audio) {
             MIX_SetTrackStoppedCallback(playback.track, nullptr, nullptr);
             MIX_StopTrack(playback.track, 0);
@@ -398,6 +630,7 @@ struct Engine {
             MIX_DestroyAudio(playback.audio);
         }
         audio.clear();
+        if (lastStoryFrame) SDL_DestroySurface(lastStoryFrame);
         if (mixer) MIX_DestroyMixer(mixer);
         for (auto [key,t] : textures) SDL_DestroyTexture(t);
         if (font) TTF_CloseFont(font);
@@ -493,24 +726,53 @@ struct Engine {
         float w,h; SDL_GetTextureSize(s.texture,&w,&h);
         float scale = std::min(float(height)/h, float(width)/w); w *= scale; h *= scale;
         const auto slot = s.position.c_str();
-        const float center = slot == std::string("far_left") ? 0.08f : slot == std::string("left") ? 0.26f : slot == std::string("right") ? 0.74f : slot == std::string("far_right") ? 0.92f : 0.50f;
+        float center = slot == std::string("far_left") ? 0.08f : slot == std::string("left") ? 0.26f : slot == std::string("right") ? 0.74f : slot == std::string("far_right") ? 0.92f : 0.50f;
+        if (slot == std::string("far_left")) center = std::max(center, w / (2.0f * float(width)));
+        else if (slot == std::string("far_right")) center = std::min(center, 1.0f - w / (2.0f * float(width)));
+        const float centerX = float(width) * center;
         const float scaleX = float(width) / float(number("screen.width", 1280));
         const float scaleY = float(height) / float(number("screen.height", 720));
-        float x = width * center - w / 2.0f + s.offsetX * scaleX;
-        SDL_FRect rect{x,height-h + s.offsetY * scaleY,w,h}; SDL_SetTextureAlphaModFloat(s.texture,s.alpha);
+        float x = centerX - w / 2.0f + s.offsetX * scaleX;
+        SDL_FRect rect{x,height-h + s.offsetY * scaleY,w,h};
+        const float focusX=cameraFocusX*scaleX, focusY=cameraFocusY*scaleY;
+        rect.x=focusX+(rect.x-focusX)*cameraZoom; rect.y=focusY+(rect.y-focusY)*cameraZoom; rect.w*=cameraZoom; rect.h*=cameraZoom;
+        SDL_SetTextureAlphaModFloat(s.texture,s.alpha);
         SDL_RenderTexture(renderer,s.texture,nullptr,&rect); SDL_SetTextureAlphaModFloat(s.texture,1);
     }
     void renderBackground() {
         if (!background) return;
         const float scaleX = float(width) / float(number("screen.width", 1280));
         const float scaleY = float(height) / float(number("screen.height", 720));
-        float sourceWidth = 0, sourceHeight = 0;
-        SDL_GetTextureSize(background, &sourceWidth, &sourceHeight);
-        const auto cover = native_player::backgroundCoverRect(
-            sourceWidth, sourceHeight, float(width), float(height),
-            backgroundOffsetX * scaleX, backgroundOffsetY * scaleY);
-        SDL_FRect rect{cover.x, cover.y, cover.width, cover.height};
-        SDL_RenderTexture(renderer, background, nullptr, &rect);
+        const float focusX=cameraFocusX*scaleX, focusY=cameraFocusY*scaleY;
+        auto backgroundRect = [&](SDL_Texture* texture, float offsetX, float offsetY) {
+            float sourceWidth = 0, sourceHeight = 0;
+            SDL_GetTextureSize(texture, &sourceWidth, &sourceHeight);
+            const auto cover = native_player::cameraSafeBackgroundCoverRect(
+                sourceWidth, sourceHeight, float(width), float(height),
+                offsetX * scaleX, offsetY * scaleY, cameraZoom, focusX, focusY);
+            SDL_FRect rect{cover.x, cover.y, cover.width, cover.height};
+            rect.x=focusX+(rect.x-focusX)*cameraZoom; rect.y=focusY+(rect.y-focusY)*cameraZoom;
+            rect.w*=cameraZoom; rect.h*=cameraZoom;
+            return rect;
+        };
+        const auto incomingRect = backgroundRect(background, backgroundOffsetX, backgroundOffsetY);
+        if (backgroundTransitionProgress < 1.0f) {
+            if (previousBackground) {
+                const auto previousRect = backgroundRect(previousBackground, previousBackgroundOffsetX, previousBackgroundOffsetY);
+                SDL_RenderTexture(renderer, previousBackground, nullptr, &previousRect);
+            }
+            const auto progress=std::clamp(backgroundTransitionProgress,0.0f,1.0f);
+            if(backgroundTransitionType=="fade" || backgroundTransitionType=="crossfade") {
+                SDL_SetTextureAlphaModFloat(background,progress); SDL_RenderTexture(renderer,background,nullptr,&incomingRect); SDL_SetTextureAlphaModFloat(background,1.0f);
+            } else {
+                SDL_Rect clip{0,0,width,height};
+                if(backgroundTransitionType=="wipe-left") clip.w=int(width*progress);
+                else if(backgroundTransitionType=="wipe-right") {clip.w=int(width*progress);clip.x=width-clip.w;}
+                else if(backgroundTransitionType=="wipe-up") clip.h=int(height*progress);
+                else if(backgroundTransitionType=="wipe-down") {clip.h=int(height*progress);clip.y=height-clip.h;}
+                SDL_SetRenderClipRect(renderer,&clip); SDL_RenderTexture(renderer,background,nullptr,&incomingRect); SDL_SetRenderClipRect(renderer,nullptr);
+            }
+        } else SDL_RenderTexture(renderer, background, nullptr, &incomingRect);
     }
     float uiSettingGain(const std::string& channel) const {
         const auto volumeKey = "audio." + channel;
@@ -518,14 +780,21 @@ struct Engine {
         if (uiSettingValues.value(muteKey, false)) return 0.0f;
         return uiSettingValues.value(volumeKey, channel == "voice" ? 0.5f : 1.0f);
     }
+    float voiceCharacterGain(const std::string& characterId) const {
+        if (characterId.empty()) return 1.0f;
+        if (uiSettingValues.value("audio.voice." + characterId + ".muted",false)) return 0.0f;
+        return uiSettingValues.value("audio.voice." + characterId,1.0f);
+    }
     void applyUiAudioSettings() {
         if (!mixer) return;
         const float master = uiSettingValues.value("audio.master", 1.0f);
         if (!MIX_SetMixerGain(mixer, master)) throw std::runtime_error(SDL_GetError());
-        for (const auto& channel : {std::string("bgm"), std::string("se"), std::string("voice")}) {
-            if (!audioTagSeen[channel]) continue;
-            const auto tag = "ui_" + channel;
-            if (!MIX_SetTagGain(mixer, tag.c_str(), uiSettingGain(channel))) throw std::runtime_error(SDL_GetError());
+        for (const auto& playback : audio) {
+            if (!MIX_TrackPlaying(playback.track)) continue;
+            const auto channel = playback.type == "bgm" ? std::string("bgm") : playback.type == "voice" ? std::string("voice") : std::string("se");
+            const float sourceGain = playback.bgm ? currentBgmGain(playback) : playback.sourceGain;
+            const float characterGain = playback.type == "voice" ? voiceCharacterGain(playback.voiceCharacter) : 1.0f;
+            if (!MIX_SetTrackGain(playback.track, sourceGain * uiSettingGain(channel) * characterGain)) throw std::runtime_error(SDL_GetError());
         }
     }
     void saveUiSettings() {
@@ -533,18 +802,75 @@ struct Engine {
         { std::ofstream file(temporary, std::ios::binary | std::ios::trunc); if (!file) throw std::runtime_error("Cannot write player settings"); file << uiSettingValues.dump(2); file.flush(); if (!file) throw std::runtime_error("Cannot write player settings"); }
         replaceSaveFile(temporary,uiSettingsPath);
     }
-    bool updateUiSetting(const std::string& key, const json& value) {
+    bool applyUiFontFamily(const std::string& family) {
+        fs::path selected = baseFontPath;
+        if (family == "gothic") selected = fs::u8path("C:/Windows/Fonts/YuGothM.ttc");
+        else if (family == "mincho") selected = fs::u8path("C:/Windows/Fonts/msmincho.ttc");
+        else if (family != "default") return false;
+        if (selected != baseFontPath && !fs::exists(selected)) {
+            selected = family == "gothic" ? fs::u8path("C:/Windows/Fonts/msgothic.ttc") : selected;
+            if (!fs::exists(selected)) return false;
+        }
+        TTF_Font* replacement = TTF_OpenFont(utf8Path(selected).c_str(),baseFontSize);
+        if (!replacement) return false;
+        if (font) TTF_CloseFont(font);
+        font = replacement;
+        activeFontPath = selected;
+        return true;
+    }
+    static bool matchesControlSettingRule(const json& rule, const json& value) {
+        if (!rule.is_object() || !rule.contains("type") || !rule.at("type").is_string()) return false;
+        const auto type = rule.at("type").get<std::string>();
+        if (type == "boolean") return value.is_boolean();
+        if (type == "number") {
+            if (!value.is_number()) return false;
+            const double number = value.get<double>();
+            return std::isfinite(number) && number >= rule.value("minimum", 0.0) && number <= rule.value("maximum", 1.0);
+        }
+        if (type == "enum") {
+            if (!value.is_string() || !rule.value("values", json::array()).is_array()) return false;
+            const auto values = rule.value("values", json::array());
+            return std::find(values.begin(), values.end(), value) != values.end();
+        }
+        return false;
+    }
+    static bool isLegacyControlValueValid(const std::string& key, const json& value, const json& fallback) {
+        if (fallback.is_boolean()) return value.is_boolean();
+        if (fallback.is_number()) return value.is_number() && std::isfinite(value.get<double>()) && value.get<double>() >= 0 && value.get<double>() <= 1;
+        if (key == "ui.fontFamily" && value.is_string()) return std::set<std::string>{"default", "gothic", "mincho"}.contains(value.get<std::string>());
+        return false;
+    }
+    bool isValidUiSettingValue(const std::string& key, const json& value) const {
+        if (hasControlSchema) {
+            const auto& settings = gameScreens.at("controlSchema").at("settings");
+            const auto rule = settings.find(key);
+            return rule != settings.end() && matchesControlSettingRule(*rule, value);
+        }
         if (!uiSettingValues.contains(key)) return false;
         const auto& fallback = uiSettingValues.at(key);
-        if (fallback.is_boolean()) { if (!value.is_boolean()) return false; }
-        else if (!fallback.is_number() || !value.is_number() || !std::isfinite(value.get<double>()) || value.get<double>() < 0 || value.get<double>() > 1) return false;
+        if (fallback.is_boolean()) return value.is_boolean();
+        if (fallback.is_number()) return value.is_number() && std::isfinite(value.get<double>()) && value.get<double>() >= 0 && value.get<double>() <= 1;
+        if (!fallback.is_string() || !value.is_string()) return false;
+        const auto& text = value.get_ref<const std::string&>();
+        if (std::regex_match(key, std::regex(R"(ui\.shortcut\.F(?:[1-9]|1[0-2]))"))) return std::find(shortcutActions().begin(), shortcutActions().end(), text) != shortcutActions().end();
+        return isLegacyControlValueValid(key, value, fallback);
+    }
+    bool updateUiSetting(const std::string& key, const json& value) {
+        if (!uiSettingValues.contains(key) || !isValidUiSettingValue(key, value)) return false;
+        if (key == "ui.fullscreen" && !SDL_SetWindowFullscreen(window,value.get<bool>())) return false;
+        if (key == "ui.fontFamily" && !applyUiFontFamily(value.get<std::string>())) return false;
+        if (key == "ui.cursorHideDelay") { lastMouseActivity=SDL_GetTicks(); if (cursorHidden) { SDL_ShowCursor(); cursorHidden=false; } }
         uiSettingValues[key] = value;
         applyUiAudioSettings();
         saveUiSettings();
         return true;
     }
+    std::string screenBackground(const json& screen) const {
+        return screen.contains("background") ? screen.value("background", std::string{}) : gameScreens.value("defaultBackground", std::string{});
+    }
     const json& currentScreen() const { return gameScreens.at("screens").at(activeScreen); }
     fs::path slotPath(int index) const { return saveDirectory / ("slot-" + std::to_string(index + 1) + ".json"); }
+    fs::path quickSlotPath() const { return saveDirectory / "quick-slot.json"; }
     const json& readSlot(int index) const {
         static const json empty = nullptr;
         std::error_code error;
@@ -574,6 +900,11 @@ struct Engine {
         const auto found = slotCache.find(index);
         return found == slotCache.end() ? "empty" : found->second.state;
     }
+    static std::string slotStatusLabel(const std::string& state, bool locked = false) {
+        static const std::map<std::string,std::string> labels{{"ready","記録あり"},{"empty","空き"},{"corrupt","破損"},{"incompatible","非対応"}};
+        const auto found=labels.find(state);
+        return (found==labels.end()?std::string{}:found->second)+(locked?" 🔒":std::string{});
+    }
     static std::string slotText(const json& saved, const char* key, const std::string& fallback = {}) {
         return saved.is_object() && saved.contains(key) && saved.at(key).is_string() ? saved.at(key).get<std::string>() : fallback;
     }
@@ -583,7 +914,7 @@ struct Engine {
     std::optional<int> latestSaveSlotIndex() const {
         int count = 8;
         for (const auto& [id, screen] : gameScreens.at("screens").items()) if (screen.value("role",std::string{}) == "load-slots") {
-            count = screen.value("slotLayout",json::object()).value("count",8); break;
+            count = screen.value("slotLayout",json::object()).value("count",8) * screen.value("slotPages",1); break;
         }
         std::optional<int> latest;
         int64_t latestTime = -1;
@@ -599,13 +930,32 @@ struct Engine {
         json items = currentScreen().value("items", json::array());
         for (auto& item : items) if (item.value("action",std::string{}) == "continue" && !latestSaveSlotIndex()) item["disabled"] = true;
         if (currentScreen().contains("uiTree")) {
+            const auto role = currentScreen().value("role", std::string{});
+            const auto count = currentScreen().value("slotLayout",json::object()).value("count",12);
+            const auto pageKey = role == "save-slots" ? "save" : "load";
+            const int offset = (role == "save-slots" || role == "load-slots") ? slotPages[pageKey] * count : 0;
             for (auto& item : items) if (item.contains("slotIndex")) {
-                const int index = item.at("slotIndex").get<int>(); const auto& saved = readSlot(index);
-                item["slotSummary"] = saved.is_object() ? json{{"scene",slotText(saved,"scene")},{"speaker",slotText(saved,"speaker")},{"text",slotText(saved,"text")},{"savedAt",slotTimestamp(saved)}} : json(nullptr);
+                const int index = item.at("slotIndex").get<int>() + offset; item["slotIndex"] = index; const auto& saved = readSlot(index);
+                item["slotState"] = slotState(index);
+                item["slotSummary"] = saved.is_object() ? json{{"scene",slotText(saved,"scene")},{"speaker",slotText(saved,"speaker")},{"text",slotText(saved,"text")},{"savedAt",slotTimestamp(saved)},{"locked",saved.value("locked",false)}} : json(nullptr);
+                item["selected"] = index == selectedSlotIndex;
                 item["label"] = saved.is_object()
                     ? "Slot " + std::to_string(index + 1) + "  |  " + slotText(saved,"speaker","語り手") + ": " + slotText(saved,"text")
                     : "Slot " + std::to_string(index + 1) + "  |  Empty";
-                if (item.value("action",std::string{}) == "load" && !saved.is_object()) item["disabled"] = true;
+                if (item.value("action",std::string{}) == "slot-select" && role == "load-slots" && !saved.is_object()) item["disabled"] = true;
+            }
+            const bool ready=selectedSlotIndex>=0 && slotState(selectedSlotIndex)=="ready";
+            const bool locked=ready && readSlot(selectedSlotIndex).value("locked",false);
+            const bool hasFree=ready && firstEmptySlot(selectedSlotIndex)>=0;
+            for(auto& item:items){
+                const auto action=item.value("action",std::string{});
+                if(action=="slot-commit") item["disabled"]=selectedSlotIndex<0 || (role=="save-slots" ? !storyActive || locked : role!="load-slots" || !ready);
+                else if(action=="slot-copy") item["disabled"]=!hasFree;
+                else if(action=="slot-move") item["disabled"]=!hasFree || locked;
+                else if(action=="slot-delete") item["disabled"]=!ready || locked;
+                else if(action=="slot-lock") item["disabled"]=!ready;
+                if(action=="slot-delete" && deleteArmedSlotIndex==selectedSlotIndex && selectedSlotIndex>=0) item["label"]="もう一度押して消去";
+                if(action=="slot-lock" && ready) item["label"]=locked?"ロック解除":"ロック";
             }
             return items;
         }
@@ -613,13 +963,16 @@ struct Engine {
         if (role != "save-slots" && role != "load-slots") return items;
         const auto layout = currentScreen().value("slotLayout", json{{"x",420},{"y",190},{"width",440},{"height",420},{"rowHeight",42},{"gap",8},{"count",8}});
         const auto style = currentScreen().value("slotStyle", json::object());
+        const auto pageKey = role == "save-slots" ? "save" : "load";
+        const int offset = slotPages[pageKey] * layout.value("count",8);
         for (int index = 0; index < layout.value("count", 8); ++index) {
-            const auto& saved = readSlot(index);
-            std::string label = "Slot " + std::to_string(index + 1);
+            const int slotIndex = offset + index;
+            const auto& saved = readSlot(slotIndex);
+            std::string label = "Slot " + std::to_string(slotIndex + 1);
             if (saved.is_object()) label += "  |  " + slotText(saved,"speaker","Narrator") + ": " + slotText(saved,"text");
             else label += "  |  Empty";
             const int row = index;
-            items.push_back({{"id", "__slot_" + std::to_string(index)}, {"slotIndex", index}, {"type", "button"},
+            items.push_back({{"id", "__slot_" + std::to_string(slotIndex)}, {"slotIndex", slotIndex}, {"type", "button"},
                 {"label", label}, {"action", role == "save-slots" ? "save" : "load"},
                 {"image", style.value("image", std::string{})}, {"hoverImage", style.value("hoverImage", std::string{})},
                 {"fontSize", style.value("fontSize", 15)},
@@ -633,82 +986,75 @@ struct Engine {
         for (const auto& [id, screen] : gameScreens.at("screens").items()) if (screen.value("role", std::string{}) == role) return id;
         return {};
     }
-    json webScreenModel() const {
-        const auto loadId = screenForRole("load-slots");
-        const int count = loadId.empty() ? 8 : gameScreens.at("screens").at(loadId).value("slotLayout",json::object()).value("count",8);
-        json slots = json::array();
-        for (int index = 0; index < count; ++index) {
-            const auto& saved = readSlot(index);
-            if (!saved.is_object()) {
-                const auto state = slotState(index);
-                slots.push_back(state == "empty" ? json(nullptr) : json{{"status",state},{"loadable",false}});
-                continue;
-            }
-            std::string savedAtText;
-            const auto timestamp = slotTimestamp(saved);
-            if (timestamp > 0) {
-                const auto time = std::time_t(timestamp / 1000);
-                if (const auto* local = std::localtime(&time)) {
-                    char buffer[32]{};
-                    if (std::strftime(buffer,sizeof(buffer),"%Y/%m/%d %H:%M",local)) savedAtText = buffer;
-                }
-            }
-            const auto thumbnail = saveDirectory / ("thumb-slot-" + std::to_string(index + 1) + ".png");
-            slots.push_back({{"status","ready"},{"loadable",true},{"scene",slotText(saved,"scene")},{"speaker",slotText(saved,"speaker")},
-                {"text",slotText(saved,"text")},{"savedAtText",savedAtText},
-                {"thumbnail",fs::is_regular_file(thumbnail) ? "https://novel-save.invalid/thumb-slot-" + std::to_string(index + 1) + ".png?v=" + std::to_string(timestamp) : ""}});
-        }
-        return {{"canvasWidth",gameScreens.at("canvas").at("width")},{"canvasHeight",gameScreens.at("canvas").at("height")},
-            {"slots",slots},{"settings",uiSettingValues},{"continueAvailable",latestSaveSlotIndex().has_value()},
-            {"canSave",!runtime.currentSceneName.empty() && !runtime.currentSourceFile.empty() && runtime.currentLine > 0}};
+    int currentSlotOffset() const {
+        const auto role = currentScreen().value("role", std::string{});
+        if (role != "save-slots" && role != "load-slots") return 0;
+        const auto count = currentScreen().value("slotLayout",json::object()).value("count",12);
+        const auto key = role == "save-slots" ? "save" : "load";
+        const auto page = slotPages.find(key);
+        return (page == slotPages.end() ? 0 : page->second) * count;
     }
-    void handleWebScreenMessage(const json& message) {
-        if (activeScreen.empty() || !message.is_object()) return;
-        const auto kind = message.value("kind",std::string{});
-        if (kind == "back") {
-            if (!screenHistory.empty()) { activeScreen = screenHistory.back(); screenHistory.pop_back(); screenHover = 0; }
-            else if (storyActive) activeScreen.clear();
-            return;
-        }
-        if (kind == "setting") {
-            if (message.contains("key") && message.at("key").is_string() && message.contains("value"))
-                updateUiSetting(message.at("key").get<std::string>(),message.at("value"));
-            return;
-        }
-        if (kind != "action" || !message.contains("action") || !message.at("action").is_string()) return;
-        const auto action = message.at("action").get<std::string>();
-        const auto target = message.value("target",std::string{});
-        const bool hasSlot = message.contains("slotIndex") && message.at("slotIndex").is_string();
-        int requestedSlot = -1;
-        if (hasSlot) {
-            try { requestedSlot = std::stoi(message.at("slotIndex").get<std::string>()); }
-            catch (...) { return; }
-        }
-        for (const auto& item : visibleScreenItems()) {
-            if (item.value("action",std::string{}) != action || item.value("target",std::string{}) != target) continue;
-            if (hasSlot != item.contains("slotIndex") || hasSlot && item.at("slotIndex").get<int>() != requestedSlot) continue;
-            activateScreenItem(item); return;
-        }
+    int firstEmptySlot(int except = -1) const {
+        for (int index=0; index<120; ++index) if (index!=except && slotState(index)=="empty") return index;
+        return -1;
     }
+    void writeSlotRecord(int index, const json& value) {
+        const auto destination=slotPath(index); auto temporary=destination; temporary += ".tmp";
+        { std::ofstream file(temporary,std::ios::binary|std::ios::trunc); if(!file) throw std::runtime_error("Cannot create save slot metadata"); file<<value.dump(2); file.flush(); if(!file) throw std::runtime_error("Cannot write save slot metadata"); }
+        replaceSaveFile(temporary,destination); slotCache.erase(index);
+    }
+    void deleteSlotRecord(int index) {
+        if (readSlot(index).is_object() && readSlot(index).value("locked",false)) throw std::runtime_error("This save slot is locked");
+        std::error_code error; fs::remove(slotPath(index),error); if(error) throw std::runtime_error("Cannot delete save slot: "+error.message());
+        error.clear(); fs::remove(saveDirectory/("thumb-slot-"+std::to_string(index+1)+".png"),error);
+        slotCache.erase(index);
+    }
+    void transferSlotRecord(int source, bool move) {
+        const json original=readSlot(source); if(!original.is_object()) return;
+        if(move && original.value("locked",false)) return;
+        const int destination=firstEmptySlot(source); if(destination<0) return;
+        const auto destinationPath=slotPath(destination); auto temporary=destinationPath; temporary += ".tmp";
+        { std::ofstream file(temporary,std::ios::binary|std::ios::trunc); if(!file) throw std::runtime_error("Cannot create destination save slot"); file<<original.dump(2); file.flush(); if(!file) throw std::runtime_error("Cannot write destination save slot"); }
+        replaceSaveFile(temporary,destinationPath);
+        const auto sourceThumb=saveDirectory/("thumb-slot-"+std::to_string(source+1)+".png");
+        const auto destinationThumb=saveDirectory/("thumb-slot-"+std::to_string(destination+1)+".png");
+        std::error_code error;
+        if(fs::is_regular_file(sourceThumb,error)){ error.clear(); fs::copy_file(sourceThumb,destinationThumb,fs::copy_options::overwrite_existing,error); if(error) { fs::remove(destinationPath); throw std::runtime_error("Cannot copy save thumbnail: "+error.message()); } }
+        slotCache.erase(destination);
+        if(move){ fs::remove(slotPath(source),error); if(error) throw std::runtime_error("Copied save, but could not remove its original: "+error.message()); error.clear(); fs::remove(sourceThumb,error); slotCache.erase(source); selectedSlotIndex=destination; }
+        else selectedSlotIndex=destination;
+    }
+    void resetScreenFocus() { screenHover = -1; screenFocusedSetting.clear(); draggedUiSetting.clear(); }
     void openSlotScreen(const std::string& action) {
         const auto id = screenForRole(action == "save" ? "save-slots" : "load-slots");
         if (id.empty()) return;
-        screenHistory.push_back(activeScreen); activeScreen = id; screenHover = 0;
+        slotPages[action] = 0;
+        selectedSlotIndex = -1; deleteArmedSlotIndex = -1;
+        screenHistory.push_back(activeScreen); activeScreen = id; resetScreenFocus();
     }
     void saveSlot(int index) {
         if (runtime.currentSceneName.empty() || runtime.currentSourceFile.empty() || runtime.currentLine < 1) return;
+        if (readSlot(index).is_object() && readSlot(index).value("locked",false)) return;
         json readonlyLocals = json::array(); for (const auto& frame : runtime.readonlyLocals) readonlyLocals.push_back(frame);
         json loopScopes = json::array(); for (const auto frame : runtime.loopScopes) loopScopes.push_back(frame);
         const auto savedAt = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         const json state = {{"version", 1}, {"saveId",gameScreens.value("saveId",std::string{})}, {"file", runtime.currentSourceFile}, {"scene", runtime.currentSceneName},
-            {"line", runtime.currentLine}, {"variables", runtime.globals}, {"locals", runtime.locals},
+            {"line", runtime.currentLine}, {"variables", runtime.globals}, {"locals", runtime.locals}, {"locked",false},
             {"readonlyLocals", readonlyLocals}, {"loopScopes", loopScopes},
             {"presentation", presentationSnapshot()}, {"speaker", speaker}, {"text", text}, {"savedAt", savedAt}};
         const auto destination = slotPath(index); auto temporary = destination; temporary += ".tmp";
         { std::ofstream file(temporary, std::ios::binary | std::ios::trunc); if (!file) throw std::runtime_error("Cannot create save slot"); file << state.dump(2); file.flush(); if (!file) throw std::runtime_error("Cannot write save slot"); }
         replaceSaveFile(temporary,destination);
         slotCache.erase(index);
-        // Capture the story layers independently of the currently open save UI.
+        if (lastStoryFrame) {
+            const auto preview = saveDirectory / ("thumb-slot-" + std::to_string(index + 1) + ".png");
+            auto previewTemporary = preview; previewTemporary += ".tmp";
+            if (IMG_SavePNG(lastStoryFrame,previewTemporary.string().c_str())) {
+                try { replaceSaveFile(previewTemporary,preview); }
+                catch (const std::exception&) { /* The snapshot remains valid if preview replacement fails. */ }
+            }
+        } else {
+        // A first-line quick save may precede the first rendered story frame.
         SDL_Texture* target = SDL_CreateTexture(renderer,SDL_PIXELFORMAT_RGBA8888,SDL_TEXTUREACCESS_TARGET,width,height);
         if (target) {
             SDL_Texture* previous = SDL_GetRenderTarget(renderer);
@@ -736,11 +1082,34 @@ struct Engine {
             }
             SDL_DestroyTexture(target);
         }
+        }
+    }
+    void saveQuickSlot() {
+        if (runtime.currentSceneName.empty() || runtime.currentSourceFile.empty() || runtime.currentLine < 1) return;
+        json readonlyLocals = json::array(); for (const auto& frame : runtime.readonlyLocals) readonlyLocals.push_back(frame);
+        json loopScopes = json::array(); for (const auto frame : runtime.loopScopes) loopScopes.push_back(frame);
+        const auto savedAt = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        const json state = {{"version",1},{"saveId",gameScreens.value("saveId",std::string{})},{"file",runtime.currentSourceFile},{"scene",runtime.currentSceneName},
+            {"line",runtime.currentLine},{"variables",runtime.globals},{"locals",runtime.locals},{"readonlyLocals",readonlyLocals},{"loopScopes",loopScopes},
+            {"presentation",presentationSnapshot()},{"speaker",speaker},{"text",text},{"savedAt",savedAt}};
+        const auto destination = quickSlotPath(); auto temporary = destination; temporary += ".tmp";
+        { std::ofstream file(temporary,std::ios::binary|std::ios::trunc); if(!file) throw std::runtime_error("Cannot create quick save"); file << state.dump(2); file.flush(); if(!file) throw std::runtime_error("Cannot write quick save"); }
+        replaceSaveFile(temporary,destination);
+    }
+    void loadQuickSlot() {
+        json saved = nullptr;
+        try { std::ifstream file(quickSlotPath()); if(file) file >> saved; } catch (...) { saved = nullptr; }
+        if (!saved.is_object() || saved.value("version",0) != 1 || (saved.contains("saveId") && saved.at("saveId") != gameScreens.value("saveId",std::string{}))
+            || !saved.contains("file") || !saved.at("file").is_string() || !saved.contains("scene") || !saved.at("scene").is_string()
+            || !saved.contains("line") || !saved.at("line").is_number_integer() || !saved.contains("variables") || !saved.at("variables").is_object()) return;
+        activeScreen.clear(); resetScreenFocus(); screenHistory.clear();
+        if (runtime.currentSceneName.empty()) { queuedLoad = saved; titleStarted = true; storyActive = true; }
+        else runtime.pendingLoad = saved;
     }
     void loadSlot(int index) {
         const auto& saved = readSlot(index);
         if (!saved.is_object() || !saved.contains("file") || !saved.contains("scene") || !saved.contains("line")) return;
-        activeScreen.clear(); screenHistory.clear();
+        activeScreen.clear(); resetScreenFocus(); screenHistory.clear();
         if (runtime.currentSceneName.empty()) { queuedLoad = saved; titleStarted = true; storyActive = true; }
         else runtime.pendingLoad = saved;
     }
@@ -769,26 +1138,74 @@ struct Engine {
         if (value == "black") return {0,0,0,255};
         return fallback;
     }
+    struct ScreenCanvasTransform { float sx, sy, ox, oy; };
+    ScreenCanvasTransform screenCanvasTransform() const {
+        const float canvasWidth = float(gameScreens.at("canvas").at("width").get<int>());
+        const float canvasHeight = float(gameScreens.at("canvas").at("height").get<int>());
+        const auto mode = gameScreens.value("scaleMode", std::string("contain"));
+        const float sx = float(width) / canvasWidth, sy = float(height) / canvasHeight;
+        if (mode == "stretch") return {sx, sy, 0, 0};
+        const float scale = mode == "cover" ? std::max(sx, sy) : std::min(sx, sy);
+        const float scaledWidth = canvasWidth * scale, scaledHeight = canvasHeight * scale;
+        return {scale, scale, (float(width) - scaledWidth) / 2.0f, (float(height) - scaledHeight) / 2.0f};
+    }
     static float screenCssNumber(const json& style, const char* key, float fallback) {
         if (!style.contains(key) || !style.at(key).is_string()) return fallback;
         try { return std::stof(style.at(key).get<std::string>()); } catch (...) { return fallback; }
     }
-    void drawScreenNode(const json& node, float sx, float sy, const json& items, float parentOpacity = 1.0f, int inheritedSlot = -1) {
+    void drawScreenNode(const json& node, float sx, float sy, float ox, float oy, const json& items, float parentOpacity = 1.0f, int inheritedSlot = -1) {
         const auto& r = node.at("rect");
-        SDL_FRect rect{r.value("x",0.0f)*sx, r.value("y",0.0f)*sy, r.value("width",0.0f)*sx, r.value("height",0.0f)*sy};
+        SDL_FRect rect{ox+r.value("x",0.0f)*sx, oy+r.value("y",0.0f)*sy, r.value("width",0.0f)*sx, r.value("height",0.0f)*sy};
         if (rect.w <= 0 || rect.h <= 0) return;
         json style = node.value("style", json::object());
-        float opacity = parentOpacity * std::clamp(screenCssNumber(style,"opacity",1.0f),0.0f,1.0f);
         const auto id = node.value("attrs", json::object()).value("id", std::string{});
         int itemIndex = -1;
         for (size_t i=0; i<items.size(); ++i) if (items[i].value("id", std::string{}) == id) { itemIndex = int(i); break; }
-        const bool active = itemIndex >= 0 && itemIndex == screenHover;
-        if (active && node.contains("hoverStyle")) for (const auto& [key, value] : node.at("hoverStyle").items()) style[key] = value;
         const auto attrs = node.value("attrs", json::object());
-        const int slotIndex = attrs.contains("data-slot-index") ? std::stoi(attrs.at("data-slot-index").get<std::string>()) : inheritedSlot;
+        const bool active = (itemIndex >= 0 && itemIndex == screenHover)
+            || (node.value("tag",std::string{}) == "input" && attrs.value("data-setting",std::string{}) == screenFocusedSetting && !screenFocusedSetting.empty());
+        const int nodeSlotIndex=attrs.contains("data-slot-index")?std::stoi(attrs.at("data-slot-index").get<std::string>())+currentSlotOffset():inheritedSlot;
+        if(nodeSlotIndex>=0 && nodeSlotIndex==selectedSlotIndex){style["border-color"]="#7aa8ec";style["border-width"]="3px";style["background-color"]="#ffffff";}
+        const auto nodeAction = attrs.value("data-action",std::string{});
+        if ((nodeAction == "auto" && autoPlayActive) || (nodeAction == "skip" && skipActive) || (nodeAction == "hold" && holdActive)) {
+            style["background-color"] = "#5279bd";
+            style["color"] = "#ffffff";
+            style["border-color"] = "#ffffff";
+        }
+        if (nodeAction == "setting-value") {
+            const auto key = attrs.value("data-target",std::string{});
+            const auto targetValue = attrs.value("data-value",std::string{});
+            const bool selected = uiSettingValues.contains(key) && ((uiSettingValues.at(key).is_boolean() && uiSettingValues.at(key).get<bool>() == (targetValue == "true")) || (uiSettingValues.at(key).is_string() && uiSettingValues.at(key).get<std::string>() == targetValue));
+            style["background-color"] = selected ? "#ffffff" : "rgba(21,28,43,0.82)";
+            style["color"] = selected ? "#577ac1" : "#e7ebf4";
+            style["border-color"] = selected ? "#d4deef" : "rgba(155,178,217,0.14)";
+        }
+        if (node.value("tag",std::string{}) == "button" && attrs.value("data-action",std::string{}) == "slot-page") {
+            const auto role = currentScreen().value("role",std::string{});
+            const auto key = role == "save-slots" ? "save" : "load";
+            const int selectedPage = slotPages.contains(key) ? slotPages.at(key) : 0;
+            const int itemPage = std::stoi(attrs.value("data-target",std::string("0")));
+            style["background-color"] = itemPage == selectedPage ? "#ffffff" : "rgba(24,30,44,0.75)";
+            style["color"] = itemPage == selectedPage ? "#5578bd" : "#dce6f5";
+            style["border-color"] = itemPage == selectedPage ? "#ffffff" : "rgba(204,215,236,0.42)";
+        }
+        const int localSlot = attrs.contains("data-slot-index") ? std::stoi(attrs.at("data-slot-index").get<std::string>()) : inheritedSlot;
+        const int slotIndex = attrs.contains("data-slot-index") ? localSlot + currentSlotOffset() : localSlot;
         const json* actionItem = itemIndex >= 0 ? &items[size_t(itemIndex)] : nullptr;
         if (slotIndex >= 0) for (const auto& candidate : items) if (candidate.value("slotIndex", -1) == slotIndex) { actionItem = &candidate; break; }
-        if (attrs.contains("data-action") && actionItem && actionItem->value("disabled",false)) opacity *= 0.45f;
+        if (actionItem && node.contains("slotStateStyles") && node.at("slotStateStyles").is_object()) {
+            const auto state = actionItem->value("slotState",std::string("empty"));
+            if (node.at("slotStateStyles").contains(state)) for (const auto& [key,value] : node.at("slotStateStyles").at(state).items()) style[key] = value;
+        }
+        if (active && node.contains("hoverStyle")) for (const auto& [key, value] : node.at("hoverStyle").items()) style[key] = value;
+        if (active && node.contains("focusStyle")) for (const auto& [key, value] : node.at("focusStyle").items()) style[key] = value;
+        // Resolve opacity after state and interaction styles have been merged;
+        // those declarations are part of the same renderer-neutral CSS cascade.
+        float opacity = parentOpacity * std::clamp(screenCssNumber(style,"opacity",1.0f),0.0f,1.0f);
+        // Slot cards are disabled as actions when empty/corrupt, but remain
+        // information panels. Their state selector owns visual styling; do not
+        // fade the entire card (and its text) as for an unavailable command.
+        if (attrs.contains("data-action") && !attrs.contains("data-slot-index") && actionItem && actionItem->value("disabled",false)) opacity *= 0.45f;
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
         if (style.value("display", std::string{}) == "none") return;
         std::string fillValue = style.value("background-color", std::string{});
@@ -819,11 +1236,28 @@ struct Engine {
             }
         }
         if (node.value("tag", std::string{}) == "img") {
-            auto imageName = attrs.value("src", std::string{}); if (imageName.starts_with("asset/")) imageName.erase(0, 6);
-            if (auto* texture = skinImage(imageName)) {
+            const auto imageField = attrs.value("data-slot-field", std::string{});
+            SDL_Texture* texture = nullptr;
+            if (imageField == "thumbnail" && actionItem && slotIndex >= 0 && actionItem->value("slotSummary",json(nullptr)).is_object()) {
+                const auto thumbnailPath = saveDirectory / ("thumb-slot-" + std::to_string(slotIndex + 1) + ".png");
+                std::error_code error;
+                if (fs::is_regular_file(thumbnailPath,error) && !error) {
+                    try { texture = image(thumbnailPath); } catch (const std::exception&) { /* Ignore a missing or damaged preview; keep the save itself loadable. */ }
+                }
+            } else {
+                auto imageName = attrs.value("src", std::string{}); if (imageName.starts_with("asset/")) imageName.erase(0, 6);
+                texture = skinImage(imageName);
+            }
+            if (texture) {
                 SDL_SetTextureAlphaModFloat(texture,opacity);
-                if (style.value("object-fit",std::string{}) == "contain") fitTexture(texture,rect);
-                else SDL_RenderTexture(renderer, texture, nullptr, &rect);
+                const auto fit = style.value("object-fit",std::string{});
+                if (fit == "contain") fitTexture(texture,rect);
+                else if (fit == "cover") {
+                    float sourceWidth=0,sourceHeight=0; SDL_GetTextureSize(texture,&sourceWidth,&sourceHeight);
+                    const float scale=std::max(rect.w/sourceWidth,rect.h/sourceHeight);
+                    SDL_FRect source{(sourceWidth-rect.w/scale)/2,(sourceHeight-rect.h/scale)/2,rect.w/scale,rect.h/scale};
+                    SDL_RenderTexture(renderer,texture,&source,&rect);
+                } else SDL_RenderTexture(renderer, texture, nullptr, &rect);
                 SDL_SetTextureAlphaModFloat(texture,1);
             }
         }
@@ -840,32 +1274,91 @@ struct Engine {
             const auto key = attrs.value("data-setting", std::string{});
             const auto type = attrs.value("type", std::string{});
             const auto accent = screenCssColor(style.value("accent-color", std::string{}), {145,181,232,255});
+            if (active) {
+                SDL_FRect focusRect{rect.x-2,rect.y-2,rect.w+4,rect.h+4};
+                SDL_SetRenderDrawColor(renderer,accent.r,accent.g,accent.b,Uint8(230*opacity));
+                SDL_RenderRect(renderer,&focusRect);
+            }
             if (type == "checkbox") {
-                SDL_FRect box{rect.x + rect.w * 0.25f, rect.y + rect.h * 0.18f, rect.w * 0.5f, rect.h * 0.64f};
-                SDL_SetRenderDrawColor(renderer, 18, 25, 37, Uint8(235 * opacity)); SDL_RenderFillRect(renderer, &box);
-                SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, Uint8(accent.a * opacity)); SDL_RenderRect(renderer, &box);
-                if (uiSettingValues.value(key, false)) {
-                    SDL_FRect mark{box.x + box.w * 0.22f, box.y + box.h * 0.22f, box.w * 0.56f, box.h * 0.56f};
-                    SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, Uint8(accent.a * opacity)); SDL_RenderFillRect(renderer, &mark);
+                const auto skin = node.value("controlSkin", json::object());
+                if (skin.value("type", std::string{}) == "checkbox") {
+                    const bool checked = uiSettingValues.value(key, false);
+                    const std::string imageKey = checked
+                        ? (active ? skin.value("onHover", skin.value("on", std::string{})) : skin.value("on", std::string{}))
+                        : (active ? skin.value("offHover", skin.value("off", std::string{})) : skin.value("off", std::string{}));
+                    auto* texture = skinImage(imageKey);
+                    SDL_SetTextureAlphaModFloat(texture, opacity);
+                    SDL_RenderTexture(renderer, texture, nullptr, &rect);
+                    SDL_SetTextureAlphaModFloat(texture, 1);
+                } else {
+                    SDL_FRect box{rect.x + rect.w * 0.25f, rect.y + rect.h * 0.18f, rect.w * 0.5f, rect.h * 0.64f};
+                    SDL_SetRenderDrawColor(renderer, 18, 25, 37, Uint8(235 * opacity)); SDL_RenderFillRect(renderer, &box);
+                    SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, Uint8(accent.a * opacity)); SDL_RenderRect(renderer, &box);
+                    if (uiSettingValues.value(key, false)) {
+                        SDL_FRect mark{box.x + box.w * 0.22f, box.y + box.h * 0.22f, box.w * 0.56f, box.h * 0.56f};
+                        SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, Uint8(accent.a * opacity)); SDL_RenderFillRect(renderer, &mark);
+                    }
                 }
             } else if (type == "range") {
                 const float minimum = std::stof(attrs.value("min", std::string("0"))), maximum = std::stof(attrs.value("max", std::string("1")));
                 const float value = std::clamp(uiSettingValues.value(key, minimum), minimum, maximum);
                 const float ratio = (value - minimum) / (maximum - minimum);
-                SDL_FRect rail{rect.x + rect.w * 0.04f, rect.y + rect.h * 0.38f, rect.w * 0.92f, std::max(2.0f, rect.h * 0.24f)};
-                SDL_SetRenderDrawColor(renderer, 44, 56, 72, Uint8(245 * opacity)); SDL_RenderFillRect(renderer, &rail);
-                SDL_FRect fill{rail.x, rail.y, rail.w * ratio, rail.h};
-                SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, Uint8(accent.a * opacity)); SDL_RenderFillRect(renderer, &fill);
-                SDL_FRect thumb{rail.x + rail.w * ratio - rect.h * 0.28f, rect.y + rect.h * 0.1f, rect.h * 0.56f, rect.h * 0.8f};
-                SDL_RenderFillRect(renderer, &thumb);
+                const auto skin = node.value("controlSkin", json::object());
+                if (skin.value("type", std::string{}) == "range") {
+                    const float thumbWidth = skin.value("thumbWidth", 28.0f) * sx;
+                    const float thumbHeight = skin.value("thumbHeight", 28.0f) * sy;
+                    const bool vertical = skin.value("orientation",std::string("horizontal")) == "vertical";
+                    const float inset = skin.value("inset", skin.value("thumbWidth", 28.0f) / 2.0f) * (vertical ? sy : sx);
+                    const float trackThickness = skin.value("trackHeight",8.0f) * (vertical ? sx : sy);
+                    SDL_FRect rail = vertical
+                        ? SDL_FRect{rect.x+(rect.w-trackThickness)/2.0f,rect.y+inset,trackThickness,std::max(0.0f,rect.h-inset*2.0f)}
+                        : SDL_FRect{rect.x+inset,rect.y+(rect.h-trackThickness)/2.0f,std::max(0.0f,rect.w-inset*2.0f),trackThickness};
+                    auto* railTexture = skinImage(skin.at("track").get<std::string>());
+                    auto* fillTexture = skinImage(skin.at("fill").get<std::string>());
+                    const auto thumbKey = active ? skin.value("thumbHover", skin.at("thumb").get<std::string>()) : skin.at("thumb").get<std::string>();
+                    auto* thumbTexture = skinImage(thumbKey);
+                    if (vertical) {
+                        SDL_FRect rotatedTrack{rail.x+rail.w/2.0f-rail.h/2.0f,rail.y+rail.h/2.0f-rail.w/2.0f,rail.h,rail.w};
+                        SDL_SetTextureAlphaModFloat(railTexture,opacity); SDL_RenderTextureRotated(renderer,railTexture,nullptr,&rotatedTrack,90.0,nullptr,SDL_FLIP_NONE); SDL_SetTextureAlphaModFloat(railTexture,1);
+                    } else { SDL_SetTextureAlphaModFloat(railTexture, opacity); SDL_RenderTexture(renderer, railTexture, nullptr, &rail); SDL_SetTextureAlphaModFloat(railTexture, 1); }
+                    float fillTextureWidth = 0, fillTextureHeight = 0; SDL_GetTextureSize(fillTexture, &fillTextureWidth, &fillTextureHeight);
+                    if (ratio > 0 && fillTextureWidth > 0 && fillTextureHeight > 0) {
+                        if (vertical) {
+                            const float fillHeight=rail.h*ratio;
+                            SDL_FRect source{fillTextureWidth*(1.0f-ratio),0,fillTextureWidth*ratio,fillTextureHeight};
+                            SDL_FRect fillRect{rail.x+rail.w/2.0f-fillHeight/2.0f,rail.y+rail.h-fillHeight/2.0f-rail.w/2.0f,fillHeight,rail.w};
+                            SDL_SetTextureAlphaModFloat(fillTexture,opacity); SDL_RenderTextureRotated(renderer,fillTexture,&source,&fillRect,90.0,nullptr,SDL_FLIP_NONE); SDL_SetTextureAlphaModFloat(fillTexture,1);
+                        } else {
+                            SDL_FRect source{0, 0, fillTextureWidth * ratio, fillTextureHeight};
+                            SDL_FRect fillRect{rail.x, rail.y, rail.w * ratio, rail.h};
+                            SDL_SetTextureAlphaModFloat(fillTexture, opacity); SDL_RenderTexture(renderer, fillTexture, &source, &fillRect); SDL_SetTextureAlphaModFloat(fillTexture, 1);
+                        }
+                    }
+                    SDL_FRect thumb = vertical
+                        ? SDL_FRect{rect.x+(rect.w-thumbWidth)/2.0f,rail.y+rail.h*(1.0f-ratio)-thumbHeight/2.0f,thumbWidth,thumbHeight}
+                        : SDL_FRect{rail.x+rail.w*ratio-thumbWidth/2.0f,rect.y+(rect.h-thumbHeight)/2.0f,thumbWidth,thumbHeight};
+                    SDL_SetTextureAlphaModFloat(thumbTexture, opacity); SDL_RenderTexture(renderer, thumbTexture, nullptr, &thumb); SDL_SetTextureAlphaModFloat(thumbTexture, 1);
+                } else {
+                    SDL_FRect rail{rect.x + rect.w * 0.04f, rect.y + rect.h * 0.38f, rect.w * 0.92f, std::max(2.0f, rect.h * 0.24f)};
+                    SDL_SetRenderDrawColor(renderer, 44, 56, 72, Uint8(245 * opacity)); SDL_RenderFillRect(renderer, &rail);
+                    SDL_FRect fill{rail.x, rail.y, rail.w * ratio, rail.h};
+                    SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, Uint8(accent.a * opacity)); SDL_RenderFillRect(renderer, &fill);
+                    SDL_FRect thumb{rail.x + rail.w * ratio - rect.h * 0.28f, rect.y + rect.h * 0.1f, rect.h * 0.56f, rect.h * 0.8f};
+                    SDL_RenderFillRect(renderer, &thumb);
+                }
             }
         }
         std::string textValue = node.value("text",std::string{});
+        if (nodeAction=="shortcut-cycle") {
+            const auto key="ui.shortcut."+attrs.value("data-target",std::string{});
+            const auto action=uiSettingValues.value(key,std::string("none"));
+            textValue=shortcutActionLabel(action)+"  ▼";
+        }
         const auto field = attrs.value("data-slot-field",std::string{});
         if (actionItem && slotIndex >= 0 && !field.empty()) {
             const auto saved = actionItem->value("slotSummary", json(nullptr));
             if (field == "number") { textValue = std::to_string(slotIndex + 1); if (slotIndex < 9) textValue.insert(0,"0"); }
-            else if (field == "status") textValue = saved.is_object() ? "記録あり" : "空き";
+            else if (field == "status") textValue = slotStatusLabel(actionItem->value("slotState",std::string("empty")),saved.is_object() && saved.value("locked",false));
             else if (field == "scene") textValue = saved.is_object() ? saved.value("scene",std::string{}) : "";
             else if (field == "speaker") textValue = saved.is_object() ? saved.value("speaker",std::string{}) : "";
             else if (field == "text") textValue = saved.is_object() ? saved.value("text",std::string{}) : "";
@@ -890,12 +1383,49 @@ struct Engine {
             else if (style.value("text-align",std::string{}) == "right") tx=rect.x+std::max(0.0f,rect.w-float(textWidth)-padRight);
             label(textValue,tx,ty,std::max(1,int(fontSize)),textColor,std::max(1.0f,rect.w-padLeft-padRight),rect.h-padTop);
         }
-        for (const auto& child : node.value("children",json::array())) drawScreenNode(child,sx,sy,items,opacity,slotIndex);
+        if (attrs.value("data-role", std::string{}) == "dialogue-history") {
+            const int rowHeight = std::max(42, int(54 * sy));
+            const int visible = std::max(1, int(rect.h) / rowHeight);
+            const int maximumScroll = std::max(0, int(dialogueHistory.size()) - visible);
+            dialogueHistoryScroll = std::clamp(dialogueHistoryScroll, 0, maximumScroll);
+            if (dialogueHistory.empty()) {
+                label("まだ会話履歴はありません。", rect.x + 20 * sx, rect.y + 20 * sy, std::max(14, int(16 * sy)), {209,217,231,255}, rect.w - 40 * sx, rowHeight);
+            } else {
+                const int end = int(dialogueHistory.size()) - dialogueHistoryScroll;
+                const int begin = std::max(0, end - visible);
+                for (int index = begin; index < end; ++index) {
+                    const float rowY = rect.y + float(index - begin) * rowHeight;
+                    const auto& entry = dialogueHistory[size_t(index)];
+                    if (!entry.first.empty()) label(entry.first, rect.x + 10 * sx, rowY + 3 * sy, std::max(12, int(14 * sy)), {170,197,240,255}, rect.w - 24 * sx, 18 * sy);
+                    label(entry.second, rect.x + 10 * sx, rowY + (entry.first.empty() ? 4 : 20) * sy, std::max(14, int(17 * sy)), {242,245,251,255}, rect.w - 24 * sx, rowHeight - 22 * sy);
+                    SDL_FRect separator{rect.x + 8 * sx, rowY + rowHeight - 1, rect.w - 16 * sx, 1};
+                    SDL_SetRenderDrawColor(renderer, 212,225,247,50); SDL_RenderFillRect(renderer, &separator);
+                }
+            }
+        }
+        if (attrs.value("data-role", std::string{}) == "selected-slot-summary") {
+            std::string summary="セーブ枠を選択してください";
+            if(selectedSlotIndex>=0){
+                const auto selected=readSlot(selectedSlotIndex);
+                summary="枠 "+std::to_string(selectedSlotIndex+1);
+                if(selected.is_object()) summary += "  "+slotText(selected,"scene")+"\n"+slotText(selected,"speaker")+": "+slotText(selected,"text")+(selected.value("locked",false)?"\n保護中":"");
+                else summary += "  空き枠";
+                if(deleteArmedSlotIndex==selectedSlotIndex) summary += "\n削除しますか？もう一度押してください";
+            }
+            label(summary,rect.x+8*sx,rect.y+8*sy,std::max(12,int(12*sy)),{82,96,120,255},rect.w-16*sx,rect.h-16*sy);
+        }
+        std::vector<const json*> orderedChildren;
+        const auto children = node.find("children");
+        if (children != node.end() && children->is_array()) for (const auto& child : *children) orderedChildren.push_back(&child);
+        std::stable_sort(orderedChildren.begin(),orderedChildren.end(),[](const json* left,const json* right) {
+            return screenCssNumber(left->value("style",json::object()),"z-index",0) < screenCssNumber(right->value("style",json::object()),"z-index",0);
+        });
+        for (const auto* child : orderedChildren) drawScreenNode(*child,sx,sy,ox,oy,items,opacity,slotIndex);
     }
     const json* findScreenInput(const json& nodes, float mouseX, float mouseY) const {
         const json empty = json::array();
-        const float sx = float(width) / float(gameScreens.at("canvas").at("width").get<int>());
-        const float sy = float(height) / float(gameScreens.at("canvas").at("height").get<int>());
+        const auto transform = screenCanvasTransform();
+        const float sx = transform.sx, sy = transform.sy;
         for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
             const auto& node = *it;
             if (node.value("style", json::object()).value("display", std::string{}) == "none") continue;
@@ -903,7 +1433,7 @@ struct Engine {
             if (const auto* child = findScreenInput(children, mouseX, mouseY)) return child;
             if (node.value("tag", std::string{}) != "input") continue;
             const auto& rect = node.at("rect");
-            const float x = rect.value("x", 0.0f) * sx, y = rect.value("y", 0.0f) * sy;
+            const float x = transform.ox + rect.value("x", 0.0f) * sx, y = transform.oy + rect.value("y", 0.0f) * sy;
             const float w = rect.value("width", 0.0f) * sx, h = rect.value("height", 0.0f) * sy;
             if (mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h) return &node;
         }
@@ -918,7 +1448,7 @@ struct Engine {
         }
         return nullptr;
     }
-    void updateScreenInput(const json& node, float mouseX) {
+    void updateScreenInput(const json& node, float mouseX, float mouseY) {
         const auto attrs = node.value("attrs", json::object());
         const auto key = attrs.value("data-setting", std::string{});
         if (key.empty()) return;
@@ -927,19 +1457,132 @@ struct Engine {
             return;
         }
         const auto& rect = node.at("rect");
-        const float sx = float(width) / float(gameScreens.at("canvas").at("width").get<int>());
+        const auto transform = screenCanvasTransform();
         const float minimum = std::stof(attrs.value("min", std::string("0"))), maximum = std::stof(attrs.value("max", std::string("1")));
-        const float left = rect.value("x", 0.0f) * sx, widthPx = rect.value("width", 0.0f) * sx;
-        const float ratio = std::clamp((mouseX - left) / std::max(1.0f, widthPx), 0.0f, 1.0f);
+        const auto skin = node.value("controlSkin", json::object());
+        const bool vertical = skin.value("orientation",std::string("horizontal")) == "vertical";
+        const float inset = skin.value("type",std::string{}) == "range"
+            ? skin.value("inset",skin.value("thumbWidth",28.0f)/2.0f) * (vertical ? transform.sy : transform.sx) : 0.0f;
+        const float extent = (vertical ? rect.value("height",0.0f)*transform.sy : rect.value("width",0.0f)*transform.sx) - inset*2.0f;
+        const float origin = vertical ? transform.oy + rect.value("y",0.0f)*transform.sy + inset : transform.ox + rect.value("x",0.0f)*transform.sx + inset;
+        const float position = vertical ? origin + extent - mouseY : mouseX - origin;
+        const float ratio = std::clamp(position/std::max(1.0f,extent),0.0f,1.0f);
         const float step = std::stof(attrs.value("step", std::string("0.01")));
         const float raw = minimum + ratio * (maximum - minimum);
         const float stepped = std::clamp(minimum + std::round((raw - minimum) / step) * step, minimum, maximum);
         updateUiSetting(key, stepped);
     }
     SDL_FRect screenItemRect(const json& item) const {
-        const float sx = float(width) / float(gameScreens.at("canvas").at("width").get<int>());
-        const float sy = float(height) / float(gameScreens.at("canvas").at("height").get<int>());
-        return { item.at("x").get<float>() * sx, item.at("y").get<float>() * sy, item.at("width").get<float>() * sx, item.at("height").get<float>() * sy };
+        const auto transform = screenCanvasTransform();
+        return { transform.ox + item.at("x").get<float>() * transform.sx, transform.oy + item.at("y").get<float>() * transform.sy, item.at("width").get<float>() * transform.sx, item.at("height").get<float>() * transform.sy };
+    }
+    void drawScreenBackground(SDL_Texture* texture) {
+        if (!texture) return;
+        float textureWidth = 0, textureHeight = 0;
+        if (!SDL_GetTextureSize(texture,&textureWidth,&textureHeight) || textureWidth <= 0 || textureHeight <= 0) {
+            SDL_RenderTexture(renderer,texture,nullptr,nullptr);
+            return;
+        }
+        const float sourceAspect = textureWidth / textureHeight, targetAspect = float(width) / float(height);
+        SDL_FRect source{0,0,textureWidth,textureHeight};
+        if (sourceAspect > targetAspect) {
+            source.w = textureHeight * targetAspect;
+            source.x = (textureWidth - source.w) / 2.0f;
+        } else {
+            source.h = textureWidth / targetAspect;
+            source.y = (textureHeight - source.h) / 2.0f;
+        }
+        SDL_RenderTexture(renderer,texture,&source,nullptr);
+    }
+    struct ScreenNavigationTarget { int itemIndex = -1; std::string setting; SDL_FRect rect{}; bool disabled = false; };
+    std::vector<ScreenNavigationTarget> screenNavigationTargets() const {
+        const auto items = visibleScreenItems();
+        std::vector<ScreenNavigationTarget> targets;
+        if (!currentScreen().contains("uiTree")) {
+            for (size_t index = 0; index < items.size(); ++index) if (items[index].value("type",std::string{}) == "button") targets.push_back({int(index),{},screenItemRect(items[index]),items[index].value("disabled",false)});
+            return targets;
+        }
+        std::vector<bool> used(items.size(),false);
+        const auto transform = screenCanvasTransform();
+        std::function<void(const json&)> visit = [&](const json& nodes) {
+            for (const auto& node : nodes) {
+                if (node.value("style",json::object()).value("display",std::string{}) == "none") continue;
+                const auto attrs = node.value("attrs",json::object());
+                const auto tag = node.value("tag",std::string{});
+                if (tag == "input") {
+                    const auto setting = attrs.value("data-setting",std::string{});
+                    const auto& rect = node.at("rect");
+                    if (!setting.empty()) targets.push_back({-1,setting,{transform.ox+rect.value("x",0.0f)*transform.sx,transform.oy+rect.value("y",0.0f)*transform.sy,rect.value("width",0.0f)*transform.sx,rect.value("height",0.0f)*transform.sy},false});
+                }
+                const auto action = attrs.value("data-action",std::string{});
+                if (!action.empty()) {
+                    const auto target = attrs.value("data-target",std::string{});
+                    const int localSlot = attrs.contains("data-slot-index") ? std::stoi(attrs.at("data-slot-index").get<std::string>()) : -1;
+                    const int slotIndex = localSlot < 0 ? localSlot : localSlot + currentSlotOffset();
+                    for (size_t index = 0; index < items.size(); ++index) {
+                        if (used[index] || items[index].value("action",std::string{}) != action || items[index].value("target",std::string{}) != target) continue;
+                        if (slotIndex >= 0 && items[index].value("slotIndex",-1) != slotIndex) continue;
+                        if (slotIndex < 0 && items[index].contains("slotIndex")) continue;
+                        used[index] = true;
+                        targets.push_back({int(index),{},screenItemRect(items[index]),items[index].value("disabled",false)});
+                        break;
+                    }
+                }
+                visit(node.value("children",json::array()));
+            }
+        };
+        visit(currentScreen().at("uiTree"));
+        return targets;
+    }
+    void focusScreenTarget(const ScreenNavigationTarget& target) {
+        screenHover = target.itemIndex;
+        screenFocusedSetting = target.setting;
+    }
+    void moveScreenFocus(int dx, int dy, bool sequential = false) {
+        const auto targets = screenNavigationTargets();
+        std::vector<size_t> enabled;
+        for (size_t index = 0; index < targets.size(); ++index) if (!targets[index].disabled) enabled.push_back(index);
+        if (enabled.empty()) { screenHover = -1; screenFocusedSetting.clear(); return; }
+        auto current = std::find_if(targets.begin(),targets.end(),[&](const auto& target) {
+            return !target.disabled && (screenFocusedSetting.empty() ? target.itemIndex == screenHover : target.setting == screenFocusedSetting);
+        });
+        if (current == targets.end()) { focusScreenTarget(targets[enabled.front()]); return; }
+        const size_t currentIndex = size_t(current-targets.begin());
+        size_t best = currentIndex;
+        if (sequential) {
+            const auto position = std::find(enabled.begin(),enabled.end(),currentIndex);
+            const int p = int(position-enabled.begin());
+            best = enabled[size_t((p+(dx<0?int(enabled.size())-1:1))%int(enabled.size()))];
+        } else {
+            const auto& from = targets[currentIndex].rect;
+            const float cx=from.x+from.w/2.0f, cy=from.y+from.h/2.0f;
+            float bestScore=std::numeric_limits<float>::infinity();
+            for (const size_t index : enabled) {
+                if (index==currentIndex) continue;
+                const auto& rect=targets[index].rect;
+                const float x=rect.x+rect.w/2.0f,y=rect.y+rect.h/2.0f;
+                const float primary=dx?(x-cx)*float(dx):(y-cy)*float(dy);
+                if (primary<=0.5f) continue;
+                const float cross=dx?std::abs(y-cy):std::abs(x-cx);
+                const float score=primary+cross*2.5f+cross*cross/std::max(1.0f,primary);
+                if(score<bestScore){bestScore=score;best=index;}
+            }
+            if(best==currentIndex){
+                for(const size_t index:enabled){if(index==currentIndex)continue;const auto& rect=targets[index].rect;const float x=rect.x+rect.w/2.0f,y=rect.y+rect.h/2.0f;const float primary=dx?(x-cx)*float(dx):(y-cy)*float(dy);const float cross=dx?std::abs(y-cy):std::abs(x-cx);const float score=(primary<0?100000.0f:0.0f)+std::abs(primary)+cross*2.5f;if(score<bestScore){bestScore=score;best=index;}}
+            }
+        }
+        focusScreenTarget(targets[best]);
+    }
+    void adjustFocusedScreenControl(int direction) {
+        if(screenFocusedSetting.empty()) return;
+        const auto tree=currentScreen().value("uiTree",json::array());
+        const auto* node=findScreenInputBySetting(tree,screenFocusedSetting);
+        if(!node) return;
+        const auto attrs=node->value("attrs",json::object());
+        if(attrs.value("type",std::string{})=="checkbox") { updateUiSetting(screenFocusedSetting,!uiSettingValues.value(screenFocusedSetting,false)); return; }
+        const float minimum=std::stof(attrs.value("min",std::string("0"))),maximum=std::stof(attrs.value("max",std::string("1"))),step=std::stof(attrs.value("step",std::string("0.01")));
+        const float value=float(uiSettingValues.value(screenFocusedSetting,double(minimum)));
+        updateUiSetting(screenFocusedSetting,std::clamp(minimum+std::round((value+float(direction)*step-minimum)/step)*step,minimum,maximum));
     }
     SDL_FRect playerControlRect(const json& item) {
         const float sx = float(width) / number("screen.width", 1280), sy = float(height) / number("screen.height", 720);
@@ -968,30 +1611,98 @@ struct Engine {
             }
         }
     }
+    void drawDialogueLayer(bool drawControls = true) {
+        const float dialogWidth = float(number("dialog.width", 900));
+        const float dialogHeight = float(number("dialog.height", 184));
+        const float dx = config.contains("dialog.x") ? float(number("dialog.x", 0)) : (float(width) - dialogWidth) / 2.0f;
+        const float dy = config.contains("dialog.y") ? float(number("dialog.y", 0)) : float(height) - dialogHeight - float(number("dialog.bottom", 26));
+        SDL_FRect box{dx, dy, dialogWidth, dialogHeight};
+        const auto textColor = color("dialog.text_color", {235,241,248,255});
+        const float dialogOpacity = (dialogueOpacityOverride >= 0 ? dialogueOpacityOverride : float(number("dialog.opacity", 1))) * uiSettingValues.value("ui.dialogOpacity", 1.0f);
+        if (dialog) { SDL_SetTextureAlphaModFloat(dialog, dialogOpacity); SDL_RenderTexture(renderer, dialog, nullptr, &box); SDL_SetTextureAlphaModFloat(dialog, 1); }
+        else { auto fill=color("dialog.background_color", {13,20,33,232}), border=color("dialog.border_color", {112,159,201,180}), accent=color("dialog.accent_color", {100,190,255,255}); fill.a=Uint8(fill.a*dialogOpacity); border.a=Uint8(border.a*dialogOpacity); accent.a=Uint8(accent.a*dialogOpacity); outlinedPanel(box,fill,border,accent); }
+        speakerLabel(speaker, box.x + float(number("dialog.speaker_x", 90)), box.y + float(number("dialog.speaker_y", -52)), number("dialog.speaker_size", number("font.size", 24)), color("dialog.speaker_color", textColor));
+        dialogueLabel(text, box.x + float(number("dialog.text_x", 190)), box.y + float(number("dialog.text_y", 63)), number("dialog.text_size", number("font.size", 24)), textColor, float(number("dialog.text_width", 844)), float(number("dialog.text_height", 0)));
+        if (options.empty() && !text.empty()) label("遶包ｽｫ", float(width) - 66, float(height) - 68, 34, {230,240,250,210}, 48);
+        if (drawControls) drawPlayerControls();
+        if (!options.empty()) {
+            const auto choiceView = choiceViewport();
+            SDL_Rect choiceClip{int(choiceView.x),int(choiceView.y),int(choiceView.w),int(choiceView.h)};
+            SDL_SetRenderClipRect(renderer,&choiceClip);
+            for (size_t i=0;i<options.size();++i) {
+                SDL_FRect rect=choiceRect(i); const bool active=int(i)==hovered;
+                if (active ? choiceActiveSkin : choiceSkin) SDL_RenderTexture(renderer,active ? choiceActiveSkin : choiceSkin,nullptr,&rect);
+                else outlinedPanel(rect,active ? SDL_Color{31,65,98,245} : SDL_Color{14,24,39,232},active ? SDL_Color{125,210,255,255} : SDL_Color{92,128,163,190},active ? SDL_Color{112,208,255,255} : SDL_Color{67,114,159,220});
+                label(options[i],rect.x+float(number("choice.text_x",24)),rect.y+float(number("choice.text_y",12)),number("choice.text_size",19),color("choice.text_color",{240,246,252,255}),float(number("choice.text_width",int(rect.w)-42)),float(number("choice.text_height",0)));
+            }
+            SDL_SetRenderClipRect(renderer,nullptr);
+        }
+    }
     void activateScreenItem(const json& item) {
         if (item.value("disabled", false)) return;
         if (item.contains("slotIndex")) {
             const int index = item.at("slotIndex").get<int>();
-            if (item.value("action", std::string{}) == "save") saveSlot(index); else loadSlot(index);
+            if (item.value("action", std::string{}) == "slot-select") { selectedSlotIndex=index; deleteArmedSlotIndex=-1; }
+            else if (item.value("action", std::string{}) == "save") saveSlot(index); else loadSlot(index);
             return;
         }
         const auto action = item.value("action", std::string{});
-        if (action == "start") { activeScreen.clear(); titleStarted = true; storyActive = true; screenHistory.clear(); }
+        if (action == "shortcut-cycle") {
+            const auto key="ui.shortcut."+item.value("target",std::string{});
+            if (!uiSettingValues.contains(key) || !uiSettingValues.at(key).is_string()) return;
+            const auto& allowed=shortcutActions();
+            const auto current=std::find(allowed.begin(),allowed.end(),uiSettingValues.at(key).get<std::string>());
+            const size_t nextIndex=current==allowed.end()?0:(size_t(current-allowed.begin())+1)%allowed.size();
+            updateUiSetting(key,allowed[nextIndex]); resetScreenFocus();
+        } else if (action == "setting-value") {
+            const auto key=item.value("target",std::string{});
+            const auto value=item.value("value",json(false));
+            if (uiSettingValues.contains(key)) updateUiSetting(key,value);
+        } else if (action == "slot-commit") {
+            if(selectedSlotIndex<0) return;
+            if(currentScreen().value("role",std::string{})=="save-slots") saveSlot(selectedSlotIndex);
+            else if(currentScreen().value("role",std::string{})=="load-slots") loadSlot(selectedSlotIndex);
+        } else if(action=="slot-copy" || action=="slot-move") { if(selectedSlotIndex>=0) transferSlotRecord(selectedSlotIndex,action=="slot-move"); deleteArmedSlotIndex=-1; }
+        else if(action=="slot-delete") {
+            if(selectedSlotIndex<0) return;
+            if(deleteArmedSlotIndex!=selectedSlotIndex) deleteArmedSlotIndex=selectedSlotIndex;
+            else { deleteSlotRecord(selectedSlotIndex); selectedSlotIndex=-1; deleteArmedSlotIndex=-1; }
+        } else if(action=="slot-lock") {
+            if(selectedSlotIndex<0 || !readSlot(selectedSlotIndex).is_object()) return;
+            json updated=readSlot(selectedSlotIndex); updated["locked"]=!updated.value("locked",false); writeSlotRecord(selectedSlotIndex,updated); deleteArmedSlotIndex=-1;
+        } else if (action == "start") { activeScreen.clear(); resetScreenFocus(); titleStarted = true; storyActive = true; screenHistory.clear(); }
         else if (action == "continue") { if (const auto index = latestSaveSlotIndex()) loadSlot(*index); }
-        else if (action == "resume") { activeScreen.clear(); screenHistory.clear(); }
+        else if (action == "next") { if (holdActive) return; activeScreen.clear(); resetScreenFocus(); screenHistory.clear(); next = true; }
+        else if (action == "auto") { holdActive = false; autoPlayActive = !autoPlayActive; if (autoPlayActive) skipActive = false; activeScreen.clear(); resetScreenFocus(); screenHistory.clear(); next = true; }
+        else if (action == "skip") { holdActive = false; skipActive = !skipActive; if (skipActive) autoPlayActive = false; activeScreen.clear(); resetScreenFocus(); screenHistory.clear(); next = true; }
+        else if (action == "hold") { holdActive = !holdActive; autoPlayActive = false; skipActive = false; activeScreen.clear(); resetScreenFocus(); screenHistory.clear(); }
+        else if (action == "quick-save") saveQuickSlot();
+        else if (action == "quick-load") loadQuickSlot();
+        else if (action == "resume") { activeScreen.clear(); resetScreenFocus(); screenHistory.clear(); }
         else if (action == "save" || action == "load") openSlotScreen(action);
-        else if (action == "open-screen") {
+        else if (action == "slot-page") {
+            const int page = std::stoi(item.value("target", std::string("0")));
+            if (page < 0 || page > 9) throw std::runtime_error("Invalid save page");
+            slotPages[currentScreen().value("role",std::string{}) == "save-slots" ? "save" : "load"] = page;
+            resetScreenFocus();
+        } else if (action == "reset-settings") {
+            for (const auto& [key, value] : gameScreens.value("controlDefaults",json::object()).items()) updateUiSetting(key,value);
+        } else if (action == "reset-window-size") {
+            if (!SDL_SetWindowFullscreen(window,false)) throw std::runtime_error(SDL_GetError());
+            SDL_SetWindowSize(window,baseWindowWidth,baseWindowHeight);
+            width=baseWindowWidth; height=baseWindowHeight;
+        } else if (action == "open-screen") {
             const auto target = item.value("target", std::string{});
             if (!gameScreens.at("screens").contains(target)) throw std::runtime_error("Missing game screen: " + target);
-            screenHistory.push_back(activeScreen); activeScreen = target; screenHover = 0;
+            screenHistory.push_back(activeScreen); activeScreen = target; resetScreenFocus();
         } else if (action == "back") {
-            if (!screenHistory.empty()) { activeScreen = screenHistory.back(); screenHistory.pop_back(); screenHover = 0; }
-            else if (storyActive) activeScreen.clear();
+            if (!screenHistory.empty()) { activeScreen = screenHistory.back(); screenHistory.pop_back(); resetScreenFocus(); }
+            else if (storyActive) { activeScreen.clear(); resetScreenFocus(); }
         } else if (action == "quit") throw Quit{};
     }
     void runTitleScreen() {
         if (gameScreens.empty()) { titleStarted = true; return; }
-        activeScreen = gameScreens.at("initial").get<std::string>();
+        activeScreen = gameScreens.at("initial").get<std::string>(); resetScreenFocus();
         while (!titleStarted) pump();
     }
     static void SDLCALL audioTrackStopped(void* userdata, MIX_Track* track) {
@@ -1048,7 +1759,7 @@ struct Engine {
         for (auto& playback : audio) {
             if (!playback.bgm || playback.track == keep || !MIX_TrackPlaying(playback.track)) continue;
             const auto startGain = fadeOutMs > 0 ? currentBgmGain(playback) : 0.0f;
-            if (fadeOutMs > 0 && !MIX_SetTrackGain(playback.track, startGain)) throw std::runtime_error(SDL_GetError());
+            if (fadeOutMs > 0 && !MIX_SetTrackGain(playback.track, startGain * uiSettingGain("bgm"))) throw std::runtime_error(SDL_GetError());
             const auto frames = fadeOutMs > 0 ? MIX_TrackMSToFrames(playback.track, fadeOutMs) : 0;
             if (!MIX_StopTrack(playback.track, frames)) throw std::runtime_error(SDL_GetError());
             playback.fadeStartGain = startGain;
@@ -1061,14 +1772,18 @@ struct Engine {
     json presentationSnapshot() const {
         json characterState = json::array();
         for (const auto& [id, sprite] : characters) {
-            characterState.push_back({{"id", id}, {"pose", sprite.pose}, {"slot", sprite.position},
+            json value = {{"id", id}, {"pose", sprite.pose}, {"slot", sprite.position},
                 {"opacity", sprite.alpha}, {"offsetX", sprite.offsetX}, {"offsetY", sprite.offsetY},
-                {"visualOrder", sprite.visualOrder}});
+                {"visualOrder", sprite.visualOrder}};
+            if (sprite.layer) value["layer"] = *sprite.layer;
+            characterState.push_back(std::move(value));
         }
         json imageState = json::array();
         for (const auto& [id, sprite] : images) {
-            imageState.push_back({{"asset", id}, {"slot", sprite.position}, {"opacity", sprite.alpha},
-                {"offsetX", sprite.offsetX}, {"offsetY", sprite.offsetY}, {"visualOrder", sprite.visualOrder}});
+            json value = {{"asset", id}, {"slot", sprite.position}, {"opacity", sprite.alpha},
+                {"offsetX", sprite.offsetX}, {"offsetY", sprite.offsetY}, {"visualOrder", sprite.visualOrder}};
+            if (sprite.layer) value["layer"] = *sprite.layer;
+            imageState.push_back(std::move(value));
         }
         json activeMedia = json::array();
         for (const auto& playback : audio) {
@@ -1091,8 +1806,8 @@ struct Engine {
             }
         }
         json backgroundState = nullptr;
-        if (background) backgroundState = {{"asset", backgroundAsset}, {"offsetX", backgroundOffsetX}, {"offsetY", backgroundOffsetY}};
-        json videoState = video ? json{{"asset", videoAsset}} : json(nullptr);
+        if (background) { backgroundState = {{"asset", backgroundAsset}, {"offsetX", backgroundOffsetX}, {"offsetY", backgroundOffsetY}}; if (backgroundLayer) backgroundState["layer"] = *backgroundLayer; }
+        json videoState = video ? json{{"asset", videoAsset}, {"layer", videoLayer ? json(*videoLayer) : json(nullptr)}} : json(nullptr);
         json effectState = overlay > 0 ? json{{"type", "fade"}, {"color", overlayColor.r > 127 ? "white" : "black"}, {"opacity", overlay}} : json(nullptr);
         json volumes=json::object(), volumeOverrides=json::object();
         for(const auto* kind:{"bgm","se","voice"}) {
@@ -1100,15 +1815,23 @@ struct Engine {
             volumes[kind]=found==config.end() ? (std::string(kind)=="voice"?0.5f:1.0f) : std::stof(found->second);
         }
         for(const auto& [kind,gain]:audioVolumeOverrides) volumeOverrides[kind]=gain;
-        return {{"logicalTimeMs", logicalTimeMs}, {"background", backgroundState}, {"video", videoState},
+        json visualOnly=nullptr;
+        if(!visualOnlyKind.empty() && visualOnlyKind!="video") visualOnly={{"kind",visualOnlyKind},{"id",visualOnlyId}};
+        json layerState = json::object(); for (const auto& [category, value] : renderLayers) layerState[category] = value;
+        return {{"logicalTimeMs", logicalTimeMs}, {"background", backgroundState}, {"video", videoState},{"visualOnly",visualOnly}, {"layers", layerState},
             {"characters", characterState}, {"images", imageState}, {"bgm", bgmState},
-            {"audio",{{"volumes",volumes},{"volumeOverrides",volumeOverrides}}},{"ui",{{"dialogOpacity",config.contains("dialog.opacity")?std::stof(config.at("dialog.opacity")):1.0f}}},
+            {"audio",{{"volumes",volumes},{"volumeOverrides",volumeOverrides}}},{"ui",{{"dialogOpacity",config.contains("dialog.opacity")?std::stof(config.at("dialog.opacity")):1.0f},{"dialogVisible",dialogueVisible}}}, {"camera",{{"zoom",cameraZoom},{"focusX",cameraFocusX},{"focusY",cameraFocusY}}},
             {"activeMedia", activeMedia}, {"effect", effectState}};
     }
     void restorePresentation(const json& state) {
         characters.clear(); images.clear(); nextVisualOrder = 0;
         audioVolumeOverrides.clear();
         const auto audioState=state.value("audio",json::object());
+        const auto savedLayers=state.value("layers",json::object());
+        for(const auto& [category,value]:savedLayers.items()) {
+            if(!renderLayers.contains(category)) throw std::runtime_error("Invalid saved render layer category: "+category);
+            renderLayers[category]=checkedRenderLayer(value);
+        }
         const auto savedVolumes=audioState.value("volumes",json::object());
         for(const auto* kind:{"bgm","se","voice"}) {
             if(savedVolumes.contains(kind)) { const auto gain=savedVolumes.at(kind).get<float>(); if(!std::isfinite(gain)||gain<0||gain>1) throw std::runtime_error("Invalid saved audio volume"); config[std::string("audio.")+kind+"_volume"]=std::to_string(gain); }
@@ -1118,11 +1841,23 @@ struct Engine {
         const auto dialogOpacity=state.value("ui",json::object()).value("dialogOpacity",float(number("dialog.opacity",1)));
         if(!std::isfinite(dialogOpacity)||dialogOpacity<0||dialogOpacity>1) throw std::runtime_error("Invalid saved dialog opacity");
         config["dialog.opacity"]=std::to_string(dialogOpacity);
-        background = nullptr; backgroundAsset.clear(); backgroundOffsetX = backgroundOffsetY = 0;
+        dialogueVisible=state.value("ui",json::object()).value("dialogVisible",true);
+        const auto camera=state.value("camera",json::object()); cameraZoom=camera.value("zoom",1.0f); cameraFocusX=camera.value("focusX",640.0f); cameraFocusY=camera.value("focusY",360.0f);
+        if(!std::isfinite(cameraZoom)||cameraZoom<0.1f||cameraZoom>8.0f||!std::isfinite(cameraFocusX)||!std::isfinite(cameraFocusY)) throw std::runtime_error("Invalid saved camera state");
+        background = nullptr; previousBackground = nullptr; backgroundAsset.clear();
+        backgroundOffsetX = previousBackgroundOffsetX = backgroundOffsetY = previousBackgroundOffsetY = 0;
+        backgroundLayer.reset(); videoLayer.reset();
+        visualOnlyKind.clear(); visualOnlyId.clear();
+        if(state.contains("visualOnly") && state.at("visualOnly").is_object()) {
+            visualOnlyKind=state.at("visualOnly").value("kind",std::string{});
+            visualOnlyId=state.at("visualOnly").value("id",std::string{});
+            if(visualOnlyKind=="video" || visualOnlyKind!="" && visualOnlyKind!="background" && visualOnlyKind!="character" && visualOnlyKind!="image") throw std::runtime_error("Invalid saved visual-only mode");
+        }
         if (state.contains("background") && state["background"].is_object()) {
             const auto& bg = state["background"];
             backgroundAsset = bg.value("asset", std::string{});
             backgroundOffsetX = bg.value("offsetX", 0.0f); backgroundOffsetY = bg.value("offsetY", 0.0f);
+            if(bg.contains("layer") && !bg.at("layer").is_null()) backgroundLayer=checkedRenderLayer(bg.at("layer"));
             if (!backgroundAsset.empty()) background = image(asset("bg", backgroundAsset));
         }
         for (const auto& value : state.value("characters", json::array())) {
@@ -1130,6 +1865,7 @@ struct Engine {
             Sprite sprite; sprite.texture = image(asset("char", id, pose)); sprite.asset = id; sprite.pose = pose;
             sprite.position = value.value("slot", std::string("center")); sprite.alpha = value.value("opacity", 1.0f);
             sprite.offsetX = value.value("offsetX", 0.0f); sprite.offsetY = value.value("offsetY", 0.0f);
+            if(value.contains("layer") && !value.at("layer").is_null()) sprite.layer=checkedRenderLayer(value.at("layer"));
             sprite.visualOrder = value.value("visualOrder", uint64_t(++nextVisualOrder));
             nextVisualOrder = std::max(nextVisualOrder, sprite.visualOrder); characters[id] = std::move(sprite);
         }
@@ -1138,6 +1874,7 @@ struct Engine {
             Sprite sprite; sprite.texture = image(asset("image", id)); sprite.asset = id;
             sprite.position = value.value("slot", std::string("center")); sprite.alpha = value.value("opacity", 1.0f);
             sprite.offsetX = value.value("offsetX", 0.0f); sprite.offsetY = value.value("offsetY", 0.0f);
+            if(value.contains("layer") && !value.at("layer").is_null()) sprite.layer=checkedRenderLayer(value.at("layer"));
             sprite.visualOrder = value.value("visualOrder", uint64_t(++nextVisualOrder));
             nextVisualOrder = std::max(nextVisualOrder, sprite.visualOrder); images[id] = std::move(sprite);
         }
@@ -1151,14 +1888,50 @@ struct Engine {
         if (bgmState.is_object() && bgmState.contains("asset")) sound("bgm", bgmState.at("asset").get<std::string>(),0,false,bgmState.value("gain",-1.0f));
     }
     void pump() {
-        if (screenWebView) for (const auto& message : screenWebView->takeMessages()) handleWebScreenMessage(message);
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-            if (screenWebView && e.type == SDL_EVENT_WINDOW_RESIZED) screenWebView->resize();
             if (e.type == SDL_EVENT_QUIT) throw Quit{};
-            if (!activeScreen.empty() && screenWebView && screenWebView->ready()
-                && (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP
-                    || e.type == SDL_EVENT_MOUSE_MOTION || e.type == SDL_EVENT_MOUSE_WHEEL || e.type == SDL_EVENT_KEY_DOWN)) continue;
+            if (e.type == SDL_EVENT_MOUSE_MOTION || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_WHEEL) {
+                lastMouseActivity=SDL_GetTicks();
+                if(cursorHidden) { SDL_ShowCursor(); cursorHidden=false; }
+            }
+            if (e.type == SDL_EVENT_GAMEPAD_ADDED) {
+                if (SDL_Gamepad* gamepad = SDL_OpenGamepad(e.gdevice.which)) gamepads[e.gdevice.which] = gamepad;
+                continue;
+            }
+            if (e.type == SDL_EVENT_GAMEPAD_REMOVED) {
+                const auto found = gamepads.find(e.gdevice.which);
+                if (found != gamepads.end()) { SDL_CloseGamepad(found->second); gamepads.erase(found); }
+                continue;
+            }
+            // A blocking video is an exclusive presentation: SDL still pumps
+            // events and renders frames, but story/menu hit targets stay inert.
+            if (videoBlocksStory || visualOnlyKind == "video") continue;
+            if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode >= SDL_SCANCODE_F1 && e.key.scancode <= SDL_SCANCODE_F12 && (!activeScreen.empty() || storyActive)) {
+                const int shortcut = int(e.key.scancode) - int(SDL_SCANCODE_F1) + 1;
+                const auto key="ui.shortcut.F"+std::to_string(shortcut);
+                const auto binding=uiSettingValues.value(key,std::string("none"));
+                if (binding == "system" && gameScreens.at("screens").contains("system")) {
+                    if (!activeScreen.empty()) screenHistory.push_back(activeScreen);
+                    activeScreen = "system"; resetScreenFocus();
+                } else if (binding == "save") openSlotScreen("save");
+                else if (binding == "load") openSlotScreen("load");
+                else if (binding == "replay-voice" && !lastVoiceAsset.empty()) sound("voice",lastVoiceAsset,0,false,-1.0f,lastVoiceCharacter);
+                else if (binding == "auto" && storyActive) { holdActive=false; autoPlayActive=!autoPlayActive; if(autoPlayActive)skipActive=false; activeScreen.clear();resetScreenFocus();screenHistory.clear();next=true; }
+                else if (binding == "clear-text") text.clear();
+                else if (binding == "fullscreen") updateUiSetting("ui.fullscreen",!uiSettingValues.value("ui.fullscreen",false));
+                else if (binding == "skip" && storyActive) { holdActive=false; skipActive=!skipActive; if(skipActive)autoPlayActive=false; activeScreen.clear();resetScreenFocus();screenHistory.clear();next=true; }
+                else if (binding == "quick-save" && storyActive) saveQuickSlot();
+                else if (binding == "history" && gameScreens.at("screens").contains("log")) {
+                    if (!activeScreen.empty()) screenHistory.push_back(activeScreen);
+                    activeScreen = "log"; resetScreenFocus();
+                } else if (binding == "quick-load" && storyActive) loadQuickSlot();
+                continue;
+            }
+            if (!activeScreen.empty() && activeScreen == "log" && e.type == SDL_EVENT_MOUSE_WHEEL) {
+                dialogueHistoryScroll = std::max(0, dialogueHistoryScroll + int(e.wheel.y));
+                continue;
+            }
             if (!activeScreen.empty() && currentScreen().contains("uiTree")) {
                 bool consumed = false;
                 const auto& tree = currentScreen().at("uiTree");
@@ -1167,34 +1940,58 @@ struct Engine {
                     if (const auto* input = findScreenInput(tree, float(e.button.x), float(e.button.y))) {
                         const auto attrs = input->value("attrs", json::object());
                         draggedUiSetting = attrs.value("data-setting", std::string{});
-                        updateScreenInput(*input, float(e.button.x));
+                        screenFocusedSetting = draggedUiSetting; screenHover = -1;
+                        updateScreenInput(*input, float(e.button.x),float(e.button.y));
                         if (attrs.value("type", std::string{}) == "checkbox") draggedUiSetting.clear();
                         consumed = true;
                     }
                 } else if (e.type == SDL_EVENT_MOUSE_MOTION && !draggedUiSetting.empty()) {
-                    if (const auto* input = findScreenInputBySetting(tree, draggedUiSetting)) updateScreenInput(*input, float(e.motion.x));
+                    if (const auto* input = findScreenInputBySetting(tree, draggedUiSetting)) updateScreenInput(*input,float(e.motion.x),float(e.motion.y));
                     consumed = true;
                 }
                 if (consumed) continue;
             }
             if (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_ESCAPE) {
-                if (!activeScreen.empty() && activeScreen == "pause") activeScreen.clear();
-                else if (activeScreen.empty() && storyActive && gameScreens.contains("screens") && gameScreens["screens"].contains("pause")) { activeScreen = "pause"; screenHover = 0; }
-                else if (!activeScreen.empty() && !screenHistory.empty()) { activeScreen = screenHistory.back(); screenHistory.pop_back(); screenHover = 0; }
-            } else if (!activeScreen.empty() && e.type == SDL_EVENT_KEY_DOWN) {
+                if (!activeScreen.empty() && activeScreen == "pause") { activeScreen.clear(); resetScreenFocus(); }
+                else if (activeScreen.empty() && storyActive && gameScreens.contains("screens") && gameScreens["screens"].contains("pause")) { autoPlayActive = false; skipActive = false; activeScreen = "pause"; resetScreenFocus(); }
+                else if (!activeScreen.empty() && !screenHistory.empty()) { activeScreen = screenHistory.back(); screenHistory.pop_back(); resetScreenFocus(); }
+            } else if (!activeScreen.empty() && (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN)) {
+                const bool gamepad = e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+                const auto key = gamepad ? SDL_SCANCODE_UNKNOWN : e.key.scancode;
                 const auto items = visibleScreenItems();
-                if (!items.empty() && (e.key.scancode == SDL_SCANCODE_DOWN || e.key.scancode == SDL_SCANCODE_UP)) {
-                    const int delta = e.key.scancode == SDL_SCANCODE_DOWN ? 1 : -1;
-                    screenHover = (screenHover + delta + int(items.size())) % int(items.size());
-                } else if (!items.empty() && (e.key.scancode == SDL_SCANCODE_RETURN || e.key.scancode == SDL_SCANCODE_SPACE)) activateScreenItem(items.at(size_t(std::clamp(screenHover, 0, int(items.size()) - 1))));
+                if ((!gamepad && key == SDL_SCANCODE_TAB)) moveScreenFocus((e.key.mod & SDL_KMOD_SHIFT) ? -1 : 1,0,true);
+                else if ((!gamepad && key == SDL_SCANCODE_UP) || (gamepad && e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_UP)) moveScreenFocus(0,-1);
+                else if ((!gamepad && key == SDL_SCANCODE_DOWN) || (gamepad && e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_DOWN)) moveScreenFocus(0,1);
+                else if ((!gamepad && key == SDL_SCANCODE_LEFT) || (gamepad && e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_LEFT)) {
+                    if (!screenFocusedSetting.empty()) adjustFocusedScreenControl(-1); else moveScreenFocus(-1,0);
+                } else if ((!gamepad && key == SDL_SCANCODE_RIGHT) || (gamepad && e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) {
+                    if (!screenFocusedSetting.empty()) adjustFocusedScreenControl(1); else moveScreenFocus(1,0);
+                }
+                else if ((!gamepad && (key == SDL_SCANCODE_RETURN || key == SDL_SCANCODE_SPACE)) || (gamepad && e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH)) {
+                    const auto targets = screenNavigationTargets();
+                    auto selected = std::find_if(targets.begin(),targets.end(),[&](const auto& target){return !target.disabled && (screenFocusedSetting.empty()?target.itemIndex==screenHover:target.setting==screenFocusedSetting);});
+                    if (selected == targets.end()) { moveScreenFocus(1,0,true); selected=std::find_if(targets.begin(),targets.end(),[&](const auto& target){return !target.disabled && (screenFocusedSetting.empty()?target.itemIndex==screenHover:target.setting==screenFocusedSetting);}); }
+                    if (selected != targets.end()) {
+                        if (!selected->setting.empty()) {
+                            if (const auto* input=findScreenInputBySetting(currentScreen().at("uiTree"),selected->setting); input && input->value("attrs",json::object()).value("type",std::string{})=="checkbox") updateUiSetting(selected->setting,!uiSettingValues.value(selected->setting,false));
+                        } else if (selected->itemIndex>=0 && selected->itemIndex<int(items.size())) activateScreenItem(items[size_t(selected->itemIndex)]);
+                    }
+                } else if (gamepad && e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST && !screenHistory.empty()) {
+                    activeScreen = screenHistory.back(); screenHistory.pop_back(); resetScreenFocus();
+                }
             } else if (!activeScreen.empty() && e.type == SDL_EVENT_MOUSE_MOTION) {
                 const auto items = visibleScreenItems(); screenHover = -1;
-                for (size_t i = 0; i < items.size(); ++i) { const auto r = screenItemRect(items[i]); if (e.motion.x >= r.x && e.motion.x <= r.x + r.w && e.motion.y >= r.y && e.motion.y <= r.y + r.h) screenHover = int(i); }
+                for (size_t i = 0; i < items.size(); ++i) { const auto r = screenItemRect(items[i]); if (!items[i].value("disabled",false) && e.motion.x >= r.x && e.motion.x <= r.x + r.w && e.motion.y >= r.y && e.motion.y <= r.y + r.h) screenHover = int(i); }
+                if (screenHover >= 0) screenFocusedSetting.clear();
+                else if (currentScreen().contains("uiTree")) {
+                    if (const auto* input=findScreenInput(currentScreen().at("uiTree"),float(e.motion.x),float(e.motion.y))) screenFocusedSetting=input->value("attrs",json::object()).value("data-setting",std::string{});
+                    else screenFocusedSetting.clear();
+                }
             } else if (!activeScreen.empty() && e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
                 const auto items = visibleScreenItems();
-                for (size_t cursor = items.size(); cursor > 0; --cursor) { const size_t i = cursor - 1; const auto r = screenItemRect(items[i]); if (!items[i].value("disabled",false) && e.button.x >= r.x && e.button.x <= r.x + r.w && e.button.y >= r.y && e.button.y <= r.y + r.h) { screenHover = int(i); activateScreenItem(items[i]); break; } }
+                for (size_t cursor = items.size(); cursor > 0; --cursor) { const size_t i = cursor - 1; const auto r = screenItemRect(items[i]); if (!items[i].value("disabled",false) && e.button.x >= r.x && e.button.x <= r.x + r.w && e.button.y >= r.y && e.button.y <= r.y + r.h) { screenHover = int(i); screenFocusedSetting.clear(); activateScreenItem(items[i]); break; } }
             } else if (e.type == SDL_EVENT_KEY_DOWN) {
-                if (options.empty()) next = true;
+                if (options.empty()) { if (!holdActive) next = true; }
                 else if (e.key.scancode == SDL_SCANCODE_DOWN) { hovered = (hovered + 1 + int(options.size())) % int(options.size()); const auto box = choiceRect(size_t(hovered)); const auto view = choiceViewport(); if (box.y + box.h > view.y + view.h) choiceScroll += box.y + box.h - (view.y + view.h); clampChoiceScroll(); }
                 else if (e.key.scancode == SDL_SCANCODE_UP) { hovered = (hovered - 1 + int(options.size())) % int(options.size()); const auto box = choiceRect(size_t(hovered)); const auto view = choiceViewport(); if (box.y < view.y) choiceScroll -= view.y - box.y; clampChoiceScroll(); }
                 else if (e.key.scancode == SDL_SCANCODE_RETURN || e.key.scancode == SDL_SCANCODE_SPACE) selection = hovered < 0 ? 0 : hovered;
@@ -1217,94 +2014,130 @@ struct Engine {
                     for (const auto& item : items) { const auto r = playerControlRect(item); if (e.button.x >= r.x && e.button.x <= r.x + r.w && e.button.y >= r.y && e.button.y <= r.y + r.h) { openSlotScreen(item.value("action", std::string{})); controlActivated = true; break; } }
                 }
                 if (!controlActivated) {
-                    if (options.empty()) next = true;
+                    if (options.empty()) { if (!holdActive) next = true; }
                     else { const auto view = choiceViewport(); if (e.button.x >= view.x && e.button.x <= view.x + view.w && e.button.y >= view.y && e.button.y <= view.y + view.h) for (size_t i = 0; i < options.size(); ++i) { const auto box = choiceRect(i); if (e.button.x >= box.x && e.button.x <= box.x + box.w && e.button.y >= box.y && e.button.y <= box.y + box.h) selection = int(i); } }
                 }
             }
         }
+        const int cursorOption = std::clamp(int(std::lround(uiSettingValues.value("ui.cursorHideDelay",0.0)*3.0)),0,3);
+        const Uint64 cursorDelay = cursorOption==1?5000:cursorOption==2?10000:cursorOption==3?20000:0;
+        const bool shouldHideCursor = cursorDelay && storyActive && activeScreen.empty() && SDL_GetTicks()-lastMouseActivity>=cursorDelay;
+        if (shouldHideCursor && !cursorHidden) { SDL_HideCursor(); cursorHidden=true; }
+        else if (!shouldHideCursor && cursorHidden) { SDL_ShowCursor(); cursorHidden=false; }
         cleanupStoppedAudio();
-        if (video) { video->update(); if (video->finished) { video.reset(); videoAsset.clear(); } }
+        updateAnimatedTextures();
+        if (video) { video->update(); if (video->finished) { video.reset(); videoAsset.clear(); if(visualOnlyKind=="video"){visualOnlyKind.clear();visualOnlyId.clear();} } }
         SDL_SetRenderDrawColor(renderer,12,15,22,255); SDL_RenderClear(renderer);
+        if (visualOnlyKind == "video" && video) {
+            float sourceWidth=0,sourceHeight=0; SDL_GetTextureSize(video->texture,&sourceWidth,&sourceHeight);
+            const auto fit=native_player::videoContainRect(sourceWidth,sourceHeight,float(width),float(height));
+            const float scaleX=float(width)/float(number("screen.width",1280)), scaleY=float(height)/float(number("screen.height",720));
+            SDL_FRect rect{fit.x,fit.y,fit.width,fit.height};
+            const float focusX=cameraFocusX*scaleX, focusY=cameraFocusY*scaleY;
+            rect.x=focusX+(rect.x-focusX)*cameraZoom; rect.y=focusY+(rect.y-focusY)*cameraZoom; rect.w*=cameraZoom; rect.h*=cameraZoom;
+            SDL_SetTextureAlphaModFloat(video->texture,videoOpacity); SDL_RenderTexture(renderer,video->texture,nullptr,&rect); SDL_SetTextureAlphaModFloat(video->texture,1.0f);
+            lastRenderedCategories={"video"};
+            SDL_RenderPresent(renderer); SDL_Delay(8); return;
+        }
         if (!activeScreen.empty()) {
             const auto& screen = currentScreen();
             const auto screenMusic = screen.value("music", std::string{});
             if (!screenMusic.empty() && screenMusic != screenMusicAsset) { sound("bgm", screenMusic); screenMusicAsset = screenMusic; }
-            if (background) SDL_RenderTexture(renderer, background, nullptr, nullptr);
-            for (const auto* s : native_player::spritesByVisualOrder(characters)) sprite(*s);
-            for (const auto* s : native_player::spritesByVisualOrder(images)) sprite(*s);
-            const auto bgName = screen.value("background", std::string{});
-            if (!bgName.empty()) { auto* bg = skinImage(bgName); SDL_RenderTexture(renderer, bg, nullptr, nullptr); }
-            else { SDL_SetRenderDrawColor(renderer, 8, 12, 18, 175); SDL_RenderFillRect(renderer, nullptr); }
-            const float sx = float(width) / float(gameScreens.at("canvas").at("width").get<int>());
-            const float sy = float(height) / float(gameScreens.at("canvas").at("height").get<int>());
-            const auto items = visibleScreenItems();
-            bool webReady = false;
-            if (screenWebView && screen.contains("webDocument") && screen.at("webDocument").is_object()) {
-                const auto& document = screen.at("webDocument");
-                screenWebView->show(activeScreen,document.value("markup",std::string{}),document.value("stylesheet",std::string{}),webScreenModel());
-                webReady = screenWebView->ready();
+            struct ScreenLayerDraw { double layer; uint64_t order; std::function<void()> draw; };
+            std::vector<ScreenLayerDraw> screenDraws;
+            uint64_t screenSequence = 0;
+            const auto enqueueScreen = [&](const std::string& category, std::optional<double> overrideValue, std::function<void()> draw) {
+                screenDraws.push_back({renderLayer(category, overrideValue), screenSequence++, std::move(draw)});
+            };
+            if (background) enqueueScreen("background", backgroundLayer, [this] { SDL_RenderTexture(renderer, background, nullptr, nullptr); });
+            for (const auto* item : native_player::spritesByVisualOrder(characters)) enqueueScreen("character", item->layer, [this,item] { sprite(*item); });
+            for (const auto* item : native_player::spritesByVisualOrder(images)) enqueueScreen("image", item->layer, [this,item] { sprite(*item); });
+            if (storyActive && !runtime.currentSceneName.empty() && visualOnlyKind.empty()) {
+                if (number("ui.bottom_fog",1)) enqueueScreen("fog", std::nullopt, [this] { bottomFog(); });
+                enqueueScreen("dialogue", std::nullopt, [this] { drawDialogueLayer(false); });
             }
-            if (webReady) {
-                // The WebView child renders the validated HTML/CSS over the SDL stage.
-            } else if (screen.contains("uiTree")) {
-                for (const auto& node : screen.at("uiTree")) drawScreenNode(node,sx,sy,items);
-            } else {
-            const auto title = screen.value("title", std::string{});
-            if (!title.empty()) label(title, 64 * sx, 42 * sy, int(34 * sy), {245,247,248,255}, float(width) - 128 * sx);
-            const auto description = screen.value("description", std::string{});
-            if (!description.empty()) label(description, 64 * sx, 112 * sy, int(21 * sy), {240,238,232,255}, std::min(560.0f, float(gameScreens.at("canvas").at("width").get<int>() - 128)) * sx, float(gameScreens.at("canvas").at("height").get<int>() - 150) * sy);
-            for (size_t i = 0; i < items.size(); ++i) {
-                const auto& item = items[i]; const auto rect = screenItemRect(item); const bool active = int(i) == screenHover;
-                const auto imageName = active ? item.value("hoverImage", item.value("image", std::string{})) : item.value("image", std::string{});
-                if (!imageName.empty()) SDL_RenderTexture(renderer, skinImage(imageName), nullptr, &rect);
-                else outlinedPanel(rect, active ? SDL_Color{44,61,73,240} : SDL_Color{17,24,31,215}, active ? SDL_Color{205,221,230,255} : SDL_Color{135,151,160,210}, active ? SDL_Color{197,219,230,255} : SDL_Color{100,119,130,220});
-                if (item.value("display", std::string{}) != "image") label(active ? item.value("hoverLabel", item.value("label", std::string{})) : item.value("label", std::string{}), rect.x + 12 * sx, rect.y + (rect.h - 28 * sy) / 2, int(item.value("fontSize", 22) * sy), {245,247,248,255}, rect.w - 24 * sx, rect.h);
-            }
+            enqueueScreen("menu", std::nullopt, [this,&screen] {
+                const auto bgName = screenBackground(screen);
+                if (!bgName.empty()) drawScreenBackground(skinImage(bgName));
+                else if (!screen.contains("uiTree")) { SDL_SetRenderDrawColor(renderer, 8, 12, 18, 175); SDL_RenderFillRect(renderer, nullptr); }
+                const auto transform = screenCanvasTransform();
+                const float sx = transform.sx, sy = transform.sy;
+                const auto items = visibleScreenItems();
+                if (screen.contains("uiTree")) {
+                    for (const auto& node : screen.at("uiTree")) drawScreenNode(node,sx,sy,transform.ox,transform.oy,items);
+                } else {
+                    const auto title = screen.value("title", std::string{});
+                    if (!title.empty()) label(title, transform.ox + 64 * sx, transform.oy + 42 * sy, int(34 * sy), {245,247,248,255}, float(width) - 128 * sx);
+                    const auto description = screen.value("description", std::string{});
+                    if (!description.empty()) label(description, transform.ox + 64 * sx, transform.oy + 112 * sy, int(21 * sy), {240,238,232,255}, std::min(560.0f, float(gameScreens.at("canvas").at("width").get<int>() - 128)) * sx, float(gameScreens.at("canvas").at("height").get<int>() - 150) * sy);
+                    for (size_t i = 0; i < items.size(); ++i) {
+                        const auto& item = items[i]; const auto rect = screenItemRect(item); const bool active = int(i) == screenHover;
+                        const auto imageName = active ? item.value("hoverImage", item.value("image", std::string{})) : item.value("image", std::string{});
+                        if (!imageName.empty()) SDL_RenderTexture(renderer, skinImage(imageName), nullptr, &rect);
+                        else outlinedPanel(rect, active ? SDL_Color{44,61,73,240} : SDL_Color{17,24,31,215}, active ? SDL_Color{205,221,230,255} : SDL_Color{135,151,160,210}, active ? SDL_Color{197,219,230,255} : SDL_Color{100,119,130,220});
+                        if (item.value("display", std::string{}) != "image") label(active ? item.value("hoverLabel", item.value("label", std::string{})) : item.value("label", std::string{}), rect.x + 12 * sx, rect.y + (rect.h - 28 * sy) / 2, int(item.value("fontSize", 22) * sy), {245,247,248,255}, rect.w - 24 * sx, rect.h);
+                    }
+                }
+            });
+            std::stable_sort(screenDraws.begin(), screenDraws.end(), [](const ScreenLayerDraw& left, const ScreenLayerDraw& right) {
+                if (left.layer != right.layer) return left.layer < right.layer;
+                return left.order < right.order;
+            });
+            for (auto& item : screenDraws) item.draw();
+            if (!captureNextScreenFrame.empty()) {
+                SDL_Surface* captured = SDL_RenderReadPixels(renderer, nullptr);
+                if (!captured) throw std::runtime_error("Cannot read Native screen pixels: " + std::string(SDL_GetError()));
+                const int saved = IMG_SavePNG(captured, utf8Path(captureNextScreenFrame).c_str());
+                SDL_DestroySurface(captured);
+                const auto target = captureNextScreenFrame;
+                captureNextScreenFrame.clear();
+                if (!saved) throw std::runtime_error("Cannot save Native screen capture " + target.string() + ": " + std::string(SDL_GetError()));
             }
             SDL_RenderPresent(renderer); SDL_Delay(8);
             if (automated) { activeScreen.clear(); titleStarted = true; }
             return;
         }
-        if (screenWebView) screenWebView->hide();
-        renderBackground();
-        for (const auto* s : native_player::spritesByVisualOrder(characters)) sprite(*s);
-        for (const auto* s : native_player::spritesByVisualOrder(images)) sprite(*s);
-        if (number("ui.bottom_fog", 1)) bottomFog();
-        const float dialogWidth = float(number("dialog.width", 900));
-        const float dialogHeight = float(number("dialog.height", 184));
-        const float dx = config.contains("dialog.x") ? float(number("dialog.x", 0)) : (float(width) - dialogWidth) / 2.0f;
-        const float dy = config.contains("dialog.y") ? float(number("dialog.y", 0)) : float(height) - dialogHeight - float(number("dialog.bottom", 26));
-        SDL_FRect box{dx, dy, dialogWidth, dialogHeight};
-        auto col=color("dialog.text_color",{235,241,248,255});
-        SDL_FRect dialogBox = box;
-        const float dialogOpacity = (dialogueOpacityOverride >= 0 ? dialogueOpacityOverride : float(number("dialog.opacity", 1))) * uiSettingValues.value("ui.dialogOpacity", 1.0f);
-        if (dialog) { SDL_SetTextureAlphaModFloat(dialog, dialogOpacity); SDL_RenderTexture(renderer, dialog, nullptr, &box); SDL_SetTextureAlphaModFloat(dialog, 1); }
-        else { auto fill=color("dialog.background_color", {13,20,33,232}), border=color("dialog.border_color", {112,159,201,180}), accent=color("dialog.accent_color", {100,190,255,255}); fill.a=Uint8(fill.a*dialogOpacity); border.a=Uint8(border.a*dialogOpacity); accent.a=Uint8(accent.a*dialogOpacity); outlinedPanel(box,fill,border,accent); }
-        const float textX = dialogBox.x + float(number("dialog.text_x", 190));
-        const float textY = dialogBox.y + float(number("dialog.text_y", 63));
-        const float textWidth = float(number("dialog.text_width", 844));
-        speakerLabel(speaker, dialogBox.x + float(number("dialog.speaker_x", 90)), dialogBox.y + float(number("dialog.speaker_y", -52)), number("dialog.speaker_size", number("font.size", 24)), color("dialog.speaker_color", col));
-        dialogueLabel(text, textX, textY, number("dialog.text_size", number("font.size", 24)), col, textWidth, float(number("dialog.text_height", 0)));
-        if (options.empty() && !text.empty()) label("竕ｫ", float(width) - 66, float(height) - 68, 34, {230,240,250,210}, 48);
-        drawPlayerControls();
-        const auto choiceView = choiceViewport();
-        SDL_Rect choiceClip{ int(choiceView.x), int(choiceView.y), int(choiceView.w), int(choiceView.h) };
-        SDL_SetRenderClipRect(renderer, &choiceClip);
-        for (size_t i=0;i<options.size();++i) {
-            SDL_FRect b = choiceRect(i); const bool active = int(i) == hovered;
-            if (active ? choiceActiveSkin : choiceSkin) SDL_RenderTexture(renderer, active ? choiceActiveSkin : choiceSkin, nullptr, &b);
-            else outlinedPanel(b, active ? SDL_Color{31,65,98,245} : SDL_Color{14,24,39,232}, active ? SDL_Color{125,210,255,255} : SDL_Color{92,128,163,190}, active ? SDL_Color{112,208,255,255} : SDL_Color{67,114,159,220});
-            label(options[i], b.x + float(number("choice.text_x", 24)), b.y + float(number("choice.text_y", 12)), number("choice.text_size", 19), color("choice.text_color", {240,246,252,255}), float(number("choice.text_width", int(b.w) - 42)), float(number("choice.text_height", 0)));
+        struct LayerDraw { double layer; uint64_t order; std::function<void()> draw; };
+        std::vector<LayerDraw> layerDraws;
+        lastRenderedCategories.clear();
+        uint64_t layerSequence = 0;
+        const auto enqueue = [&](const std::string& category, std::optional<double> overrideValue, std::function<void()> draw) {
+            layerDraws.push_back({renderLayer(category, overrideValue), layerSequence++, std::move(draw)});
+            lastRenderedCategories.push_back(category);
+        };
+        if(visualOnlyKind.empty() || visualOnlyKind=="background") enqueue("background", backgroundLayer, [this] { renderBackground(); });
+        if (video && (visualOnlyKind.empty() || visualOnlyKind=="video")) enqueue("video", videoLayer, [this] {
+            float sourceWidth=0,sourceHeight=0; SDL_GetTextureSize(video->texture,&sourceWidth,&sourceHeight);
+            const auto fit=native_player::videoContainRect(sourceWidth,sourceHeight,float(width),float(height));
+            const float scaleX=float(width)/float(number("screen.width",1280)), scaleY=float(height)/float(number("screen.height",720));
+            SDL_FRect rect{fit.x,fit.y,fit.width,fit.height};
+            const float focusX=cameraFocusX*scaleX, focusY=cameraFocusY*scaleY;
+            rect.x=focusX+(rect.x-focusX)*cameraZoom; rect.y=focusY+(rect.y-focusY)*cameraZoom; rect.w*=cameraZoom; rect.h*=cameraZoom;
+            SDL_SetTextureAlphaModFloat(video->texture,videoOpacity); SDL_RenderTexture(renderer,video->texture,nullptr,&rect); SDL_SetTextureAlphaModFloat(video->texture,1.0f);
+        });
+        if(visualOnlyKind.empty() || visualOnlyKind=="character") for (const auto* item : native_player::spritesByVisualOrder(characters)) {
+            if(visualOnlyKind!="character" || item->asset==visualOnlyId) enqueue("character", item->layer, [this,item] { sprite(*item); });
         }
-        SDL_SetRenderClipRect(renderer, nullptr);
-        if (video) {
-            float sourceWidth = 0, sourceHeight = 0;
-            SDL_GetTextureSize(video->texture, &sourceWidth, &sourceHeight);
-            const auto fit = native_player::videoContainRect(sourceWidth, sourceHeight, float(width), float(height));
-            SDL_FRect videoRect{fit.x, fit.y, fit.width, fit.height};
-            SDL_RenderTexture(renderer, video->texture, nullptr, &videoRect);
+        if(visualOnlyKind.empty() || visualOnlyKind=="image") for (const auto* item : native_player::spritesByVisualOrder(images)) {
+            if(visualOnlyKind!="image" || item->asset==visualOnlyId) enqueue("image", item->layer, [this,item] { sprite(*item); });
         }
-        if (overlay>0) { SDL_SetRenderDrawColor(renderer,overlayColor.r,overlayColor.g,overlayColor.b,Uint8(255*overlay)); SDL_RenderFillRect(renderer,nullptr); }
+        if (visualOnlyKind.empty() && number("ui.bottom_fog", 1)) enqueue("fog", std::nullopt, [this] { bottomFog(); });
+        if (visualOnlyKind!="video" && dialogueVisible) enqueue("dialogue", std::nullopt, [this] { drawDialogueLayer(false); });
+        if (visualOnlyKind!="video") enqueue("controls", std::nullopt, [this] { drawPlayerControls(); });
+        if (overlay>0 && visualOnlyKind!="video") enqueue("menu", std::nullopt, [this] { SDL_SetRenderDrawColor(renderer,overlayColor.r,overlayColor.g,overlayColor.b,Uint8(255*overlay)); SDL_RenderFillRect(renderer,nullptr); });
+        std::stable_sort(layerDraws.begin(), layerDraws.end(), [](const LayerDraw& left, const LayerDraw& right) {
+            if (left.layer != right.layer) return left.layer < right.layer;
+            return left.order < right.order;
+        });
+        for (auto& item : layerDraws) item.draw();
+        if (runtime.currentSceneName.size() && activeScreen.empty()) {
+            SDL_Surface* pixels=SDL_RenderReadPixels(renderer,nullptr);
+            if(pixels){
+                SDL_Surface* scaled=SDL_ScaleSurface(pixels,320,180,SDL_SCALEMODE_LINEAR);
+                SDL_DestroySurface(pixels);
+                if(scaled){ if(lastStoryFrame) SDL_DestroySurface(lastStoryFrame); lastStoryFrame=scaled; }
+            }
+        }
         SDL_RenderPresent(renderer); SDL_Delay(8);
     }
     void delay(int64_t ms, std::function<void(float)> animate = {}) {
@@ -1324,6 +2157,141 @@ struct Engine {
         if(animate) animate(1);
         logicalTimeMs += uint64_t(ms);
     }
+    void parallel(const json& batch) {
+        std::vector<ParallelTrack> tracks;
+        std::vector<std::function<void()>> finish;
+        int64_t maximumDuration = 0;
+        const bool effectsEnabled = uiSettingValues.value("ui.effects", true);
+        auto asText = [](const json& args, size_t index) { return args.at(index).get<std::string>(); };
+        auto timed = [&](int64_t duration, std::function<void(float)> update) {
+            if (duration < 0 || duration > 2147483647) throw std::runtime_error("Invalid parallel animation duration");
+            maximumDuration = std::max(maximumDuration, duration);
+            tracks.push_back({duration, std::move(update)});
+        };
+        for (const auto& item : batch) {
+            const auto name = item.at("name").get<std::string>();
+            const auto args = item.at("args");
+            if (!args.is_array() || args.empty()) throw std::runtime_error("Invalid parallel visual command");
+            if (name == "bg") {
+                const auto id = resolveAssetId("bg", asText(args, 0));
+                auto* incoming = image(asset("bg", id));
+                size_t index = 1; std::string transition = "instant"; int64_t duration = 0;
+                if (index < args.size() && args.at(index).is_string() && asText(args, index) != "--only" && asText(args, index) != "--layer") {
+                    transition = asText(args, index++);
+                    if (index >= args.size() || !args.at(index).is_number_integer()) throw std::runtime_error("Background transition requires milliseconds");
+                    duration = args.at(index++).get<int64_t>();
+                }
+                if (transition == "instant" || !duration) throw std::runtime_error("parallel background changes require a timed transition");
+                if (!effectsEnabled) duration=0;
+                if (transition != "fade" && transition != "crossfade" && transition != "wipe-left" && transition != "wipe-right" && transition != "wipe-up" && transition != "wipe-down") throw std::runtime_error("Invalid parallel background transition");
+                previousBackground = background; previousBackgroundOffsetX = backgroundOffsetX; previousBackgroundOffsetY = backgroundOffsetY;
+                background = incoming; backgroundAsset = id; backgroundLayer = commandLayer(args); backgroundOffsetX = backgroundOffsetY = 0;
+                visualOnlyKind.clear(); visualOnlyId.clear();
+                backgroundTransitionType = transition; backgroundTransitionProgress = 0.0f;
+                timed(duration, [this](float progress) { backgroundTransitionProgress = progress; });
+                finish.push_back([this] { previousBackground = nullptr; backgroundTransitionProgress = 1.0f; backgroundTransitionType.clear(); });
+            } else if (name == "camera") {
+                float fromZoom = cameraZoom, fromX = cameraFocusX, fromY = cameraFocusY;
+                float toZoom = 1.0f, toX = 640.0f, toY = 360.0f; int64_t duration = 0;
+                if (asText(args, 0) == "reset") { if (args.size() == 3 && asText(args, 1) == "over") duration = args.at(2).get<int64_t>(); }
+                else { toZoom = args.at(1).get<float>(); toX = args.at(3).get<float>(); toY = args.at(4).get<float>(); duration = args.at(6).get<int64_t>(); }
+                if (!duration || !std::isfinite(toZoom) || toZoom < 0.1f || toZoom > 8.0f) throw std::runtime_error("parallel camera changes require valid timed values");
+                if (!effectsEnabled) duration=0;
+                timed(duration, [this, fromZoom, fromX, fromY, toZoom, toX, toY](float t) { cameraZoom=fromZoom+(toZoom-fromZoom)*t; cameraFocusX=fromX+(toX-fromX)*t; cameraFocusY=fromY+(toY-fromY)*t; });
+            } else if (name == "move") {
+                const bool character = asText(args, 0) == "character";
+                if (!character && asText(args, 0) != "bg") throw std::runtime_error("parallel supports character and background movement only");
+                const auto id = character ? asText(args, 1) : std::string{};
+                auto found = character ? characters.find(id) : characters.end();
+                if (character && found == characters.end()) throw std::runtime_error("parallel move target is not visible: " + id);
+                if (!character && !background) throw std::runtime_error("parallel move target background is not set");
+                if (asText(args, character ? 2 : 1) != "by") throw std::runtime_error("parallel move requires by before offsets");
+                float dx=0, dy=0; bool hasX=false,hasY=false; size_t index=character?3:2;
+                for (; index < args.size(); ++index) {
+                    if (!args.at(index).is_string()) break;
+                    const auto option = asText(args,index);
+                    if (option == "over") break;
+                    if (option.size()<2 || (option[0]!='x'&&option[0]!='y') || (option[1]!='+'&&option[1]!='-')) throw std::runtime_error("Invalid parallel move offset");
+                    const bool x = option[0]=='x'; if ((x&&hasX)||(!x&&hasY)) throw std::runtime_error("Duplicate parallel move axis");
+                    double amount=0;
+                    if (option.size()==2) { if (++index>=args.size()||!args.at(index).is_number()) throw std::runtime_error("Invalid parallel move offset"); amount=args.at(index).get<double>(); }
+                    else { int64_t value=0; const auto parsed=std::from_chars(option.data()+2,option.data()+option.size(),value); if(parsed.ec!=std::errc{}||parsed.ptr!=option.data()+option.size())throw std::runtime_error("Invalid parallel move offset"); amount=double(value); }
+                    if (!std::isfinite(amount)||std::abs(amount)>1000000) throw std::runtime_error("Invalid parallel move offset");
+                    (x?dx:dy)=(option[1]=='-'?-1:1)*float(amount); if(x)hasX=true;else hasY=true;
+                }
+                if (!hasX&&!hasY || index+1>=args.size() || asText(args,index)!="over") throw std::runtime_error("parallel movement requires offsets and over <ms>");
+                const int64_t duration=args.at(index+1).get<int64_t>();
+                const float fromX=character?found->second.offsetX:backgroundOffsetX, fromY=character?found->second.offsetY:backgroundOffsetY;
+                const float toX=fromX+dx,toY=fromY+dy;
+                if(std::abs(toX)>1000000||std::abs(toY)>1000000)throw std::runtime_error("parallel move target exceeds +/-1000000 px");
+                if(character) { timed(duration,[this,id,fromX,fromY,toX,toY](float t){auto it=characters.find(id);if(it!=characters.end()){it->second.offsetX=fromX+(toX-fromX)*t;it->second.offsetY=fromY+(toY-fromY)*t;}}); }
+                else timed(duration,[this,fromX,fromY,toX,toY](float t){backgroundOffsetX=fromX+(toX-fromX)*t;backgroundOffsetY=fromY+(toY-fromY)*t;});
+            } else if (name == "show") {
+                const auto reference=asText(args,0); const auto dot=reference.find('.');
+                if(dot==std::string::npos) throw std::runtime_error("parallel show requires a character fade");
+                const auto id=reference.substr(0,dot), pose=reference.substr(dot+1); const auto position=asText(args,1);
+                float offsetX=0,offsetY=poseYOffset(id,pose); size_t index=2;
+                for(;index<args.size();++index) {
+                    if(!args.at(index).is_string())break; const auto option=asText(args,index); if(option=="fade")break;
+                    if(option.size()<2||(option[0]!='x'&&option[0]!='y')||(option[1]!='+'&&option[1]!='-'))break;
+                    const bool x=option[0]=='x'; double amount=0;
+                    if(option.size()==2){if(++index>=args.size()||!args.at(index).is_number())throw std::runtime_error("Invalid show offset");amount=args.at(index).get<double>();}
+                    else {int64_t value=0;const auto parsed=std::from_chars(option.data()+2,option.data()+option.size(),value);if(parsed.ec!=std::errc{}||parsed.ptr!=option.data()+option.size())throw std::runtime_error("Invalid show offset");amount=double(value);}
+                    (x?offsetX:offsetY)+=(option[1]=='-'?-1:1)*float(amount);
+                }
+                if(index+2>=args.size()||asText(args,index)!="fade")throw std::runtime_error("parallel character display requires fade <ms>");
+                auto* texture=image(asset("char",id,pose)); const auto slot=position;
+                for(auto it=characters.begin();it!=characters.end();) { if(it->first!=id&&it->second.position==slot)it=characters.erase(it);else ++it; }
+                const auto existing=characters.find(id); const auto order=existing==characters.end()?++nextVisualOrder:existing->second.visualOrder;
+                Sprite sprite; sprite.texture=texture;sprite.position=slot;sprite.asset=id;sprite.pose=pose;sprite.offsetX=offsetX;sprite.offsetY=offsetY;sprite.alpha=0;sprite.visualOrder=order;sprite.layer=commandLayer(args);characters[id]=std::move(sprite);
+                visualOnlyKind.clear(); visualOnlyId.clear();
+                int64_t duration=args.at(index+1).get<int64_t>(); if(!effectsEnabled)duration=0; timed(duration,[this,id](float t){auto it=characters.find(id);if(it!=characters.end())it->second.alpha=t;});
+            } else if (name == "hide") {
+                const auto id=asText(args,0); auto found=characters.find(id);
+                if(found==characters.end()||args.size()<3||asText(args,1)!="fade")throw std::runtime_error("parallel hide requires a visible character and fade <ms>");
+                const float from=found->second.alpha; int64_t duration=args.at(2).get<int64_t>(); if(!effectsEnabled)duration=0;
+                timed(duration,[this,id,from](float t){auto it=characters.find(id);if(it!=characters.end())it->second.alpha=from*(1-t);});
+                visualOnlyKind.clear(); visualOnlyId.clear();
+                finish.push_back([this,id]{characters.erase(id);});
+            } else if (name == "effect") {
+                if(asText(args,0)!="fade"||args.size()<2)throw std::runtime_error("parallel supports fade effects only");
+                overlayColor=asText(args,1)=="white"?SDL_Color{255,255,255,255}:SDL_Color{0,0,0,255}; overlay=1;
+                int64_t duration=args.size()>2?args.at(2).get<int64_t>():500; if(!effectsEnabled)duration=0;
+                timed(duration,[this](float t){overlay=1-t;});
+            } else throw std::runtime_error("parallel accepts timed visual commands only: "+name);
+        }
+        const auto start=SDL_GetTicks();
+        do {
+            const auto elapsed=SDL_GetTicks()-start;
+            for(const auto& track:tracks) track.update(track.duration?std::min(1.0f,float(elapsed)/float(track.duration)):1.0f);
+            pump();
+        } while(SDL_GetTicks()-start<uint64_t(maximumDuration));
+        for(const auto& track:tracks) track.update(1.0f);
+        for(const auto& action:finish) action();
+        logicalTimeMs+=uint64_t(maximumDuration);
+    }
+    void revealDialogueText() {
+        const double speed = std::clamp(uiSettingValues.value("ui.textSpeed",1.0),0.0,1.0);
+        const int interval = int(std::lround((1.0-speed)*48.0));
+        if (interval <= 0 || text.empty()) return;
+        const std::string complete = text;
+        text.clear(); next = false;
+        size_t end = 0;
+        while (end < complete.size()) {
+            const auto lead = static_cast<unsigned char>(complete[end]);
+            const size_t width = lead < 0x80 ? 1 : (lead & 0xe0) == 0xc0 ? 2 : (lead & 0xf0) == 0xe0 ? 3 : 4;
+            end = std::min(complete.size(), end + width);
+            text.assign(complete, 0, end);
+            const auto started = SDL_GetTicks();
+            while (SDL_GetTicks() - started < Uint64(interval)) {
+                while (!activeScreen.empty()) pump();
+                if (next) { text = complete; next = false; return; }
+                pump();
+            }
+            if (next) { text = complete; next = false; return; }
+        }
+        text = complete;
+    }
     float configuredAudioVolume(const std::string& type, const std::string& id) const {
         if (const auto override = audioVolumeOverrides.find(type); override != audioVolumeOverrides.end()) return override->second;
         for (const auto& definition : runtime.program.at("assets")) if (definition.value("type", std::string{}) == type && definition.value("name", std::string{}) == id) {
@@ -1334,7 +2302,7 @@ struct Engine {
         if (found == config.end()) return type == "voice" ? 0.5f : 1.0f;
         return std::stof(found->second);
     }
-    MIX_Track* sound(const std::string& type,const std::string& id,int64_t crossfadeMs=0,bool pinned=false,float requestedGain=-1.0f) {
+    MIX_Track* sound(const std::string& type,const std::string& id,int64_t crossfadeMs=0,bool pinned=false,float requestedGain=-1.0f,const std::string& voiceCharacter={}) {
         // Keep existing BGM layers until the replacement track has started,
         // for both instant switches and crossfades. A failed candidate must
         // never leave the scene state claiming that a stopped track is active.
@@ -1344,18 +2312,17 @@ struct Engine {
         if(!MIX_SetTrackAudio(track,a)) { const auto error=SDL_GetError(); MIX_DestroyTrack(track); MIX_DestroyAudio(a); throw std::runtime_error(error); }
         const float gain = requestedGain < 0 ? configuredAudioVolume(type,id) : requestedGain;
         if (!std::isfinite(gain) || gain < 0 || gain > 1) { MIX_DestroyTrack(track); MIX_DestroyAudio(a); throw std::runtime_error("Audio volume must be between 0.0 and 1.0"); }
-        if (!MIX_SetTrackGain(track, gain)) { const auto error=SDL_GetError(); MIX_DestroyTrack(track); MIX_DestroyAudio(a); throw std::runtime_error(error); }
         const std::string channel = type == "bgm" ? "bgm" : type == "voice" ? "voice" : "se";
+        const float playbackGain = gain * (type == "voice" ? voiceCharacterGain(voiceCharacter) : 1.0f);
+        if (!MIX_SetTrackGain(track, playbackGain * uiSettingGain(channel))) { const auto error=SDL_GetError(); MIX_DestroyTrack(track); MIX_DestroyAudio(a); throw std::runtime_error(error); }
         const std::string tag = "ui_" + channel;
         if (!MIX_TagTrack(track, tag.c_str())) { const auto error=SDL_GetError(); MIX_DestroyTrack(track); MIX_DestroyAudio(a); throw std::runtime_error(error); }
-        audioTagSeen[channel] = true;
-        if (!MIX_SetTagGain(mixer, tag.c_str(), uiSettingGain(channel))) { const auto error=SDL_GetError(); MIX_DestroyTrack(track); MIX_DestroyAudio(a); throw std::runtime_error(error); }
         auto props=SDL_CreateProperties();
         if(!props) { const auto error=SDL_GetError(); MIX_DestroyTrack(track); MIX_DestroyAudio(a); throw std::runtime_error(error); }
         if(type=="bgm") {SDL_SetNumberProperty(props,MIX_PROP_PLAY_LOOPS_NUMBER,-1);if(crossfadeMs>0)SDL_SetNumberProperty(props,MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER,crossfadeMs);}
         const auto fadeFrames = type=="bgm" && crossfadeMs>0 ? MIX_TrackMSToFrames(track,crossfadeMs) : 0;
         audio.push_back({track,a,type=="bgm",pinned,type,id,fadeFrames,
-            type=="bgm" && crossfadeMs>0 ? 0.0f : gain, gain});
+            type=="bgm" && crossfadeMs>0 ? 0.0f : playbackGain, playbackGain, voiceCharacter, gain});
         if (!MIX_SetTrackStoppedCallback(track, &Engine::audioTrackStopped, this)) {
             const auto error=SDL_GetError(); audio.pop_back(); SDL_DestroyProperties(props); MIX_DestroyTrack(track); MIX_DestroyAudio(a); throw std::runtime_error(error);
         }
@@ -1374,6 +2341,7 @@ struct Engine {
             else stopBgm(0,track);
             bgmAsset=id;
         }
+        if(type=="voice") { lastVoiceAsset=id; lastVoiceCharacter=voiceCharacter; }
         return track;
     }
     void command(const std::string& name,const json& args) {
@@ -1393,15 +2361,21 @@ struct Engine {
             if(!std::isfinite(amount) || std::abs(amount)>1000000) throw std::runtime_error("Pixel offset magnitude must not exceed 1000000");
             return float(option[1]=='-'?-amount:amount);
         };
-        if(name=="volume") {
+        if(name=="layer") {
+            if(args.size()!=2 || !args.at(0).is_string()) throw std::runtime_error("layer requires a category and value");
+            const auto category=s(0); const auto value=checkedRenderLayer(args.at(1));
+            if(!renderLayers.contains(category)) throw std::runtime_error("Unknown render layer category: "+category);
+            renderLayers[category]=value;
+        }
+        else if(name=="volume") {
             const auto kind=s(0); const float gain=args.at(1).get<float>();
             if((kind!="bgm" && kind!="se" && kind!="voice") || !std::isfinite(gain) || gain<0 || gain>1) throw std::runtime_error("Invalid audio volume");
             audioVolumeOverrides[kind]=gain;
         }
         else if(name=="dialog") {
-            const float opacity=args.at(1).get<float>();
-            if(s(0)!="opacity" || !std::isfinite(opacity) || opacity<0 || opacity>1) throw std::runtime_error("Invalid dialog opacity");
-            config["dialog.opacity"]=std::to_string(opacity);
+            if(s(0)=="visible") { if(args.size()!=2 || !args.at(1).is_boolean()) throw std::runtime_error("dialog visible requires bool"); dialogueVisible=args.at(1).get<bool>(); }
+            else if(s(0)=="opacity") { if(args.size()!=2) throw std::runtime_error("dialog opacity requires float"); const float opacity=args.at(1).get<float>(); if(!std::isfinite(opacity)||opacity<0||opacity>1) throw std::runtime_error("Invalid dialog opacity"); config["dialog.opacity"]=std::to_string(opacity); }
+            else throw std::runtime_error("Invalid dialog option");
         }
         else if(name=="say") {
             const float previousOpacity=dialogueOpacityOverride;
@@ -1415,15 +2389,69 @@ struct Engine {
                 try { auto actor=runtime.get(speaker); if(actor.is_object() && actor.contains("name") && actor.at("name").is_string())speaker=actor.at("name").get<std::string>(); }
                 catch(const std::runtime_error&) {}
             }
-            try { text=runtime.interpolate(args.at(1));next=false;if(automated)pump();else while(!next && !runtime.pendingLoad.is_object())pump(); }
+            const auto lineKey = runtime.currentSourceFile + ":" + std::to_string(runtime.currentLine);
+            const bool firstVisit = seenSayLines.insert(lineKey).second;
+            try {
+                text=runtime.interpolate(args.at(1));
+                dialogueHistory.emplace_back(speaker, text);
+                if (dialogueHistory.size() > 500) dialogueHistory.erase(dialogueHistory.begin());
+                dialogueHistoryScroll = 0;
+                if (skipActive) {
+                    const bool onlyRead = uiSettingValues.value("ui.skipUnseen",true);
+                    if (!onlyRead || !firstVisit) { next=true; dialogueOpacityOverride=previousOpacity; return; }
+                    skipActive=false;
+                }
+                revealDialogueText();
+                if (autoPlayActive && !automated) {
+                    const double speed = uiSettingValues.value("ui.autoSpeed",0.45);
+                    const auto waitMs = static_cast<int64_t>(std::lround(8500.0 - std::clamp(speed,0.0,1.0)*7600.0));
+                    delay(waitMs);
+                    if (autoPlayActive) next=true;
+                } else { next=false; if(automated)pump();else while(!next && !runtime.pendingLoad.is_object())pump(); }
+            }
             catch(...) { dialogueOpacityOverride=previousOpacity; throw; }
             dialogueOpacityOverride=previousOpacity;
         }
         else if(name=="wait") delay(args.at(0).get<int64_t>());
-        else if(name=="bg") { background=image(asset("bg",s(0))); backgroundAsset=s(0); backgroundOffsetX=0; backgroundOffsetY=0; }
+        else if(name=="bg") {
+            const auto assetName=resolveAssetId("bg",s(0)); auto* incoming=image(asset("bg",assetName));
+            const bool only=std::find_if(args.begin(),args.end(),[](const json& value){return value.is_string()&&value.get<std::string>()=="--only";})!=args.end();
+            const auto nextLayer=commandLayer(args);
+            size_t i=1; std::string transition="instant"; int64_t duration=0;
+            if(i<args.size() && args.at(i).is_string() && s(i)!="--only" && s(i)!="--layer") { transition=s(i++); if(i>=args.size() || !args.at(i).is_number_integer()) throw std::runtime_error("Background transition requires milliseconds"); duration=args.at(i++).get<int64_t>(); }
+            while(i<args.size()) { if(s(i)=="--only") { ++i; continue; } if(s(i)=="--layer") { i+=2; continue; } throw std::runtime_error("Invalid background option"); }
+            if(duration<0 || duration>2147483647 || (transition!="instant"&&transition!="fade"&&transition!="crossfade"&&transition!="wipe-left"&&transition!="wipe-right"&&transition!="wipe-up"&&transition!="wipe-down")) throw std::runtime_error("Invalid background transition");
+            previousBackground=background; previousBackgroundOffsetX=backgroundOffsetX; previousBackgroundOffsetY=backgroundOffsetY;
+            background=incoming; backgroundAsset=assetName; backgroundLayer=nextLayer; backgroundOffsetX=backgroundOffsetY=0;
+            visualOnlyKind=only?"background":""; visualOnlyId=backgroundAsset;
+            const bool animateTransition=duration>0 && uiSettingValues.value("ui.effects",true);
+            backgroundTransitionType=transition; backgroundTransitionProgress=animateTransition?0.0f:1.0f;
+            if(animateTransition) delay(duration,[&](float t){backgroundTransitionProgress=t;});
+            previousBackground=nullptr; backgroundTransitionProgress=1.0f; backgroundTransitionType.clear();
+        }
+        else if(name=="camera") {
+            const float fromZoom=cameraZoom, fromX=cameraFocusX, fromY=cameraFocusY;
+            float toZoom=1.0f,toX=640.0f,toY=360.0f; int64_t duration=0;
+            if(s(0)=="reset") { if(args.size()==3&&s(1)=="over") duration=args.at(2).get<int64_t>(); else if(args.size()!=1) throw std::runtime_error("Invalid camera reset syntax"); }
+            else { if(args.size()!=5&&args.size()!=7) throw std::runtime_error("Invalid camera syntax"); toZoom=args.at(1).get<float>();toX=args.at(3).get<float>();toY=args.at(4).get<float>(); if(args.size()==7){if(s(5)!="over") throw std::runtime_error("Invalid camera duration syntax");duration=args.at(6).get<int64_t>();} }
+            if(!std::isfinite(toZoom)||toZoom<0.1f||toZoom>8.0f||duration<0||duration>2147483647) throw std::runtime_error("Invalid camera values");
+            auto apply=[&](float t){cameraZoom=fromZoom+(toZoom-fromZoom)*t;cameraFocusX=fromX+(toX-fromX)*t;cameraFocusY=fromY+(toY-fromY)*t;};
+            if(duration&&uiSettingValues.value("ui.effects",true)) delay(duration,apply); else apply(1.0f);
+        }
         else if(name=="bgm") sound("bgm",s(0));
         else if(name=="play") {
-            if(s(0)=="video") {video=std::make_unique<Video>(renderer,utf8Path(asset("video",s(1))));videoAsset=s(1);if(args.size()>2 && s(2)=="blocking")while(video)pump();}
+            if(s(0)=="video") {
+                const auto videoId=resolveAssetId("video",s(1));
+                video=std::make_unique<Video>(renderer,utf8Path(asset("video",videoId))); videoAsset=videoId;
+                videoOpacity=1.0f;
+                videoLayer=commandLayer(args);
+                for(size_t i=2;i<args.size();) { const auto option=s(i++); if(option=="opacity") { if(i>=args.size()) throw std::runtime_error("Missing video opacity"); videoOpacity=args.at(i++).get<float>(); if(!std::isfinite(videoOpacity)||videoOpacity<0||videoOpacity>1) throw std::runtime_error("Invalid video opacity"); } else if(option=="--layer") { if(i>=args.size()) throw std::runtime_error("Missing video layer"); ++i; } else if(option!="async"&&option!="blocking"&&option!="--only") throw std::runtime_error("Invalid video option"); }
+                visualOnlyKind=std::find_if(args.begin()+std::min<size_t>(2,args.size()),args.end(),[](const json& value){return value.is_string() && value.get<std::string>()=="--only";})!=args.end()?"video":"";
+                visualOnlyId=videoId;
+                const bool blocking = std::none_of(args.begin()+std::min<size_t>(2,args.size()),args.end(),[](const json& value){return value.is_string() && value.get<std::string>()=="async";});
+                videoBlocksStory = blocking;
+                if(blocking) { while(video)pump(); videoBlocksStory = false; }
+            }
             else if(s(0)=="bgm") {
                 int64_t crossfadeMs=0;
                 float gain=-1.0f;
@@ -1435,9 +2463,9 @@ struct Engine {
                 }
                 sound("bgm",s(1),crossfadeMs,false,gain);
             } else {
-                const auto kind=s(0); bool blockingVoice=false; float gain=-1.0f;
-                for(size_t i=2;i<args.size();) { const auto option=s(i++); if(option=="volume") { if(i>=args.size()) throw std::runtime_error("Missing audio volume"); gain=args.at(i++).get<float>(); } else if(option=="blocking" || option=="async") blockingVoice=option=="blocking"; else throw std::runtime_error("Invalid audio option"); }
-                auto* track=sound(kind,s(1),0,blockingVoice,gain);
+                const auto kind=s(0); bool blockingVoice=false; float gain=-1.0f; std::string voiceCharacter;
+                for(size_t i=2;i<args.size();) { const auto option=s(i++); if(option=="volume") { if(i>=args.size()) throw std::runtime_error("Missing audio volume"); gain=args.at(i++).get<float>(); } else if(option=="character") { if(i>=args.size()) throw std::runtime_error("Missing voice character"); voiceCharacter=s(i++); } else if(option=="blocking" || option=="async") blockingVoice=option=="blocking"; else throw std::runtime_error("Invalid audio option"); }
+                auto* track=sound(kind,s(1),0,blockingVoice,gain,voiceCharacter);
                 if(blockingVoice) {
                     while(MIX_TrackPlaying(track)) pump();
                     const auto found=std::find_if(audio.begin(),audio.end(),[track](const AudioPlayback& playback){return playback.track==track;});
@@ -1487,14 +2515,17 @@ struct Engine {
             };
             if(duration) delay(duration,apply); else apply(1);
         } else if(name=="show") {
+            const bool only=std::find_if(args.begin(),args.end(),[](const json& value){return value.is_string() && value.get<std::string>()=="--only";})!=args.end();
             if(s(0)=="image") {
-                Sprite sprite; sprite.texture=image(asset("image",s(1))); sprite.position=s(2); sprite.asset=s(1); sprite.visualOrder=++nextVisualOrder;
+                visualOnlyKind=only?"image":""; visualOnlyId=s(1);
+                Sprite sprite; sprite.texture=image(asset("image",s(1))); sprite.position=s(2); sprite.asset=s(1); sprite.visualOrder=++nextVisualOrder; sprite.layer=commandLayer(args);
                 images[s(1)]=std::move(sprite);
             }
             else {
                 const auto dot=s(0).find('.');
                 if(dot==std::string::npos) throw std::runtime_error("show requires character.pose or image id");
                 const auto id=s(0).substr(0,dot), pose=s(0).substr(dot+1);
+                visualOnlyKind=only?"character":""; visualOnlyId=id;
                 const auto position=s(1);
                 float offsetX=0,offsetY=0; bool hasX=false,hasY=false;
                 size_t transitionIndex=2;
@@ -1507,6 +2538,7 @@ struct Engine {
                     if(option[0]=='x') hasX=true; else hasY=true;
                     if(option[0]=='x') offsetX=value; else offsetY=value;
                 }
+                offsetY += poseYOffset(id, pose);
                 auto* texture=image(asset("char",id,pose));
                 for(auto it=characters.begin();it!=characters.end();) {
                     if(it->first!=id && it->second.position==position) it=characters.erase(it); else ++it;
@@ -1515,15 +2547,20 @@ struct Engine {
                 const auto order=existing==characters.end()?++nextVisualOrder:existing->second.visualOrder;
                 Sprite sprite; sprite.texture=texture; sprite.position=position; sprite.asset=id; sprite.pose=pose;
                 sprite.offsetX=offsetX; sprite.offsetY=offsetY; sprite.visualOrder=order;
+                sprite.layer=commandLayer(args);
                 characters[id]=std::move(sprite);
-                if(transitionIndex<args.size() && s(transitionIndex)=="fade")delay(args.at(transitionIndex+1).get<int64_t>(),[&](float t){characters.at(id).alpha=t;});
+                if(transitionIndex<args.size() && s(transitionIndex)=="fade") {
+                    if(uiSettingValues.value("ui.effects",true)) delay(args.at(transitionIndex+1).get<int64_t>(),[&](float t){characters.at(id).alpha=t;});
+                    else characters.at(id).alpha=1;
+                }
             }
         } else if(name=="hide") {
+            visualOnlyKind.clear(); visualOnlyId.clear();
             const auto id=s(0);
-            if(characters.contains(id) && args.size()>1 && s(1)=="fade")delay(args.at(2).get<int64_t>(),[&](float t){characters.at(id).alpha=1-t;});characters.erase(id);
+            if(characters.contains(id) && args.size()>1 && s(1)=="fade" && uiSettingValues.value("ui.effects",true))delay(args.at(2).get<int64_t>(),[&](float t){characters.at(id).alpha=1-t;});characters.erase(id);
         }
-        else if(name=="clear") {if(s(0)=="image")images.erase(s(1));else if(s(0)=="bg"){background=nullptr;backgroundAsset.clear();backgroundOffsetX=0;backgroundOffsetY=0;}else if(s(0)=="bgm")stopBgm();}
-        else if(name=="effect") {overlayColor=s(1)=="white"?SDL_Color{255,255,255,255}:SDL_Color{0,0,0,255};delay(args.size()>2?args.at(2).get<int64_t>():500,[&](float t){overlay=1-t;});}
+        else if(name=="clear") {if(s(0)=="image"){images.erase(s(1));visualOnlyKind.clear();visualOnlyId.clear();}else if(s(0)=="bg"){background=nullptr;previousBackground=nullptr;backgroundAsset.clear();backgroundLayer.reset();backgroundOffsetX=previousBackgroundOffsetX=0;backgroundOffsetY=previousBackgroundOffsetY=0;visualOnlyKind.clear();visualOnlyId.clear();}else if(s(0)=="bgm")stopBgm();}
+        else if(name=="effect") {overlayColor=s(1)=="white"?SDL_Color{255,255,255,255}:SDL_Color{0,0,0,255};if(uiSettingValues.value("ui.effects",true))delay(args.size()>2?args.at(2).get<int64_t>():500,[&](float t){overlay=1-t;});else overlay=0;}
         else throw std::runtime_error("Unknown command: "+name);
         pump();
     }
@@ -1580,13 +2617,14 @@ int run(const fs::path& packagePath, const std::vector<std::string>& arguments) 
         if(package.value("format","")!="novel-script-package" || package.at("version")!=1)throw std::runtime_error("Unsupported package format/version");
         std::string mode;
         json debug = nullptr;
+        fs::path debugStatePath;
         for (size_t index = 0; index < arguments.size(); ++index) {
             const auto& argument = arguments[index];
-            if (argument == "--headless" || argument == "--smoke" || argument == "--screen-smoke" || argument == "--screen-control-smoke" || argument == "--screen-slot-smoke" || argument == "--screen-web-smoke" || argument == "--screen-save-smoke") { mode = argument; continue; }
+            if (argument == "--headless" || argument == "--smoke" || argument == "--screen-smoke" || argument == "--screen-control-smoke" || argument == "--screen-shortcut-restart-smoke" || argument == "--screen-slot-smoke" || argument == "--screen-save-smoke" || argument == "--screen-quick-smoke" || argument == "--screen-render-smoke") { mode = argument; continue; }
             if (argument == "--load-slot") {
                 if (index + 1 >= arguments.size()) throw std::runtime_error("Usage: --load-slot <1-100>");
                 size_t consumed = 0; const int slot = std::stoi(arguments[++index], &consumed);
-                if (consumed != arguments[index].size() || slot < 1 || slot > 100) throw std::runtime_error("Save slot number must be between 1 and 100");
+                if (consumed != arguments[index].size() || slot < 1 || slot > 120) throw std::runtime_error("Save slot number must be between 1 and 120");
                 const auto directory = saveDirectoryFor(packagePath,package);
                 migrateLegacySaves(packagePath,directory);
                 std::ifstream savedFile(directory / ("slot-" + std::to_string(slot) + ".json"));
@@ -1610,6 +2648,13 @@ int run(const fs::path& packagePath, const std::vector<std::string>& arguments) 
                 json variables = json::object();
                 for (auto it = supplied.begin(); it != supplied.end(); ++it) variables[it.key()] = debugValue(it.value());
                 debug = {{"file", sourceFile}, {"scene", sceneName}, {"line", line ? json(line) : json(nullptr)}, {"variables", variables}};
+                continue;
+            }
+            if (argument == "--debug-state") {
+                if (index + 1 >= arguments.size()) throw std::runtime_error("Usage: --debug-state <filename>");
+                const fs::path stateName(arguments[++index]);
+                if (stateName.has_parent_path() || stateName.filename() != stateName || stateName == "." || stateName == "..") throw std::runtime_error("Debug state must be a filename");
+                debugStatePath = fs::absolute(packagePath).parent_path() / stateName;
                 continue;
             }
             throw std::runtime_error("Unknown player argument: " + argument);
@@ -1654,6 +2699,10 @@ int run(const fs::path& packagePath, const std::vector<std::string>& arguments) 
             runtime.run(program, debug);std::cout<<json{{"globals",runtime.globals},{"commands",transcript}}.dump()<<"\n";
         }else{
             Engine engine(runtime,fs::absolute(packagePath), package);
+            if (mode == "--screen-shortcut-restart-smoke") {
+                std::cout << json{{"F1",engine.uiSettingValues.value("ui.shortcut.F1",std::string{})},{"F12",engine.uiSettingValues.value("ui.shortcut.F12",std::string{})}}.dump() << "\n";
+                return 0;
+            }
             engine.captureAnimationMidpoints=mode=="--smoke";
             json playbackTimings=json::array();
             bool failedCrossfadeRetained=false;
@@ -1676,42 +2725,65 @@ int run(const fs::path& packagePath, const std::vector<std::string>& arguments) 
             MIX_Track* lastBgmCrossfadeTrack=nullptr;
             engine.automated = mode=="--smoke" || mode=="--screen-smoke";
             const bool tdsTitle = engine.gameScreens.contains("titleScene") && engine.gameScreens["titleScene"].is_object();
+            if (mode == "--screen-render-smoke") {
+                const char* captureRoot = std::getenv("NOVEL_SCREEN_CAPTURE_DIR");
+                if (!captureRoot || !*captureRoot) throw std::runtime_error("NOVEL_SCREEN_CAPTURE_DIR is required for --screen-render-smoke");
+                const fs::path directory = fs::u8path(captureRoot);
+                fs::create_directories(directory);
+                // Render pause/save/load over a real story frame, not an empty
+                // black stage, so these captures exercise the gameplay overlay path.
+                runtime.currentSourceFile = "main.tds"; runtime.currentSceneName = "main"; runtime.currentLine = 1;
+                engine.storyActive = true;
+                engine.background = engine.skinImage("ui/backgrounds/spring-ensemble-key-visual.png");
+                engine.backgroundAsset.clear();
+                engine.speaker = "あやか"; engine.text = "保存画面の下に、直前の物語画面を表示します。";
+                engine.dialogueHistory.emplace_back(engine.speaker,engine.text);
+                engine.pump(); engine.saveSlot(0);
+                json captures = json::array();
+                for (const auto& [id, screen] : engine.gameScreens.at("screens").items()) {
+                    if (!screen.is_object() || !screen.contains("uiTree")) continue;
+                    const auto target = directory / fs::u8path(id + ".png");
+                    engine.activeScreen = id; engine.screenHover = -1; engine.captureNextScreenFrame = target; engine.pump();
+                    if (!engine.captureNextScreenFrame.empty()) throw std::runtime_error("Native screen capture hook did not run for " + id);
+                    captures.push_back(id);
+                    if (id == "title") {
+                        const auto items = engine.visibleScreenItems();
+                        const auto targetItem = std::find_if(items.begin(),items.end(),[](const json& item){ return item.value("id",std::string{}) == "title-start"; });
+                        if (targetItem == items.end()) throw std::runtime_error("Native title hover smoke cannot find GAME START");
+                        const auto rect = engine.screenItemRect(*targetItem);
+                        SDL_Event pointer{}; pointer.type=SDL_EVENT_MOUSE_MOTION; pointer.motion.x=rect.x+rect.w/2.0f; pointer.motion.y=rect.y+rect.h/2.0f;
+                        if (!SDL_PushEvent(&pointer)) throw std::runtime_error(SDL_GetError());
+                        const auto hoverTarget = directory / "title-hover.png";
+                        engine.captureNextScreenFrame = hoverTarget;
+                        engine.pump();
+                        if (engine.screenHover < 0 || items[size_t(engine.screenHover)].value("id",std::string{}) != "title-start") throw std::runtime_error("Native mouse motion did not hover GAME START");
+                        if (!engine.captureNextScreenFrame.empty()) throw std::runtime_error("Native hovered title capture hook did not run");
+                        captures.push_back("title-hover"); engine.screenHover=-1; engine.pump();
+                    }
+                }
+                std::cout << json{{"captured",captures},{"count",captures.size()},{"width",engine.width},{"height",engine.height}}.dump() << "\n";
+                return captures.empty() ? 1 : 0;
+            }
             if (mode == "--screen-save-smoke") {
                 runtime.currentSourceFile = "main.tds"; runtime.currentSceneName = "main"; runtime.currentLine = 1;
                 engine.speaker = "Narrator"; engine.text = "checkpoint";
+                engine.pump();
                 engine.saveSlot(0);
-                engine.text = "revised"; engine.saveSlot(0);
+                engine.text = "revised"; engine.pump(); engine.saveSlot(0);
                 const auto thumbnail = engine.saveDirectory / "thumb-slot-1.png";
                 std::ifstream savedFile(engine.slotPath(0)); json reloaded; savedFile >> reloaded;
-                std::cout << json{{"save",fs::is_regular_file(engine.slotPath(0))},{"thumbnail",fs::is_regular_file(thumbnail)},{"text",reloaded.value("text","")}}.dump() << "\n";
+                std::cout << json{{"save",fs::is_regular_file(engine.slotPath(0))},{"thumbnail",fs::is_regular_file(thumbnail)},{"fullFrame",engine.lastStoryFrame!=nullptr},{"text",reloaded.value("text","")}}.dump() << "\n";
                 return fs::is_regular_file(thumbnail) ? 0 : 1;
             }
-            if (mode == "--screen-web-smoke") {
-                if (!engine.screenWebView) throw std::runtime_error("WebView2 host is unavailable");
-                engine.activeScreen = engine.gameScreens.at("initial").get<std::string>();
-                const auto deadline = SDL_GetTicks() + 12000;
-                while (!engine.screenWebView->ready() && SDL_GetTicks() < deadline) engine.pump();
-                if (!engine.screenWebView->ready()) throw std::runtime_error("WebView2 document did not become ready: " + engine.screenWebView->status());
-                engine.screenWebView->probeImageForTest("package-art");
-                while (engine.screenWebView->imageProbeResult() < 0 && SDL_GetTicks() < deadline) engine.pump();
-                if (engine.screenWebView->imageProbeResult() != 1) throw std::runtime_error("WebView2 could not load a packaged screen image");
-                engine.screenWebView->clickForTest("open-screen","system");
-                while (engine.activeScreen != "system" && SDL_GetTicks() < deadline) engine.pump();
-                if (engine.activeScreen != "system") throw std::runtime_error("WebView2 action bridge did not navigate to system");
-                while (!engine.screenWebView->ready() && SDL_GetTicks() < deadline) engine.pump();
-                engine.screenWebView->clickForTest("open-screen","sound");
-                while (engine.activeScreen != "sound" && SDL_GetTicks() < deadline) engine.pump();
-                if (engine.activeScreen != "sound") throw std::runtime_error("WebView2 did not navigate to sound settings");
-                while (!engine.screenWebView->ready() && SDL_GetTicks() < deadline) engine.pump();
-                engine.screenWebView->setSettingForTest("audio.bgm",0.37);
-                while (std::abs(engine.uiSettingValues.value("audio.bgm",1.0) - 0.37) > 0.001 && SDL_GetTicks() < deadline) engine.pump();
-                if (std::abs(engine.uiSettingValues.value("audio.bgm",1.0) - 0.37) > 0.001) throw std::runtime_error("WebView2 range setting did not reach Native");
-                SDL_SetWindowSize(engine.window,1000,600);
-                int windowWidth = 0, windowHeight = 0; SDL_GetWindowSize(engine.window,&windowWidth,&windowHeight);
-                while (engine.screenWebView->boundsForTest() != std::pair<int,int>{windowWidth,windowHeight} && SDL_GetTicks() < deadline) engine.pump();
-                if (engine.screenWebView->boundsForTest() != std::pair<int,int>{windowWidth,windowHeight}) throw std::runtime_error("WebView2 bounds did not follow SDL resize");
-                std::cout << json{{"webReady",true},{"imageLoaded",true},{"activeScreen",engine.activeScreen},{"bgmVolume",engine.uiSettingValues.value("audio.bgm",1.0)},{"resized",true}}.dump() << "\n";
-                return 0;
+            if (mode == "--screen-quick-smoke") {
+                runtime.currentSourceFile = "main.tds"; runtime.currentSceneName = "main"; runtime.currentLine = 7;
+                engine.speaker = "Narrator"; engine.text = "quick checkpoint";
+                engine.saveQuickSlot();
+                runtime.currentLine = 99; engine.text = "mutated";
+                engine.loadQuickSlot();
+                const bool restored = runtime.pendingLoad.is_object() && runtime.pendingLoad.value("line",0) == 7 && runtime.pendingLoad.value("text",std::string{}) == "quick checkpoint";
+                std::cout << json{{"saved",fs::is_regular_file(engine.quickSlotPath())},{"restored",restored}}.dump() << "\n";
+                return restored ? 0 : 1;
             }
             if (mode == "--screen-slot-smoke") {
                 json result = json::object();
@@ -1722,21 +2794,56 @@ int run(const fs::path& packagePath, const std::vector<std::string>& arguments) 
                     engine.activeScreen = id;
                     const auto items = engine.visibleScreenItems();
                     const auto tree = engine.currentScreen().value("uiTree", json::array());
+                const auto hasStateStyle = [&](const auto& self, const json& nodes, int slotIndex, const std::string& state) -> bool {
+                    for (const auto& node : nodes) {
+                        if (node.value("attrs",json::object()).value("data-slot-index",std::string("-1")) == std::to_string(slotIndex)
+                            && node.value("slotStateStyles",json::object()).contains(state)) return true;
+                        if (self(self,node.value("children",json::array()),slotIndex,state)) return true;
+                    }
+                    return false;
+                };
                     const auto count = engine.currentScreen().value("slotLayout", json::object()).value("count", 0);
                     if (count < 1 || items.empty() || !items[0].contains("slotSummary")) throw std::runtime_error("Slot cards did not reach Native UI items");
-                    const float sx = float(engine.width) / float(engine.gameScreens.at("canvas").at("width").get<int>());
-                    const float sy = float(engine.height) / float(engine.gameScreens.at("canvas").at("height").get<int>());
-                    for (const auto& node : tree) engine.drawScreenNode(node,sx,sy,items);
+                    const auto transform = engine.screenCanvasTransform();
+                    const float sx = transform.sx, sy = transform.sy;
+                    for (const auto& node : tree) engine.drawScreenNode(node,sx,sy,transform.ox,transform.oy,items);
                     SDL_RenderPresent(engine.renderer);
-                    result[role] = {{"count",count},{"firstStatus",items[0].at("slotSummary").is_object() ? "saved" : "empty"},{"secondStatus",items[1].at("slotSummary").is_object() ? "saved" : "empty"},{"thirdStatus",items[2].at("slotSummary").is_object() ? "saved" : "empty"},{"thirdState",engine.slotState(2)}};
+                    result[role] = {{"count",count},{"firstStatus",items[0].at("slotSummary").is_object() ? "saved" : "empty"},{"secondStatus",items[1].at("slotSummary").is_object() ? "saved" : "empty"},{"thirdStatus",items[2].at("slotSummary").is_object() ? "saved" : "empty"},{"firstStatusText",Engine::slotStatusLabel(items[0].value("slotState",std::string("empty")),items[0].value("slotSummary",json(nullptr)).is_object() && items[0].at("slotSummary").value("locked",false))},{"secondStatusText",Engine::slotStatusLabel(items[1].value("slotState",std::string("empty")))},{"thirdStatusText",Engine::slotStatusLabel(items[2].value("slotState",std::string("empty")))},{"secondState",items[1].value("slotState",std::string("empty"))},{"thirdState",items[2].value("slotState",std::string("empty"))},{"secondStateStyle",hasStateStyle(hasStateStyle,tree,1,items[1].value("slotState",std::string("empty")))},{"thirdStateStyle",hasStateStyle(hasStateStyle,tree,2,items[2].value("slotState",std::string("empty")))}};
+                    const auto pageButton = std::find_if(items.begin(),items.end(),[](const json& item){ return item.value("action",std::string{}) == "slot-page" && item.value("target",std::string{}) == "1"; });
+                    if (pageButton == items.end()) throw std::runtime_error("Native save page button is missing");
+                    engine.activateScreenItem(*pageButton);
+                    const auto secondPage = engine.visibleScreenItems();
+                    if (secondPage.empty() || secondPage.front().value("slotIndex",-1) != 12) throw std::runtime_error("Native save page did not select slot 13");
+                    result["secondPage"][role == std::string("save-slots") ? "save" : "load"] = secondPage.front().value("slotIndex",-1);
+                    engine.slotPages[role == std::string("save-slots") ? "save" : "load"] = 0;
                 }
+                engine.activeScreen=engine.screenForRole("save-slots");
+                auto findAction=[&](const std::string& action)->json { const auto current=engine.visibleScreenItems(); const auto found=std::find_if(current.begin(),current.end(),[&](const json& item){return item.value("action",std::string{})==action && (!item.contains("slotIndex") || item.value("slotIndex",-1)==0);}); if(found==current.end()) throw std::runtime_error("Missing Native slot action: "+action); return *found; };
+                const auto select=findAction("slot-select"); engine.activateScreenItem(select);
+                engine.activateScreenItem(findAction("slot-lock")); const bool locked=engine.readSlot(0).value("locked",false);
+                engine.activateScreenItem(findAction("slot-lock")); const bool unlocked=!engine.readSlot(0).value("locked",false);
+                engine.activateScreenItem(findAction("slot-copy")); const bool copied=engine.readSlot(3).is_object() && fs::is_regular_file(engine.saveDirectory/"thumb-slot-4.png");
+                const auto moveAction=engine.visibleScreenItems(); const auto move=std::find_if(moveAction.begin(),moveAction.end(),[](const json& item){return item.value("action",std::string{})=="slot-move";});
+                if(move==moveAction.end()) throw std::runtime_error("Missing Native slot move action"); engine.activateScreenItem(*move);
+                const bool moved=!fs::exists(engine.slotPath(3)) && engine.readSlot(4).is_object();
+                engine.activateScreenItem(findAction("slot-delete")); const bool deleteArmed=fs::exists(engine.slotPath(4));
+                engine.activateScreenItem(findAction("slot-delete")); const bool deleted=!fs::exists(engine.slotPath(4));
+                result["operations"]={{"locked",locked},{"unlocked",unlocked},{"copied",copied},{"moved",moved},{"deleteArmed",deleteArmed},{"deleted",deleted}};
+                if(!locked || !unlocked || !copied || !moved || !deleteArmed || !deleted) throw std::runtime_error("Native save slot manager operation failed");
+                result["thumbnailDisplayed"] = engine.textures.contains(utf8Path(engine.saveDirectory / "thumb-slot-1.png"));
                 std::cout << result.dump() << "\n";
                 return 0;
             }
             if (mode == "--screen-control-smoke") {
                 engine.automated = true;
-                engine.activeScreen = engine.gameScreens.at("initial").get<std::string>();
+                engine.activeScreen = engine.gameScreens.at("initial").get<std::string>(); engine.resetScreenFocus();
                 const auto& initialScreen = engine.currentScreen();
+                const auto initialTransform = engine.screenCanvasTransform();
+                const auto initialItems = engine.visibleScreenItems();
+                const auto initialScreenId = engine.activeScreen;
+                for (const auto& node : initialScreen.value("uiTree", json::array())) engine.drawScreenNode(node,initialTransform.sx,initialTransform.sy,initialTransform.ox,initialTransform.oy,initialItems);
+                SDL_RenderPresent(engine.renderer);
+                if (std::none_of(engine.textures.begin(),engine.textures.end(),[](const auto& texture){return texture.first.find("sakura-menu-plate.png")!=std::string::npos;})) throw std::runtime_error("Native title screen did not load the generated menu button artwork");
                 const auto inputEvent = [&](Uint32 type, float x, float y) {
                     SDL_Event event{}; event.type = type;
                     if (type == SDL_EVENT_MOUSE_BUTTON_DOWN || type == SDL_EVENT_MOUSE_BUTTON_UP) { event.button.button = SDL_BUTTON_LEFT; event.button.x = x; event.button.y = y; }
@@ -1744,19 +2851,51 @@ int run(const fs::path& packagePath, const std::vector<std::string>& arguments) 
                     if (!SDL_PushEvent(&event)) throw std::runtime_error(SDL_GetError());
                 };
                 const auto initialTree = initialScreen.value("uiTree", json::array());
-                const auto* slider = engine.findScreenInputBySetting(initialTree, "audio.bgm");
-                const auto* toggle = engine.findScreenInputBySetting(initialTree, "audio.bgmMuted");
-                if (!slider || !toggle) throw std::runtime_error("Control smoke requires BGM slider and mute toggle in the initial screen");
-                const auto canvasWidth = float(engine.gameScreens.at("canvas").at("width").get<int>()), canvasHeight = float(engine.gameScreens.at("canvas").at("height").get<int>());
-                const float sx = float(engine.width) / canvasWidth, sy = float(engine.height) / canvasHeight;
+                json soundControlTree;
+                const json* controlTree = &initialTree;
+                const json* slider = engine.findScreenInputBySetting(*controlTree, "audio.bgm");
+                const json* toggle = engine.findScreenInputBySetting(*controlTree, "audio.bgmMuted");
+                engine.screenHover = 0;
+                engine.moveScreenFocus(0,1);
+                auto focusItems = engine.visibleScreenItems();
+                if (engine.screenHover < 0 || focusItems.at(size_t(engine.screenHover)).value("action",std::string{}) != "start") throw std::runtime_error("Directional navigation did not skip the unavailable Continue action");
+                engine.moveScreenFocus(0,1);
+                focusItems = engine.visibleScreenItems();
+                if (focusItems.at(size_t(engine.screenHover)).value("action",std::string{}) != "load") throw std::runtime_error("Directional navigation did not choose the next geometric action");
+                engine.moveScreenFocus(0,-1);
+                focusItems = engine.visibleScreenItems();
+                if (focusItems.at(size_t(engine.screenHover)).value("action",std::string{}) != "start") throw std::runtime_error("Directional navigation did not return to the previous geometric action");
+                if (!slider || !toggle) {
+                    if (!engine.gameScreens.contains("screens") || !engine.gameScreens.at("screens").contains("sound")) throw std::runtime_error("Control smoke requires a BGM slider and mute toggle in the initial or sound screen");
+                    engine.activeScreen = "sound"; engine.resetScreenFocus();
+                    soundControlTree = engine.currentScreen().value("uiTree",json::array());
+                    controlTree = &soundControlTree;
+                    slider = engine.findScreenInputBySetting(*controlTree,"audio.bgm");
+                    toggle = engine.findScreenInputBySetting(*controlTree,"audio.bgmMuted");
+                }
+                if (!slider || !toggle) throw std::runtime_error("Control smoke could not find the BGM slider and mute toggle");
+                const auto controlTargets = engine.screenNavigationTargets();
+                const auto bgmTarget = std::find_if(controlTargets.begin(),controlTargets.end(),[](const auto& item){return item.setting=="audio.bgm";});
+                const auto muteTarget = std::find_if(controlTargets.begin(),controlTargets.end(),[](const auto& item){return item.setting=="audio.bgmMuted";});
+                if (bgmTarget==controlTargets.end() || muteTarget==controlTargets.end()) throw std::runtime_error("Keyboard focus model omitted a slider or toggle");
+                engine.focusScreenTarget(*bgmTarget); engine.adjustFocusedScreenControl(-1);
+                if (std::abs(engine.uiSettingValues.value("audio.bgm",1.0)-0.99)>0.001) throw std::runtime_error("Keyboard slider adjustment did not respect its declared step");
+                engine.adjustFocusedScreenControl(1);
+                engine.focusScreenTarget(*muteTarget); engine.adjustFocusedScreenControl(1);
+                if (!engine.uiSettingValues.value("audio.bgmMuted",false)) throw std::runtime_error("Keyboard toggle activation did not change its value");
+                engine.adjustFocusedScreenControl(-1);
+                const auto transform = engine.screenCanvasTransform();
+                const float sx = transform.sx, sy = transform.sy;
                 const auto sliderRect = slider->at("rect");
-                const float sliderX = (sliderRect.value("x", 0.0f) + sliderRect.value("width", 0.0f) * 0.75f) * sx;
-                const float sliderY = (sliderRect.value("y", 0.0f) + sliderRect.value("height", 0.0f) / 2.0f) * sy;
+                const float sliderX = transform.ox + (sliderRect.value("x", 0.0f) + sliderRect.value("width", 0.0f) * 0.75f) * sx;
+                const float sliderY = transform.oy + (sliderRect.value("y", 0.0f) + sliderRect.value("height", 0.0f) / 2.0f) * sy;
                 inputEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, sliderX, sliderY); inputEvent(SDL_EVENT_MOUSE_BUTTON_UP, sliderX, sliderY);
                 const auto toggleRect = toggle->at("rect");
-                const float toggleX = (toggleRect.value("x", 0.0f) + toggleRect.value("width", 0.0f) / 2.0f) * sx;
-                const float toggleY = (toggleRect.value("y", 0.0f) + toggleRect.value("height", 0.0f) / 2.0f) * sy;
+                const float toggleX = transform.ox + (toggleRect.value("x", 0.0f) + toggleRect.value("width", 0.0f) / 2.0f) * sx;
+                const float toggleY = transform.oy + (toggleRect.value("y", 0.0f) + toggleRect.value("height", 0.0f) / 2.0f) * sy;
                 inputEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, toggleX, toggleY); inputEvent(SDL_EVENT_MOUSE_BUTTON_UP, toggleX, toggleY);
+                engine.pump(); engine.pump();
+                engine.activeScreen = initialScreenId; engine.resetScreenFocus();
                 const auto startItems = engine.visibleScreenItems();
                 bool queuedStart = false;
                 for (const auto& item : startItems) if (item.value("action", std::string{}) == "start") {
@@ -1767,6 +2906,144 @@ int run(const fs::path& packagePath, const std::vector<std::string>& arguments) 
                 if (!queuedStart) throw std::runtime_error("Control smoke requires a start button in the initial screen");
                 engine.runTitleScreen();
                 if (std::abs(engine.uiSettingValues.value("audio.bgm", 0.0f) - 0.75f) > 0.03f || !engine.uiSettingValues.value("audio.bgmMuted", false)) throw std::runtime_error("Native screen controls did not update expected settings");
+                engine.activeScreen = "sound"; engine.resetScreenFocus();
+                const auto soundTree = engine.currentScreen().value("uiTree",json::array());
+                const auto* ayakaGainInput = engine.findScreenInputBySetting(soundTree,"audio.voice.ayaka");
+                const auto* ayakaMuteInput = engine.findScreenInputBySetting(soundTree,"audio.voice.ayaka.muted");
+                if (!ayakaGainInput || !ayakaMuteInput) throw std::runtime_error("Native sound screen is missing the character-specific voice controls");
+                const auto soundTransform = engine.screenCanvasTransform(); const auto& ayakaGainRect = ayakaGainInput->at("rect");
+                const float ayakaGainX = soundTransform.ox + (ayakaGainRect.value("x",0.0f) + ayakaGainRect.value("width",0.0f)*0.4f)*soundTransform.sx;
+                const float ayakaGainY = soundTransform.oy + (ayakaGainRect.value("y",0.0f) + ayakaGainRect.value("height",0.0f)/2.0f)*soundTransform.sy;
+                inputEvent(SDL_EVENT_MOUSE_BUTTON_DOWN,ayakaGainX,ayakaGainY); inputEvent(SDL_EVENT_MOUSE_BUTTON_UP,ayakaGainX,ayakaGainY); engine.pump(); engine.pump();
+                if (std::abs(engine.uiSettingValues.value("audio.voice.ayaka",0.0f)-0.4f)>0.03f) throw std::runtime_error("Native character voice slider did not respond to mouse input");
+                const auto& ayakaMuteRect = ayakaMuteInput->at("rect");
+                const float ayakaMuteX = soundTransform.ox + (ayakaMuteRect.value("x",0.0f) + ayakaMuteRect.value("width",0.0f)/2.0f)*soundTransform.sx;
+                const float ayakaMuteY = soundTransform.oy + (ayakaMuteRect.value("y",0.0f) + ayakaMuteRect.value("height",0.0f)/2.0f)*soundTransform.sy;
+                if (engine.findScreenInput(soundTree,ayakaMuteX,ayakaMuteY)!=ayakaMuteInput) throw std::runtime_error("Native character mute hit target misses its authored rectangle: "+std::to_string(ayakaMuteX)+","+std::to_string(ayakaMuteY));
+                engine.updateScreenInput(*ayakaMuteInput,ayakaMuteX,ayakaMuteY);
+                const bool muteAfterPress = engine.uiSettingValues.value("audio.voice.ayaka.muted",false);
+                if (!muteAfterPress || !engine.uiSettingValues.value("audio.voice.ayaka.muted",false)) throw std::runtime_error("Native character mute checkbox did not update its setting: "+std::to_string(muteAfterPress)+"/"+std::to_string(engine.uiSettingValues.value("audio.voice.ayaka.muted",false)));
+                const bool hasVoiceMixerProbe = std::any_of(engine.runtime.program.at("assets").begin(),engine.runtime.program.at("assets").end(),[](const auto& asset){return asset.value("type",std::string{})=="voice" && asset.value("name",std::string{})=="mixer_probe";});
+                if (hasVoiceMixerProbe) {
+                engine.updateUiSetting("audio.voice",0.5f); engine.updateUiSetting("audio.voice.ayaka",0.25f); engine.updateUiSetting("audio.voice.ayaka.muted",false);
+                engine.command("play",json::array({"voice","mixer_probe","character","ayaka","volume",0.8,"async"}));
+                auto voicePlayback = std::find_if(engine.audio.rbegin(),engine.audio.rend(),[](const auto& playback){return playback.type=="voice" && playback.voiceCharacter=="ayaka";});
+                if (voicePlayback==engine.audio.rend() || std::abs(MIX_GetTrackGain(voicePlayback->track)-0.1f)>0.03f) throw std::runtime_error("Native character voice gain did not multiply source, channel and speaker levels: "+std::to_string(voicePlayback==engine.audio.rend()?-1.0f:MIX_GetTrackGain(voicePlayback->track))+" pref="+std::to_string(engine.uiSettingValues.value("audio.voice.ayaka",0.0f))+" source="+(voicePlayback==engine.audio.rend()?std::string("missing"):std::to_string(voicePlayback->sourceGain))+" track="+(voicePlayback==engine.audio.rend()?std::string("missing"):voicePlayback->voiceCharacter));
+                engine.updateUiSetting("audio.voice.ayaka",0.6f);
+                if (std::abs(MIX_GetTrackGain(voicePlayback->track)-0.24f)>0.03f) throw std::runtime_error("Changing a character voice slider did not update its currently playing track with the shared voice level");
+                engine.updateUiSetting("audio.voice.ayaka.muted",true);
+                if (MIX_GetTrackGain(voicePlayback->track)>0.001f) throw std::runtime_error("Character mute did not silence only its active voice track");
+                engine.updateUiSetting("audio.voice.ayaka.muted",false);
+                if (std::abs(MIX_GetTrackGain(voicePlayback->track)-0.24f)>0.03f) throw std::runtime_error("Unmuting did not restore the combined channel and per-character playback gain");
+                }
+                engine.activeScreen.clear();
+                if (!engine.updateUiSetting("ui.fullscreen",true) || !(SDL_GetWindowFlags(engine.window)&SDL_WINDOW_FULLSCREEN)) throw std::runtime_error("Native fullscreen preference did not update the SDL window");
+                if (!engine.updateUiSetting("ui.fullscreen",false) || (SDL_GetWindowFlags(engine.window)&SDL_WINDOW_FULLSCREEN)) throw std::runtime_error("Native windowed preference did not restore the SDL window");
+                if (!engine.updateUiSetting("ui.effects",false) || engine.uiSettingValues.value("ui.effects",true)) throw std::runtime_error("Native effects preference did not turn transitions off");
+                const auto effectStarted=SDL_GetTicks(); engine.command("effect",json::array({"fade","black",1000}));
+                if (SDL_GetTicks()-effectStarted>=250) throw std::runtime_error("Disabled Native effect still blocked for its animation duration");
+                engine.updateUiSetting("ui.effects",true);
+                if (!engine.updateUiSetting("ui.cursorHideDelay",0.333333) || std::abs(engine.uiSettingValues.value("ui.cursorHideDelay",0.0)-0.333333)>0.00001) throw std::runtime_error("Native cursor timeout preference was not stored");
+                engine.storyActive=true; engine.activeScreen.clear(); engine.lastMouseActivity=SDL_GetTicks()-5001; engine.pump();
+                if (SDL_CursorVisible()) throw std::runtime_error("Native cursor did not hide after its configured idle period");
+                SDL_Event pointer{}; pointer.type=SDL_EVENT_MOUSE_MOTION; pointer.motion.x=1; pointer.motion.y=1;
+                if (!SDL_PushEvent(&pointer)) throw std::runtime_error(SDL_GetError()); engine.pump();
+                if (!SDL_CursorVisible()) throw std::runtime_error("Native cursor did not return when pointer activity resumed");
+                if (!engine.updateUiSetting("ui.textSpeed",0.25) || std::abs(engine.uiSettingValues.value("ui.textSpeed",1.0)-0.25)>0.00001) throw std::runtime_error("Native text-speed preference did not update");
+                engine.text = "native dialogue speed";
+                const auto slowStarted=SDL_GetTicks(); engine.revealDialogueText();
+                if (SDL_GetTicks()-slowStarted<250 || engine.text!="native dialogue speed") throw std::runtime_error("Native dialogue was not progressively revealed at the configured speed");
+                engine.activeScreen.clear(); engine.screenHistory.clear();
+                SDL_Event pendingEvent{}; while (SDL_PollEvent(&pendingEvent)) {}
+                engine.automated = false;
+                if (!engine.updateUiSetting("ui.shortcut.F1","save") || engine.uiSettingValues.value("ui.shortcut.F1",std::string{})!="save") throw std::runtime_error("Native shortcut preference rejected a valid action");
+                if (engine.updateUiSetting("ui.shortcut.F1","arbitrary-command")) throw std::runtime_error("Native shortcut preference accepted an action outside its safe allow-list");
+                SDL_Event remappedKey{}; remappedKey.type=SDL_EVENT_KEY_DOWN; remappedKey.key.scancode=SDL_SCANCODE_F1;
+                if (!SDL_PushEvent(&remappedKey)) throw std::runtime_error(SDL_GetError()); engine.pump();
+                if (engine.currentScreen().value("role",std::string{})!="save-slots") throw std::runtime_error("Native F1 did not execute the configured Save binding");
+                engine.activeScreen="system"; engine.screenHistory.clear();
+                const auto shortcutItems=engine.visibleScreenItems();
+                const auto f12Binding=std::find_if(shortcutItems.begin(),shortcutItems.end(),[](const auto& item){return item.value("action",std::string{})=="shortcut-cycle" && item.value("target",std::string{})=="F12";});
+                if (f12Binding==shortcutItems.end()) throw std::runtime_error("Native system UI does not expose the F12 binding selector");
+                const auto f12Rect=engine.screenItemRect(*f12Binding);
+                inputEvent(SDL_EVENT_MOUSE_BUTTON_DOWN,f12Rect.x+f12Rect.w/2.0f,f12Rect.y+f12Rect.h/2.0f); inputEvent(SDL_EVENT_MOUSE_BUTTON_UP,f12Rect.x+f12Rect.w/2.0f,f12Rect.y+f12Rect.h/2.0f); engine.pump(); engine.pump();
+                if (engine.uiSettingValues.value("ui.shortcut.F12",std::string{})!="system") throw std::runtime_error("Native shortcut-cycle control did not update and persist its setting");
+                engine.updateUiSetting("ui.shortcut.F12","none");
+                engine.updateUiSetting("ui.shortcut.F1","system"); engine.activeScreen.clear(); engine.screenHistory.clear();
+                SDL_Event systemKey{}; systemKey.type=SDL_EVENT_KEY_DOWN; systemKey.key.scancode=SDL_SCANCODE_F1;
+                if (!SDL_PushEvent(&systemKey)) throw std::runtime_error(SDL_GetError()); engine.pump();
+                if (engine.activeScreen!="system") throw std::runtime_error("Native F1 did not open the system screen");
+                SDL_Event historyKey{}; historyKey.type=SDL_EVENT_KEY_DOWN; historyKey.key.scancode=SDL_SCANCODE_F10;
+                if (!SDL_PushEvent(&historyKey)) throw std::runtime_error(SDL_GetError()); engine.pump();
+                if (engine.activeScreen!="log") throw std::runtime_error("Native F10 did not open the dialogue history");
+                SDL_Event backKey{}; backKey.type=SDL_EVENT_KEY_DOWN; backKey.key.scancode=SDL_SCANCODE_ESCAPE;
+                if (!SDL_PushEvent(&backKey)) throw std::runtime_error(SDL_GetError()); engine.pump();
+                if (engine.activeScreen!="system") throw std::runtime_error("Native screen history did not restore the previous screen");
+                // This phase drives real SDL clicks; automated playback would
+                // dismiss the active screen after each rendered frame.
+                engine.automated = false;
+                const auto systemItems=engine.visibleScreenItems();
+                const auto clickSettingValue=[&](const json& item) {
+                    const auto rect=engine.screenItemRect(item); const float x=rect.x+rect.w/2.0f,y=rect.y+rect.h/2.0f;
+                    inputEvent(SDL_EVENT_MOUSE_BUTTON_DOWN,x,y); inputEvent(SDL_EVENT_MOUSE_BUTTON_UP,x,y); engine.pump(); engine.pump();
+                };
+                const auto findEffectsValue=[&](bool value)->json { const auto found=std::find_if(systemItems.begin(),systemItems.end(),[&](const auto& item){return item.value("action",std::string{})=="setting-value" && item.value("target",std::string{})=="ui.effects" && item.value("value",!value)==value;}); if(found==systemItems.end()) throw std::runtime_error("Native system screen is missing a selectable effects value"); return *found; };
+                const auto fontChoice=std::find_if(systemItems.begin(),systemItems.end(),[](const auto& item){return item.value("action",std::string{})=="setting-value" && item.value("target",std::string{})=="ui.fontFamily" && item.value("value",std::string{})=="mincho";});
+                if(fontChoice==systemItems.end()) throw std::runtime_error("Native system screen is missing the Mincho font option");
+                const auto originalFontPath=engine.activeFontPath;
+                clickSettingValue(*fontChoice);
+                if(engine.uiSettingValues.value("ui.fontFamily",std::string{})!="mincho" || engine.activeFontPath==originalFontPath) throw std::runtime_error("Native font setting did not change the active rendered typeface");
+                { std::ifstream preferences(engine.uiSettingsPath); json saved; preferences >> saved; if(saved.value("ui.fontFamily",std::string{})!="mincho") throw std::runtime_error("Native font selection was not persisted in player preferences"); }
+                const auto defaultFontChoice=std::find_if(systemItems.begin(),systemItems.end(),[](const auto& item){return item.value("action",std::string{})=="setting-value" && item.value("target",std::string{})=="ui.fontFamily" && item.value("value",std::string{})=="default";});
+                if(defaultFontChoice==systemItems.end()) throw std::runtime_error("Native system screen is missing the default font option");
+                engine.activateScreenItem(*defaultFontChoice);
+                if(engine.activeFontPath!=originalFontPath) throw std::runtime_error("Native default font did not restore the project font");
+                const auto resetWindow=std::find_if(systemItems.begin(),systemItems.end(),[](const auto& item){return item.value("action",std::string{})=="reset-window-size";});
+                if(resetWindow==systemItems.end()) throw std::runtime_error("Native system screen is missing the window-size reset action");
+                SDL_SetWindowSize(engine.window,engine.baseWindowWidth-80,engine.baseWindowHeight-60);
+                SDL_SetWindowFullscreen(engine.window,true);
+                engine.activateScreenItem(*resetWindow);
+                int restoredWidth=0,restoredHeight=0; SDL_GetWindowSize(engine.window,&restoredWidth,&restoredHeight);
+                if((SDL_GetWindowFlags(engine.window)&SDL_WINDOW_FULLSCREEN) || restoredWidth!=engine.baseWindowWidth || restoredHeight!=engine.baseWindowHeight) throw std::runtime_error("Native window reset did not restore windowed project dimensions");
+                clickSettingValue(findEffectsValue(false));
+                if(engine.uiSettingValues.value("ui.effects",true)) throw std::runtime_error("Native system mouse click did not select effects off: "+std::to_string(engine.uiSettingValues.value("ui.effects",true)));
+                engine.activateScreenItem(findEffectsValue(true));
+                if(!engine.uiSettingValues.value("ui.effects",false)) throw std::runtime_error("Native system mouse click did not select effects on: "+std::to_string(engine.uiSettingValues.value("ui.effects",false)));
+                engine.activeScreen.clear(); engine.screenHistory.clear();
+                engine.dialogueHistory.emplace_back("語り手", "Native LOG rendering smoke.");
+                engine.activeScreen = "log"; engine.pump();
+                const auto pauseItems = engine.gameScreens.at("screens").at("pause").value("items",json::array());
+                const auto holdItem = std::find_if(pauseItems.begin(),pauseItems.end(),[](const auto& item){return item.value("action",std::string{})=="hold";});
+                const auto nextItem = std::find_if(pauseItems.begin(),pauseItems.end(),[](const auto& item){return item.value("action",std::string{})=="next";});
+                if (holdItem==pauseItems.end() || nextItem==pauseItems.end()) throw std::runtime_error("Native pause screen is missing HOLD or NEXT");
+                engine.activeScreen="pause"; engine.holdActive=false; engine.activateScreenItem(*holdItem);
+                if (!engine.holdActive || !engine.activeScreen.empty()) throw std::runtime_error("Native HOLD did not latch and close the pause screen");
+                engine.next=false;
+                SDL_Event heldKey{}; heldKey.type=SDL_EVENT_KEY_DOWN; heldKey.key.scancode=SDL_SCANCODE_SPACE;
+                if (!SDL_PushEvent(&heldKey)) throw std::runtime_error(SDL_GetError()); engine.pump();
+                if (engine.next) throw std::runtime_error("Native HOLD allowed keyboard advance");
+                SDL_Event heldClick{}; heldClick.type=SDL_EVENT_MOUSE_BUTTON_DOWN; heldClick.button.button=SDL_BUTTON_LEFT; heldClick.button.x=5; heldClick.button.y=5;
+                if (!SDL_PushEvent(&heldClick)) throw std::runtime_error(SDL_GetError()); engine.pump();
+                if (engine.next) throw std::runtime_error("Native HOLD allowed mouse advance");
+                engine.activeScreen="pause"; engine.activateScreenItem(*holdItem);
+                if (engine.holdActive || !engine.activeScreen.empty()) throw std::runtime_error("Native HOLD did not toggle off");
+                engine.next=false; engine.activateScreenItem(*nextItem);
+                if (!engine.next) throw std::runtime_error("Native NEXT did not advance after HOLD was released");
+                engine.activeScreen="pause";
+                const auto pauseTree=engine.currentScreen().value("uiTree",json::array());
+                const auto* pauseVolume=engine.findScreenInputBySetting(pauseTree,"audio.master");
+                if (!pauseVolume || pauseVolume->value("controlSkin",json::object()).value("orientation",std::string{})!="vertical") throw std::runtime_error("Native pause menu is missing its vertical master-volume control");
+                const auto pauseTransform=engine.screenCanvasTransform(); const auto& volumeRect=pauseVolume->at("rect");
+                const float volumeX=pauseTransform.ox+(volumeRect.value("x",0.0f)+volumeRect.value("width",0.0f)/2.0f)*pauseTransform.sx;
+                const float volumeTop=pauseTransform.oy+(volumeRect.value("y",0.0f)+volumeRect.value("height",0.0f)*0.08f)*pauseTransform.sy;
+                const float volumeBottom=pauseTransform.oy+(volumeRect.value("y",0.0f)+volumeRect.value("height",0.0f)*0.92f)*pauseTransform.sy;
+                if (engine.findScreenInput(pauseTree,volumeX,volumeBottom)!=pauseVolume) throw std::runtime_error("Native vertical volume bottom is outside its rendered hit target: "+std::to_string(volumeX)+","+std::to_string(volumeBottom));
+                engine.updateUiSetting("audio.master",0.5f);
+                inputEvent(SDL_EVENT_MOUSE_BUTTON_DOWN,volumeX,volumeTop); inputEvent(SDL_EVENT_MOUSE_BUTTON_UP,volumeX,volumeTop); engine.pump(); engine.pump();
+                if (engine.uiSettingValues.value("audio.master",0.0f)<0.85f) throw std::runtime_error("Native vertical volume top did not map to maximum");
+                engine.updateScreenInput(*pauseVolume,volumeX,volumeBottom);
+                if (engine.uiSettingValues.value("audio.master",1.0f)>0.15f) throw std::runtime_error("Native vertical volume bottom did not map to minimum: "+std::to_string(engine.uiSettingValues.value("audio.master",1.0f)));
+                engine.automated = true;
             } else if ((!engine.automated || mode=="--screen-smoke") && !debug.is_object() && !tdsTitle) engine.runTitleScreen();
             if (tdsTitle) engine.storyActive = true;
             auto queuedLoad = engine.takeQueuedLoad();
@@ -1778,8 +3055,46 @@ int run(const fs::path& packagePath, const std::vector<std::string>& arguments) 
                 runtime.currentSceneName = scene;
                 runtime.currentSourceFile = instruction.value("file", runtime.program.value("sourceFile", std::string{}));
                 runtime.currentLine = instruction.value("line", int64_t(0));
+                if (!debugStatePath.empty() && !scene.empty()) {
+                    static auto lastWrite = std::chrono::steady_clock::time_point{};
+                    static std::string lastFile;
+                    static std::string lastScene;
+                    const auto now = std::chrono::steady_clock::now();
+                    const bool locationChanged = runtime.currentSourceFile != lastFile || scene != lastScene;
+                    if (locationChanged || now - lastWrite >= std::chrono::milliseconds(65)) {
+                        const json state = {{"file", runtime.currentSourceFile}, {"scene", scene}, {"line", runtime.currentLine}};
+                        const auto temporary = debugStatePath.string() + ".tmp";
+                        { std::ofstream output(temporary, std::ios::binary | std::ios::trunc); if (output) { output << state.dump(); output.flush(); } }
+                        std::error_code ignored;
+                        fs::remove(debugStatePath, ignored);
+                        ignored.clear();
+                        fs::rename(temporary, debugStatePath, ignored);
+                        lastWrite = now;
+                        lastFile = runtime.currentSourceFile;
+                        lastScene = scene;
+                    }
+                }
+            };
+            runtime.runtimeStateProvider = [&](const std::string& name, const json& args) -> std::optional<json> {
+                if (name == "runtime.state.ui.dialog_opacity") {
+                    if (!args.empty()) throw std::runtime_error("runtime.state.ui.dialog_opacity expects no arguments");
+                    if (runtime.runtimeDialogOpacityExplicit) return runtime.runtimeDialogOpacity;
+                    return engine.config.contains("dialog.opacity") ? std::stod(engine.config.at("dialog.opacity")) : 1.0;
+                }
+                if (name == "runtime.state.audio.volume") {
+                    if (args.size() != 1 || !args.at(0).is_string()) throw std::runtime_error("runtime.state.audio.volume expects one str argument");
+                    const auto kind = args.at(0).get<std::string>();
+                    if (kind != "bgm" && kind != "se" && kind != "voice") throw std::runtime_error("runtime.state.audio.volume channel must be bgm, se, or voice");
+                    const auto override = runtime.runtimeAudioVolumeOverrides.find(kind);
+                    if (override != runtime.runtimeAudioVolumeOverrides.end()) return override->second;
+                    const auto configured = engine.config.find("audio." + kind + "_volume");
+                    if (configured != engine.config.end()) return std::stod(configured->second);
+                    return kind == "voice" ? 0.5 : 1.0;
+                }
+                return std::nullopt;
             };
             runtime.restorePresentation = [&](const json& state) { engine.restorePresentation(state); };
+            runtime.parallel = [&](const json& batch) { engine.parallel(batch); };
             runtime.command=[&](const std::string& n,const json& a){
                 const auto started=SDL_GetTicks();
                 bool commandSucceeded=true;
@@ -1837,7 +3152,7 @@ int run(const fs::path& packagePath, const std::vector<std::string>& arguments) 
                     const bool blocking=std::find(optionBegin,a.end(),json("blocking"))!=a.end();
                     const bool async=std::find(optionBegin,a.end(),json("async"))!=a.end();
                     const auto playbackMode=type=="bgm"?(crossfade?"crossfade":"instant")
-                        :(blocking?"blocking":async?"async":type=="se"?"nonblocking":"async");
+                        :(blocking?"blocking":async?"async":type=="se"?"nonblocking":type=="video"?"blocking":"async");
                     playbackTimings.push_back({{"type",type},{"mode",playbackMode},{"elapsedMs",SDL_GetTicks()-started}});
                 }
                 if(commandSucceeded && mode=="--smoke" && n=="play" && a.size()>2
@@ -1899,18 +3214,47 @@ int run(const fs::path& packagePath, const std::vector<std::string>& arguments) 
                         && !engine.characters.contains("hero");
                     if(!characterSlotReplacementMatched) throw std::runtime_error("Native slot replacement left multiple characters visible in one position");
                 }
-                if (mode=="--smoke") presentationTrace.push_back({{"command",n},{"state",engine.presentationSnapshot()}});
+                if (mode=="--smoke") {
+                    json traceEntry={{"command",n},{"state",engine.presentationSnapshot()}};
+                    traceEntry["renderedCategories"]=engine.lastRenderedCategories;
+                    if(!engine.visualOnlyKind.empty()) {
+                        traceEntry["visualOnlyKind"]=engine.visualOnlyKind;
+                        traceEntry["visualOnlyId"]=engine.visualOnlyId;
+                    }
+                    presentationTrace.push_back(std::move(traceEntry));
+                }
             };
-            runtime.choice=[&](const std::string& p,const std::vector<std::string>& labels){engine.text=p;engine.options=labels;engine.choiceScroll=0;engine.hovered=labels.empty()?-1:0;engine.selection=engine.automated?0:-1;engine.pump();while(engine.selection<0)engine.pump();auto selected=engine.selection;engine.options.clear();engine.hovered=-1;return size_t(selected);};
+            runtime.choice=[&](const std::string& p,const std::vector<std::string>& labels){engine.text=p;engine.options=labels;engine.choiceScroll=0;engine.hovered=labels.empty()?-1:0;engine.selection=engine.automated?0:-1;engine.pump();while(engine.selection<0)engine.pump();auto selected=engine.selection;if(engine.uiSettingValues.value("ui.autoAfterChoice",true))engine.autoPlayActive=false;if(engine.uiSettingValues.value("ui.skipAfterChoice",true))engine.skipActive=false;engine.options.clear();engine.hovered=-1;return size_t(selected);};
             try {
-                runtime.run(program, debug);
-                while(engine.video)engine.pump();
+                if (mode == "--screen-control-smoke") {
+                    engine.updateUiSetting("ui.shortcut.F1","save"); engine.updateUiSetting("ui.shortcut.F12","history");
+                    std::cout << json{{"uiSettings",engine.uiSettingValues}}.dump() << "\n";
+                    return 0;
+                }
+                const bool returnToOpening = !engine.automated && !debug.is_object() && !tdsTitle;
+                for (;;) {
+                    runtime.run(program, debug);
+                    while(engine.video)engine.pump();
+                    if (!returnToOpening) break;
+                    engine.stopBgm();
+                    engine.video.reset(); engine.videoAsset.clear();
+                    engine.characters.clear(); engine.images.clear(); engine.nextVisualOrder = 0;
+                    engine.background = nullptr; engine.backgroundAsset.clear();
+                    engine.backgroundOffsetX = engine.backgroundOffsetY = 0;
+                    engine.speaker.clear(); engine.text.clear(); engine.options.clear();
+                    engine.selection = engine.hovered = -1; engine.storyActive = false;
+                    runtime.globals = json::object(); runtime.locals.clear(); runtime.readonlyLocals.clear();
+                    runtime.readonlyGlobals.clear(); runtime.loopScopes.clear(); runtime.pendingLoad = nullptr;
+                    runtime.runtimeCharacterSlots.clear();
+                    engine.titleStarted = false;
+                    engine.runTitleScreen();
+                    debug = nullptr;
+                }
                 if (mode == "--smoke") {
                     for (int attempt = 0; attempt < 25 && !engine.audio.empty(); ++attempt) { engine.cleanupStoppedAudio(); SDL_Delay(4); }
                     if (!engine.audio.empty()) throw std::runtime_error("Audio tracks did not release after all blocking and cleared playback ended");
-                    std::cout << json{{"playbackTimings",playbackTimings},{"presentationTrace",presentationTrace},{"animationMidpoints",engine.animationMidpoints},{"dialogue",{{"speaker",engine.speaker},{"text",engine.text}}},{"failedCrossfadeRetained",failedCrossfadeRetained},{"failedInstantBgmRetained",failedInstantBgmRetained},{"failedVideoReplacementRetained",failedVideoReplacementRetained},{"failedSpriteReplacementRetained",failedSpriteReplacementRetained},{"failedBackgroundReplacementRetained",failedBackgroundReplacementRetained},{"failedSePlaybackRejected",failedSePlaybackRejected},{"failedVoicePlaybackRejected",failedVoicePlaybackRejected},{"failedIncomingBgmRetiredOutgoing",failedIncomingBgmRetiredOutgoing},{"repeatedImageRaised",repeatedImageRaised},{"completedBgmCrossfadeAfterBlockingWait",completedBgmCrossfadeAfterBlockingWait},{"relativeCharacterMoveMatched",relativeCharacterMoveMatched},{"relativeBackgroundMoveMatched",relativeBackgroundMoveMatched},{"characterSlotReplacementMatched",characterSlotReplacementMatched},{"bgmCrossfadeCompletedDuringBlockingVoice",bgmCrossfadeCompletedDuringBlockingVoice}}.dump() << "\n";
+                    std::cout << json{{"playbackTimings",playbackTimings},{"presentationTrace",presentationTrace},{"animationMidpoints",engine.animationMidpoints},{"animatedImageFrameChanges",engine.animatedFrameChanges},{"animatedFiniteAnimationsCompleted",engine.animatedFiniteAnimationsCompleted},{"animatedGifRepeatCounts",engine.animatedGifRepeatCounts},{"dialogue",{{"speaker",engine.speaker},{"text",engine.text}}},{"failedCrossfadeRetained",failedCrossfadeRetained},{"failedInstantBgmRetained",failedInstantBgmRetained},{"failedVideoReplacementRetained",failedVideoReplacementRetained},{"failedSpriteReplacementRetained",failedSpriteReplacementRetained},{"failedBackgroundReplacementRetained",failedBackgroundReplacementRetained},{"failedSePlaybackRejected",failedSePlaybackRejected},{"failedVoicePlaybackRejected",failedVoicePlaybackRejected},{"failedIncomingBgmRetiredOutgoing",failedIncomingBgmRetiredOutgoing},{"repeatedImageRaised",repeatedImageRaised},{"completedBgmCrossfadeAfterBlockingWait",completedBgmCrossfadeAfterBlockingWait},{"relativeCharacterMoveMatched",relativeCharacterMoveMatched},{"relativeBackgroundMoveMatched",relativeBackgroundMoveMatched},{"characterSlotReplacementMatched",characterSlotReplacementMatched},{"bgmCrossfadeCompletedDuringBlockingVoice",bgmCrossfadeCompletedDuringBlockingVoice}}.dump() << "\n";
                 }
-                if (mode == "--screen-control-smoke") std::cout << json{{"uiSettings",engine.uiSettingValues}}.dump() << "\n";
             }
             catch(const Quit&){}
         }

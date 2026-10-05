@@ -518,6 +518,23 @@ window.addEventListener('message', (event) => {
       updateFlowTestPanel();
     }
   }
+  if (event.data?.type === 'scene-flow:debug-play-result') {
+    const message = document.querySelector('#flow-test-message');
+    const stop = document.querySelector('#flow-test-stop');
+    message.textContent = String(event.data.message || '');
+    message.dataset.state = event.data.ok ? 'ok' : 'error';
+    stop.disabled = !event.data.active;
+    const location = document.querySelector('#flow-test-location');
+    if (location) { location.hidden = true; location.textContent = ''; }
+  }
+  if (event.data?.type === 'scene-flow:debug-location') {
+    const location = document.querySelector('#flow-test-location');
+    const current = event.data.location;
+    if (location && current && typeof current.file === 'string' && typeof current.scene === 'string' && Number.isSafeInteger(current.line)) {
+      location.textContent = `実行中: ${current.file}:${current.line}  (scene ${current.scene})`;
+      location.hidden = false;
+    }
+  }
 });
 fetch('/api/project', { cache: 'no-store' }).then((response) => response.ok ? response.json() : {}).catch(() => ({})).then((project) => {
   flowProjectRoot = project.projectRoot || '';
@@ -578,7 +595,7 @@ filterPanel.innerHTML = '<label>Filter <input id="flow-search" type="search" pla
 document.querySelector('.controls h1')?.after(filterPanel);
 const flowTestPanel = document.createElement('section');
 flowTestPanel.className = 'flow-test-panel';
-flowTestPanel.innerHTML = '<h2>ここからテスト</h2><div id="flow-test-file" class="flow-test-file">ノードを選択</div><label class="flow-test-field">開始scene<select id="flow-test-scene"></select></label><label class="flow-test-field">開始行<span class="flow-test-line-controls"><input id="flow-test-line" type="text" inputmode="numeric" autocomplete="off"><button id="flow-test-pick-line" type="button" aria-label="編集画面で開始行を選ぶ" title="編集画面で開始行を選ぶ">&gt;</button></span></label><div class="flow-test-subtitle">実行時点の変数 <span>確定値は自動適用</span></div><div id="flow-test-vars"></div><button id="flow-test-run" type="button">ここから再生</button><div id="flow-test-message" role="status"></div>';
+flowTestPanel.innerHTML = '<h2>ここからテスト</h2><div class="flow-test-engine">ネイティブプレイヤーを使用</div><div id="flow-test-file" class="flow-test-file">ノードを選択</div><label class="flow-test-field">開始scene<select id="flow-test-scene"></select></label><label class="flow-test-field">開始行<span class="flow-test-line-controls"><input id="flow-test-line" type="text" inputmode="numeric" autocomplete="off"><button id="flow-test-pick-line" type="button" aria-label="編集画面で開始行を選ぶ" title="編集画面で開始行を選ぶ">&gt;</button></span></label><div class="flow-test-subtitle">実行時点の変数 <span>確定値は自動適用</span></div><div id="flow-test-vars"></div><div class="flow-test-actions"><button id="flow-test-run" type="button">ここから再生</button><button id="flow-test-stop" type="button" disabled>停止</button></div><div id="flow-test-location" hidden></div><div id="flow-test-message" role="status"></div>';
 filterPanel.after(flowTestPanel);
 const flowTestScene = document.querySelector('#flow-test-scene');
 const flowTestLine = document.querySelector('#flow-test-line');
@@ -870,6 +887,14 @@ document.querySelector('#flow-test-run').addEventListener('click', () => {
   }
   if (!sendToEditor({ type: 'scene-flow:debug-play', file: node.id, scene: scene?.name, line, variables })) { message.textContent = '編集画面内のシーンフローから実行してください'; return; }
   message.textContent = '再生を準備しています…';
+  message.dataset.state = '';
+});
+document.querySelector('#flow-test-stop').addEventListener('click', () => {
+  const message = document.querySelector('#flow-test-message');
+  if (!sendToEditor({ type: 'scene-flow:debug-stop' })) { message.textContent = '編集画面内のシーンフローから停止してください'; return; }
+  message.textContent = '停止しています…';
+  message.dataset.state = '';
+  document.querySelector('#flow-test-stop').disabled = true;
 });
 document.querySelector('#flow-search')?.addEventListener('input', (event) => { flowFilter.query = event.target.value; if (data) { render(data); fitFlowGraph(); } });
 document.querySelector('#show-includes')?.addEventListener('change', (event) => { flowFilter.showIncludes = event.target.checked; if (data) { render(data); fitFlowGraph(); } });

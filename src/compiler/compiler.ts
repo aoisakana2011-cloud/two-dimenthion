@@ -20,6 +20,7 @@ export type Instruction = (
   | { op: 'set'; target: CompiledExpr; value: CompiledExpr }
   | { op: 'unset'; target: CompiledExpr }
   | { op: 'command'; name: string; args: CompiledExpr[] }
+  | { op: 'parallel'; body: Instruction[] }
   | { op: 'if'; condition: CompiledExpr; body: Instruction[]; elseIf: Array<{ condition: CompiledExpr; body: Instruction[] }>; otherwise: Instruction[] }
   | { op: 'for'; name: string; start: CompiledExpr; stop: CompiledExpr; step: CompiledExpr; body: Instruction[] }
   | { op: 'forEach'; name: string; iterable: CompiledExpr; body: Instruction[] }
@@ -716,6 +717,7 @@ function functionWrites(functions: Instruction[], globalNames: Set<string>): Map
       if (instruction.op === 'set') { visitExpressionCalls(instruction.target, recordCall); visitExpressionCalls(instruction.value, recordCall); }
       if (instruction.op === 'unset') visitExpressionCalls(instruction.target, recordCall);
       if (instruction.op === 'command') instruction.args.forEach((argument) => visitExpressionCalls(argument, recordCall));
+      if (instruction.op === 'parallel') walk(instruction.body, writes, invoked, new Set(locals));
       if (instruction.op === 'return') visitExpressionCalls(instruction.value, recordCall);
       if (instruction.op === 'if') {
         visitExpressionCalls(instruction.condition, recordCall);
@@ -788,6 +790,7 @@ function optimizeInstructions(
       if (item.op === 'set') { invalidateExpression(item.target); invalidateExpression(item.value); }
       if (item.op === 'unset') invalidateExpression(item.target);
       if (item.op === 'command') item.args.forEach(invalidateExpression);
+      if (item.op === 'parallel') invalidateAssigned(item.body);
       if (item.op === 'return') invalidateExpression(item.value);
       if (item.op === 'if') { invalidateExpression(item.condition); invalidateAssigned(item.body); item.elseIf.forEach((branch) => { invalidateExpression(branch.condition); invalidateAssigned(branch.body); }); invalidateAssigned(item.otherwise); }
       if (item.op === 'for') { invalidateExpression(item.start); invalidateExpression(item.stop); invalidateExpression(item.step); invalidateAssigned(item.body); }
@@ -1239,6 +1242,7 @@ class Compiler {
       case 'set': return { op: 'set', target: this.assignable(statement.target), value: this.expr(statement.value) };
       case 'unset': return { op: 'unset', target: this.assignable(statement.target) };
       case 'command': return { op: 'command', name: statement.name, args: statement.args.map((v) => this.expr(v)) };
+      case 'parallel': return { op: 'parallel', body: this.statements(statement.body) };
       case 'if': return {
         op: 'if',
         condition: this.expr(statement.condition.expression),

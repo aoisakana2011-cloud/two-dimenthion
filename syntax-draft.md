@@ -171,7 +171,7 @@ include "std/motion/walk.tds" as walk
 - include先の `struct` はプロジェクト統合時に型宣言として取り込まれ、include元のグローバル宣言・関数シグネチャ・関数本体から参照できる。循環includeや同名structはエラーになる。
 - `std/` はエディター同梱の読み取り専用標準ライブラリ用予約パスで、作品内の `scenario_dir/std/` より優先される。`std/math.tds`、`std/motion/walk.tds`、`std/motion/effects.tds`、`std/text.tds`、`std/collections.tds` をincludeできる。
 
-例: `include "std/math.tds" as math` の後に `math.sin(angle)`、`include "std/motion/walk.tds" as walk` の後に `walk.walk_bob(6.0, progress)` と書く。`std/motion/effects.tds` は `shake`、`breathe`、`hop`、`drift`、`std/text.tds` は単語分割と結合、`std/collections.tds` は文字列リストの検索・重複除去・要素除去を提供する。引数と単位の詳細は [`std/README.md`](std/README.md) を参照。
+例: `include "std/math.tds" as math` の後に `math.sin(angle)`、`include "std/motion/walk.tds" as walk` の後に `walk.character("ayase", 120.0, 3, 2.0, 6.0)` または `walk.walk_x(120.0, progress)` と書く。`walk.character` の引数はキャラクター名、最終横移動量(px)、歩行周期数、時間(秒)、上下揺れ幅(px)。表示中のキャラクターだけを動かし、静的解析で存在を証明できない呼び出しにはIDE警告を出す。`std/motion/effects.tds` は `shake`、`breathe`、`hop`、`drift`、`std/text.tds` は単語分割と結合、`std/collections.tds` は文字列リストの検索・重複除去・要素除去を提供する。引数と単位の詳細は [`std/README.md`](std/README.md) を参照。
 
 別ファイルへの遷移は `goto` で行う。
 
@@ -208,6 +208,8 @@ asset image logo = "asset/image/logo.png"
 | `video` | 動画 | `.mp4`, `.webm` |
 
 パスは相対パスに限る。ドライブ名から始まるパス、先頭が `/` または `\\` のパス、`..` を含むパスは禁止される。型検査では拡張子を、プロジェクト検証ではファイルの存在とアセットルート内に収まることを確認する。
+
+GIF は Browser ではブラウザーの標準再生、Native ではフレーム更新で表示する。両方とも埋め込みのループ回数を尊重し、ループ指定がなければ一度だけ、0 回なら無限、正数なら初回の後に指定回数だけ繰り返す。
 
 音声の音量は `0.0`（無音）〜`1.0`（元の音量）で指定する。`bgm` / `se` / `voice` のアセット宣言には任意で基準音量を付けられる。
 
@@ -258,8 +260,10 @@ say ayase "私の表示名は name フィールドから取得されます"
 ポーズは必ず `pose` を付けて宣言する。
 
 ```text
-pose smile = "asset/char/ayase/smile.png"
+pose smile = "asset/char/ayase/smile.png" y_offset = -20
 ```
+
+構文は `pose <pose-name> = "<asset-path>" [y_offset = <signed-int-px>]`。`y_offset` は省略可能で、画像ごとの基本Y位置を整数pxで指定する。指定範囲は `-1000000`〜`1000000` で、既定値は0。正の値は下、負の値は上へ動く。`show` のY指定はこの値に加算する。
 
 ポーズ名は同じキャラクター内で重複できない。パスには `char` と同じ画像拡張子制約が適用される。ポーズは通常の状態フィールドではないため、`ayase.smile` を一般式として読み書きすることはできない。`show` の中ではキャラクターとポーズを表す専用参照として解釈される。
 
@@ -668,10 +672,11 @@ hide ayase fade 300
 
 ```tds
 show image logo center
+show image logo center --only
 clear image logo
 ```
 
-一般画像の `show image` は画像IDと位置を必須とし、現在は `fade` を受け付けない。
+一般画像の `show image` は画像IDと位置を必須とし、現在は `fade` を受け付けない。`--only` を付けると、その画像だけをシーン素材として表示する（会話UIは維持）。通常の表示命令、hide、clearで解除される。画像IDの代わりに、アセット登録された画像のファイル名も指定できる。
 
 ### 13.4 音声と動画
 
@@ -685,14 +690,19 @@ play se door volume 0.25
 play video opening blocking
 play video opening async
 play video opening
+play video opening --only
+play video opening async --only
+play video "op.mp4" --only
 ```
 
-- `se`、`voice`、`bgm` は種別と一致するアセットIDを取る。
+- `se`、`voice`、`bgm` は種別と一致するアセットIDを取る。動画はアセットIDまたは登録済み動画のファイル名を指定できる（例: `play video "op.mp4" --only`）。
 - 音声再生命令には `volume <float>` を付けられる。この指定はその再生だけに適用し、`crossfade <int>` はBGMだけに指定できる。
 - `say narrator "一時的に薄い会話欄" opacity 0.6` はその台詞の表示中だけ会話欄の背景面を変更し、次の台詞で通常の設定へ戻す。文字自体の透明度は変更しない。
-- `voice` と動画のモードは `blocking` または `async`。Voiceは省略時 `async`。
+- `voice` は `blocking` または `async` を指定でき、省略時 `async`。動画は省略時 `blocking` で、`async` を明記した場合だけ物語と並行して再生する。
 - `blocking` は終了まで待つ。
-- `async` またはモード省略は、メディアと並行して次の命令へ進む。
+- 動画の `--only` は再生中、背景・立ち絵・一般画像・会話UI・プレイヤー操作UIを隠し、動画だけを表示する。動画終了時に自動解除される。asyncでも描画は動画専有となり、次の表示命令で解除される。
+- `bg <id> --only` は背景だけ、`show <character>.<pose> <position> --only` はその立ち絵だけをシーン素材として表示する。背景／キャラクター／一般画像の `--only` は後続の通常表示命令、hide、clearで解除される。
+- `async` はメディアと並行して次の命令へ進む。動画がblocking中は物語の入力を受け付けず、終了後に次の命令へ進む。
 
 再生機の `setting/player-ui.json` では `dialog.opacity` と `audio.bgm` / `audio.se` / `audio.voice` を既定値として設定する。どれも `0.0`〜`1.0`。未指定のチャンネルは1.0、voiceのみ0.5。音量の優先順位は「play行の一時指定 → シナリオのvolume設定 → アセット宣言のvolume → settingのチャンネル既定値」。`dialog.opacity` のsetting値が会話欄の初期値で、TDSの `dialog opacity` が再生中の基準を上書きする。
 
@@ -832,6 +842,13 @@ scene main {
 
 - `runtime.state.characters.exists(id: str) -> bool` は、キャラクター `id` が現在いずれかの配置枠に表示中なら `true`。
 - `runtime.state.characters.list() -> list[str]` は、表示中のキャラクターIDを重複なし・ID昇順で返す。返すlistは呼び出しごとの値で、実行状態そのものを変更しない。
+- `runtime.state.characters.position(id: str) -> str` は、表示中の配置枠（`far_left` / `left` / `center` / `right` / `far_right`）を返す。非表示なら空文字列を返す。戻り値は呼び出し時点の状態のスナップショット。
+- `runtime.state.background.exists() -> bool` / `runtime.state.background.current() -> str` は、現在の背景の有無とasset IDを返す。背景がない場合、`current()`は空文字列。
+- `runtime.state.audio.bgm_exists() -> bool` / `runtime.state.audio.current_bgm() -> str` は、現在のBGM状態とasset IDを返す。BGMがない場合、`current_bgm()`は空文字列。いずれも呼び出し時点の状態を読むだけで、状態を変更しない。
+- `runtime.state.execution.current_scene() -> str` / `current_file() -> str` / `current_line() -> int` は、現在実行中のシーン名・ソースファイル・行番号を返す。シーン外の初期化中は空文字列・空文字列・0。値は呼び出しを含む命令の位置である。
+- `runtime.state.audio.volume(channel: str) -> float` は `bgm` / `se` / `voice` のシナリオ側チャンネル音量を返す。`volume` 命令のoverrideがあればそれを、なければ作品の初期値を返す。ユーザーのマスター音量・ミュート、個別素材のvolumeは含めない。
+- `runtime.state.ui.dialog_opacity() -> float` は `dialog opacity` が設定する通常の文字欄不透明度を返す。一行限定の `say ... opacity` とユーザー側UI倍率は含めない。
+- `runtime.state.variables.exists(name: str) -> bool` は現在の実行フレームから参照可能な変数かを返す。`names() -> list[str]` はその時点で参照可能なglobal/local名を重複なし・昇順で返す。後続の未実行declareは含まず、値の型や値本体を動的に取り出すAPIではない。
 - キャラクター宣言済みかどうかではなく、現在表示中かどうかを判定する。未表示の宣言済みキャラクターは `exists` が `false`。
 - `show` による同一枠の置換、`hide` 完了、テスト再生時の復元状態を反映する。Browser版とNative版で同じ結果になる。
 - 関数内やincludeしたTDSモジュールからも呼び出せる。include aliasによる名前変換の対象ではない。
@@ -938,18 +955,23 @@ scene chapter1 {
 | 宣言 | `dict[T] <name> = <dict>` / `list[T] <name> = <list>` | `T` は基本型。辞書キーは常に `str` |
 | 宣言 | `const <type> <name> = <expr>` | 以後の `set` / `unset` は不可 |
 | 宣言 | `global <declaration>` | ファイルのトップレベルだけ |
-| 更新 | `set <target> = <expr>` | target は変数、辞書要素、struct／キャラクターフィールド |
+| キャラクター | `pose <pose-name> = "<asset-path>" [y_offset = <signed-int-px>]` | `character` ブロック内。y_offsetは省略時0、整数pxで -1000000〜1000000。正は下、負は上 |
+| 更新 | `set <target> = <expr>` | target は変数、辞書要素／リスト要素、struct／キャラクターフィールド |
 | 更新 | `unset <dict>[<str-expr>]` | 辞書要素だけ |
 | 会話 | `say [<speaker>] <str-expr> [opacity <float>]` | speaker はキャラクター、`narrator`、`none`。opacityはこの台詞だけ |
-| 背景 | `bg <bg-id>` / `bgm <bgm-id>` | 種別が一致するアセットID |
-| 表示 | `show <character>.<pose> <far_left\|left\|center\|right\|far_right> [x±<px>] [y±<px>] [fade <ms>]` | 5スロットの立ち絵表示。x+は右、y+は下 |
+| 背景 | `bg <bg-id> [--layer <0..7.999>] [--only]` / `bgm <bgm-id>` | 種別が一致するアセットID |
+| 表示 | `show <character>.<pose> <far_left\|left\|center\|right\|far_right> [x±<px>] [y±<px>] [fade <ms>] [--layer <0..7.999>] [--only]` | 5スロットの立ち絵表示。x+は右、y+は下 |
 | 表示 | `hide <character> [fade <ms>]` | キャラクターを非表示 |
 | 移動 | `move character <id> by [x±<px>] [y±<px>] [over <ms>]` / `move bg by [x±<px>] [y±<px>] [over <ms>]` | x/yのいずれか必須。現在位置からの差分移動。時間付きはblocking |
-| 表示 | `show image <image-id> <far_left\|left\|center\|right\|far_right>` / `clear image <image-id>` | 一般画像。fade不可 |
-| 再生 | `play <se\|voice\|bgm> <id> [volume <float>] [crossfade <int>] [blocking\|async]` | 音量0.0〜1.0。crossfadeはbgmのみ |
+| 表示 | `show image <image-id> <far_left\|left\|center\|right\|far_right> [--layer <0..7.999>] [--only]` / `clear image <image-id>` | 一般画像。fade不可。--onlyは画像だけを表示 |
+| 再生 | `play se <id> [volume <float>]` / `play voice <id> [volume <float>] [character <id>] [blocking\|async]` / `play bgm <id> [volume <float>] [crossfade <int>]` | blocking／asyncはvoiceとvideoのみ。音量0.0〜1.0 |
 | 音量 | `volume <bgm\|se\|voice> <float>` | チャンネルの以後の基準音量。0.0〜1.0 |
 | UI | `dialog opacity <float>` | 会話欄の背景面の以後の不透明度。0.0〜1.0 |
-| 再生 | `play video <id> [blocking\|async]` | 省略時は `async` |
+| UI | `dialog visible <bool>` | 会話欄と選択肢の表示／非表示 |
+| カメラ | `camera zoom <float> at <x:int> <y:int> [over <ms>]` / `camera reset [over <ms>]` | ズームは0.1〜8.0。焦点座標は論理画面px |
+| Layer | `layer <background|video|character|image|fog|dialogue|controls|menu> <0..7.999>` / `[--layer <0..7.999>]` on `bg`, `show`, and `play video` | Category default or per-element override; 0.001 steps, higher values draw in front.
+| 再生 | `play video <id> [blocking\|async] [opacity <float>] [--layer <0..7.999>] [--only]` | 省略時は `blocking`。並行再生は `async` を明記。モードはどちらか一方。--onlyは動画終了まで動画だけを表示 |
+| 演出 | `parallel { <timed-visual-command> ... }` | 時間付きの背景切替、立ち絵fade、hide fade、move、camera、effect fadeを同時開始し、最長の完了を待つ |
 | 演出 | `wait <int-expr>` / `effect fade <black\|white> [<int-expr>]` | 時間はミリ秒 |
 | 分岐 | `if <condition> { ... } [elif <condition> { ... }] [else { ... }]` | condition は `bool` 式 |
 | 選択 | `choice [<str-expr>] { <str-expr> { ... } ... }` | 1選択肢以上。関数内では不可 |
@@ -1025,13 +1047,13 @@ scene ending {
 
 ```text
 scene asset character struct pose include
-int float str dict none global
+int float str bool dict list none global true false
 set unset
-say bg bgm char show at hide image clear play effect wait
+say bg bgm char show at hide image clear play effect wait camera dialog
 if elif else and or not
 choice for from to step while
 fn return goto
-async blocking voice video
+async blocking voice video parallel
 ```
 
 `const` と `let` はこの一覧とは別に、文頭で特別に解釈される。どちらも識別子には使用しない。`let` は常にエラーである。

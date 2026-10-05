@@ -78,6 +78,7 @@ public:
             origin = stream->start_time == AV_NOPTS_VALUE ? 0 : stream->start_time * av_q2d(stream->time_base);
             texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, video->width, video->height);
             if (!texture) throw std::runtime_error(SDL_GetError());
+            if (!SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND)) throw std::runtime_error(SDL_GetError());
             scaler = sws_getContext(video->width, video->height, video->pix_fmt, video->width, video->height, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
             if (!scaler) throw std::runtime_error("Cannot create video scaler");
             pixels.resize(static_cast<size_t>(video->width) * video->height * 4);

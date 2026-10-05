@@ -34,6 +34,7 @@ export type Statement = NodeLocation & (
   | { kind: 'set'; target: Assignable; value: Expr }
   | { kind: 'unset'; target: Assignable }
   | { kind: 'command'; name: string; args: Expr[] }
+  | { kind: 'parallel'; body: Statement[] }
   | { kind: 'if'; condition: Condition; body: Statement[]; elseIf: Array<{ condition: Condition; body: Statement[] }>; otherwise: Statement[] }
   | { kind: 'for'; name: string; nameLine?: number; nameColumn?: number; start: Expr; stop: Expr; step: Expr; body: Statement[] }
   | { kind: 'forEach'; name: string; nameLine?: number; nameColumn?: number; iterable: Expr; body: Statement[] }
@@ -50,7 +51,7 @@ export interface Character extends NodeLocation {
   kind: 'character';
   name: string;
   properties: CharacterProperty[];
-  poses: Array<{ name: string; path: string; line?: number; column?: number }>;
+  poses: Array<{ name: string; path: string; yOffset?: number; line?: number; column?: number }>;
 }
 export interface ExternalCharacter { poses: Set<string>; fields: Record<string, PrimitiveType>; definition?: Character; }
 export interface StructDef extends NodeLocation { kind: 'struct'; name: string; fields: Record<string, PrimitiveType>; fieldLocations?: Record<string, NodeLocation>; }

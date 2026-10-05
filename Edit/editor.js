@@ -15,6 +15,17 @@ const minimap = document.querySelector('#minimap');
 const minimapContent = document.querySelector('#minimap-content');
 const minimapViewport = document.querySelector('#minimap-viewport');
 const editorTabs = document.querySelector('#editor-tabs');
+const assetDocumentViewer = document.querySelector('#asset-document-viewer');
+const assetDocumentKind = document.querySelector('#asset-document-kind');
+const assetDocumentPath = document.querySelector('#asset-document-path');
+const assetDocumentMetadataFields = Object.fromEntries(
+  [...document.querySelectorAll('#asset-document-metadata [data-asset-meta]')]
+    .map((field) => [field.dataset.assetMeta, field]),
+);
+const assetDocumentImage = document.querySelector('#asset-document-image');
+const assetDocumentVideo = document.querySelector('#asset-document-video');
+const assetDocumentAudio = document.querySelector('#asset-document-audio');
+const assetDocumentError = document.querySelector('#asset-document-error');
 let flowStartPreviewFile = '';
 let flowStartPreviewLine = 0;
 let flowLinePicker = null;
@@ -43,8 +54,18 @@ document.addEventListener('click', (event) => { if (!event.target.closest('.menu
 let currentProjectRoot = '';
 let activeSettingDocument = '';
 let activeStandardLibraryDocument = '';
-let debugExecutingFile = '';
-let debugExecutingLine = 0;
+let activeAssetDocument = '';
+let flowNativeDebugSession = '';
+let flowNativeDebugPollTimer = 0;
+let flowNativeDebugPollBusy = false;
+let flowNativeDebugLocationSequence = 0;
+let flowNativeDebugLastLocationKey = '';
+let flowNativeDebugActiveLoopKey = '';
+let flowNativeDebugExecutionFile = '';
+let flowNativeDebugExecutionLine = 0;
+let flowNativeDebugLoopSourceFile = '';
+let flowNativeDebugLoopSource = '';
+let flowNativeDebugLoopRanges = [];
 let scenarioDirectory = 'senario';
 let catalog = {};
 let suggestions = [];
@@ -82,6 +103,18 @@ let restoringHistory = false;
 const openTabs = [];
 const splitTabs = [];
 const fileLabel = (name) => String(name || '').replace(/[\\/]$/, '').split(/[\\/]/).pop();
+const assetMediaKind = (name) => {
+  const extension = String(name || '').split('.').at(-1).toLowerCase();
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(extension)) return 'image';
+  if (['wav', 'ogg', 'mp3', 'flac'].includes(extension)) return 'audio';
+  if (['mp4', 'webm'].includes(extension)) return 'video';
+  return '';
+};
+function assetDocumentUrl(name) {
+  const normalized = String(name || '').replaceAll('\\', '/');
+  if (!normalized.startsWith('asset/') || normalized.split('/').some(part => !part || part === '.' || part === '..')) throw Error('作品内のassetファイルを指定してください');
+  return `/${normalized.split('/').map(encodeURIComponent).join('/')}`;
+}
 const valueTypeLabel = (type) => typeof type === 'string' ? type : type?.kind === 'struct' ? type.name || 'struct' : type?.kind === 'dict' || type?.kind === 'list' ? `${type.kind}[${type.value}]` : type?.kind || '不明';
 function scenarioRelativePath(name) {
   const root = String(scenarioDirectory || '').replaceAll('\\', '/').replace(/\/+$/, '');
@@ -218,7 +251,7 @@ function highlightSource(source) {
   }
 
   const significant = tokens.filter((token) => token.kind !== 'space' && token.kind !== 'comment');
-  const keywords = new Set(['scene', 'asset', 'character', 'pose', 'struct', 'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'clear', 'play', 'wait', 'effect', 'const', 'global', 'set', 'unset', 'if', 'elif', 'else', 'and', 'or', 'not', 'for', 'from', 'to', 'step', 'while', 'choice', 'fn', 'return', 'goto', 'include']);
+  const keywords = new Set(['scene', 'asset', 'character', 'pose', 'struct', 'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'clear', 'play', 'wait', 'effect', 'const', 'global', 'set', 'unset', 'if', 'elif', 'else', 'and', 'or', 'not', 'for', 'from', 'to', 'step', 'while', 'parallel', 'choice', 'fn', 'return', 'goto', 'include']);
   const types = new Set(['int', 'float', 'str', 'none', 'dict']);
   const builtins = new Set(['narrator', 'left', 'center', 'right', 'far_left', 'far_right', 'fade', 'black', 'white', 'async', 'blocking', 'voice', 'video', 'image', 'se']);
   for (const token of significant) {
@@ -289,7 +322,7 @@ function highlightSource(source) {
 }
 function updateHighlight() { if (!highlight) return; highlight.innerHTML = highlightSource(editor.value); }
 
-const KEYWORDS = ['scene', 'asset', 'character', 'pose', 'struct', 'int', 'float', 'str', 'dict', 'const', 'global', 'say', 'bg', 'bgm', 'show', 'hide', 'clear', 'play', 'wait', 'effect', 'set', 'unset', 'if', 'elif', 'else', 'and', 'or', 'not', 'for', 'while', 'choice', 'fn', 'return', 'goto', 'include'];
+const KEYWORDS = ['scene', 'asset', 'character', 'pose', 'struct', 'int', 'float', 'str', 'dict', 'const', 'global', 'say', 'bg', 'bgm', 'show', 'hide', 'clear', 'play', 'wait', 'effect', 'set', 'unset', 'if', 'elif', 'else', 'and', 'or', 'not', 'for', 'while', 'parallel', 'choice', 'fn', 'return', 'goto', 'include'];
 
 function setStatus(message, kind = '') {
   if (kind !== 'error') document.querySelector('#runtime-error')?.remove();
@@ -521,7 +554,12 @@ async function refreshFiles() {
         openButton.title = '設定・規約ファイルを編集';
         openButton.onclick = () => openSettingFile(file.path).catch(showError);
       }
-      if (file.path.startsWith('asset/')) { openButton.title = '?????'; openButton.onclick = () => window.open('/' + file.path.split('/').map(encodeURIComponent).join('/'), '_blank', 'noopener'); }
+      if (file.path.startsWith('asset/')) {
+        openButton.title = assetMediaKind(file.path) ? 'クリック: エディター内で素材を開く' : '右クリック: ファイル操作';
+        openButton.onclick = () => assetMediaKind(file.path)
+          ? openAssetDocument(file.path).catch(showError)
+          : setStatus('この形式はエディター内プレビューに対応していません', 'warning');
+      }
       item.append(openButton);
       parent.append(item);
     });
@@ -608,7 +646,8 @@ function showFileContextMenu(event, filePath) {
     addAction('ファイル情報を表示', () => showFileInfo(filePath).catch(showError));
     separator();
   } else if (isAsset) {
-    addAction('素材をプレビュー', () => window.open('/' + filePath.split('/').map(encodeURIComponent).join('/'), '_blank', 'noopener'));
+    const mediaKind = assetMediaKind(filePath);
+    if (mediaKind) addAction(mediaKind === 'image' ? '画像をエディターで開く' : 'メディアをエディターで開く', () => openAssetDocument(filePath).catch(showError));
     separator();
   }
   addAction('相対パスをコピー', () => copyText(filePath).catch(showError));
@@ -1724,15 +1763,173 @@ function acceptSuggestion() {
   return true;
 }
 
+function clearAssetDocumentView() {
+  activeAssetDocument = '';
+  document.documentElement.classList.remove('asset-document-open');
+  document.querySelector('.editor-group')?.classList.remove('image-document-open');
+  if (assetDocumentViewer) assetDocumentViewer.hidden = true;
+  if (assetDocumentImage) { assetDocumentImage.hidden = true; assetDocumentImage.removeAttribute('src'); }
+  if (assetDocumentVideo) { assetDocumentVideo.pause(); assetDocumentVideo.hidden = true; assetDocumentVideo.removeAttribute('src'); assetDocumentVideo.load(); }
+  if (assetDocumentAudio) { assetDocumentAudio.pause(); assetDocumentAudio.hidden = true; assetDocumentAudio.removeAttribute('src'); assetDocumentAudio.load(); }
+  resetAssetDocumentMetadata();
+  if (assetDocumentError) { assetDocumentError.hidden = true; assetDocumentError.textContent = ''; }
+}
+
+function setAssetDocumentMetadata(field, value) {
+  const target = assetDocumentMetadataFields[field];
+  if (!target) return;
+  target.textContent = value || '—';
+  target.title = value || '';
+}
+
+function resetAssetDocumentMetadata() {
+  for (const field of Object.values(assetDocumentMetadataFields)) {
+    field.textContent = '—';
+    field.removeAttribute('title');
+  }
+}
+
+function formatAssetSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return '取得できません';
+  if (bytes < 1024) return `${bytes.toLocaleString('ja-JP')} B`;
+  const units = ['KiB', 'MiB', 'GiB', 'TiB'];
+  let value = bytes;
+  let unitIndex = -1;
+  do { value /= 1024; unitIndex++; } while (value >= 1024 && unitIndex < units.length - 1);
+  return `${value.toLocaleString('ja-JP', { maximumFractionDigits: 2 })} ${units[unitIndex]} (${bytes.toLocaleString('ja-JP')} B)`;
+}
+
+function formatAssetDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '—';
+  const total = Math.floor(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const remainder = total % 60;
+  return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}` : `${minutes}:${String(remainder).padStart(2, '0')}`;
+}
+
+function setAssetDocumentDimensions(width, height) {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+  const roundedWidth = Math.round(width);
+  const roundedHeight = Math.round(height);
+  let a = roundedWidth;
+  let b = roundedHeight;
+  while (b) [a, b] = [b, a % b];
+  setAssetDocumentMetadata('width', `${roundedWidth.toLocaleString('ja-JP')} px`);
+  setAssetDocumentMetadata('height', `${roundedHeight.toLocaleString('ja-JP')} px`);
+  setAssetDocumentMetadata('ratio', `${roundedWidth / a}:${roundedHeight / a}`);
+  const pixelCount = roundedWidth * roundedHeight;
+  setAssetDocumentMetadata('pixels', `${(pixelCount / 1_000_000).toLocaleString('ja-JP', { maximumFractionDigits: 2 })} MP (${pixelCount.toLocaleString('ja-JP')} px)`);
+  setAssetDocumentMetadata('orientation', roundedWidth === roundedHeight ? '正方形' : roundedWidth > roundedHeight ? '横長' : '縦長');
+}
+
+function loadAssetDocumentMetadata(name, mediaKind) {
+  resetAssetDocumentMetadata();
+  const extension = name.split('.').at(-1)?.toUpperCase() || '不明';
+  setAssetDocumentMetadata('format', extension);
+  if (mediaKind === 'audio') setAssetDocumentMetadata('orientation', '音声');
+  request(`/api/asset-info?path=${encodeURIComponent(name)}`).then((info) => {
+    if (activeAssetDocument !== name) return;
+    const mime = info.mimeType ? ` (${info.mimeType})` : '';
+    setAssetDocumentMetadata('format', `${(info.extension || extension).toUpperCase()}${mime}`);
+    setAssetDocumentMetadata('size', formatAssetSize(info.sizeBytes));
+    const modified = new Date(info.modifiedAt);
+    setAssetDocumentMetadata('modified', Number.isNaN(modified.valueOf()) ? '不明' : new Intl.DateTimeFormat('ja-JP', {
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    }).format(modified));
+  }).catch(() => {
+    if (activeAssetDocument !== name) return;
+    setAssetDocumentMetadata('size', '取得できません');
+    setAssetDocumentMetadata('modified', '取得できません');
+  });
+}
+
+async function openAssetDocument(name) {
+  const normalized = String(name || '').replaceAll('\\', '/');
+  const mediaKind = assetMediaKind(normalized);
+  if (!mediaKind) throw Error('エディター内で開ける画像・音声・動画ファイルではありません');
+  const url = assetDocumentUrl(normalized);
+  if (activeAssetDocument === normalized) return;
+  if (sceneName.value && sceneName.value !== normalized && isDirty) await saveScene();
+  clearAssetDocumentView();
+  activeSettingDocument = '';
+  activeStandardLibraryDocument = '';
+  activeAssetDocument = normalized;
+  editor.value = '';
+  editor.readOnly = true;
+  sceneRevision = '';
+  clearEditorHistory();
+  updateDirtyState(false);
+  updateLineNumbers();
+  updateHighlight();
+  hideSuggestions();
+  document.documentElement.classList.add('asset-document-open');
+  document.querySelector('.editor-group')?.classList.add('image-document-open');
+  assetDocumentViewer.hidden = false;
+  assetDocumentKind.textContent = mediaKind.toUpperCase();
+  assetDocumentPath.textContent = normalized;
+  assetDocumentPath.title = normalized;
+  loadAssetDocumentMetadata(normalized, mediaKind);
+  assetDocumentError.hidden = true;
+  assetDocumentError.textContent = '';
+  assetDocumentImage.hidden = true;
+  assetDocumentVideo.hidden = true;
+  assetDocumentAudio.hidden = true;
+  if (!openTabs.includes(normalized)) openTabs.push(normalized);
+  renderEditorTabs(normalized);
+  result.textContent = '';
+  if (mediaKind === 'image') {
+    assetDocumentImage.alt = normalized;
+    assetDocumentImage.onload = () => {
+      if (activeAssetDocument !== normalized) return;
+      setAssetDocumentDimensions(assetDocumentImage.naturalWidth, assetDocumentImage.naturalHeight);
+    };
+    assetDocumentImage.onerror = () => {
+      if (activeAssetDocument !== normalized) return;
+      assetDocumentError.textContent = `画像を読み込めませんでした: ${normalized}`;
+      assetDocumentError.hidden = false;
+    };
+    assetDocumentImage.src = url;
+    assetDocumentImage.hidden = false;
+  } else if (mediaKind === 'video') {
+    assetDocumentVideo.onloadedmetadata = () => {
+      if (activeAssetDocument === normalized) {
+        setAssetDocumentDimensions(assetDocumentVideo.videoWidth, assetDocumentVideo.videoHeight);
+        setAssetDocumentMetadata('duration', formatAssetDuration(assetDocumentVideo.duration));
+      }
+    };
+    assetDocumentVideo.onerror = () => {
+      if (activeAssetDocument !== normalized) return;
+      assetDocumentError.textContent = `動画を読み込めませんでした: ${normalized}`;
+      assetDocumentError.hidden = false;
+    };
+    assetDocumentVideo.src = url;
+    assetDocumentVideo.hidden = false;
+  } else {
+    assetDocumentAudio.onloadedmetadata = () => {
+      if (activeAssetDocument === normalized) setAssetDocumentMetadata('duration', formatAssetDuration(assetDocumentAudio.duration));
+    };
+    assetDocumentAudio.onerror = () => {
+      if (activeAssetDocument !== normalized) return;
+      assetDocumentError.textContent = `音声を読み込めませんでした: ${normalized}`;
+      assetDocumentError.hidden = false;
+    };
+    assetDocumentAudio.src = url;
+    assetDocumentAudio.hidden = false;
+  }
+  setStatus(`${normalized} をエディター内で開きました`);
+}
+
 async function openScene(name) {
   if (isStandardLibraryPath(name)) return openStandardLibraryFile(name);
   if (sceneName?.value && sceneName.value !== name && isDirty) await saveScene();
+  const scene = await request(`/api/scene?name=${encodeURIComponent(name)}`);
+  clearAssetDocumentView();
   activeSettingDocument = '';
   activeStandardLibraryDocument = '';
   editor.readOnly = false;
   variableTooltipRequestId++;
   currentVariableAnalysis = null;
-  const scene = await request(`/api/scene?name=${encodeURIComponent(name)}`);
   localStorage.setItem(lastSceneKey(), scene.name);
   if (!openTabs.includes(scene.name)) openTabs.push(scene.name);
   sceneName.value = scene.name;
@@ -1753,6 +1950,7 @@ async function openStandardLibraryFile(name) {
   if (!isStandardLibraryPath(name)) throw Error('Invalid standard library path.');
   if (sceneName?.value && sceneName.value !== name && isDirty && !activeStandardLibraryDocument) await saveScene();
   const file = await request(`/api/standard-library-file?name=${encodeURIComponent(name)}`);
+  clearAssetDocumentView();
   activeSettingDocument = '';
   activeStandardLibraryDocument = file.name;
   variableTooltipRequestId++;
@@ -1777,6 +1975,7 @@ async function openStandardLibraryFile(name) {
 async function openSettingFile(name) {
   if (sceneName?.value && sceneName.value !== name && isDirty) await saveScene();
   const file = await request(`/api/setting-file?name=${encodeURIComponent(name)}`);
+  clearAssetDocumentView();
   activeSettingDocument = file.name;
   activeStandardLibraryDocument = '';
   sceneName.value = file.name;
@@ -1791,6 +1990,14 @@ async function openSettingFile(name) {
   result.textContent = '';
   hideSuggestions();
   setStatus(`${file.name} を開きました`);
+}
+
+async function openEditorDocument(name) {
+  const normalized = String(name || '').replaceAll('\\', '/');
+  if (normalized.startsWith('asset/')) return openAssetDocument(normalized);
+  if (normalized.startsWith('setting/') || normalized === 'setting.txt') return openSettingFile(normalized);
+  if (isStandardLibraryPath(normalized)) return openStandardLibraryFile(normalized);
+  return openScene(normalized);
 }
 
 async function jumpToLocation(location, symbol = '') {
@@ -1847,7 +2054,7 @@ function renderDiagnosticResult(summary, entries) {
   }
 }
 
-function renderEditorTabs(activeName = sceneName?.value) {
+function renderEditorTabs(activeName = activeAssetDocument || sceneName?.value) {
   if (!editorTabs) return;
   editorTabs.replaceChildren(...openTabs.map((name) => {
     const tab = document.createElement('div');
@@ -1855,24 +2062,36 @@ function renderEditorTabs(activeName = sceneName?.value) {
     tab.setAttribute('role', 'tab'); tab.setAttribute('aria-selected', String(name === activeName));
     const select = document.createElement('button'); select.type = 'button'; select.className = 'editor-tab-name'; select.textContent = fileLabel(name); select.title = name;
     select.addEventListener('click', (event) => {
-      if (event.shiftKey) moveTabToRight(name).catch(showError);
-      else if (name !== sceneName.value) openScene(name).catch(showError);
+      if (event.shiftKey && !String(name).startsWith('asset/')) moveTabToRight(name).catch(showError);
+      else if (name !== sceneName.value) openEditorDocument(name).catch(showError);
     });
-    const split = document.createElement('button'); split.type = 'button'; split.className = 'editor-tab-split'; split.textContent = '→'; split.title = `${name}を右ペインで開く`;
-    split.addEventListener('click', () => moveTabToRight(name).catch(showError));
+    if (!String(name).startsWith('asset/')) {
+      const split = document.createElement('button'); split.type = 'button'; split.className = 'editor-tab-split'; split.textContent = '→'; split.title = `${name}を右ペインで開く`;
+      split.addEventListener('click', () => moveTabToRight(name).catch(showError));
+      tab.append(select, split);
+    } else {
+      tab.append(select);
+    }
     const close = document.createElement('button'); close.type = 'button'; close.className = 'editor-tab-close'; close.textContent = '×'; close.title = `${name}を閉じる`;
     close.addEventListener('click', async () => {
-      if (isDirty && name === sceneName.value && !window.confirm('未保存の変更があります。タブを閉じますか？')) return;
+      const activeName = activeAssetDocument || sceneName.value;
+      if (isDirty && name === activeName && !window.confirm('未保存の変更があります。タブを閉じますか？')) return;
       const index = openTabs.indexOf(name); if (index >= 0) openTabs.splice(index, 1);
-      if (name === sceneName.value) {
+      if (name === activeName) {
         const next = openTabs[index] || openTabs[index - 1];
-        if (next) await openScene(next); else { sceneName.value = ''; editor.value = ''; clearEditorHistory(); updateLineNumbers(); updateHighlight();
-updateDirtyState(false); }
+        if (next) await openEditorDocument(next); else {
+          clearAssetDocumentView();
+          if (sceneName.value && !sceneName.value.startsWith('asset/')) await openEditorDocument(sceneName.value);
+          else {
+            activeSettingDocument = ''; activeStandardLibraryDocument = '';
+            sceneName.value = ''; editor.value = ''; editor.readOnly = false; clearEditorHistory(); updateLineNumbers(); updateHighlight(); updateDirtyState(false);
+          }
+        }
       }
-      renderEditorTabs(sceneName.value);
+      renderEditorTabs(activeAssetDocument || sceneName.value);
       renderSplitTabs();
     });
-    tab.append(select, split, close); return tab;
+    tab.append(close); return tab;
   }));
 }
 
@@ -2105,7 +2324,7 @@ function replaceWithFormattedSource(source, caretOffset = null, selectionEnd = c
 }
 
 function formatCode() {
-  if (activeSettingDocument || activeStandardLibraryDocument) return;
+  if (activeSettingDocument || activeStandardLibraryDocument || activeAssetDocument) return;
   const source = editor.value;
   const formatted = formatSource(source);
   if (formatted === source) return;
@@ -2113,6 +2332,10 @@ function formatCode() {
 }
 
 async function saveScene() {
+  if (activeAssetDocument) {
+    setStatus(`${activeAssetDocument} · 素材プレビューは読み取り専用です`);
+    return;
+  }
   if (activeStandardLibraryDocument) {
     setStatus(`${activeStandardLibraryDocument} · 標準ライブラリは読み取り専用です`);
     return;
@@ -2243,6 +2466,7 @@ window.novelEditorApi = {
 };
 
 async function validate(providedReport = null) {
+  if (activeAssetDocument) return;
   const sequence = ++validationSequence;
   const sourceSnapshot = editor.value;
   const fileSnapshot = sceneName.value;
@@ -2263,6 +2487,15 @@ async function validate(providedReport = null) {
     promise: null,
   };
   diagnostics = Array.isArray(report.diagnostics) ? report.diagnostics : [];
+  // File info is initially populated from the saved scene graph. While a file
+  // is being edited that graph can still carry its previous parse error, so
+  // let a successful validation of the current buffer supersede that stale
+  // graph status instead of leaving "syntax error" stuck in the sidebar.
+  if (report.ok && fileInfoBase && typeof fileInfoBase === 'object'
+    && normalizedScenePath(fileInfoBase.path) === normalizedScenePath(fileSnapshot)) {
+    delete fileInfoBase.error;
+    renderFileInfo();
+  }
   if (!diagnostics.length && !report.ok) {
     const message = String(report.error || '構文エラー');
     const assetPath = message.match(/(?:asset|アセット)\s*'([^']+)'/)?.[1];
@@ -2375,6 +2608,44 @@ function gotoAtEvent(event) {
   const match = /^\s*goto\s+(?:"([^"]+)"|([A-Za-z0-9_./-]+))/.exec(sourceLine);
   return match ? (match[1] || match[2]) : '';
 }
+function fileReferenceAtEvent(event) {
+  const exactOffset = sourceOffsetAtEvent(event);
+  let location;
+  if (exactOffset !== null) {
+    const prefix = editor.value.slice(0, exactOffset);
+    const lineStart = prefix.lastIndexOf('\n') + 1;
+    location = { line: prefix.split(/\r?\n/).length, column: exactOffset - lineStart, sourceLine: editor.value.slice(lineStart).split(/\r?\n/, 1)[0] || '' };
+  } else location = sourceTokenAtEvent(event);
+  if (!location) return null;
+  const { sourceLine, column } = location;
+  const definitions = [
+    { kind: 'asset', pattern: /^\s*(?:asset\s+(?:bg|bgm|se|voice|video|image|char)\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*|pose\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*)"((?:\\.|[^"\\])*)"/i },
+    { kind: 'include', pattern: /^\s*include\s+"((?:\\.|[^"\\])*)"/i },
+    { kind: 'goto', pattern: /^\s*goto\s+(?:"((?:\\.|[^"\\])*)"|([A-Za-z0-9_./\\-]+))/i },
+  ];
+  for (const { kind, pattern } of definitions) {
+    const match = pattern.exec(sourceLine);
+    if (!match) continue;
+    const quotedPath = match[1];
+    const rawPath = quotedPath ?? match[2];
+    if (!rawPath) continue;
+    const start = match.index + match[0].indexOf(rawPath);
+    if (column < start - 1 || column > start + rawPath.length) continue;
+    const matchesSceneFile = kind === 'goto' && sceneNames.some(file => file === rawPath || file.replace(/\.tds$/i, '') === rawPath);
+    if (kind === 'goto' && quotedPath === undefined && !rawPath.includes('/') && !/\.tds$/i.test(rawPath) && !matchesSceneFile) continue;
+    return { kind, path: rawPath.replaceAll('\\', '/'), rawPath };
+  }
+  return null;
+}
+async function openFileReference(reference) {
+  if (reference.kind === 'asset') {
+    if (assetMediaKind(reference.path)) return openAssetDocument(reference.path);
+    setStatus('この素材形式はエディター内プレビューに対応していません', 'warning');
+    return;
+  }
+  if (isStandardLibraryPath(reference.path)) return openStandardLibraryFile(reference.path);
+  return openScene(reference.path);
+}
 function showGotoMenu(event) {
   const target = gotoAtEvent(event);
   if (!target) return false;
@@ -2446,7 +2717,10 @@ async function showEditorSymbolInfo(event, token) {
   const requestId = ++variableTooltipRequestId;
   hideVariableTooltip();
   if (showGotoMenu(event)) return;
-  if (token && syntaxHints[token.name]) {
+  // A reserved word may also be a method name in a qualified standard API
+  // (for example `walk.character`). Prefer resolving that full symbol before
+  // showing the standalone `character` declaration syntax hint.
+  if (token && syntaxHints[token.name] && !qualifiedTokenName(token).includes('.')) {
     showSyntaxTooltip(event);
     return;
   }
@@ -2478,7 +2752,8 @@ function showEditorContextMenu(event) {
   variableTooltipRequestId++;
   hideVariableTooltip();
   const token = sourceTokenAtEvent(event);
-  const gotoTarget = gotoAtEvent(event);
+  const fileReference = fileReferenceAtEvent(event);
+  const gotoTarget = fileReference?.kind === 'goto' ? '' : gotoAtEvent(event);
   const selectionExists = editor.selectionStart !== editor.selectionEnd;
   editorContextMenu.replaceChildren();
 
@@ -2509,11 +2784,22 @@ function showEditorContextMenu(event) {
   const addSeparator = () => editorContextMenu.append(Object.assign(document.createElement('span'), { className: 'editor-context-separator', role: 'separator' }));
 
   let hasNavigation = false;
+  if (fileReference) {
+    const mediaKind = fileReference.kind === 'asset' ? assetMediaKind(fileReference.path) : '';
+    if (fileReference.kind !== 'asset' || mediaKind) {
+      const label = fileReference.kind === 'include' ? 'include先を開く'
+        : fileReference.kind === 'goto' ? '遷移ファイルを開く'
+          : mediaKind === 'image' ? '画像をエディターで開く' : 'メディアをエディターで開く';
+      addItem(label, '', () => openFileReference(fileReference));
+    }
+    addItem('相対パスをコピー', '', () => copyText(fileReference.path));
+    hasNavigation = true;
+  }
   if (gotoTarget) {
     addItem('移動先を開く', '', () => openScene(gotoTarget).catch(showError));
     hasNavigation = true;
   }
-  if (token) {
+  if (token && !fileReference) {
     addItem('定義へ移動', 'F12', () => jumpToTokenDefinition(token).catch(showError));
     addItem('シンボル情報を表示', '', () => showEditorSymbolInfo(event, token));
     hasNavigation = true;
@@ -2566,6 +2852,7 @@ fileContextMenu.addEventListener('keydown', event => {
 });
 
 function clearLeftEditor() {
+  clearAssetDocumentView();
   activeSettingDocument = '';
   activeStandardLibraryDocument = '';
   editor.readOnly = false;
@@ -3375,7 +3662,7 @@ async function confirmProjectSwitch() {
 }
 
 async function applyOpenedProject(info) {
-  closeDebugPlayer();
+  await stopSceneFlowDebug().catch(() => {});
   workspaceReadyForPolling = false;
   projectChangesToken = '';
   currentProjectRoot = info.projectRoot || '';
@@ -3505,9 +3792,9 @@ function updateHighlight() {
     const lineNumber = index + 1;
     const item = byLine.get(lineNumber);
     const classes = ['hl-line'];
-    if (sceneName.value === debugExecutingFile && lineNumber === debugExecutingLine) classes.push('hl-running');
     if (item) classes.push(`hl-${item.severity}`);
     if (unreachableLines.has(lineNumber)) classes.push('hl-unreachable');
+    if (normalizedScenePath(sceneName.value) === normalizedScenePath(flowNativeDebugExecutionFile) && lineNumber === flowNativeDebugExecutionLine) classes.push('hl-running');
     if (sceneName.value === flowStartPreviewFile && lineNumber === flowStartPreviewLine) classes.push('hl-start');
     if (sceneName.value === flowLinePicker?.file && lineNumber === flowPickHoverLine) classes.push('hl-pick-hover');
     return `<span class="${classes.join(' ')}">${highlightSource(line) || ' '}</span>`;
@@ -3536,13 +3823,13 @@ const syntaxHints = {
   and: '<条件> and <条件>', or: '<条件> or <条件>', not: 'not <条件>',
   say: 'say <文字列リテラルで始まるstr式> または say <話者> <str式>',
   bg: 'bg <背景アセット>', bgm: 'bgm <BGMアセット>', se: 'play se <SEアセット>',
-  show: 'show <名前>.<ポーズ> <位置> [x+(式)] [y-(式)] [fade <ミリ秒>]', hide: 'hide <名前> [fade <ミリ秒>]',
+  show: 'show <名前>.<ポーズ> <位置> [x+(式)] [y-(式)] [fade <ミリ秒>] [--only]', hide: 'hide <名前> [fade <ミリ秒>]',
   move: 'move character <名前> by x+<px> y-<px> [over <ミリ秒>] / move bg by x+<px> y-<px> [over <ミリ秒>]',
   clear: 'clear bg | image | bgm',
-  image: 'asset image <名前> = "<画像パス>" / show image <名前> <位置>',
+  image: 'asset image <名前> = "<画像パス>" / show image <名前> <位置> [--only]',
   at: 'show <character.pose> at <position>',
   async: 'play voice <名前> async', blocking: 'play voice <名前> blocking',
-  voice: 'play voice <名前> [blocking|async]', video: 'play video <名前> [blocking|async]',
+  voice: 'play voice <名前> [blocking|async]', video: 'play video <名前|"ファイル名.mp4"> [blocking|async] [--only]',
   true: '真を表す真偽値リテラルです。', false: '偽を表す真偽値リテラルです。',
   if: 'if <条件> { ... } else { ... }', elif: 'elif <条件> { ... }', else: 'else { ... }',
   for: 'for <変数> from <開始> to <終了> [step <幅>] { ... }',
@@ -3642,8 +3929,8 @@ function showWorkbenchMessage(title, message) {
 }
 async function showProjectSettings() {
   document.querySelector('.project-settings')?.remove();
-  const [project, variableData, assetData, playerUi] = await Promise.all([
-    request('/api/project'), request('/api/variables'), request('/api/assets'), request('/api/player-ui'),
+  const [project, variableData, assetData] = await Promise.all([
+    request('/api/project'), request('/api/variables'), request('/api/assets'),
   ]);
   const dialog = document.createElement('section');
   dialog.className = 'editor-dialog project-settings';
@@ -3673,115 +3960,6 @@ async function showProjectSettings() {
   const basicNote = document.createElement('p'); basicNote.className = 'project-settings-note'; basicNote.textContent = 'フォルダー名を変更しても既存ファイルは移動しません。先にファイルを移動してから変更してください。';
   basic.append(basicNote);
   basic.prepend(basicTitle);
-  const player = document.createElement('section');
-  player.className = 'project-settings-section';
-  const playerTitle = document.createElement('h2'); playerTitle.textContent = '再生機UI';
-  const playerFields = {};
-  const playerField = (labelText, name, value, type = 'text', parent = player) => {
-    const label = document.createElement('label'); label.textContent = labelText;
-    const input = document.createElement('input'); input.name = name; input.type = type; input.value = value;
-    label.append(input); parent.append(label); playerFields[name] = input;
-  };
-  const sourceTheme = playerUi.theme;
-  const theme = sourceTheme;
-  const rgba = (value) => value.join(',');
-  const integer = (name) => Number(playerFields[name].value);
-  const ratio = (name) => Number(playerFields[name].value);
-  const playerGroup = (title) => {
-    const group = document.createElement('section'); group.className = 'player-ui-settings-group';
-    const groupTitle = document.createElement('h3'); groupTitle.textContent = title;
-    group.append(groupTitle); player.append(group); return group;
-  };
-  const screenGroup = playerGroup('論理画面');
-  playerField('画面幅', 'screen_width', theme.screen.width, 'number', screenGroup);
-  playerField('画面高さ', 'screen_height', theme.screen.height, 'number', screenGroup);
-  const dialogGroup = playerGroup('会話欄（画面基準）');
-  playerField('会話欄画像', 'dialog_image', theme.dialog.image, 'text', dialogGroup);
-  playerField('会話欄の透過率 (0–1)', 'dialog_opacity', theme.dialog.opacity ?? 1, 'number', dialogGroup);
-  playerFields.dialog_opacity.min = '0'; playerFields.dialog_opacity.max = '1'; playerFields.dialog_opacity.step = '0.01';
-  playerField('会話欄 X', 'dialog_x', theme.dialog.x ?? Math.round((1280 - theme.dialog.width) / 2), 'number', dialogGroup);
-  playerField('会話欄 Y', 'dialog_y', theme.dialog.y, 'number', dialogGroup);
-  playerField('会話欄幅', 'dialog_width', theme.dialog.width, 'number', dialogGroup);
-  playerField('会話欄高さ', 'dialog_height', theme.dialog.height, 'number', dialogGroup);
-  const audioGroup = playerGroup('音量（0–1）');
-  for (const [kind, label, fallback] of [['bgm', 'BGM', 1], ['se', '効果音', 1], ['voice', 'ボイス', 0.5]]) {
-    playerField(`${label}音量`, `audio_${kind}`, theme.audio?.[kind] ?? fallback, 'number', audioGroup);
-    playerFields[`audio_${kind}`].min = '0'; playerFields[`audio_${kind}`].max = '1'; playerFields[`audio_${kind}`].step = '0.01';
-  }
-  const messageGroup = playerGroup('本文（会話欄基準）');
-  playerField('本文 X', 'dialog_text_x', theme.dialog.message.x, 'number', messageGroup); playerField('本文 Y', 'dialog_text_y', theme.dialog.message.y, 'number', messageGroup); playerField('本文幅', 'dialog_text_width', theme.dialog.message.width, 'number', messageGroup); playerField('本文高さ', 'dialog_text_height', theme.dialog.message.height, 'number', messageGroup); playerField('本文サイズ', 'dialog_text_size', theme.dialog.message.size, 'number', messageGroup); playerField('本文色 RGBA', 'dialog_text_color', rgba(theme.dialog.message.color), 'text', messageGroup);
-  const speakerGroup = playerGroup('話者欄（会話欄基準）');
-  playerField('話者欄画像', 'speaker_image', theme.dialog.nameplate.image, 'text', speakerGroup); playerField('話者欄 X', 'speaker_x', theme.dialog.nameplate.x, 'number', speakerGroup); playerField('話者欄 Y', 'speaker_y', theme.dialog.nameplate.y, 'number', speakerGroup); playerField('話者欄幅', 'speaker_width', theme.dialog.nameplate.width, 'number', speakerGroup); playerField('話者欄高さ', 'speaker_height', theme.dialog.nameplate.height, 'number', speakerGroup); playerField('話者名サイズ', 'speaker_size', theme.dialog.nameplate.text.size, 'number', speakerGroup); playerField('話者名色 RGBA', 'speaker_color', rgba(theme.dialog.nameplate.text.color), 'text', speakerGroup);
-  const choiceGroup = playerGroup('選択肢（画面基準）');
-  playerField('選択肢画像', 'choice_image', theme.choices.image, 'text', choiceGroup); playerField('選択中画像', 'choice_active_image', theme.choices.activeImage, 'text', choiceGroup); playerField('選択肢 X', 'choice_x', theme.choices.x, 'number', choiceGroup); playerField('選択肢 Y', 'choice_y', theme.choices.y, 'number', choiceGroup); playerField('表示幅', 'choice_width', theme.choices.width, 'number', choiceGroup); playerField('表示高さ', 'choice_view_height', theme.choices.height, 'number', choiceGroup); playerField('項目高さ', 'choice_height', theme.choices.itemHeight, 'number', choiceGroup); playerField('項目間隔', 'choice_gap', theme.choices.gap, 'number', choiceGroup); playerField('本文 X', 'choice_text_x', theme.choices.text.x, 'number', choiceGroup); playerField('本文 Y', 'choice_text_y', theme.choices.text.y, 'number', choiceGroup); playerField('本文サイズ', 'choice_text_size', theme.choices.text.size, 'number', choiceGroup); playerField('本文色 RGBA', 'choice_text_color', rgba(theme.choices.text.color), 'text', choiceGroup);
-  const fogLabel = document.createElement('label'); fogLabel.textContent = '下部の霧';
-  const fog = document.createElement('input'); fog.type = 'checkbox'; fog.checked = Boolean(theme.screen.backdrop?.bottomFog?.enabled); fogLabel.append(fog); player.append(fogLabel);
-  playerField('靄の色 RGBA', 'fog_color', rgba(theme.screen.backdrop?.bottomFog?.color || [255, 250, 253, 255]));
-  playerField('靄の高さ', 'fog_height', theme.screen.backdrop?.bottomFog?.height ?? 300, 'number');
-  const preview = document.createElement('div'); preview.className = 'player-ui-preview'; preview.setAttribute('aria-label', '再生機UI配置プレビュー');
-  const controlsGroup = playerGroup('Dialogue Save / Load buttons');
-  const controls = theme.controls || { enabled: true, anchor: 'dialogue-top-left', buttons: [
-    { action: 'save', label: 'Save', x: 0, y: -44, width: 84, height: 36 },
-    { action: 'load', label: 'Load', x: 92, y: -44, width: 84, height: 36 },
-  ] };
-  const controlsEnabled = document.createElement('input'); controlsEnabled.type = 'checkbox'; controlsEnabled.checked = controls.enabled !== false;
-  const enabledLabel = document.createElement('label'); enabledLabel.textContent = 'Show controls'; enabledLabel.append(controlsEnabled); controlsGroup.append(enabledLabel);
-  const anchorSelect = document.createElement('select');
-  for (const [value, text] of [['dialogue-top-left', 'Dialogue top-left'], ['stage', 'Stage coordinates']]) { const option = document.createElement('option'); option.value = value; option.textContent = text; anchorSelect.append(option); }
-  anchorSelect.value = controls.anchor || 'dialogue-top-left';
-  const anchorLabel = document.createElement('label'); anchorLabel.textContent = 'Anchor'; anchorLabel.append(anchorSelect); controlsGroup.append(anchorLabel);
-  const controlFields = {};
-  for (const action of ['save', 'load']) {
-    const item = controls.buttons?.find(button => button.action === action) || { action, label: action, x: action === 'save' ? 0 : 92, y: -44, width: 84, height: 36 };
-    const group = document.createElement('section'); group.className = 'player-ui-settings-group';
-    const groupTitle = document.createElement('h3'); groupTitle.textContent = action.toUpperCase(); group.append(groupTitle); controlsGroup.append(group);
-    for (const key of ['label', 'hoverLabel', 'x', 'y', 'width', 'height', 'image', 'hoverImage', 'display']) {
-      const fieldLabel = document.createElement('label'); fieldLabel.textContent = key;
-      const input = key === 'display' ? document.createElement('select') : document.createElement('input');
-      if (key === 'display') for (const [value, label] of [['both', 'Text + image'], ['text', 'Text only'], ['image', 'Image only']]) { const option = document.createElement('option'); option.value = value; option.textContent = label; input.append(option); }
-      else input.type = ['x', 'y', 'width', 'height'].includes(key) ? 'number' : 'text';
-      input.value = item[key] ?? (key === 'display' ? 'both' : '');
-      controlFields[`${action}_${key}`] = input; fieldLabel.append(input); group.append(fieldLabel);
-    }
-  }
-  const previewDialog = document.createElement('div'); previewDialog.className = 'player-ui-preview-dialog';
-  const themeDirectory = String(project.settings?.native_ui_theme || '').replaceAll('\\', '/').split('/').slice(0, -1).join('/');
-  const previewAsset = (name) => `url(/asset/${[themeDirectory, name].filter(Boolean).map(encodeURIComponent).join('/')})`;
-  const previewText = document.createElement('span'); previewText.className = 'player-ui-preview-message'; previewText.textContent = 'ここに本文が表示されます。';
-  const previewSpeaker = document.createElement('span'); previewSpeaker.className = 'player-ui-preview-speaker'; previewSpeaker.textContent = '話者名';
-  const previewChoice = document.createElement('span'); previewChoice.className = 'player-ui-preview-choice'; previewChoice.textContent = '選択肢';
-  const resize = document.createElement('button'); resize.type = 'button'; resize.className = 'player-ui-preview-resize'; resize.setAttribute('aria-label', '会話欄の大きさを変更');
-  previewDialog.append(previewText, previewSpeaker, resize); preview.append(previewDialog, previewChoice); player.append(preview);
-  const renderPreview = () => {
-    const scale = preview.clientWidth / integer('screen_width');
-    preview.style.height = `${integer('screen_height') * scale}px`;
-    previewDialog.style.left = `${integer('dialog_x') * scale}px`;
-    previewDialog.style.top = `${integer('dialog_y') * scale}px`;
-    previewDialog.style.width = `${integer('dialog_width') * scale}px`;
-    previewDialog.style.height = `${integer('dialog_height') * scale}px`;
-    previewDialog.style.backgroundImage = previewAsset(playerFields.dialog_image.value);
-    previewDialog.style.setProperty('--preview-opacity', String(ratio('dialog_opacity')));
-    Object.assign(previewText.style, { left: `${integer('dialog_text_x') * scale}px`, top: `${integer('dialog_text_y') * scale}px`, width: `${integer('dialog_text_width') * scale}px`, height: `${integer('dialog_text_height') * scale}px`, fontSize: `${integer('dialog_text_size') * scale}px`, color: `rgba(${playerFields.dialog_text_color.value})` });
-    Object.assign(previewSpeaker.style, { left: `${integer('speaker_x') * scale}px`, top: `${integer('speaker_y') * scale}px`, width: `${integer('speaker_width') * scale}px`, height: `${integer('speaker_height') * scale}px`, fontSize: `${integer('speaker_size') * scale}px`, color: `rgba(${playerFields.speaker_color.value})`, backgroundImage: previewAsset(playerFields.speaker_image.value) });
-    Object.assign(previewChoice.style, { left: `${integer('choice_x') * scale}px`, top: `${integer('choice_y') * scale}px`, width: `${integer('choice_width') * scale}px`, height: `${integer('choice_height') * scale}px`, fontSize: `${integer('choice_text_size') * scale}px`, color: `rgba(${playerFields.choice_text_color.value})`, backgroundImage: previewAsset(playerFields.choice_image.value) });
-  };
-  Object.values(playerFields).forEach((input) => input.addEventListener('input', renderPreview));
-  const drag = (event, resizing) => {
-    event.preventDefault();
-    const box = preview.getBoundingClientRect(); const scale = box.width / integer('screen_width');
-    const originX = integer('dialog_x'), originY = integer('dialog_y'), originWidth = integer('dialog_width'), originHeight = integer('dialog_height');
-    const startX = event.clientX, startY = event.clientY;
-    const move = (pointer) => {
-      const dx = Math.round((pointer.clientX - startX) / scale), dy = Math.round((pointer.clientY - startY) / scale);
-      if (resizing) { playerFields.dialog_width.value = Math.max(80, originWidth + dx); playerFields.dialog_height.value = Math.max(40, originHeight + dy); }
-      else { playerFields.dialog_x.value = Math.max(0, Math.min(integer('screen_width') - originWidth, originX + dx)); playerFields.dialog_y.value = Math.max(0, Math.min(integer('screen_height') - originHeight, originY + dy)); }
-      renderPreview();
-    };
-    const stop = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop); };
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', stop, { once: true });
-  };
-  previewDialog.addEventListener('pointerdown', (event) => drag(event, event.target === resize));
-  requestAnimationFrame(renderPreview);
   const variables = document.createElement('section');
   variables.className = 'project-settings-section';
   const variableTitle = document.createElement('h2'); variableTitle.textContent = '共有変数';
@@ -3814,7 +3992,9 @@ async function showProjectSettings() {
         const source = String(asset.path).replaceAll('\\', '/');
         const prefix = assetDirectory + '/';
         const relative = source.startsWith(prefix) ? source.slice(prefix.length) : source;
-        window.open('/asset/' + relative.split('/').map(encodeURIComponent).join('/'), '_blank', 'noopener');
+        const projectPath = source.startsWith('asset/') ? source : `asset/${relative}`;
+        dialog.remove();
+        openAssetDocument(projectPath).catch(showError);
       });
       assetList.append(row);
     });
@@ -3822,43 +4002,23 @@ async function showProjectSettings() {
     const empty = document.createElement('div'); empty.className = 'project-settings-empty'; empty.textContent = '登録済みの素材はありません。';
     assetList.append(empty);
   }
-  const assetNote = document.createElement('p'); assetNote.className = 'project-settings-note'; assetNote.textContent = '素材は asset フォルダーに置き、.tds の asset / character / pose 宣言で登録します。クリックするとプレビューを開きます。';
+  const assetNote = document.createElement('p'); assetNote.className = 'project-settings-note'; assetNote.textContent = '素材は asset フォルダーに置き、.tds の asset / character / pose 宣言で登録します。クリックするとエディター内で表示します。';
   const checkImages = document.createElement('button'); checkImages.type = 'button'; checkImages.className = 'project-settings-save'; checkImages.textContent = '画像読込を検証'; checkImages.addEventListener('click', () => saveAllScenes().then(() => runNativeTool('images', '画像読込を検証')).catch(showError));
   assets.append(assetTitle, assetList, assetNote, checkImages);
   const footer = document.createElement('footer');
-  const save = document.createElement('button'); save.type = 'button'; save.className = 'project-settings-save'; save.textContent = '作品・再生機UI設定を保存';
-  const buildPlayerControls = () => ({
-    enabled: controlsEnabled.checked,
-    anchor: anchorSelect.value,
-    buttons: ['save', 'load'].map(action => {
-      const item = { action };
-      for (const key of ['label', 'hoverLabel', 'x', 'y', 'width', 'height', 'image', 'hoverImage', 'display']) {
-        const value = controlFields[`${action}_${key}`].value;
-        if (value !== '') item[key] = ['x', 'y', 'width', 'height'].includes(key) ? Number(value) : value;
-      }
-      return item;
-    }),
-  });
+  const save = document.createElement('button'); save.type = 'button'; save.className = 'project-settings-save'; save.textContent = '作品設定を保存';
   save.addEventListener('click', async () => {
     const updated = await request('/api/project/settings', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(Object.fromEntries(Object.entries(fields).map(([name, input]) => [name, input.value]))),
     });
-    const rgbaValue = (name) => playerFields[name].value.split(',').map((part) => Number(part.trim()));
-    await request('/api/player-ui', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ theme: {
-      version: 1, screen: { width: integer('screen_width'), height: integer('screen_height'), backdrop: { bottomFog: { enabled: fog.checked, color: rgbaValue('fog_color'), height: integer('fog_height') } } },
-      dialog: { image: playerFields.dialog_image.value, opacity: ratio('dialog_opacity'), x: integer('dialog_x'), y: integer('dialog_y'), width: integer('dialog_width'), height: integer('dialog_height'), message: { x: integer('dialog_text_x'), y: integer('dialog_text_y'), width: integer('dialog_text_width'), height: integer('dialog_text_height'), size: integer('dialog_text_size'), color: rgbaValue('dialog_text_color') }, nameplate: { x: integer('speaker_x'), y: integer('speaker_y'), width: integer('speaker_width'), height: integer('speaker_height'), image: playerFields.speaker_image.value, text: { x: 0, y: 0, width: integer('speaker_width'), height: integer('speaker_height'), size: integer('speaker_size'), color: rgbaValue('speaker_color') } } },
-      choices: { x: integer('choice_x'), y: integer('choice_y'), width: integer('choice_width'), height: integer('choice_view_height'), itemHeight: integer('choice_height'), gap: integer('choice_gap'), image: playerFields.choice_image.value, activeImage: playerFields.choice_active_image.value, text: { x: integer('choice_text_x'), y: integer('choice_text_y'), width: integer('choice_width') - integer('choice_text_x') * 2, height: integer('choice_height'), size: integer('choice_text_size'), color: rgbaValue('choice_text_color') } },
-      audio: { bgm: ratio('audio_bgm'), se: ratio('audio_se'), voice: ratio('audio_voice') },
-      controls: buildPlayerControls(),
-    } }) });
     currentProjectRoot = updated.projectRoot || currentProjectRoot;
     await Promise.all([refreshFiles(), refreshCatalog(), refreshScenes()]);
     setStatus('作品設定を保存しました', 'ok');
     dialog.remove();
   });
   footer.append(save);
-  dialog.append(heading, close, path, basic, player, variables, assets, footer);
+  dialog.append(heading, close, path, basic, variables, assets, footer);
   document.body.append(dialog);
   close.focus();
 }
@@ -3866,27 +4026,144 @@ function showLanguageGuide() {
   document.querySelector('.workbench-message')?.remove();
   const dialog = document.createElement('section');
   dialog.className = 'editor-dialog workbench-message language-guide';
+  dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true');
   const heading = document.createElement('strong'); heading.textContent = '.tds 構文ヘルプ';
   const close = document.createElement('button'); close.type = 'button'; close.className = 'guide-close'; close.setAttribute('aria-label', 'ヘルプを閉じる'); close.textContent = '×'; close.onclick = () => dialog.remove();
-  const intro = document.createElement('p'); intro.className = 'guide-intro'; intro.textContent = '例を貼り付けて編集できます。保存・コンパイル時には構文、型、変数、素材、シーン遷移まで検証されます。';
+  const intro = document.createElement('p'); intro.className = 'guide-intro'; intro.textContent = '構文を検索し、例を確認できます。「エディターへ挿入」はカーソル位置にコード例を挿入します。';
   const reference = document.createElement('a'); reference.href = '/docs/tds-language-and-editor-guide.md'; reference.target = '_blank'; reference.rel = 'noopener'; reference.className = 'guide-reference'; reference.textContent = '詳しい構文リファレンスを開く';
+  const search = document.createElement('input'); search.className = 'guide-search'; search.type = 'search'; search.placeholder = '構文・型・命令を検索'; search.setAttribute('aria-label', '構文ヘルプを検索');
   const sections = [
-    ['最小のシーン', 'scene main {\n  say narrator "こんにちは"\n  goto next\n}\n\nscene next {\n  say narrator "次の場面"\n}', 'sceneで始まり、{ }の中を上から実行します。インデントは半角スペース2個が標準です。'],
-    ['素材と立ち絵', 'asset bg classroom = "asset/bg/classroom.png"\n\ncharacter hero {\n  name = "主人公"\n  pose normal = "asset/char/hero/normal.png"\n}\n\nscene main {\n  bg classroom\n  show hero.normal center\n}', 'assetで素材を登録し、シーンでは登録名を使います。showは character.pose と位置を指定します。'],
-    ['台詞と変数', 'int score = 0\nstr route = "common"\n\nset score = score + 1\nsay narrator "点数: {score}"\nsay "点数: " + str(score)', '本文が文字列リテラルから始まる式なら話者を省略でき、narrator として扱います。変数や関数呼び出しから始まる本文では話者を指定します。文字列補間は {式} で書きます。'],
-    ['分岐・ループ', 'if score >= 10 {\n  say narrator "成功"\n} else {\n  say narrator "もう一度"\n}\n\nfor i from 0 to 3 step 1 {\n  say narrator "{i}"\n}', 'if/elif/else、for、whileを使えます。ループは値が変化し、実行回数が過大にならないようにします。'],
-    ['選択肢', 'choice "どうする？" {\n  "進む" {\n    goto next\n  }\n  "待つ" {\n    wait 500\n  }\n}', 'choiceの各ラベルの中に処理を書きます。プロンプトは省略できます。'],
-    ['演出', 'bg classroom\nbgm morning\nshow hero.smile left fade 250\nplay se door\nplay voice greeting blocking\neffect fade black 300\nclear bgm', '時間はミリ秒の非負整数です。voice/videoはblockingなら完了を待ち、asyncなら進行を止めません。'],
-    ['エディタ操作', 'Ctrl+S       保存\nCtrl+Z/Y      Undo / Redo\nCtrl+Shift+F  現在シーンを整形\nTab           選択範囲をインデント\nShift+Tab     選択範囲を逆インデント', '整形は2スペース、演算子の空白、辞書とブロックの判別、改行コードを統一します。'],
-    ['困ったとき', '赤い診断: 先に修正する\n黄色い警告: 意図した演出か確認\n素材エラー: asset宣言とファイルを確認\n同じ位置の警告: showの位置を分ける\n保存競合: シーンを再読み込みして差分を確認', 'IDE、Browser、Nativeは同じコンパイラの診断を共有します。'],
+    ['最小の作品・開始点', 'asset bg room = "asset/bg/room.jpg"\n\nscene main {\n  bg room\n  say narrator "こんにちは"\n}\n\nscene next {\n  say "次のシーン"\n}\n\n# シーン遷移\ngoto next', '開始ファイルの最初のsceneから実行します。sceneは自動連続再生されず、次へ進むにはgotoが必要です。命令は上から順番に実行されます。'],
+    ['ファイル分割・include', 'include "std/math.tds" as math\ninclude "common.tds" as common\n\nscene main {\n  wait math.sin(1.0)\n  common.start_route()\n}', 'include先は宣言・関数を再利用するモジュールです。必ず別名を付け、関数は alias.name(...) で呼びます。別シナリオへの移動は goto "chapter/next.tds"。'],
+    ['変数・型・代入', 'int score = 0\nfloat opacity = 0.85\nbool unlocked = false\nstr route = "common"\nconst int max_score = 10\nglobal list[str] endings = []\n\nset score = score + 1', '型と初期値を必ず宣言します。再代入はset。constは変更不可。intとfloatは暗黙変換されません。トップレベル変数はmain.tds以外で共有する場合globalを付けます。'],
+    ['辞書・リスト・struct', 'dict[int] stats = { "hp": 100 }\nlist[str] names = ["綾瀬", "美緒"]\n\nstruct Profile {\n  name: str\n  level: int\n}\nProfile player = { "name": "ユイ", "level": 1 }\nset stats["hp"] = 90\nset player.level = 2', '辞書のキーは文字列、値型は宣言時に固定です。リストは同型の値を並べます。struct初期化では定義済みフィールドをすべて指定します。添字は0始まり。'],
+    ['式・関数・戻り値', 'fn clamp_score(value: int) -> int {\n  if value > 100 { return 100 }\n  return value\n}\n\nint score = clamp_score(120)\nstr label = "score={score}"', '関数はトップレベルで宣言し、引数に型、戻り値に->型を指定します。戻り値なしは-> none。式では関数呼び出し、比較、and/or/not、算術演算を使えます。'],
+    ['台詞と変数・文字列', 'int score = 0\nstr route = "common"\n\nset score = score + 1\nsay narrator "点数: {score}"\nsay "点数: " + str(score)\nsay ayase "こんにちは"', '本文が文字列リテラルから始まる式なら話者を省略でき、narratorとして扱います。変数や関数式を本文にする場合は話者を指定します。文字列内の{式}は実行時に展開されます。'],
+    ['背景・キャラクター・画像', 'asset bg classroom = "asset/bg/classroom.png"\ncharacter ayase {\n  name = "綾瀬"\n  pose normal = "asset/char/ayase.png"\n}\nasset image logo = "asset/image/logo.png"\n\nscene main {\n  bg classroom\n  show ayase.normal center x+20 y+10 fade 300\n  show image logo right\n  hide ayase fade 200\n}', '素材はasset宣言で登録します。配置はfar_left / left / center / right / far_right。showのx/yはpx、fadeはミリ秒です。相対移動はmove character ... / move bg ... by x+... y-... over ...。'],
+    ['分岐・選択肢', 'if score >= 10 and unlocked {\n  goto good_end\n} elif score > 0 {\n  goto normal_end\n} else {\n  goto bad_end\n}\n\nchoice "どうする？" {\n  "進む" { goto next }\n  "待つ" { wait 500 }\n}', '条件はbool式です。choiceの各ラベルに実行ブロックを書きます。選択後は選んだブロックだけを実行し、後続命令へ戻ります。'],
+    ['ループ', 'for i from 1 to 3 {\n  say narrator "{i}回目"\n}\nfor name in names {\n  say narrator name\n}\nwhile score < 3 {\n  set score = score + 1\n}', '数値forは両端を含み、stepで刻み幅を指定できます。for item in listは要素を順番に処理します。whileは条件がtrueの間繰り返すため、終了条件を更新してください。'],
+    ['音声・動画・音量', 'asset bgm morning = "asset/bgm/morning.ogg"\nasset se door = "asset/se/door.wav"\nasset voice line = "asset/voice/line.ogg"\n\nvolume bgm 0.6\nbgm morning volume 0.8\nplay se door volume 0.5\nplay voice line blocking\nplay video opening\nplay video opening async\nclear bgm', '音量は0.0〜1.0。volumeは以降の基準、再生命令のvolumeはその再生だけに適用します。動画は省略時blockingで終了まで物語と入力を止めます。動画を並行再生する場合はasyncを指定します。voiceは省略時asyncです。'],
+    ['時間・画面効果', 'wait 500\neffect fade black 300\nshow ayase.smile left fade 250\nmove character ayase by x+30 y+10 over 400\nmove bg by x-5 y+0 over 800', 'wait / fade / overの時間はミリ秒の整数です。moveの座標はpx。完了待ちの時間付き命令は合計時間をブロックします。'],
+    ['標準ライブラリ・実行状態API', 'include "std/math.tds" as math\ninclude "std/motion/walk.tds" as walk\n\nif runtime.state.characters.exists("ayase") {\n  walk.character("ayase", 120.0, 2, 2.0, 6.0)\n}\nfloat x = math.clamp(1.5, 0.0, 1.0)', 'よく使う機能はstd/math、std/text、std/collections、std/motionにあります。runtime.stateは再生中の盤面状態を読むAPIです。walk.characterは表示中と証明できるキャラクターだけを動かし、証明できない呼び出しはIDEが警告します。'],
+    ['よくあるエラー', 'say narrator "正しい"\nset score = score + 1\n\n# 間違い: score = score + 1\n# 間違い: float ratio = 1\n# 間違い: goto chapter/next.tds', '再代入にはsetが必要です。floatには1.0のようなfloat値を使います。外部ファイルへのgotoは引用符付き相対パス。asset/include/gotoのファイル存在エラーは診断一覧で場所を確認します。'],
+    ['エディター操作', 'Ctrl+S       保存\nCtrl+Z / Ctrl+Y  Undo / Redo\nCtrl+Shift+F  現在のシーンを整形\nTab / Shift+Tab  インデント調整\nCtrl+Enter    ビルド', '整形・保存・ビルド時に解析されます。赤はエラー、黄は警告です。エラー箇所は診断をクリックすると該当位置へ移動できます。'],
   ];
-  dialog.append(heading, close, intro, reference);
+  const list = document.createElement('div'); list.className = 'guide-sections';
+  const book = document.createElement('div'); book.className = 'guide-book'; book.hidden = true;
+  const bookIndex = document.createElement('nav'); bookIndex.className = 'guide-book-index'; bookIndex.setAttribute('aria-label', 'Reference sections');
+  const bookPage = document.createElement('article'); bookPage.className = 'guide-book-page';
+  book.append(bookIndex, bookPage);
+  let bookSections = null;
+  let selectedBookSection = -1;
+  const appendMarkdownBlocks = (parent, source) => {
+    const lines = source.split(/\r?\n/);
+    for (let index = 0; index < lines.length;) {
+      const line = lines[index];
+      if (!line.trim()) { index++; continue; }
+      if (/^\s*(?:~~~|```)/.test(line)) {
+        const marker = line.trim().slice(0, 3); const code = []; index++;
+        while (index < lines.length && !lines[index].trim().startsWith(marker)) code.push(lines[index++]);
+        if (index < lines.length) index++;
+        const pre = document.createElement('pre'); pre.textContent = code.join('\n'); parent.append(pre); continue;
+      }
+      const headingMatch = /^(#{1,6})\s+(.+)$/.exec(line);
+      if (headingMatch) {
+        const headingNode = document.createElement(`h${Math.min(4, headingMatch[1].length)}`);
+        headingNode.textContent = headingMatch[2].replace(/\s+#+\s*$/, ''); parent.append(headingNode); index++; continue;
+      }
+      if (/^\s*\|/.test(line)) {
+        const rows = [];
+        while (index < lines.length && /^\s*\|/.test(lines[index])) rows.push(lines[index++]);
+        const table = document.createElement('table');
+        rows.filter(row => !/^\s*\|?\s*:?-{3,}/.test(row)).forEach((row, rowIndex) => {
+          const tr = document.createElement('tr');
+          row.trim().replace(/^\||\|$/g, '').split('|').forEach(value => {
+            const cell = document.createElement(rowIndex === 0 ? 'th' : 'td'); cell.textContent = value.trim().replace(/`/g, ''); tr.append(cell);
+          });
+          table.append(tr);
+        });
+        parent.append(table); continue;
+      }
+      if (/^\s*(?:[-*+] |\d+\. )/.test(line)) {
+        const ordered = /^\s*\d+\. /.test(line); const listNode = document.createElement(ordered ? 'ol' : 'ul');
+        while (index < lines.length && /^\s*(?:[-*+] |\d+\. )/.test(lines[index])) {
+          const item = document.createElement('li'); item.textContent = lines[index++].replace(/^\s*(?:[-*+] |\d+\. )/, '').replace(/`/g, ''); listNode.append(item);
+        }
+        parent.append(listNode); continue;
+      }
+      const paragraph = [];
+      while (index < lines.length && lines[index].trim() && !/^\s*(?:~~~|```|#{1,6}\s|\||[-*+] |\d+\. )/.test(lines[index])) paragraph.push(lines[index++].trim());
+      if (paragraph.length) { const p = document.createElement('p'); p.textContent = paragraph.join(' ').replace(/`([^`]+)`/g, '$1'); parent.append(p); }
+    }
+  };
+  const selectBookSection = (index) => {
+    selectedBookSection = index;
+    const query = search.value.trim().toLocaleLowerCase();
+    const matches = bookSections.map((section, sectionIndex) => ({ section, sectionIndex }))
+      .filter(({ section }) => !query || section.searchText.includes(query));
+    if (matches.length && !matches.some(({ sectionIndex }) => sectionIndex === selectedBookSection)) selectedBookSection = matches[0].sectionIndex;
+    bookIndex.replaceChildren();
+    for (const { section, sectionIndex } of matches) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'guide-book-entry';
+      button.classList.toggle('is-selected', sectionIndex === selectedBookSection); button.textContent = section.title;
+      button.onclick = () => selectBookSection(sectionIndex); bookIndex.append(button);
+    }
+    if (!matches.length) { bookPage.textContent = 'No matching sections'; return; }
+    const current = bookSections[selectedBookSection]; bookPage.replaceChildren();
+    if (!current) { bookPage.textContent = '検索結果がありません'; return; }
+    const title = document.createElement('h2'); title.textContent = current.title; bookPage.append(title);
+    appendMarkdownBlocks(bookPage, current.body);
+  };
+  reference.addEventListener('click', async (event) => {
+    event.preventDefault();
+    if (bookSections && !book.hidden) {
+      intro.hidden = false; list.hidden = false; book.hidden = true; dialog.classList.remove('is-book');
+      search.value = '';
+      reference.textContent = 'Back to quick reference';
+      search.placeholder = 'Search syntax, types, commands, and descriptions'; return;
+    }
+    try {
+      if (!bookSections) {
+        reference.setAttribute('aria-busy', 'true');
+        const response = await fetch('/docs/tds-language-and-editor-guide.md');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const source = await response.text(); const parsed = []; let lines = [], title = '.tds Reference', inFence = false;
+        for (const line of source.split(/\r?\n/)) {
+          if (/^\s*(?:~~~|```)/.test(line)) inFence = !inFence;
+          const headingMatch = !inFence && /^(#{1,3})\s+(.+)$/.exec(line);
+          if (headingMatch) {
+            if (lines.some(value => value.trim())) parsed.push({ title, body: lines.join('\n') });
+            title = headingMatch[2].replace(/\s+#+\s*$/, ''); lines = [];
+          } else lines.push(line);
+        }
+        if (lines.some(value => value.trim())) parsed.push({ title, body: lines.join('\n') });
+        bookSections = parsed.map(section => ({ ...section, searchText: `${section.title}\n${section.body}`.toLocaleLowerCase() }));
+      }
+      intro.hidden = true; list.hidden = true; book.hidden = false; dialog.classList.add('is-book');
+      reference.textContent = '簡易ヘルプへ戻る'; search.placeholder = '構文・型・命令・説明を検索';
+      selectBookSection(0);
+    } catch (error) { reference.textContent = `読み込めませんでした: ${error.message}`; }
+    finally { reference.removeAttribute('aria-busy'); }
+  });
+  dialog.append(book);
+  dialog.append(heading, close, intro, search, reference, list);
   sections.forEach(([title, body, descriptionText], index) => {
-    const block = document.createElement('details'); block.className = 'guide-section'; if (index === 0) block.open = true;
+    const block = document.createElement('details'); block.className = 'guide-section'; block.dataset.search = `${title} ${body} ${descriptionText}`.toLocaleLowerCase(); if (index === 0) block.open = true;
     const summary = document.createElement('summary'); summary.textContent = title;
     const description = document.createElement('p'); description.textContent = descriptionText;
     const pre = document.createElement('pre'); pre.textContent = body;
-    block.append(summary, description, pre); dialog.append(block);
+    const actions = document.createElement('div'); actions.className = 'guide-actions';
+    const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'コピー';
+    copy.onclick = async () => { try { await navigator.clipboard.writeText(body); copy.textContent = 'コピーしました'; setTimeout(() => { if (copy.isConnected) copy.textContent = 'コピー'; }, 1200); } catch { copy.textContent = 'コピーできません'; } };
+    const insert = document.createElement('button'); insert.type = 'button'; insert.textContent = 'エディターへ挿入';
+    insert.onclick = () => { editor.focus(); editor.setRangeText(body, editor.selectionStart, editor.selectionEnd, 'end'); editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: body })); };
+    actions.append(copy, insert);
+    block.append(summary, description, pre, actions); list.append(block);
+  });
+  search.addEventListener('input', () => {
+    if (bookSections && !book.hidden) { selectBookSection(selectedBookSection); return; }
+    const query = search.value.trim().toLocaleLowerCase();
+    list.querySelectorAll('.guide-section').forEach(block => { block.hidden = Boolean(query) && !block.dataset.search.includes(query); if (query && !block.hidden) block.open = true; });
   });
   document.body.append(dialog); close.focus();
 }
@@ -3904,11 +4181,19 @@ async function showGameScreenSettings() {
   const heading = document.createElement('strong'); heading.textContent = 'タイトル・メニュー画面';
   const close = document.createElement('button'); close.type = 'button'; close.className = 'project-settings-close'; close.textContent = '×'; close.setAttribute('aria-label', '閉じる'); close.onclick = () => dialog.remove();
   const toolbar = document.createElement('div'); toolbar.className = 'game-screen-toolbar';
+  const scaleModeSelect = document.createElement('select'); scaleModeSelect.className = 'game-screen-scale-mode'; scaleModeSelect.setAttribute('aria-label', '画面サイズへの適応');
+  for (const [value, label] of [['contain', '比率を維持'], ['cover', '画面を覆う'], ['stretch', '引き伸ばす']]) {
+    const option = document.createElement('option'); option.value = value; option.textContent = label; scaleModeSelect.append(option);
+  }
+  const previewRatioSelect = document.createElement('select'); previewRatioSelect.className = 'game-screen-preview-ratio'; previewRatioSelect.setAttribute('aria-label', 'プレビュー画面比率');
+  for (const [value, label] of [['canvas', '基準比率'], ['16:9', '16:9'], ['16:10', '16:10'], ['4:3', '4:3'], ['21:9', '21:9'], ['9:16', '9:16']]) {
+    const option = document.createElement('option'); option.value = value; option.textContent = label; previewRatioSelect.append(option);
+  }
   const screenSelect = document.createElement('select'); screenSelect.setAttribute('aria-label', '編集する画面');
   const addScreen = document.createElement('button'); addScreen.type = 'button'; addScreen.textContent = '画面を追加';
   const addButton = document.createElement('button'); addButton.type = 'button'; addButton.textContent = 'ボタンを追加';
   const sourceModeButton = document.createElement('button'); sourceModeButton.type = 'button'; sourceModeButton.textContent = 'HTML/CSSで編集';
-  toolbar.append(screenSelect, addScreen, addButton, sourceModeButton);
+  toolbar.append(screenSelect, scaleModeSelect, previewRatioSelect, addScreen, addButton, sourceModeButton);
   const workspace = document.createElement('div'); workspace.className = 'game-screen-workspace';
   const preview = document.createElement('div'); preview.className = 'game-screen-preview'; preview.setAttribute('aria-label', '画面プレビュー');
   const inspector = document.createElement('div'); inspector.className = 'game-screen-inspector';
@@ -3997,17 +4282,27 @@ async function showGameScreenSettings() {
   function render() {
     const screen = selectedScreen(); if (!screen) return;
     const width = config.canvas.width, height = config.canvas.height;
-    preview.style.aspectRatio = `${width} / ${height}`;
-    const scale = Math.min(preview.clientWidth / width, preview.clientHeight / height);
-    preview.style.backgroundImage = screen.background ? `linear-gradient(#0002,#0002),url("${assetUrl(screen.background)}")` : 'none';
+    const [ratioWidth, ratioHeight] = previewRatioSelect.value === 'canvas'
+      ? [width, height] : previewRatioSelect.value.split(':').map(Number);
+    preview.style.aspectRatio = `${ratioWidth} / ${ratioHeight}`;
+    const previewWidth = preview.clientWidth, previewHeight = preview.clientHeight;
+    // The settings dialog can render while hidden (and therefore measure 0x0).
+    // ResizeObserver invokes render again once it becomes visible; don't turn
+    // that normal lifecycle state into an uncaught canvasTransform exception.
+    if (previewWidth <= 0 || previewHeight <= 0) { preview.replaceChildren(); return; }
+    const transform = NovelScreenDocument.canvasTransform(previewWidth, previewHeight, { width, height }, config.scaleMode || 'contain');
+    const { scaleX, scaleY, offsetX, offsetY } = transform;
+    const screenBackground = Object.hasOwn(screen, 'background') ? screen.background : config.defaultBackground;
+    preview.style.backgroundImage = screenBackground ? `linear-gradient(#0002,#0002),url("${assetUrl(screenBackground)}")` : 'none';
+    preview.style.backgroundSize = 'cover';
     preview.replaceChildren();
     if (sourceMode && screen.template && window.NovelScreenDocument) {
       try {
         const controls = config.controlSettings && documents[config.controlSettings]
           ? NovelScreenDocument.parseControlSettings(documents[config.controlSettings]) : {};
         const compiled = NovelScreenDocument.compileScreenDocument(documents[screen.template] || '', documents[config.stylesheet] || '', config.canvas, Object.keys(config.screens), controls);
-        preview.append(NovelScreenDocument.buildWebScreen(documents[screen.template] || '', documents[config.stylesheet] || '', document, {
-          width, height, scaleX: scale, scaleY: scale, assetUrl,
+        preview.append(NovelScreenDocument.buildScreenDom(compiled.tree, document, {
+          scaleX, scaleY, offsetX, offsetY, assetUrl,
           controlDefaults: controls, canSave: true, canContinue: true,
           saved: index => index === 0 ? { scene: 'main', text: 'ここに本文が表示されます。' } : null,
           onAction: () => {},
@@ -4029,25 +4324,24 @@ async function showGameScreenSettings() {
     }
     if (screen.title) {
       const screenTitle = document.createElement('div'); screenTitle.className = 'game-screen-preview-title'; screenTitle.textContent = screen.title;
-      Object.assign(screenTitle.style, { left: `${64 * scale}px`, top: `${42 * scale}px`, fontSize: `${34 * scale}px` }); preview.append(screenTitle);
+      Object.assign(screenTitle.style, { left: `${offsetX + 64 * scaleX}px`, top: `${offsetY + 42 * scaleY}px`, fontSize: `${34 * scaleY}px` }); preview.append(screenTitle);
     }
     if (screen.description) {
       const description = document.createElement('div'); description.className = 'game-screen-preview-description'; description.textContent = screen.description;
-      Object.assign(description.style, { left: `${64 * scale}px`, top: `${112 * scale}px`, width: `${Math.min(560, width - 128) * scale}px`, fontSize: `${18 * scale}px` }); preview.append(description);
+      Object.assign(description.style, { left: `${offsetX + 64 * scaleX}px`, top: `${offsetY + 112 * scaleY}px`, width: `${Math.min(560, width - 128) * scaleX}px`, fontSize: `${18 * scaleY}px` }); preview.append(description);
     }
     for (const item of screen.items) {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'game-screen-preview-button';
       button.textContent = item.label;
-      Object.assign(button.style, { left: `${item.x * scale}px`, top: `${item.y * scale}px`, width: `${item.width * scale}px`, height: `${item.height * scale}px`, fontSize: `${Math.max(9, 18 * scale)}px` });
+      Object.assign(button.style, { left: `${offsetX + item.x * scaleX}px`, top: `${offsetY + item.y * scaleY}px`, width: `${item.width * scaleX}px`, height: `${item.height * scaleY}px`, fontSize: `${Math.max(9, 18 * scaleY)}px` });
       if (item.image) button.style.backgroundImage = `url("${assetUrl(item.image)}")`;
       if (selectedItem === item) button.classList.add('selected');
       button.addEventListener('pointerdown', event => {
         event.preventDefault(); selectedItem = item; renderInspector(); render();
         const origin = { x: item.x, y: item.y, px: event.clientX, py: event.clientY };
         const move = pointer => {
-        const currentScale = preview.clientWidth / width;
-          item.x = Math.max(0, Math.min(width - item.width, Math.round(origin.x + (pointer.clientX - origin.px) / currentScale)));
-          item.y = Math.max(0, Math.min(height - item.height, Math.round(origin.y + (pointer.clientY - origin.py) / currentScale)));
+          item.x = Math.max(0, Math.min(width - item.width, Math.round(origin.x + (pointer.clientX - origin.px) / scaleX)));
+          item.y = Math.max(0, Math.min(height - item.height, Math.round(origin.y + (pointer.clientY - origin.py) / scaleY)));
           renderInspector(); render();
         };
         const stop = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop); };
@@ -4059,6 +4353,7 @@ async function showGameScreenSettings() {
   function renderInspector() {
     inspector.replaceChildren();
     const screen = selectedScreen();
+    scaleModeSelect.value = config.scaleMode || 'contain';
     if (sourceMode) {
       const heading = document.createElement('h2'); heading.textContent = '画面HTML / 共通CSS'; inspector.append(heading);
       const htmlLabel = document.createElement('label'); htmlLabel.textContent = screen.template || 'HTML';
@@ -4073,9 +4368,12 @@ async function showGameScreenSettings() {
     if (!selectedItem) {
       const bgmAssets = (assetData.assets || []).filter(asset => asset.type === 'bgm');
       selectField('Screen BGM', screen.music || '', [['', 'None'], ...bgmAssets.map(asset => [asset.name, `${asset.name}  ${asset.path}`])], value => { screen.music = value; render(); });
+      selectField('共通の既定背景', config.defaultBackground || '', [['', 'なし'], ...imageAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { config.defaultBackground = value; render(); });
       field('画面タイトル', 'title', screen.title);
       field('説明文', 'description', screen.description || '');
-      selectField('背景画像', screen.background, [['', 'なし'], ...imageAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { screen.background = value; render(); });
+      const backgroundValue = Object.hasOwn(screen, 'background') ? screen.background : '__default__';
+      const backgroundOptions = [['__default__', `共通設定 (${config.defaultBackground || 'なし'})`], ['', 'なし'], ...imageAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])];
+      selectField('背景画像', backgroundValue, backgroundOptions, value => { if (value === '__default__') delete screen.background; else screen.background = value; render(); });
       field('この画面のBGM（素材名）', 'music', screen.music || '');
       selectField('画面の役割', screen.role || '', [['', '通常画面'], ['save-slots', 'セーブ枠'], ['load-slots', 'ロード枠']], value => {
         for (const candidate of Object.values(config.screens)) if (candidate !== screen && candidate.role === value) delete candidate.role;
@@ -4149,6 +4447,8 @@ async function showGameScreenSettings() {
     renderInspector(); render();
   });
   screenSelect.addEventListener('change', () => { selectedItem = null; renderInspector(); render(); });
+  scaleModeSelect.addEventListener('change', () => { config.scaleMode = scaleModeSelect.value; render(); });
+  previewRatioSelect.addEventListener('change', render);
   addButton.addEventListener('click', () => {
     const screen = selectedScreen();
     const item = { id: `button_${Date.now().toString(36)}`, type: 'button', label: '新しいボタン', action: screenSelect.value === 'pause' ? 'resume' : 'start', x: 64, y: 150 + screen.items.length * 68, width: 300, height: 56 };
@@ -4493,44 +4793,6 @@ let searchTimer = null;
 let searchSequence = 0;
 const sceneFlowHost = document.querySelector('#scene-flow-host');
 const sceneFlowFrame = document.querySelector('#scene-flow-frame');
-let debugPlayerSession = '';
-let debugPlayerPanel = null;
-let debugLocationSequence = 0;
-let debugPlayerFitHandler = null;
-let debugPlayerScreen = { width: 1280, height: 720 };
-function fitDebugPlayerPanel() {
-  if (!debugPlayerPanel) return;
-  const aspect = debugPlayerScreen.width / debugPlayerScreen.height;
-  const narrow = innerWidth <= 900;
-  const widthLimit = Math.min(innerWidth * (narrow ? 0.78 : 0.48), narrow ? 560 : 720, innerWidth - 24);
-  const width = Math.max(160, Math.min(widthLimit, Math.max(160, innerHeight - 60) * aspect));
-  debugPlayerPanel.style.width = `${width}px`;
-  debugPlayerPanel.style.height = `${36 + (width - 2) / aspect}px`;
-  const viewport = debugPlayerPanel.querySelector('.debug-player-viewport');
-  const frame = viewport?.querySelector('iframe');
-  if (!viewport || !frame) return;
-  frame.style.width = `${debugPlayerScreen.width}px`;
-  frame.style.height = `${debugPlayerScreen.height}px`;
-  const bounds = viewport.getBoundingClientRect();
-  const scale = Math.min(bounds.width / debugPlayerScreen.width, bounds.height / debugPlayerScreen.height);
-  frame.style.transform = `scale(${scale})`;
-}
-function closeDebugPlayer() {
-  if (debugPlayerFitHandler) window.removeEventListener('resize', debugPlayerFitHandler);
-  debugPlayerFitHandler = null;
-  debugPlayerSession = '';
-  debugLocationSequence++;
-  debugExecutingFile = '';
-  debugExecutingLine = 0;
-  debugPlayerPanel?.remove();
-  debugPlayerPanel = null;
-  editor.classList.remove('debug-running');
-  updateHighlight();
-}
-function stopDebugPlayer(returnToFlow = false) {
-  closeDebugPlayer();
-  if (returnToFlow) showSceneFlowView();
-}
 async function showFlowStartPreview(file, line, focus = false) {
   const target = scenarioRelativePath(file) || file;
   if (!sceneNames.includes(target) || !Number.isSafeInteger(line) || line < 1) return;
@@ -4610,99 +4872,175 @@ lineNumbers.addEventListener('mouseleave', () => {
 lineNumbers.addEventListener('click', (event) => {
   if (flowLinePicker) acceptFlowLinePicker(flowPickerLineAt(lineNumbers, event));
 });
-async function showDebugLocation(file, line) {
-  const sequence = ++debugLocationSequence;
-  const target = scenarioRelativePath(file) || file;
-  if (!sceneNames.includes(target)) return;
-  if (sceneName.value !== target) await openScene(target);
-  if (sequence !== debugLocationSequence || !debugPlayerSession) return;
-  debugExecutingFile = target;
-  debugExecutingLine = Math.max(1, Number(line) || 1);
-  const location = debugPlayerPanel?.querySelector('[data-debug-location]');
-  if (location) location.textContent = `${target}:${debugExecutingLine}`;
-  updateHighlight();
-  const lines = editor.value.split('\n');
-  const start = lines.slice(0, debugExecutingLine - 1).reduce((count, text) => count + text.length + 1, 0);
-  const end = Math.min(editor.value.length, start + (lines[debugExecutingLine - 1]?.length || 0));
-  editor.classList.add('debug-running');
-  editor.setSelectionRange(start, end);
-  editor.scrollTop = Math.max(0, (debugExecutingLine - 4) * editorLineHeight());
-  highlight.scrollTop = editor.scrollTop;
-  lineNumbers.scrollTop = editor.scrollTop;
-  setStatus(`${target}:${debugExecutingLine} を実行中`, 'ok');
-}
 async function startSceneFlowDebug(message) {
   if (!sceneNames.includes(message.file)) throw Error('開始ノードが現在の作品にありません');
   if (message.line !== null && (!Number.isSafeInteger(message.line) || message.line < 1)) throw Error('開始行が不正です');
   await saveAllScenes();
-  closeDebugPlayer();
+  if (flowNativeDebugSession) await stopSceneFlowDebug(false).catch(() => {});
   hideSceneFlowView();
   activateExplorerView();
-  const panel = document.createElement('section'); panel.className = 'debug-player-panel'; panel.setAttribute('aria-label', 'テスト再生');
-  const bar = document.createElement('div'); bar.className = 'debug-player-bar';
-  const heading = document.createElement('div'); heading.className = 'debug-player-heading';
-  const title = document.createElement('strong'); title.textContent = 'テスト再生';
-  const debugLocationLabel = document.createElement('span'); debugLocationLabel.dataset.debugLocation = ''; debugLocationLabel.textContent = `${message.file}:${message.line ?? message.scene}`;
-  heading.append(title, debugLocationLabel);
-  const actions = document.createElement('div'); actions.className = 'debug-player-actions';
-  const flow = document.createElement('button'); flow.type = 'button'; flow.textContent = 'Scene Flow'; flow.title = '停止してScene Flowへ戻る'; flow.addEventListener('click', () => stopDebugPlayer(true));
-  const stop = document.createElement('button'); stop.type = 'button'; stop.textContent = '停止'; stop.title = 'テスト再生を停止'; stop.addEventListener('click', () => stopDebugPlayer(false));
-  actions.append(flow, stop);
-  const viewport = document.createElement('div'); viewport.className = 'debug-player-viewport';
-  const frame = document.createElement('iframe'); frame.title = 'テスト再生機';
-  viewport.append(frame);
-  bar.append(heading, actions); panel.append(bar, viewport); document.body.append(panel);
-  debugPlayerPanel = panel;
-  debugPlayerScreen = { width: 1280, height: 720 };
-  debugPlayerFitHandler = fitDebugPlayerPanel;
-  window.addEventListener('resize', debugPlayerFitHandler);
-  fitDebugPlayerPanel();
-  debugPlayerSession = crypto.randomUUID();
-  const url = new URL('/player.html', location.origin);
-  url.searchParams.set('source', message.file);
-  url.searchParams.set('scene', message.scene);
-  if (message.line !== null) url.searchParams.set('line', String(message.line));
-  url.searchParams.set('variables', JSON.stringify(message.variables || {}));
-  url.searchParams.set('debug', debugPlayerSession);
-  frame.src = url.href;
+  await openScene(message.file);
+  flowNativeDebugLastLocationKey = '';
+  flowNativeDebugActiveLoopKey = '';
+  flowNativeDebugLoopSourceFile = '';
+  setStatus('ネイティブプレイヤーでテスト再生を準備中…');
+  const report = await request('/api/native-play', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: message.file,
+      debugStart: { file: message.file, scene: message.scene, line: message.line, variables: message.variables || {} },
+    }),
+  });
+  if (!report.session || report.engine !== 'native') throw Error('ネイティブテストプレイヤーを開始できませんでした');
+  flowNativeDebugSession = report.session;
+  scheduleSceneFlowDebugPoll(report.session, 0);
+  setStatus('ネイティブプレイヤーでテスト再生中', 'ok');
+  notifySceneFlowDebugResult({ ok: true, active: true, message: 'ネイティブプレイヤーでテスト再生中です' });
 }
-window.addEventListener('message', (event) => {
-  if (event.origin !== location.origin || !debugPlayerPanel || event.source !== debugPlayerPanel.querySelector('iframe')?.contentWindow) return;
-  const message = event.data;
-  if (!message || message.session !== debugPlayerSession) return;
-  if (message.type === 'novel-debug:screen') {
-    const width = Number(message.width), height = Number(message.height);
-    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
-      debugPlayerScreen = { width, height };
-      debugPlayerPanel.style.setProperty('--debug-player-aspect', `${width} / ${height}`);
-      fitDebugPlayerPanel();
+
+function clearSceneFlowExecutionLine() {
+  highlight?.querySelectorAll('.hl-running').forEach((line) => line.classList.remove('hl-running'));
+  flowNativeDebugExecutionFile = '';
+  flowNativeDebugExecutionLine = 0;
+}
+
+function loopRangesForDebugSource(file, source) {
+  if (flowNativeDebugLoopSourceFile === file && flowNativeDebugLoopSource === source) return flowNativeDebugLoopRanges;
+  flowNativeDebugLoopSourceFile = file;
+  flowNativeDebugLoopSource = source;
+  flowNativeDebugLoopRanges = [];
+  const lineStarts = [0];
+  for (let index = 0; index < source.length; index += 1) if (source[index] === '\n') lineStarts.push(index + 1);
+  for (let lineIndex = 0; lineIndex < lineStarts.length; lineIndex += 1) {
+    const lineStart = lineStarts[lineIndex];
+    const lineEnd = source.indexOf('\n', lineStart);
+    const lineText = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
+    if (!/^\s*(?:for|while)\b/.test(lineText)) continue;
+    let opening = -1;
+    let quoted = false;
+    let escaped = false;
+    for (let index = lineStart; index < source.length; index += 1) {
+      const char = source[index];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') quoted = false;
+        continue;
+      }
+      if (char === '"') { quoted = true; continue; }
+      if (char === '#' || (char === '/' && source[index + 1] === '/')) {
+        const newline = source.indexOf('\n', index);
+        if (newline < 0) break;
+        index = newline;
+        continue;
+      }
+      if (char === '{') { opening = index; break; }
     }
+    if (opening < 0) continue;
+    const closing = matchingClosingBrace(source, opening);
+    if (closing < 0) continue;
+    const endLine = source.slice(0, closing).split('\n').length;
+    flowNativeDebugLoopRanges.push({ startLine: lineIndex + 1, endLine, key: `${file}:${lineIndex + 1}:${endLine}` });
   }
-  else if (message.type === 'novel-debug:location') {
-    const playerWindow = event.source;
-    showDebugLocation(message.file, message.line).catch(showError).finally(() => {
-      playerWindow.postMessage({ type: 'novel-debug:ack', session: message.session, step: message.step }, location.origin);
-    });
+  return flowNativeDebugLoopRanges;
+}
+
+function scrollExecutionLineIntoView(lineNumber) {
+  const line = highlight?.children?.[lineNumber - 1];
+  if (!line) return;
+  const lineRect = line.getBoundingClientRect();
+  const editorRect = editor.getBoundingClientRect();
+  const style = getComputedStyle(editor);
+  const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+  const paddingBottom = Number.parseFloat(style.paddingBottom) || 0;
+  const visibleTop = editorRect.top + editor.clientTop + paddingTop;
+  const visibleBottom = editorRect.top + editor.clientTop + editor.clientHeight - paddingBottom;
+  if (lineRect.top >= visibleTop && lineRect.bottom <= visibleBottom) return;
+  const contentTop = editor.scrollTop + lineRect.top - editorRect.top - editor.clientTop;
+  const availableHeight = Math.max(1, editor.clientHeight - paddingTop - paddingBottom);
+  editor.scrollTop = Math.max(0, contentTop - paddingTop - availableHeight * 0.35);
+}
+
+async function setSceneFlowExecutionLine(location) {
+  const sequence = ++flowNativeDebugLocationSequence;
+  clearSceneFlowExecutionLine();
+  if (!location || !Number.isSafeInteger(Number(location.line)) || Number(location.line) < 1) return;
+  const target = scenarioRelativePath(location.file) || location.file;
+  if (sceneName.value !== target) {
+    if (!sceneNames.includes(target)) return;
+    await openScene(target);
   }
-  else if (message.type === 'novel-debug:done') {
-    setStatus('テスト再生が完了しました', 'ok');
-    const location = debugPlayerPanel?.querySelector('[data-debug-location]');
-    if (location) location.textContent = '完了';
-    debugExecutingFile = ''; debugExecutingLine = 0; editor.classList.remove('debug-running'); updateHighlight();
+  if (sequence !== flowNativeDebugLocationSequence) return;
+  const lineNumber = Number(location.line);
+  flowNativeDebugExecutionFile = target;
+  flowNativeDebugExecutionLine = lineNumber;
+  const line = highlight?.children?.[lineNumber - 1];
+  if (line?.classList.contains('hl-line')) line.classList.add('hl-running');
+  const locationKey = `${normalizedScenePath(target)}:${location.scene}:${lineNumber}`;
+  if (locationKey === flowNativeDebugLastLocationKey) return;
+  flowNativeDebugLastLocationKey = locationKey;
+  const loops = loopRangesForDebugSource(target, editor.value);
+  const activeLoop = loops.filter((loop) => lineNumber >= loop.startLine && lineNumber <= loop.endLine)
+    .sort((left, right) => right.endLine - left.endLine)[0];
+  const activeLoopKey = activeLoop?.key || '';
+  if (!activeLoopKey || activeLoopKey !== flowNativeDebugActiveLoopKey) scrollExecutionLineIntoView(lineNumber);
+  flowNativeDebugActiveLoopKey = activeLoopKey;
+}
+
+function scheduleSceneFlowDebugPoll(session, delay = 100) {
+  clearTimeout(flowNativeDebugPollTimer);
+  flowNativeDebugPollTimer = setTimeout(async () => {
+    if (flowNativeDebugSession !== session) return;
+    if (flowNativeDebugPollBusy) { scheduleSceneFlowDebugPoll(session, 50); return; }
+    flowNativeDebugPollBusy = true;
+    try {
+      const state = await request(`/api/native-play/state?session=${encodeURIComponent(session)}`);
+      if (flowNativeDebugSession !== session) return;
+      if (!state.active) {
+        flowNativeDebugSession = '';
+        clearSceneFlowExecutionLine();
+        notifySceneFlowDebugResult({ ok: true, active: false, message: 'テスト再生が終了しました' });
+        return;
+      }
+      await setSceneFlowExecutionLine(state.location);
+      if (state.location) sceneFlowFrame?.contentWindow?.postMessage({ type: 'scene-flow:debug-location', location: state.location }, location.origin);
+    } catch (error) {
+      if (flowNativeDebugSession === session) console.warn('Could not read native test playback location:', error);
+    } finally {
+      flowNativeDebugPollBusy = false;
+      if (flowNativeDebugSession === session) scheduleSceneFlowDebugPoll(session, 90);
+    }
+  }, delay);
+}
+
+function notifySceneFlowDebugResult(result) {
+  sceneFlowFrame?.contentWindow?.postMessage({ type: 'scene-flow:debug-play-result', ...result }, location.origin);
+}
+
+async function stopSceneFlowDebug(notify = true) {
+  const session = flowNativeDebugSession;
+  flowNativeDebugLocationSequence += 1;
+  clearTimeout(flowNativeDebugPollTimer);
+  flowNativeDebugPollTimer = 0;
+  flowNativeDebugLastLocationKey = '';
+  flowNativeDebugActiveLoopKey = '';
+  clearSceneFlowExecutionLine();
+  if (!session) {
+    if (notify) notifySceneFlowDebugResult({ ok: true, active: false, message: '再生中のテストはありません' });
+    return { ok: true, stopped: false };
   }
-  else if (message.type === 'novel-debug:error') {
-    setStatus(`テスト再生: ${message.error}`, 'error');
-    const location = debugPlayerPanel?.querySelector('[data-debug-location]');
-    if (location) location.textContent = 'エラー';
-    debugExecutingFile = ''; debugExecutingLine = 0; editor.classList.remove('debug-running'); updateHighlight();
-  }
-});
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && debugPlayerPanel) {
-    event.preventDefault();
-    stopDebugPlayer(false);
-  }
-});
+  const report = await request('/api/native-play/stop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session }),
+  });
+  if (flowNativeDebugSession === session) flowNativeDebugSession = '';
+  const message = report.stopped ? 'テスト再生を停止しました' : 'テストプレイヤーはすでに終了しています';
+  setStatus(message, 'ok');
+  if (notify) notifySceneFlowDebugResult({ ok: true, active: false, message });
+  return report;
+}
 function hideSceneFlowView() {
   if (sceneFlowHost) sceneFlowHost.hidden = true;
 }
@@ -4738,7 +5076,15 @@ window.addEventListener('message', (event) => {
       if (match) revealEditorRange(match.index, match.index + message.symbol.length);
     }).catch(showError);
   } else if (message.type === 'scene-flow:debug-play') {
-    startSceneFlowDebug(message).catch(showError);
+    startSceneFlowDebug(message).catch((error) => {
+      notifySceneFlowDebugResult({ ok: false, active: false, message: error.message });
+      showError(error);
+    });
+  } else if (message.type === 'scene-flow:debug-stop') {
+    stopSceneFlowDebug().catch((error) => {
+      notifySceneFlowDebugResult({ ok: false, active: true, message: error.message });
+      showError(error);
+    });
   } else if (message.type === 'scene-flow:start-line-preview') {
     showFlowStartPreview(message.file, message.line).catch(showError);
   } else if (message.type === 'scene-flow:start-line-focus') {
@@ -5240,7 +5586,6 @@ document.querySelector('[data-activity="explorer"]')?.addEventListener('click', 
 document.querySelector('[data-activity="search"]')?.addEventListener('click', activateSearchView);
 document.querySelector('[data-activity="flow"]')?.addEventListener('click', showSceneFlowView);
 document.querySelector('[data-activity="presentation"]')?.addEventListener('click', activatePresentationView);
-document.querySelector('[data-presentation-action="player-ui"]')?.addEventListener('click', () => showProjectSettings().catch(showError));
 document.querySelector('[data-presentation-action="game-screens"]')?.addEventListener('click', () => showGameScreenSettings().catch(showError));
 document.querySelector('[data-presentation-action="project-settings"]')?.addEventListener('click', () => showProjectSettings().catch(showError));
 document.querySelector('.flow-link')?.addEventListener('click', (event) => { event.preventDefault(); showSceneFlowView(); });

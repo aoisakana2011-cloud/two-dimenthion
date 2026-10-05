@@ -14,7 +14,9 @@ const { Runtime } = require('../Edit/runtime');
   function encode(args) { const r = spawnSync(ffmpeg, ['-y', '-loglevel', 'error', ...args], { encoding: 'utf8', timeout: 20000 }); assert.equal(r.status, 0, r.stderr || r.error?.message); }
   encode(['-f', 'lavfi', '-i', 'sine=frequency=440:duration=1.0', path.join(assetsRoot, 'tone.wav')]);
   for (const extension of ['flac', 'ogg', 'mp3']) encode(['-i', path.join(assetsRoot, 'tone.wav'), path.join(assetsRoot, `tone.${extension}`)]);
-  for (const extension of ['jpg', 'webp', 'gif']) encode(['-i', path.join(assetsRoot, 'pixel.png'), '-vf', 'scale=160:90', '-frames:v', '1', path.join(assetsRoot, `pixel.${extension}`)]);
+  for (const extension of ['jpg', 'webp']) encode(['-i', path.join(assetsRoot, 'pixel.png'), '-vf', 'scale=160:90', '-frames:v', '1', path.join(assetsRoot, `pixel.${extension}`)]);
+  encode(['-f', 'lavfi', '-i', 'color=c=red:s=32x32:r=10:d=0.2', '-f', 'lavfi', '-i', 'color=c=blue:s=32x32:r=10:d=0.2', '-filter_complex', '[0:v][1:v]concat=n=2:v=1:a=0,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse', '-loop', '0', path.join(assetsRoot, 'pixel.gif')]);
+  encode(['-f', 'lavfi', '-i', 'color=c=red:s=32x32:r=10:d=0.2', '-f', 'lavfi', '-i', 'color=c=blue:s=32x32:r=10:d=0.2', '-filter_complex', '[0:v][1:v]concat=n=2:v=1:a=0,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse', '-loop', '1', path.join(assetsRoot, 'pixel-once.gif')]);
   encode(['-f', 'lavfi', '-i', 'color=c=blue:s=160x90:d=0.4:r=25', '-i', path.join(assetsRoot, 'tone.wav'), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', path.join(assetsRoot, 'clip.mp4')]);
   await fs.writeFile(path.join(scenesRoot, 'audio.tds'), 'fn transition_duration() -> int { return 1000 }');
   const source = `asset bg room = "asset/pixel.png"
@@ -23,6 +25,7 @@ asset image second = "asset/pixel.png"
 asset image jpeg = "asset/pixel.jpg"
 asset image webp = "asset/pixel.webp"
 asset image gif = "asset/pixel.gif"
+asset image once = "asset/pixel-once.gif"
 asset bgm music = "asset/tone.wav"
 asset bgm music_alt = "asset/tone.wav"
 asset bgm broken_bgm = "asset/broken.wav"
@@ -48,7 +51,11 @@ character ghost {
 }
 int x = 9007199254740993
 float shift = 0.5
-bg room
+bg room fade 120
+bg room --only
+show hero.normal center --only
+show image first center --only
+show image first center
 bgm music
 play bgm music_alt crossfade 900
 play se sound
@@ -60,6 +67,7 @@ play se mpthree
 show image jpeg center
 show image webp center
 show image gif center
+show image once center
 clear image jpeg
 clear image webp
 clear image gif
@@ -77,8 +85,18 @@ clear image first
 hide friend
 hide hero fade 10
 effect fade white 10
+bg room wipe-left 10
+play video clip async opacity 0.5
+camera zoom 1.25 at 640 360 over 10
+dialog visible false
+camera reset over 10
+dialog visible true
+play video clip blocking
+play video "clip.mp4" async --only
+effect fade black 10
 play video clip blocking
 play video clip async
+play video clip
 choice "transition" { "crossfade" { play bgm music_alt crossfade audio.transition_duration()\nplay bgm music crossfade audio.transition_duration()\nwait 60\nplay bgm broken_bgm crossfade audio.transition_duration()\nbgm broken_bgm\nplay video clip async\nplay video broken_video async } "keep" { wait 1 } }
 wait 1050
 clear bgm
@@ -114,11 +132,30 @@ say hero "speaker label parity"
   assert.equal(smokeResult.relativeCharacterMoveMatched, true, 'Native character move must accumulate fractional show offsets and relative movement');
   assert.equal(smokeResult.relativeBackgroundMoveMatched, true, 'Native background move must preserve fractional pixel offsets');
   assert.equal(smokeResult.characterSlotReplacementMatched, true, 'a selected story branch must replace the character already occupying the target slot');
+  assert.ok(smokeResult.animationMidpoints.some(item => item.durationMs === 120 && item.state.background?.asset === 'room'), 'Native animates and waits for a first background fade even when no previous background exists');
+  const isolatedModes = smokeResult.presentationTrace.filter(item => item.visualOnlyKind);
+  assert.ok(isolatedModes.some(item => item.visualOnlyKind === 'background' && item.visualOnlyId === 'room'), 'Native isolates the selected background without deleting scene state');
+  assert.ok(isolatedModes.some(item => item.visualOnlyKind === 'character' && item.visualOnlyId === 'hero'), 'Native isolates the selected character');
+  assert.ok(isolatedModes.some(item => item.visualOnlyKind === 'image' && item.visualOnlyId === 'first'), 'Native isolates the selected general image');
+  assert.ok(isolatedModes.some(item => item.visualOnlyKind === 'video' && item.visualOnlyId === 'clip'), 'Native applies video-only mode during async playback');
+  assert.ok(smokeResult.animatedImageFrameChanges > 0, 'Native advances animated GIF scene assets while the story runs');
+  assert.ok(smokeResult.animatedGifRepeatCounts.includes(1), 'Native reads GIF repeat-count metadata');
+  assert.ok(smokeResult.animatedFiniteAnimationsCompleted > 0, 'Native stops finite GIF animations on their final frame');
+  assert.ok(smokeResult.presentationTrace.some(item => item.command === 'play' && item.state.video?.asset === 'clip' && item.state.visualOnly === null),
+    'a subsequent ordinary video command replaces and clears the previous exclusive mode');
+  const renderedForOnly = kind => smokeResult.presentationTrace.find(item => item.visualOnlyKind === kind)?.renderedCategories?.slice().sort();
+  assert.deepEqual(renderedForOnly('background'), ['background', 'controls', 'dialogue'], 'background-only keeps UI and hides other scene layers');
+  assert.deepEqual(renderedForOnly('character'), ['character', 'controls', 'dialogue'], 'character-only keeps UI and hides other scene layers');
+  assert.deepEqual(renderedForOnly('image'), ['controls', 'dialogue', 'image'], 'image-only keeps UI and hides other scene layers');
+  assert.deepEqual(renderedForOnly('video'), ['video'], 'video-only draws video without UI, effects, fog, or other scene layers');
+  assert.deepEqual(smokeResult.presentationTrace.find(item => item.command === 'effect' && item.visualOnlyKind === 'video')?.renderedCategories?.slice().sort(), ['video'], 'screen effects do not cover video-only playback');
   const playbackTimings = smokeResult.playbackTimings;
   const playbackTime = (type, mode) => playbackTimings.find(item => item.type === type && item.mode === mode)?.elapsedMs;
   assert.ok(playbackTime('voice', 'blocking') >= 800, `blocking Voice must wait for its 1000ms asset: ${JSON.stringify(playbackTimings)}`);
   assert.ok(playbackTime('se', 'nonblocking') < playbackTime('voice', 'blocking') - 200, `SE must return while its 1000ms asset is still playing: ${JSON.stringify(playbackTimings)}`);
   assert.ok(playbackTime('video', 'blocking') >= 300, `blocking video must wait for its 400ms asset: ${JSON.stringify(playbackTimings)}`);
+  assert.ok(playbackTime('video', 'blocking') >= 300 && playbackTimings.filter(item => item.type === 'video' && item.mode === 'blocking').length >= 2,
+    `video without an explicit mode must also block until playback completes: ${JSON.stringify(playbackTimings)}`);
   assert.ok(playbackTime('video', 'async') < playbackTime('video', 'blocking') - 100, `async video must return before media completion: ${JSON.stringify(playbackTimings)}`);
   const crossfades = playbackTimings.filter(item => item.type === 'bgm' && item.mode === 'crossfade');
   assert.ok(crossfades.length >= 2 && crossfades.every(item => item.elapsedMs < 250), `BGM crossfades must not block on their 1000ms fade: ${JSON.stringify(playbackTimings)}`);
@@ -402,12 +439,13 @@ scene main {
   const timedChoiceBodyLine = timedSource.split('\n').findIndex(line => line.trim() === '"run" {') + 1;
   const timedBrowserCommands = [];
   let timedBrowserAtDialogue = null;
-  const presentationCommandNames = new Set(['bg', 'bgm', 'show', 'hide', 'move', 'play', 'volume', 'clear', 'effect', 'say', 'wait']);
+  const presentationCommandNames = new Set(['bg', 'bgm', 'show', 'hide', 'move', 'play', 'volume', 'clear', 'effect', 'say', 'wait', 'camera', 'dialog']);
   const stableFloat = value => Math.round(Number(value) * 1e6) / 1e6;
   const toPresentationSnapshot = state => ({
     logicalTimeMs: state.logicalTimeMs,
     background: state.background ? { asset: state.background.asset, offsetX: state.background.offsetX || 0, offsetY: state.background.offsetY || 0 } : null,
-    video: state.video ? { asset: state.video.asset } : null,
+    video: state.video ? { asset: state.video.asset, layer: state.video.layer ?? null } : null,
+    visualOnly: state.visualOnly?.kind === 'video' ? null : state.visualOnly || null,
     characters: Object.values(state.characters).filter(actor => actor.visible).map(actor => ({
       id: actor.id, pose: actor.pose, slot: actor.slot, opacity: actor.opacity, offsetX: actor.offsetX, offsetY: actor.offsetY, visualOrder: actor.visualOrder,
     })).sort((left, right) => left.id.localeCompare(right.id)),
@@ -419,12 +457,14 @@ scene main {
       volumes: Object.fromEntries(Object.entries(state.audio.volumes).map(([kind, gain]) => [kind, stableFloat(gain)])),
       volumeOverrides: Object.fromEntries(Object.entries(state.audio.volumeOverrides).map(([kind, gain]) => [kind, stableFloat(gain)])),
     },
-    ui: { dialogOpacity: state.ui.dialogOpacity },
+    layers: { ...state.layers },
+    ui: { dialogOpacity: state.ui.dialogOpacity, dialogVisible: state.ui.dialogVisible },
+    camera: { zoom: stableFloat(state.camera.zoom), focusX: stableFloat(state.camera.focusX), focusY: stableFloat(state.camera.focusY) },
     activeMedia: [...state.audio.se.map(({ asset }) => ({ kind: 'se', asset })), ...state.audio.voices.map(({ asset }) => ({ kind: 'voice', asset }))]
       .sort((left, right) => `${left.kind}:${left.asset}`.localeCompare(`${right.kind}:${right.asset}`)),
     effect: state.effects.find(item => item.transition.status === 'running')?.type || null,
   });
-  const normalizeNativePresentationTrace = trace => trace.map(item => ({
+  const normalizeNativePresentationTrace = trace => trace.map(({ renderedCategories, ...item }) => ({
     ...item,
     state: {
       ...item.state,
@@ -605,7 +645,7 @@ scene main {
   assert.deepEqual(expiryBrowserTrace[2].state.activeMedia, [], 'completed nonblocking Browser media must leave the active presentation state');
   const expiryNative = spawnSync(exe, [expiryPackagePath, '--smoke'], { encoding: 'utf8', timeout: 10000, env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' } });
   assert.equal(expiryNative.status, 0, expiryNative.stderr || expiryNative.error?.message);
-  assert.deepEqual(JSON.parse(expiryNative.stdout).presentationTrace, expiryBrowserTrace,
+  assert.deepEqual(normalizeNativePresentationTrace(JSON.parse(expiryNative.stdout).presentationTrace), expiryBrowserTrace,
     'Native mixer natural completion and Browser media-ended events must agree on overlapping nonblocking SE/Voice and elapsed wait state');
   const effectExpirySource = `asset se sound = "asset/tone.wav"
 asset voice greeting = "asset/tone.wav"
@@ -636,7 +676,7 @@ scene main {
   assert.deepEqual(effectExpiryBrowserTrace.at(-1).state.activeMedia, [], 'nonblocking SE and Voice complete while Browser awaits the blocking effect');
   const effectExpiryNative = spawnSync(exe, [effectExpiryPackagePath, '--smoke'], { encoding: 'utf8', timeout: 10000, env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' } });
   assert.equal(effectExpiryNative.status, 0, effectExpiryNative.stderr || effectExpiryNative.error?.message);
-  assert.deepEqual(JSON.parse(effectExpiryNative.stdout).presentationTrace, effectExpiryBrowserTrace,
+  assert.deepEqual(normalizeNativePresentationTrace(JSON.parse(effectExpiryNative.stdout).presentationTrace), effectExpiryBrowserTrace,
     'Native audio natural completion during a blocking visual effect must match Browser media-ended state and deterministic effect time');
   const midpointScenesRoot = path.join(root, 'animation-midpoint-scenes');
   await fs.mkdir(midpointScenesRoot, { recursive: true });
@@ -760,7 +800,7 @@ scene main {
   await repeatedBrowser.run(repeatedPackage.program);
   const repeatedNative = spawnSync(exe, [repeatedPackagePath, '--smoke'], { encoding: 'utf8', timeout: 10000, env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' } });
   assert.equal(repeatedNative.status, 0, repeatedNative.stderr || repeatedNative.error?.message);
-  assert.deepEqual(JSON.parse(repeatedNative.stdout).presentationTrace, repeatedBrowserTrace,
+  assert.deepEqual(normalizeNativePresentationTrace(JSON.parse(repeatedNative.stdout).presentationTrace), repeatedBrowserTrace,
     'repeated shows, same-slot replacement, and accumulated character/background moves must keep Browser scene state and Native renderer state synchronized after each command');
   assert.deepEqual(repeatedBrowser.sceneState.slots, { left: 'hero', center: null, right: 'friend', far_left: null, far_right: null });
   const createTimedBrowserRuntime = (commandLog, trace, onCommandState) => {
@@ -870,7 +910,7 @@ scene main {
   const voiceStartNative = spawnSync(exe, [timedPackagePath, '--smoke', '--debug-start', 'timed-main.tds', 'main', String(blockingVoiceLine), '{}'], { encoding: 'utf8', timeout: 10000, env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' } });
   assert.equal(voiceStartNative.status, 0, voiceStartNative.stderr || voiceStartNative.error?.message);
   assert.ok(Date.now() - voiceStartNativeStart >= 800, 'Native debug-start must block for the selected Voice asset');
-  assert.deepEqual(JSON.parse(voiceStartNative.stdout).presentationTrace, voiceStartTrace,
+  assert.deepEqual(normalizeNativePresentationTrace(JSON.parse(voiceStartNative.stdout).presentationTrace), voiceStartTrace,
     'starting directly at a nested blocking media command must match Browser state through its continuation and cleanup');
   const transferScenesRoot = path.join(root, 'debug-transfer-scenes');
   await fs.mkdir(transferScenesRoot, { recursive: true });

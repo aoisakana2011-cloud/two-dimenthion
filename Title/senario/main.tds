@@ -1,3 +1,9 @@
+# 演出一括チェックシナリオ
+# セリフごとに入力を待ち、動き・切替の見え方を確認できます。
+include "std/math.tds" as math
+include "std/motion/walk.tds" as walk
+include "std/motion/effects.tds" as motion
+
 asset bg bedroom = "asset/bg/room.jpg"
 asset bg kitchen = "asset/bg/ktichin.png"
 asset bg entrance = "asset/bg/home_entrance.jpg"
@@ -8,6 +14,8 @@ asset bgm morning = "asset/bgm/morning.mp3"
 asset bgm going_school = "asset/bgm/going_school.mp3"
 asset se cooking = "asset/se/cooking.mp3"
 asset se door = "asset/se/open_door.mp3"
+asset image logo = "asset/ui/logos/spring-late-love-title-v2.png"
+asset video op = "asset/video/OP.mp4"
 
 character protagonist {
   name = "僕"
@@ -15,129 +23,185 @@ character protagonist {
 
 character sister {
   name = "妹"
-  pose normal = "asset/char/sisiter_normal_cutout.png"
-  pose dere = "asset/char/sister_dere_cutout.png"
+  pose normal = "asset/char/sister_normal_knee.png" y_offset = 64
+  pose dere = "asset/char/sister_dere_knee.png" y_offset = 64
 }
 
 character ayaka {
   name = "綾瀬あやか"
-  pose normal = "asset/char/ayaka_normal_cutout.png"
-  pose dere = "asset/char/ayaka_dere_cutout.png"
+  pose normal = "asset/char/ayaka_normal_knee_v2.png" y_offset = 56
+  pose dere = "asset/char/ayaka_dere_knee.png" y_offset = 56
+  pose normal_knee_alt = "asset/char/ayaka_normal_knee.png" y_offset = 56
+}
+
+
+# Camera focal-point offsets move the whole game world while the dialogue UI stays fixed.
+fn shake_camera() -> none {
+  # With 1.04 zoom, focus movement is scaled by only 0.04 on screen.
+  # Compensate so the visible shake reaches roughly 12px horizontally and 6px vertically.
+  for frame from 1 to 24 {
+    float progress = float(frame) / 24.0
+    int offset_x = int(math.round(motion.shake(325.0, progress, 3.0)))
+    int offset_y = int(math.round(motion.shake(175.0, progress, 4.0)))
+    int focus_x = 640 + offset_x
+    int focus_y = 360 + offset_y
+    camera zoom 1.04 at focus_x focus_y
+    wait 35
+  }
+  camera reset over 180
+}
+
+fn breathe_sister() -> none {
+  show sister.normal center
+  int previous_y = 0
+  for frame from 1 to 20 {
+    float progress = float(frame) / 20.0
+    int offset_y = int(math.round(motion.breathe(3.0, progress)))
+    move character sister by y + (offset_y - previous_y)
+    wait 35
+    set previous_y = offset_y
+  }
+}
+
+fn hop_sister() -> none {
+  show sister.normal center
+  int previous_y = 0
+  for frame from 1 to 20 {
+    float progress = float(frame) / 20.0
+    int offset_y = int(math.round(motion.hop(42.0, progress)))
+    move character sister by y + (offset_y - previous_y)
+    wait 35
+    set previous_y = offset_y
+  }
+}
+
+fn drift_background() -> none {
+  bg bedroom
+  int previous_x = 0
+  for frame from 1 to 24 {
+    float progress = float(frame) / 24.0
+    int offset_x = int(math.round(motion.drift(18.0, progress, 2.0)))
+    move bg by x + (offset_x - previous_x)
+    wait 35
+    set previous_x = offset_x
+  }
 }
 
 scene main {
   bg bedroom
+  effect fade black 450
+  say narrator "演出チェックを始めます。各項目のあとで画面を確認してください。"
+  say narrator "最初は立ち絵のフェード登場、表情差し替え、配置スロットの置き換えです。"
+  show sister.normal far_left fade 550
+  say sister "左端からフェードで登場しました。"
+  show sister.dere left x + 24 fade 350
+  say sister "同じ人物の表情・位置・X/Yオフセットを切り替えました。"
+  show ayaka.normal far_right fade 450
+  say ayaka "別スロットにもフェード登場します。"
+  hide ayaka fade 450
+  say narrator "次は即時表示と即時退場です。"
+  show ayaka.dere right
+  wait 450
+  say ayaka "こちらも膝丈の照れ表情です。"
+  hide ayaka
+  say narrator "標準ライブラリの歩行モーションを再生します。"
+  walk.character("sister", 300.0, 4, 2.4, 7.0)
+  say sister "上下の足運びを付けて左から中央へ歩きました。"
+  move character sister by x - 120 y + 0 over 450
+  say narrator "move character の時間付きX/Y移動を確認しました。"
+  move bg by x + 28 y + 12 over 500
+  say narrator "move bg の時間付き移動です。次のシーンで背景を初期化します。"
+  goto motion_effects
+}
+
+scene motion_effects {
+  clear bg
+  bg bedroom
+  show sister.normal center
+  say narrator "ここから画面とキャラクターのモーションです。"
+  say narrator "カメラ焦点を揺らし、背景と人物をまとめて揺らします。"
+  shake_camera()
+  say narrator "画面揺れが終わり、カメラも基準倍率へ戻りました。"
+  say sister "呼吸のような小さな上下動を確認します。"
+  breathe_sister()
+  say sister "次はジャンプです。"
+  hop_sister()
+  say narrator "背景ドリフトを確認します。"
+  drift_background()
+  move bg by x + 72 y - 48 over 500
+  say narrator "背景を移動しても、画面端に下地が出ないことを確認しました。カメラ演出も続けます。"
+  camera zoom 1.25 at 640 360 over 700
+  camera zoom 1.12 at 900 330 over 550
+  say narrator "ズームアウト中も背景が画面端まで覆われることを確認します。"
+  camera zoom 0.72 at 640 360 over 550
+  camera reset over 650
+  say narrator "カメラが元に戻りました。背景遷移を続けます。"
+  goto background_transitions
+}
+
+scene background_transitions {
+  bg kitchen fade 500
+  say narrator "背景遷移: fade"
+  bg entrance crossfade 500
+  say narrator "背景遷移: crossfade"
+  bg town wipe - left 500
+  say narrator "背景遷移: wipe-left"
+  bg street wipe - right 500
+  say narrator "背景遷移: wipe-right"
+  bg school wipe - up 500
+  say narrator "背景遷移: wipe-up"
+  bg bedroom wipe - down 500
+  say narrator "背景遷移: wipe-down。最後に背景だけの表示を確認します。"
+  bg town fade 350 --only
+  wait 650
+  bg bedroom fade 350
+  show sister.normal center
+  say narrator "通常表示に戻りました。続けて画像レイヤーを確認します。"
+  show image logo center
+  wait 550
+  clear image logo
+  show image logo center --only
+  wait 650
+  show sister.dere center fade 350
+  say narrator "画像単独表示から会話画面へ戻しました。"
+  goto dialogue_and_audio
+}
+
+scene dialogue_and_audio {
+  say narrator "会話欄の不透明度と一時的なsay不透明度を確認します。"
+  dialog opacity 0.45
+  say narrator "sayだけを半透明にしています。" opacity 0.55
+  dialog opacity 1.0
+  say narrator "会話欄を一時的に非表示にします。"
+  dialog visible false
+  wait 700
+  dialog visible true
+  say narrator "会話欄を再表示しました。黒・白フェードを確認します。"
+  effect fade black 450
+  say narrator "黒フェード完了。"
+  effect fade white 450
+  say narrator "白フェード完了。"
+  say narrator "BGMクロスフェードとSE、チャンネル音量を確認します。"
+  volume bgm 0.55
+  volume se 0.65
+  volume voice 0.5
   bgm morning
-  say narrator "目覚まし時計は、昨晩の命令通りにけたたましく鳴り始めた。"
-  say narrator "それを止めるべく、僕は瞼を開ける。"
-
-  clear bg
-  bg kitchen
-  play se cooking
-  show sister.normal left y + 0 fade 250
-  say narrator "予定通りに朝食を食べる。"
-  say sister "ちょっと、ご飯を食べる前に歯磨きしたの？"
-  say protagonist "どっちみち後でするんだから、こっちのほうが効率がいい。"
-  show sister.dere left y + 0 fade 180
-  say sister "もう……お兄ちゃんは……。"
-  say narrator "呆れたような視線を向けてくる妹をよそに、僕は朝食を口へ運ぶ。"
-
-  clear bg
-  bg entrance
-  say protagonist "すまん。せっかくの入学式のところ悪いが、先に学校へ行っておいてくれないか。"
-  say sister "何言ってるの。今日はお兄ちゃんの高校の入学式でしょ？ 私は中等部なんだから、いつもと変わらないし。"
-  say protagonist "まぁ、ということで頼んだ。"
-  say sister "わ、わかった……。"
-  say narrator "妹を先に行かせるのには、もちろん理由がある。"
-  say narrator "入学式当日に遅刻する。そんな、いかにも主人公らしいムーブを思いついてしまったのである。"
-  say narrator "思いついてしまったものは仕方がない。"
-  say sister "じゃあ、行ってくるね。"
-  play se door
-  say protagonist "行ってらっしゃい。あとで行くから。"
-  hide sister fade 180
-  say narrator "玄関の扉が閉まる。"
-  say narrator "それから十五分ほど経ったところで、僕も家を出た。"
-  play se door
-  play bgm going_school crossfade 900
-  clear bg
-  bg town
-  say narrator "このくらい遅れて出れば、入学式の途中に教室へ滑り込むことになるだろう。"
-  say narrator "むしろ少しくらい目立つほうが、主人公としては都合がいい。"
-  say narrator "外へ出ると、朝は案外寒かった。もっとも、十五分早く出たところで寒さは変わらなかっただろう。"
-  say narrator "さて。主人公が入学式に遅刻しているとなれば、登校中に何かしらのトラブルへ巻き込まれるのが定石である。"
-  say narrator "というわけで、少し遅めに歩くことにした。"
-  say narrator "歩幅はそのままに、ピッチだけを落とす。あくまで自然に。イベントを待っている人間だと思われてはいけない。"
-
-  clear bg
-  bg street
-  say narrator "しばらく歩き、十字路に差しかかった。"
-  say narrator "右手の塀の向こうに、見慣れないものが見える。"
-  say narrator "明るい色の髪だ。高さからして、おそらく女の子だろう。ハーフなのだろうか。"
-  say narrator "その頭は、かなりの速度でこちらへ近づいていた。歩いているというより、走っていると言ったほうが正しそうだ。"
-  say narrator "残念ながら、食パンを咥えているかどうかまでは塀に隠れて確認できない。"
-  say narrator "しかし、この状況。間違いない。"
-  say narrator "そんなことを考えているうちに、僕たちは見事に『曲がり角でぶつかる直前の構図』になっていた。"
-  say narrator "止まるべきか。止まらぬべきか。僕はそんな野暮なことは考えない。"
-  say narrator "問題は――僕が転ぶか、相手を転ばせるかである。"
-
-  choice "主人公として、どう動く？" {
-    "自分が転んで、彼女を受け止める" {
-      goto collision_catch
+  play bgm going_school volume 0.7 crossfade 900
+  play se door volume 0.7
+  play se cooking volume 0.35
+  wait 1100
+  clear bgm
+  volume bgm 1.0
+  volume se 1.0
+  volume voice 1.0
+  say narrator "このプロジェクトには音声ファイルがないため、voice再生モードは対象外です。動画再生を選べます。"
+  choice "約108秒の動画再生も確認しますか？" {
+    "動画をblocking再生する" {
+      play video op blocking opacity 0.85
     }
-    "身をかわして、相手を転ばせる" {
-      goto collision_dodge
+    "動画はスキップする" {
+      wait 1
     }
   }
-}
-
-scene collision_catch {
-  say narrator "考える時間は、もうない。僕はとっさに両腕を広げた。"
-  show ayaka.normal right y + 0 fade 160
-  say narrator "次の瞬間、軽い衝撃。彼女を受け止めた勢いで、僕のほうが道路脇に尻もちをついた。"
-  say ayaka "いった……。えっ、だ、大丈夫？ ごめん、前をよく見てなくて！"
-  say protagonist "こっちは大丈夫。君こそ怪我はない？"
-  goto collision_after
-}
-
-scene collision_dodge {
-  say narrator "考える時間は、もうない。僕は反射的に横へ飛びのいた。"
-  show ayaka.normal right y + 0 fade 160
-  say narrator "彼女は僕の鞄をつかみ、勢いを殺しきれないまま、二人そろって道路脇に転がった。"
-  say ayaka "いたた……！ ちょっと、避けるなら避けるって言ってよ！"
-  say protagonist "言う時間があったら、もう少し格好よく避けてる。君は大丈夫？"
-  goto collision_after
-}
-
-scene collision_after {
-  show ayaka.dere right y + 0 fade 180
-  say narrator "彼女は制服についた埃を払い、僕の顔をまじまじと見た。"
-  say ayaka "私は平気。……あなた、本当に大丈夫？ 入学式の日に救急車なんて、笑えないよ。"
-  say protagonist "それは困る。遅刻して目立つ予定が、欠席で目立つことになる。"
-  say ayaka "遅刻する予定？"
-  say narrator "しまった。口が滑った。"
-  say protagonist "いや、今のは比喩で――。"
-  say ayaka "ふうん。わざとゆっくり歩いてたのも、そういうこと？"
-  say narrator "この子、見ていたのか。いや、あの速度で走っていたのに？"
-  say protagonist "……君も、かなり急いでいるみたいだけど。"
-  say ayaka "寝坊したの。目覚ましを止めた記憶はあるんだけど、二度寝したみたい。"
-  say protagonist "それは主人公らしい。"
-  say ayaka "主人公？"
-  say protagonist "いや、なんでもない。"
-  say narrator "彼女の髪に、朝の光が差した。近くで見ると、淡い金色に見える。"
-  say ayaka "綾瀬あやか。今日からこの学校の一年生。あなたは？"
-  say protagonist "僕は――。"
-  say narrator "名乗ろうとしたところで、校舎の方から始業を知らせるチャイムが鳴った。"
-  say ayaka "入学式、始まっちゃう！ 話は歩きながら。ほら、行くよ！"
-  say narrator "彼女は僕の返事を待たずに走り出した。"
-  say narrator "遅刻して目立つ計画は、どうやら彼女と一緒に実現するらしい。"
-
-  bg school
-  say narrator "校門をくぐると、式場へ向かう新入生の列はもうほとんど途切れていた。"
-  say ayaka "あの、さっきは本当にごめんね。あと……助けてくれて、ありがとう。"
-  say protagonist "どっちのこと？"
-  say ayaka "どっちも。"
-  say narrator "あやかは少しだけ笑った。"
-  say ayaka "続きは式のあとに聞かせて。遅刻の言い訳も、あなたの名前も。"
-  say narrator "こうして僕は、入学式の途中に教室へ滑り込む代わりに、同じく遅刻した少女と式場の扉の前に立つことになった。"
-  say narrator "主人公らしい出会いだったかどうかは、まだわからない。"
+  say narrator "演出チェックを終了します。"
 }

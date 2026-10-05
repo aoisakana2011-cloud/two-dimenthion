@@ -1,6 +1,6 @@
 import { Expr, ExternalCharacter, FunctionDef, NodeLocation, Script, Statement, ValueType } from '../parser';
 import { checkTypes, TypeCheckError } from './type-checker';
-import { isNonMutatingBuiltin, isPureBuiltin, isRuntimeStateApi } from '../language/builtins';
+import { IDE_ANALYSIS_RULES, isNonMutatingBuiltin, isPureBuiltin, runtimeStateApi } from '../language/builtins';
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info';
 
@@ -591,6 +591,7 @@ function statementExpressions(statement: Statement): Expr[] {
 function nested(statement: Statement): Statement[][] {
   if (statement.kind === 'if') return [statement.body, ...statement.elseIf.map((branch) => branch.body), statement.otherwise];
   if (statement.kind === 'for' || statement.kind === 'forEach' || statement.kind === 'while') return [statement.body];
+  if (statement.kind === 'parallel') return [statement.body];
   if (statement.kind === 'choice') return statement.options.map((option) => option.body);
   return [];
 }
@@ -2030,7 +2031,7 @@ function analyzeVariableConstraints(statements: Statement[], file: string, out: 
   }
 }
 
-interface CharacterPlacementState {
+interface RuntimeStateFlowState {
   slots: Map<string, string>;
   presence: Map<string, boolean>;
   presenceDependencies: Map<string, Set<string>>;
@@ -2038,6 +2039,7 @@ interface CharacterPlacementState {
 
 function characterNameFact(name: string): string { return `character:${name}`; }
 function characterExpressionFact(expression: Expr): string { return `expression:${expressionKey(expression)}`; }
+function runtimeStateFact(domain: string): string { return `runtime:${domain}`; }
 
 function isStableCharacterExpression(expression: Expr): boolean {
   if (expression.kind === 'literal') return typeof expression.value === 'string';
@@ -2062,7 +2064,53 @@ function characterExpressionVariables(expression: Expr, result = new Set<string>
   return result;
 }
 
-function invalidateCharacterExpressionFacts(state: CharacterPlacementState, variables?: ReadonlySet<string>): void {
+/** Infer reusable call-site preconditions from ordinary TDS bodies. A function
+ * which guards `move character parameter` with a registered character-presence
+ * predicate advertises that parameter as requiring proven presence to callers.
+ * The runtime guard remains authoritative when static analysis cannot prove it. */
+function functionCharacterPresenceRequirements(fn: FunctionDef): number[] {
+  const parameterIndexes = new Map(fn.params.map((parameter, index) => [parameter.name, index]));
+  const requirements = new Set<number>();
+  const characterPresenceSubjects = (expression: Expr): Expr[] => {
+    if (expression.kind === 'binary' && expression.operator === 'and') {
+      return [...characterPresenceSubjects(expression.left), ...characterPresenceSubjects(expression.right)];
+    }
+    if (expression.kind !== 'call') return [];
+    const predicate = runtimeStateApi(expression.name)?.compile?.predicate;
+    if (predicate?.kind !== 'membership' || predicate.domain !== 'characters') return [];
+    const subject = expression.args[predicate.argument];
+    return subject ? [subject] : [];
+  };
+  const bodyMovesParameter = (statements: Statement[], parameter: string): boolean => statements.some((statement) => {
+    if (statement.kind === 'command' && statement.name === 'move'
+      && statement.args[0]?.kind === 'literal' && statement.args[0].value === 'character'
+      && statement.args[1]?.kind === 'variable' && statement.args[1].name === parameter) return true;
+    return nested(statement).some((body) => bodyMovesParameter(body, parameter));
+  });
+  const inspect = (statements: Statement[]): void => {
+    for (const statement of statements) {
+      if (statement.kind === 'if') {
+        const expression = statement.condition.expression;
+        for (const subject of characterPresenceSubjects(expression)) {
+          if (subject?.kind === 'variable') {
+            const index = parameterIndexes.get(subject.name);
+            if (index !== undefined && bodyMovesParameter(statement.body, subject.name)) requirements.add(index);
+          }
+        }
+      }
+      nested(statement).forEach(inspect);
+    }
+  };
+  inspect(fn.body);
+  return [...requirements];
+}
+
+function characterPresenceFactForArgument(argument: Expr): string | undefined {
+  if (argument.kind === 'literal' && typeof argument.value === 'string') return characterNameFact(argument.value);
+  return isStableCharacterExpression(argument) ? characterExpressionFact(argument) : undefined;
+}
+
+function invalidateRuntimeExpressionFacts(state: RuntimeStateFlowState, variables?: ReadonlySet<string>): void {
   for (const [fact, dependencies] of state.presenceDependencies) {
     if (!variables || [...dependencies].some((name) => variables.has(name))) {
       state.presence.delete(fact);
@@ -2077,52 +2125,84 @@ function assignedRootVariable(target: Extract<Statement, { kind: 'set' | 'unset'
   return current.kind === 'variable' ? current.name : undefined;
 }
 
-function runtimeCharacterQueryKey(expression: Expr): string | undefined {
-  if (expression.kind !== 'call' || expression.name !== 'runtime.state.characters.exists' || expression.args.length !== 1) return undefined;
-  const target = expression.args[0];
-  if (target.kind === 'literal' && typeof target.value === 'string') return characterNameFact(target.value);
-  return isStableCharacterExpression(target) ? characterExpressionFact(target) : undefined;
+function declaredVariableNames(statements: Statement[], result = new Set<string>()): Set<string> {
+  for (const statement of statements) {
+    if (statement.kind === 'declare') result.add(statement.name);
+    nested(statement).forEach((body) => declaredVariableNames(body, result));
+  }
+  return result;
 }
 
-function knownCharacterCondition(expression: Expr, state: CharacterPlacementState): boolean | undefined {
-  const key = runtimeCharacterQueryKey(expression);
+function runtimePredicateFactKey(expression: Expr): { key: string; positiveMeans: 'present' | 'exists' } | undefined {
+  if (expression.kind !== 'call') return undefined;
+  const predicate = runtimeStateApi(expression.name)?.compile?.predicate;
+  if (!predicate) return undefined;
+  if (predicate.kind === 'state') return { key: runtimeStateFact(predicate.domain), positiveMeans: predicate.positiveMeans };
+  if (predicate.kind === 'binding') {
+    const target = expression.args[predicate.argument];
+    return target?.kind === 'literal' && typeof target.value === 'string'
+      ? { key: `variable:${target.value}`, positiveMeans: predicate.positiveMeans }
+      : undefined;
+  }
+  const target = expression.args[predicate.argument];
+  if (!target) return undefined;
+  const key = target.kind === 'literal' && typeof target.value === 'string'
+    ? characterNameFact(target.value)
+    : isStableCharacterExpression(target) ? characterExpressionFact(target) : undefined;
+  return key ? { key, positiveMeans: predicate.positiveMeans } : undefined;
+}
+
+function runtimeQueryFactKey(expression: Expr): string | undefined {
+  return runtimePredicateFactKey(expression)?.key;
+}
+
+function knownRuntimeCondition(expression: Expr, state: RuntimeStateFlowState): boolean | undefined {
+  const key = runtimeQueryFactKey(expression);
   if (key) return state.presence.get(key);
   if (expression.kind === 'unary' && expression.operator === 'not') {
-    const value = knownCharacterCondition(expression.value, state);
+    const value = knownRuntimeCondition(expression.value, state);
     return value === undefined ? undefined : !value;
   }
   if (expression.kind === 'binary' && expression.operator === 'and') {
-    const left = knownCharacterCondition(expression.left, state), right = knownCharacterCondition(expression.right, state);
+    const left = knownRuntimeCondition(expression.left, state), right = knownRuntimeCondition(expression.right, state);
     if (left === false || right === false) return false;
     if (left === true && right === true) return true;
   }
   if (expression.kind === 'binary' && expression.operator === 'or') {
-    const left = knownCharacterCondition(expression.left, state), right = knownCharacterCondition(expression.right, state);
+    const left = knownRuntimeCondition(expression.left, state), right = knownRuntimeCondition(expression.right, state);
     if (left === true || right === true) return true;
     if (left === false && right === false) return false;
   }
   return undefined;
 }
 
-function refineCharacterCondition(state: CharacterPlacementState, expression: Expr, truth: boolean): CharacterPlacementState {
-  const key = runtimeCharacterQueryKey(expression);
-  if (key) {
-    state.presence.set(key, truth);
-    if (key.startsWith('expression:')) state.presenceDependencies.set(key, characterExpressionVariables(expression.kind === 'call' ? expression.args[0] : expression));
+function refineRuntimeCondition(state: RuntimeStateFlowState, expression: Expr, truth: boolean): RuntimeStateFlowState {
+  const predicate = runtimePredicateFactKey(expression);
+  if (predicate) {
+    const { key } = predicate;
+    state.presence.set(key, truth === (predicate.positiveMeans === 'present' || predicate.positiveMeans === 'exists'));
+    if (key.startsWith('expression:') && expression.kind === 'call') {
+      const compilePredicate = runtimeStateApi(expression.name)?.compile?.predicate;
+      const argument = compilePredicate?.kind === 'membership' ? compilePredicate.argument : undefined;
+      const subject = argument === undefined ? undefined : expression.args[argument];
+      if (subject) state.presenceDependencies.set(key, characterExpressionVariables(subject));
+    }
   }
-  else if (expression.kind === 'unary' && expression.operator === 'not') refineCharacterCondition(state, expression.value, !truth);
+  else if (expression.kind === 'unary' && expression.operator === 'not') refineRuntimeCondition(state, expression.value, !truth);
   else if (expression.kind === 'binary' && expression.operator === 'and' && truth) {
-    refineCharacterCondition(state, expression.left, true);
-    refineCharacterCondition(state, expression.right, true);
+    refineRuntimeCondition(state, expression.left, true);
+    refineRuntimeCondition(state, expression.right, true);
   } else if (expression.kind === 'binary' && expression.operator === 'or' && !truth) {
-    refineCharacterCondition(state, expression.left, false);
-    refineCharacterCondition(state, expression.right, false);
+    refineRuntimeCondition(state, expression.left, false);
+    refineRuntimeCondition(state, expression.right, false);
   }
   return state;
 }
 
 function functionMayChangeCharacterPresence(name: string, visiting = new Set<string>()): boolean {
-  if (isPureBuiltin(name) || isRuntimeStateApi(name)) return false;
+  if (isPureBuiltin(name)) return false;
+  const runtimeApi = runtimeStateApi(name);
+  if (runtimeApi) return runtimeApi.effects.writes.includes('characters');
   const fn = activeFunctionDefinitions.get(name);
   if (!fn) return true;
   if (visiting.has(name)) return false;
@@ -2136,7 +2216,33 @@ function functionMayChangeCharacterPresence(name: string, visiting = new Set<str
   return visit(fn.body);
 }
 
-function cloneCharacterPlacementState(state: CharacterPlacementState): CharacterPlacementState {
+function commandRuntimeWriteDomains(name: string, args: Expr[]): string[] {
+  if (name === 'show' || name === 'hide') return ['characters'];
+  if (name === 'bg' || name === 'clear' && args[0]?.kind === 'literal' && args[0].value === 'bg') return ['background'];
+  if (name === 'bgm' || name === 'play' && args[0]?.kind === 'literal' && args[0].value === 'bgm'
+    || name === 'clear' && args[0]?.kind === 'literal' && args[0].value === 'bgm') return ['audio.bgm'];
+  return [];
+}
+
+function functionMayWriteRuntimeDomain(name: string, domain: string, visiting = new Set<string>()): boolean {
+  const api = runtimeStateApi(name);
+  if (api) return api.effects.writes.includes(domain);
+  if (isPureBuiltin(name)) return false;
+  const fn = activeFunctionDefinitions.get(name);
+  if (!fn) return true;
+  if (visiting.has(name)) return false;
+  const next = new Set(visiting); next.add(name);
+  const callsWriteDomain = (statements: Statement[]): boolean => statements.some((statement) => {
+    if (statement.kind === 'command' && commandRuntimeWriteDomains(statement.name, statement.args).includes(domain)) return true;
+    const calls = statementExpressions(statement).flatMap((expression) => [...expressionCalls(expression)]);
+    if (statement.kind === 'call') calls.push(statement.name);
+    if (calls.some((call) => functionMayWriteRuntimeDomain(call, domain, next))) return true;
+    return nested(statement).some((body) => callsWriteDomain(body));
+  });
+  return callsWriteDomain(fn.body);
+}
+
+function cloneRuntimeStateFlowState(state: RuntimeStateFlowState): RuntimeStateFlowState {
   return {
     slots: new Map(state.slots),
     presence: new Map(state.presence),
@@ -2144,8 +2250,8 @@ function cloneCharacterPlacementState(state: CharacterPlacementState): Character
   };
 }
 
-function mergeCharacterPlacementStates(states: CharacterPlacementState[]): CharacterPlacementState {
-  const merged = cloneCharacterPlacementState(states[0]);
+function mergeRuntimeStateFlowStates(states: RuntimeStateFlowState[]): RuntimeStateFlowState {
+  const merged = cloneRuntimeStateFlowState(states[0]);
   for (const [slot, character] of merged.slots) if (states.some((state) => state.slots.get(slot) !== character)) merged.slots.delete(slot);
   for (const [fact, value] of merged.presence) if (states.some((state) => state.presence.get(fact) !== value)) {
     merged.presence.delete(fact);
@@ -2161,11 +2267,11 @@ function mergeCharacterPlacementStates(states: CharacterPlacementState[]): Chara
  * are deliberately ignored to avoid claiming more certainty than the script
  * provides.
  */
-function analyzeCharacterPlacements(statements: Statement[], file: string, out: Diagnostic[], initial: CharacterPlacementState = { slots: new Map(), presence: new Map(), presenceDependencies: new Map() }, emitted = new Set<string>()): CharacterPlacementState[] {
-  const analyze = (items: Statement[], incoming: CharacterPlacementState): CharacterPlacementState[] => {
-    let states: CharacterPlacementState[] = [cloneCharacterPlacementState(incoming)];
+function analyzeRuntimeStateFlow(statements: Statement[], file: string, out: Diagnostic[], initial: RuntimeStateFlowState = { slots: new Map(), presence: new Map(), presenceDependencies: new Map() }, emitted = new Set<string>()): RuntimeStateFlowState[] {
+  const analyze = (items: Statement[], incoming: RuntimeStateFlowState): RuntimeStateFlowState[] => {
+    let states: RuntimeStateFlowState[] = [cloneRuntimeStateFlowState(incoming)];
     for (const statement of items) {
-      const next: CharacterPlacementState[] = [];
+      const next: RuntimeStateFlowState[] = [];
       for (const state of states) {
         const calledFunctions = statementExpressions(statement).flatMap((expression) => [...expressionCalls(expression)]);
         if (statement.kind === 'call') calledFunctions.push(statement.name);
@@ -2176,13 +2282,40 @@ function analyzeCharacterPlacements(statements: Statement[], file: string, out: 
             state.presenceDependencies.clear();
           } else if (!isNonMutatingBuiltin(name)) {
             const writes = activeFunctionEffects.get(name);
-            invalidateCharacterExpressionFacts(state, writes && !writes.has('*') ? writes : undefined);
+            invalidateRuntimeExpressionFacts(state, writes && !writes.has('*') ? writes : undefined);
+          }
+          for (const domain of ['background', 'audio.bgm']) {
+            if (functionMayWriteRuntimeDomain(name, domain)) state.presence.delete(runtimeStateFact(domain));
           }
         }
-        if (statement.kind === 'declare') invalidateCharacterExpressionFacts(state, new Set([statement.name]));
+        if (statement.kind === 'call') {
+          const fn = activeFunctionDefinitions.get(statement.name);
+          if (fn) {
+            const rule = IDE_ANALYSIS_RULES.characterPresenceCallRequiresProof;
+            for (const index of functionCharacterPresenceRequirements(fn)) {
+              const argument = statement.args[index];
+              if (!argument) continue;
+              const fact = characterPresenceFactForArgument(argument);
+              const known = fact ? state.presence.get(fact) : undefined;
+              const literal = argument.kind === 'literal' && typeof argument.value === 'string' ? argument.value : undefined;
+              if (known === true || known === undefined && literal !== undefined && [...state.slots.values()].includes(literal)) continue;
+              const label = literal ?? (argument.kind === 'variable' ? argument.name : 'dynamic character');
+              const key = `${rule.code}:${statement.line ?? 1}:${statement.column ?? 1}:${statement.name}:${label}`;
+              if (!emitted.has(key)) {
+                emitted.add(key);
+                out.push(diagnostic(file, rule.code, rule.severity,
+                  rule.message.replace('{function}', statement.name).replace('{target}', label).replace('{guard}', rule.guardApi), statement, label));
+              }
+            }
+          }
+        }
+        if (statement.kind === 'declare') {
+          invalidateRuntimeExpressionFacts(state, new Set([statement.name]));
+          state.presence.set(`variable:${statement.name}`, true);
+        }
         else if (statement.kind === 'set' || statement.kind === 'unset') {
           const root = assignedRootVariable(statement.target);
-          if (root) invalidateCharacterExpressionFacts(state, new Set([root]));
+          if (root) invalidateRuntimeExpressionFacts(state, new Set([root]));
         }
         const command = statement.kind === 'command' ? statement : undefined;
         if (command?.name === 'show' && command.args[0]?.kind === 'literal' && typeof command.args[0].value === 'string'
@@ -2197,7 +2330,7 @@ function analyzeCharacterPlacements(statements: Statement[], file: string, out: 
               emitted.add(key);
               out.push(diagnostic(file, 'character-slot-conflict', 'warning', `position '${position}' already contains character '${previous}'; showing '${character}' replaces it`, statement));
             }
-            invalidateCharacterExpressionFacts(state);
+            invalidateRuntimeExpressionFacts(state);
             if (previous && previous !== character) state.presence.set(characterNameFact(previous), false);
             state.slots.set(position, character);
             state.presence.set(characterNameFact(character), true);
@@ -2211,12 +2344,17 @@ function analyzeCharacterPlacements(statements: Statement[], file: string, out: 
               out.push(diagnostic(file, 'hide-unshown-character', 'warning', `character '${character}' is hidden before it is statically shown`, statement));
             }
           }
-          invalidateCharacterExpressionFacts(state);
+          invalidateRuntimeExpressionFacts(state);
           state.presence.set(characterNameFact(character), false);
           for (const [position, occupant] of state.slots) if (occupant === character) state.slots.delete(position);
+        } else if (command && commandRuntimeWriteDomains(command.name, command.args).includes('background')) {
+          state.presence.set(runtimeStateFact('background'), command.name !== 'clear');
+        } else if (command && commandRuntimeWriteDomains(command.name, command.args).includes('audio.bgm')) {
+          state.presence.set(runtimeStateFact('audio.bgm'), command.name !== 'clear');
         } else if (command?.name === 'move' && command.args[0]?.kind === 'literal' && command.args[0].value === 'character'
           && command.args[1]) {
           const target = command.args[1];
+          const rule = IDE_ANALYSIS_RULES.characterMoveRequiresPresence;
           const character = target.kind === 'literal' && typeof target.value === 'string' ? target.value : undefined;
           const fact = character === undefined ? characterExpressionFact(target) : characterNameFact(character);
           const known = state.presence.get(fact);
@@ -2226,35 +2364,62 @@ function analyzeCharacterPlacements(statements: Statement[], file: string, out: 
             if (!emitted.has(key)) {
               emitted.add(key);
               const message = character === undefined
-                ? `dynamic character '${label}' is moved without proof that it is currently visible; guard it with runtime.state.characters.exists(...)`
-                : `character '${label}' is moved before it is statically shown`;
-              out.push(diagnostic(file, 'move-unshown-character', 'warning', message, statement));
+                ? rule.dynamicMessage.replace('{target}', label).replace('{guard}', rule.guardApi)
+                : rule.missingMessage.replace('{target}', label);
+              out.push(diagnostic(file, rule.code, rule.severity, message, statement));
             }
           }
         }
 
         if (statement.kind === 'if') {
           const branches = [{ expression: statement.condition.expression, body: statement.body }, ...statement.elseIf.map((branch) => ({ expression: branch.condition.expression, body: branch.body }))];
-          let remaining: CharacterPlacementState[] = [cloneCharacterPlacementState(state)];
+          let remaining: RuntimeStateFlowState[] = [cloneRuntimeStateFlowState(state)];
           for (const branch of branches) {
-            const unmatched: CharacterPlacementState[] = [];
+            const unmatched: RuntimeStateFlowState[] = [];
+            let branchReachable = false;
             for (const candidate of remaining) {
-              const value = knownCharacterCondition(branch.expression, candidate);
-              if (value !== false) next.push(...analyze(branch.body, refineCharacterCondition(cloneCharacterPlacementState(candidate), branch.expression, true)));
-              if (value !== true) unmatched.push(refineCharacterCondition(candidate, branch.expression, false));
+              const value = knownRuntimeCondition(branch.expression, candidate);
+              if (value !== false) {
+                branchReachable = true;
+                next.push(...analyze(branch.body, refineRuntimeCondition(cloneRuntimeStateFlowState(candidate), branch.expression, true)));
+              }
+              if (value !== true) unmatched.push(refineRuntimeCondition(candidate, branch.expression, false));
+            }
+            if (!branchReachable) {
+              const rule = IDE_ANALYSIS_RULES.runtimeStateBranchUnreachable;
+              const key = `${rule.code}:${statement.line ?? 1}:${branch.expression.kind}`;
+              if (!emitted.has(key)) { emitted.add(key); out.push(diagnostic(file, rule.code, rule.severity, rule.message, statement)); }
             }
             remaining = unmatched;
           }
-          if (statement.otherwise.length) for (const candidate of remaining) next.push(...analyze(statement.otherwise, candidate));
+          if (statement.otherwise.length) {
+            if (!remaining.length) {
+              const rule = IDE_ANALYSIS_RULES.runtimeStateBranchUnreachable;
+              const key = `${rule.code}:${statement.line ?? 1}:else`;
+              if (!emitted.has(key)) { emitted.add(key); out.push(diagnostic(file, rule.code, rule.severity, rule.message, statement)); }
+            }
+            for (const candidate of remaining) next.push(...analyze(statement.otherwise, candidate));
+          }
           else next.push(...remaining);
         } else if (statement.kind === 'choice') {
           if (!statement.options.length) next.push(state);
-          for (const option of statement.options) next.push(...analyze(option.body, cloneCharacterPlacementState(state)));
+          for (const option of statement.options) {
+            const scopedDeclarations = declaredVariableNames(option.body);
+            for (const optionState of analyze(option.body, cloneRuntimeStateFlowState(state))) {
+              for (const name of scopedDeclarations) {
+                const key = `variable:${name}`;
+                if (state.presence.has(key)) optionState.presence.set(key, state.presence.get(key)!);
+                else optionState.presence.delete(key);
+                optionState.presenceDependencies.delete(key);
+              }
+              next.push(optionState);
+            }
+          }
         } else if (statement.kind === 'while' || statement.kind === 'for' || statement.kind === 'forEach') {
           // A loop may execute zero times. Keep the incoming state and also
           // inspect one body execution for conflicts inside the loop.
-          const bodyState = cloneCharacterPlacementState(state);
-          if (statement.kind === 'for' || statement.kind === 'forEach') invalidateCharacterExpressionFacts(bodyState, new Set([statement.name]));
+          const bodyState = cloneRuntimeStateFlowState(state);
+          if (statement.kind === 'for' || statement.kind === 'forEach') invalidateRuntimeExpressionFacts(bodyState, new Set([statement.name]));
           next.push(state, ...analyze(statement.body, bodyState));
         } else if (statement.kind !== 'goto' && statement.kind !== 'return') {
           next.push(state);
@@ -2266,7 +2431,7 @@ function analyzeCharacterPlacements(statements: Statement[], file: string, out: 
       }
       states = next;
       // Avoid path explosion while preserving all facts common to the paths.
-      const unique = new Map<string, CharacterPlacementState>();
+      const unique = new Map<string, RuntimeStateFlowState>();
       for (const state of states) {
         const slots = [...state.slots.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([position, character]) => `${position}=${character}`).join('|');
         const presence = [...state.presence.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([fact, value]) => `${fact}=${value}`).join('|');
@@ -2274,7 +2439,7 @@ function analyzeCharacterPlacements(statements: Statement[], file: string, out: 
         unique.set(key, state);
       }
       states = [...unique.values()];
-      if (states.length > 64) states = [mergeCharacterPlacementStates(states)];
+      if (states.length > 64) states = [mergeRuntimeStateFlowStates(states)];
     }
     return states;
   };
@@ -2361,16 +2526,28 @@ function analyzeAssetReplacements(
             : undefined;
         const assetName = asset?.kind === 'literal' && typeof asset.value === 'string' ? asset.value : undefined;
         if (assetName !== undefined) {
-          const fadeDuration = command?.args[3];
+          const crossfadeIndex = command?.name === 'play'
+            ? command.args.findIndex((argument, index) => index >= 2
+              && argument.kind === 'literal' && argument.value === 'crossfade')
+            : -1;
+          const fadeDuration = crossfadeIndex >= 0 ? command?.args[crossfadeIndex + 1] : undefined;
           const positiveFadeDuration = fadeDuration?.kind === 'literal'
             && ((typeof fadeDuration.value === 'number' && fadeDuration.value > 0)
               || (typeof fadeDuration.value === 'bigint' && fadeDuration.value > 0n));
+          const backgroundTransitionDuration = command?.args[2];
+          const positiveBackgroundTransitionDuration = backgroundTransitionDuration?.kind === 'literal'
+            && ((typeof backgroundTransitionDuration.value === 'number' && backgroundTransitionDuration.value > 0)
+              || (typeof backgroundTransitionDuration.value === 'bigint' && backgroundTransitionDuration.value > 0n));
+          const intentionalBackgroundTransition = kind === 'bg'
+            && command?.name === 'bg'
+            && command.args[1]?.kind === 'literal'
+            && ['fade', 'crossfade', 'wipe-left', 'wipe-right', 'wipe-up', 'wipe-down'].includes(String(command.args[1].value))
+            && positiveBackgroundTransitionDuration;
           const intentionalBgmCrossfade = kind === 'bgm'
             && command?.name === 'play'
-            && command.args[2]?.kind === 'literal'
-            && command.args[2].value === 'crossfade'
+            && crossfadeIndex >= 0
             && positiveFadeDuration;
-          if (current !== undefined && current !== assetName && !intentionalBgmCrossfade) {
+          if (current !== undefined && current !== assetName && !intentionalBackgroundTransition && !intentionalBgmCrossfade) {
             const key = `${statement.line ?? 1}:${statement.column ?? 1}:${kind}:${current}:${assetName}`;
             if (!emitted.has(key)) {
               emitted.add(key);
@@ -2418,7 +2595,7 @@ function analyzeVideoLayerReplacements(statements: Statement[], file: string, ou
         let current = active;
         const command = statement.kind === 'command' ? statement : undefined;
         if (command?.name === 'play' && command.args[0]?.kind === 'literal' && command.args[0].value === 'video') {
-          const mode = command.args[2]?.kind === 'literal' && typeof command.args[2].value === 'string' ? command.args[2].value : 'async';
+          const mode = command.args[2]?.kind === 'literal' && typeof command.args[2].value === 'string' ? command.args[2].value : 'blocking';
           if (current) {
             const key = `${statement.line ?? 1}:${statement.column ?? 1}`;
             if (!emitted.has(key)) {
@@ -2842,9 +3019,14 @@ export function analyzeScript(script: Script, file = 'current', externalGlobals 
     });
     script.scenes.forEach((scene) => analyzeVariableConstraints(scene.body, file, out, constraints));
   }
-  analyzeCharacterPlacements(script.globals, file, out);
-  script.functions.forEach((fn) => analyzeCharacterPlacements(fn.body, file, out));
-  script.scenes.forEach((scene) => analyzeCharacterPlacements(scene.body, file, out));
+  analyzeRuntimeStateFlow(script.globals, file, out);
+  script.functions.forEach((fn) => {
+    const parameters = new Map(fn.params.map((parameter) => [`variable:${parameter.name}`, true] as const));
+    analyzeRuntimeStateFlow(fn.body, file, out, { slots: new Map(), presence: parameters, presenceDependencies: new Map() });
+  });
+  const globals = new Map(script.globals.filter((statement): statement is Extract<Statement, { kind: 'declare' }> => statement.kind === 'declare')
+    .map((statement) => [`variable:${statement.name}`, true] as const));
+  script.scenes.forEach((scene) => analyzeRuntimeStateFlow(scene.body, file, out, { slots: new Map(), presence: new Map(globals), presenceDependencies: new Map() }));
   analyzeImageLayers(script.globals, file, out);
   script.functions.forEach((fn) => analyzeImageLayers(fn.body, file, out));
   script.scenes.forEach((scene) => analyzeImageLayers(scene.body, file, out));

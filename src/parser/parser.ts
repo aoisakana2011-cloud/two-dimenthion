@@ -13,9 +13,9 @@ const PRECEDENCE: Record<string, number> = {
 
 const KEYWORDS = new Set([
   'scene', 'asset', 'character', 'struct', 'pose', 'include', 'int', 'float', 'str', 'bool', 'list', 'dict', 'none', 'global', 'const', 'let', 'true', 'false',
-  'set', 'unset', 'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'image', 'clear', 'play', 'se', 'effect', 'wait',
+  'set', 'unset', 'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'image', 'clear', 'play', 'se', 'effect', 'wait', 'camera',
   'if', 'elif', 'else', 'and', 'or', 'not', 'choice', 'for', 'from', 'to', 'step', 'while',
-  'fn', 'return', 'goto', 'async', 'blocking', 'voice', 'video',
+  'fn', 'return', 'goto', 'async', 'blocking', 'parallel', 'voice', 'video',
 ]);
 
 export class ParseError extends Error {
@@ -164,7 +164,22 @@ export class Parser {
         const pathToken = this.expect('string', 'Character pose path must be a string');
         this.rejectUnknownEscapes(pathToken);
         const path = pathToken.value;
-        poses.push({ name: pose, path, line: propertyToken.line, column: propertyToken.column });
+        let yOffset: number | undefined;
+        if (this.atWord('y_offset')) {
+          this.take();
+          this.expect('=');
+          let sign = 1;
+          if (this.atValue('-') || this.atValue('+')) {
+            if (this.current.value === '-') sign = -1;
+            this.take();
+          }
+          const offsetToken = this.expect('number', 'Pose y_offset must be an integer');
+          if (!/^\d+$/.test(offsetToken.value)) throw this.error('Pose y_offset must be an integer');
+          const magnitude = BigInt(offsetToken.value);
+          if (magnitude > 1_000_000n) throw this.error('Pose y_offset must be between -1000000 and 1000000 px');
+          yOffset = Number(magnitude) * sign;
+        }
+        poses.push({ name: pose, path, ...(yOffset === undefined ? {} : { yOffset }), line: propertyToken.line, column: propertyToken.column });
       } else {
         const property = this.expectIdentifier('Expected character property or pose declaration');
         this.expect('=');
@@ -195,7 +210,13 @@ export class Parser {
 
   private parseFunction(): FunctionDef {
     const start = this.take();
-    const name = this.expectIdentifier('Expected function name');
+    const nameToken = this.expect('word', 'Expected function name');
+    // `character` is reserved as a declaration keyword, but is also the
+    // intentional method name in qualified APIs such as walk.character().
+    if (KEYWORDS.has(nameToken.value) && nameToken.value !== 'character') {
+      throw new ParseError(`莠育ｴ・ｪ・'${nameToken.value}' 縺ｯ隴伜挨蟄舌→縺励※菴ｿ逕ｨ縺ｧ縺阪∪縺帙ｓ`, nameToken);
+    }
+    const name = nameToken.value;
     this.expect('(');
     const params: Array<{ type: ValueType; name: string; line?: number; column?: number }> = [];
     if (!this.atValue(')')) {
@@ -259,7 +280,7 @@ export class Parser {
       // `list` is a type keyword but also a natural method name in namespaces
       // such as runtime.state.characters.list(). Keep the exception scoped to
       // qualified call segments; declarations and bare identifiers stay reserved.
-      if (KEYWORDS.has(part.value) && part.value !== 'list') {
+      if (KEYWORDS.has(part.value) && part.value !== 'list' && part.value !== 'character') {
         throw new ParseError(`Reserved keyword '${part.value}' cannot be used as a function name`, part);
       }
       parts.push(part.value);
@@ -365,6 +386,11 @@ export class Parser {
         const condition = this.parseCondition();
         const body = this.parseBraced();
         return { kind: 'while', condition, body, line: token.line, column: token.column, endLine: this.lastBlockEndLine, endColumn: this.lastBlockEndColumn };
+      }
+      case 'parallel': {
+        this.take();
+        const body = this.parseBraced();
+        return { kind: 'parallel', body, line: token.line, column: token.column, endLine: this.lastBlockEndLine, endColumn: this.lastBlockEndColumn };
       }
       case 'choice': {
         this.take();
@@ -486,21 +512,36 @@ export class Parser {
       const token = this.current;
       const isCommandWord = token.type === 'word' && (() => {
         switch (command) {
-          case 'bg':
+          case 'bg': return args.length === 0 || args.length === 1 && ['fade', 'crossfade', 'wipe-left', 'wipe-right', 'wipe-up', 'wipe-down'].includes(token.value);
           case 'bgm': return args.length === 0;
           case 'show':
             if (args.some((argument) => argument.kind === 'literal' && argument.value === 'fade')) return false;
             return args.length < (args[0]?.kind === 'literal' && args[0].value === 'image' ? 3 : 2) || token.value === 'fade';
           case 'hide': return args.length === 0 || token.value === 'fade';
           case 'clear': return args.length === 0 || args[0]?.kind === 'literal' && args[0].value === 'image' && args.length === 1;
-          case 'play': return args.length < 2 || args.length === 2 || ['crossfade', 'blocking', 'async', 'volume', 'dissolve', 'later'].includes(token.value);
+          case 'play': {
+            const previous = args.at(-1);
+            return args.length < 2
+              || ['crossfade', 'blocking', 'async', 'volume', 'opacity', 'character', 'dissolve', 'later'].includes(token.value)
+              || args.length > 2 && previous?.kind === 'literal' && previous.value === 'character';
+          }
           case 'volume': return args.length === 0;
-          case 'dialog': return args.length === 0 || args.length === 1 && args[0]?.kind === 'literal' && args[0].value === 'opacity';
+          case 'layer': return args.length === 0;
+          case 'dialog': return args.length === 0 && ['opacity', 'visible'].includes(token.value);
+          case 'camera': return ['zoom', 'at', 'over', 'reset'].includes(token.value);
           case 'effect': return args.length < 2;
           default: return false;
         }
       })();
-      if (command === 'show' && args.length === 0 && token.type === 'word' && this.peekToken().value === '.') {
+      if (['bg', 'show', 'play'].includes(command) && token.value === '--only') {
+        this.take();
+        args.push({ kind: 'literal', value: '--only', line: token.line, column: token.column });
+      } else if (['bg', 'show', 'play'].includes(command) && token.value === '--layer') {
+        this.take();
+        args.push({ kind: 'literal', value: '--layer', line: token.line, column: token.column });
+        if (this.atLineEnd() || this.atValue('}')) throw this.error('--layer の後に層番号を指定してください');
+        args.push(this.parseExpression());
+      } else if (command === 'show' && args.length === 0 && token.type === 'word' && this.peekToken().value === '.') {
         this.take();
         this.expect('.');
         const pose = this.expectIdentifier('Expected character pose');
@@ -517,7 +558,26 @@ export class Parser {
         if (this.current.type !== 'number' || !/^\d+$/.test(this.current.value)) throw this.error(`${command} の位置ずらしは x+30 / x+(式) の形式で指定してください`);
         const amount = this.take();
         args.push({ kind: 'literal', value: `${axis.value}${sign.value}${amount.value}`, line: axis.line, column: axis.column });
-      } else if (command === 'move' && token.type === 'word' && (args.length < 3 || token.value === 'over')) {
+      } else if (command === 'move' && args.length === 0 && token.type === 'word') {
+        this.take();
+        args.push({ kind: 'literal', value: token.value, line: token.line, column: token.column });
+      } else if (command === 'bg' && args.length === 1 && token.type === 'word' && token.value === 'wipe') {
+        this.take();
+        this.expect('-');
+        const direction = this.expectIdentifier('Expected wipe direction');
+        if (!['left', 'right', 'up', 'down'].includes(direction)) throw this.error('Background wipe direction must be left, right, up, or down');
+        args.push({ kind: 'literal', value: `wipe-${direction}`, line: token.line, column: token.column });
+      } else if (command === 'move' && args.length === 1 && args[0]?.kind === 'literal' && args[0].value === 'character') {
+        if (token.type === 'word' && this.peekToken().value === 'by') {
+          this.take();
+          args.push({ kind: 'literal', value: token.value, line: token.line, column: token.column });
+        } else {
+          args.push(this.parseExpression());
+        }
+      } else if (command === 'move' && token.type === 'word'
+        && (token.value === 'over'
+          || token.value === 'by' && (args.length === 1 && args[0]?.kind === 'literal' && args[0].value === 'bg'
+            || args.length === 2 && args[0]?.kind === 'literal' && args[0].value === 'character'))) {
         this.take();
         args.push({ kind: 'literal', value: token.value, line: token.line, column: token.column });
       } else if (isCommandWord) {
@@ -683,7 +743,7 @@ export class Parser {
   }
 
   private isBlockStatement(stmt: Statement): boolean {
-    return stmt.kind === 'if' || stmt.kind === 'for' || stmt.kind === 'forEach' || stmt.kind === 'while' || stmt.kind === 'choice';
+    return stmt.kind === 'if' || stmt.kind === 'for' || stmt.kind === 'forEach' || stmt.kind === 'while' || stmt.kind === 'choice' || stmt.kind === 'parallel';
   }
 
   private endStatement(stmt: Statement): void {

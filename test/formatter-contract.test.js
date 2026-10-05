@@ -64,6 +64,16 @@ test('shared formatter preserves relative move commands and px offsets', () => {
   assert.equal(format(formatted), formatted);
 });
 
+test('IDE auto-fix preserves --only as one token on visual commands', () => {
+  const source = 'scene main{play video op --only\nshow image logo center --only\nbg room --only}';
+  const formatted = format(source);
+  assert.match(formatted, /play video op --only/);
+  assert.match(formatted, /show image logo center --only/);
+  assert.match(formatted, /bg room --only/);
+  assert.deepEqual(withoutLocations(parse(formatted)), withoutLocations(parse(source)));
+  assert.equal(format(formatted), formatted);
+});
+
 test('shared tolerant lexer keeps strings/comments and structural symbols distinct', () => {
   const tokens = lex('say narrator "{not a block}" # }\nscene main {');
   assert.deepEqual(tokens.map(({ kind, value }) => [kind, value]), [

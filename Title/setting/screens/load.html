@@ -1,28 +1,20 @@
 <main class="screen data-screen">
   <div class="screen-dimmer"></div>
   <header class="screen-header">
-    <div class="screen-title">物語のつづき</div>
+    <h1 class="screen-title">LOAD</h1>
     <nav class="screen-tabs">
-      <button class="tab-button" data-action="save"><span class="tab-glyph">記</span><small class="tab-label">記録</small></button>
-      <button class="tab-button tab-active" data-action="load"><span class="tab-glyph">栞</span><small class="tab-label">再開</small></button>
-      <button class="tab-button" data-action="open-screen" data-target="system"><span class="tab-glyph">窓</span><small class="tab-label">表示</small></button>
-      <button class="tab-button" data-action="open-screen" data-target="sound"><span class="tab-glyph">音</span><small class="tab-label">音量</small></button>
+      <button class="tab-button" data-action="save"><img class="tab-icon" src="ui/icons/save.png" alt=""><small class="tab-label">SAVE</small></button>
+      <button class="tab-button tab-active" data-action="load"><img class="tab-icon" src="ui/icons/load.png" alt=""><small class="tab-label">LOAD</small></button>
+      <button class="tab-button" data-action="open-screen" data-target="system"><img class="tab-icon" src="ui/icons/system.png" alt=""><small class="tab-label">SYSTEM</small></button>
+      <button class="tab-button" data-action="open-screen" data-target="sound"><img class="tab-icon" src="ui/icons/sound.png" alt=""><small class="tab-label">SOUND</small></button>
+      <button class="tab-button" data-action="open-screen" data-target="guide"><img class="tab-icon" src="ui/icons/favorite.png" alt=""><small class="tab-label">FAVORITE</small></button>
+      <button class="tab-button" data-action="open-screen" data-target="about"><img class="tab-icon" src="ui/icons/tips.png" alt=""><small class="tab-label">TIPS</small></button>
     </nav>
   </header>
+  <nav class="slot-pages"><button class="slot-page slot-page-active" data-action="slot-page" data-target="0">01</button><button class="slot-page" data-action="slot-page" data-target="1">02</button><button class="slot-page" data-action="slot-page" data-target="2">03</button><button class="slot-page" data-action="slot-page" data-target="3">04</button><button class="slot-page" data-action="slot-page" data-target="4">05</button><button class="slot-page" data-action="slot-page" data-target="5">06</button><button class="slot-page" data-action="slot-page" data-target="6">07</button><button class="slot-page" data-action="slot-page" data-target="7">08</button><button class="slot-page" data-action="slot-page" data-target="8">09</button><button class="slot-page" data-action="slot-page" data-target="9">10</button></nav>
   <div class="save-slot-grid" data-role="load-slots" data-count="12">
-    <button class="save-slot">
-      <img class="slot-thumbnail" data-slot-field="thumbnail" alt="">
-      <span class="slot-number" data-slot-field="number"></span>
-      <span class="slot-scene" data-slot-field="scene"></span>
-      <span class="slot-text" data-slot-field="text"></span>
-      <span class="slot-date" data-slot-field="saved-at"></span>
-      <span class="slot-status" data-slot-field="status"></span>
-    </button>
+    <button class="save-slot"><img class="slot-thumbnail" data-slot-field="thumbnail" alt=""><span class="slot-number" data-slot-field="number"></span><span class="slot-scene" data-slot-field="scene"></span><span class="slot-text" data-slot-field="text"></span><span class="slot-date" data-slot-field="saved-at"></span><span class="slot-status" data-slot-field="status"></span></button>
   </div>
-  <div class="data-footer">
-    <small class="data-hint">読み返したい場面を選んでください。</small>
-    <button class="footer-button data-back" data-action="back">戻る</button>
-    <button class="footer-button data-title" data-action="open-screen" data-target="title">表紙へ</button>
-    <button class="footer-button data-quit" data-action="quit">終了</button>
-  </div>
+  <div class="data-footer"><small class="data-hint">再開したい記録を選んでください。12枠×10ページ、最大120件を保存できます。</small><button class="footer-button data-back" data-action="back">ゲームに戻る</button><button class="footer-button data-title" data-action="open-screen" data-target="title">タイトルへ</button><button class="footer-button data-quit" data-action="quit">ゲーム終了</button></div>
+  <aside class="slot-tools"><strong class="slot-tools-heading">選択したデータ</strong><div class="slot-selected-summary" data-role="selected-slot-summary">ロードする枠を選択してください</div><button class="slot-tool slot-commit" data-action="slot-commit">ここからロード</button><button class="slot-tool slot-copy" data-action="slot-copy">空き枠に複製</button><button class="slot-tool slot-move" data-action="slot-move">空き枠へ移動</button><button class="slot-tool slot-delete" data-action="slot-delete">データ消去</button><button class="slot-tool slot-lock" data-action="slot-lock">ロック／解除</button></aside>
 </main>

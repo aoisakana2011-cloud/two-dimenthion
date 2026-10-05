@@ -1,13 +1,39 @@
-# Simple horizontal and vertical offsets for a walk animation.
+# A character walk composed from ordinary TDS math and blocking move commands.
 include "std/math.tds" as math
 
-# progress is one complete walk in the range [0, 1].
-fn walk_x(distance: float, progress: float) -> float {
-  return distance * math.clamp(progress, 0.0, 1.0)
+# Horizontal displacement at normalized progress [0, 1].
+fn walk_x(distance_px: float, progress: float) -> float {
+  return distance_px * math.clamp(progress, 0.0, 1.0)
 }
 
-# A gentle vertical bob; use the result as the character's Y offset.
-fn walk_bob(amplitude: float, progress: float) -> float {
-  float phase = math.tau() * 2.0 * math.clamp(progress, 0.0, 1.0)
-  return amplitude * (1.0 - math.cos(phase)) / 2.0
+# Move a currently visible character by distance_px over seconds, with the
+# requested number of complete vertical gait cycles and bob amplitude in px.
+# Each cycle is sampled in eight eased linear segments; segment milliseconds
+# are distributed so their sum equals the requested rounded duration exactly.
+fn character(target_character: str, distance_px: float, cycles: int, seconds: float, bob_px: float) -> none {
+  if runtime.state.characters.exists(target_character) and cycles > 0 and seconds > 0.0 {
+    int total_ms = int(math.round(seconds * 1000.0))
+    int steps = cycles * 8
+    if total_ms > 0 and steps > 0 {
+      int base_ms = total_ms / steps
+      int extra_ms = total_ms % steps
+      float previous_x = 0.0
+      float previous_y = 0.0
+      for frame from 1 to steps {
+        float progress = float(frame) / float(steps)
+        float target_x = walk_x(distance_px, progress)
+        float phase = math.tau() * float(cycles) * progress
+        # Screen coordinates increase downward. Start at the baseline, dip
+        # downward first, then return to baseline without an initial up-step.
+        float target_y = bob_px * (1.0 - math.cos(phase)) / 2.0
+        int segment_ms = base_ms
+        if frame <= extra_ms {
+          set segment_ms = segment_ms + 1
+        }
+        move character (target_character) by x+(target_x - previous_x) y+(target_y - previous_y) over segment_ms
+        set previous_x = target_x
+        set previous_y = target_y
+      }
+    }
+  }
 }

@@ -1,21 +1,48 @@
-<main class="screen settings-screen">
+<main class="screen system-screen">
   <div class="screen-dimmer"></div>
   <header class="screen-header">
-    <div class="screen-title">環境設定</div>
+    <h1 class="screen-title">SYSTEM</h1>
     <nav class="screen-tabs">
-      <button class="tab-button" data-action="save"><span class="tab-glyph">記</span><small class="tab-label">記録</small></button>
-      <button class="tab-button" data-action="load"><span class="tab-glyph">栞</span><small class="tab-label">再開</small></button>
-      <button class="tab-button tab-active" data-action="open-screen" data-target="system"><span class="tab-glyph">窓</span><small class="tab-label">表示</small></button>
-      <button class="tab-button" data-action="open-screen" data-target="sound"><span class="tab-glyph">音</span><small class="tab-label">音量</small></button>
+      <button class="tab-button" data-action="save"><img class="tab-icon" src="ui/icons/save.png" alt=""><small class="tab-label">SAVE</small></button>
+      <button class="tab-button" data-action="load"><img class="tab-icon" src="ui/icons/load.png" alt=""><small class="tab-label">LOAD</small></button>
+      <button class="tab-button tab-active" data-action="open-screen" data-target="system"><img class="tab-icon" src="ui/icons/system.png" alt=""><small class="tab-label">SYSTEM</small></button>
+      <button class="tab-button" data-action="open-screen" data-target="sound"><img class="tab-icon" src="ui/icons/sound.png" alt=""><small class="tab-label">SOUND</small></button>
+      <button class="tab-button" data-action="open-screen" data-target="guide"><img class="tab-icon" src="ui/icons/favorite.png" alt=""><small class="tab-label">FAVORITE</small></button>
+      <button class="tab-button" data-action="open-screen" data-target="about"><img class="tab-icon" src="ui/icons/tips.png" alt=""><small class="tab-label">TIPS</small></button>
     </nav>
   </header>
   <section class="system-options">
-    <div class="setting-row setting-row-0"><div class="setting-label">音量・表示の調整<small class="setting-help">物語を読みやすい環境に整えます。</small></div><div class="option-pair option-two"><button class="option option-selected" data-action="open-screen" data-target="sound">音量をひらく</button><button class="option" data-action="resume">物語へ戻る</button></div></div>
+    <div class="system-left">
+      <div class="setting-row"><strong class="setting-label">画面モード</strong><small class="setting-help">画面モードを切り替えます。</small><div class="option-pair"><button class="option" data-action="setting-value" data-target="ui.fullscreen" data-value="false">ウィンドウ</button><button class="option" data-action="setting-value" data-target="ui.fullscreen" data-value="true">フルスクリーン</button></div></div>
+      <div class="setting-row"><strong class="setting-label">エフェクト</strong><small class="setting-help">表示速度が遅いときは「なし」に設定すると快適に動作します。</small><div class="option-pair"><button class="option" data-action="setting-value" data-target="ui.effects" data-value="true">あり</button><button class="option" data-action="setting-value" data-target="ui.effects" data-value="false">なし</button></div></div>
+      <div class="setting-row"><strong class="setting-label">スキップタイプ</strong><small class="setting-help">既読のみを標準にし、必要なら未読も進めます。</small><div class="option-pair"><button class="option" data-action="setting-value" data-target="ui.skipUnseen" data-value="true">既読のみ</button><button class="option" data-action="setting-value" data-target="ui.skipUnseen" data-value="false">全て</button></div></div>
+      <div class="setting-row"><strong class="setting-label">選択後のオートプレイ解除</strong><small class="setting-help">選択肢を選んだあとオートを停止します。</small><div class="option-pair"><button class="option" data-action="setting-value" data-target="ui.autoAfterChoice" data-value="true">する</button><button class="option" data-action="setting-value" data-target="ui.autoAfterChoice" data-value="false">しない</button></div></div>
+      <div class="setting-row"><strong class="setting-label">選択後のスキップ解除</strong><small class="setting-help">選択肢を選んだあとスキップを停止します。</small><div class="option-pair"><button class="option" data-action="setting-value" data-target="ui.skipAfterChoice" data-value="true">する</button><button class="option" data-action="setting-value" data-target="ui.skipAfterChoice" data-value="false">しない</button></div></div>
+      <div class="setting-row"><strong class="setting-label">マウスカーソルの自動消去</strong><small class="setting-help">マウスを動かさない時の消去タイミングを指定します。</small><span class="range-min cursor-never">しない</span><span class="range-max cursor-delay-label">5 / 10 / 20秒</span><input class="system-cursor-delay" type="range" min="0" max="1" step="0.333333" data-setting="ui.cursorHideDelay" aria-label="カーソル消去までの時間"></div>
+      <div class="setting-row"><strong class="setting-label">フォントタイプ</strong><small class="setting-help">プレイヤー内の文字表示を切り替えます。</small><div class="option-pair font-options"><button class="option" data-action="setting-value" data-target="ui.fontFamily" data-value="gothic">ゴシック</button><button class="option" data-action="setting-value" data-target="ui.fontFamily" data-value="mincho">明朝</button><button class="option" data-action="setting-value" data-target="ui.fontFamily" data-value="default">デフォルト</button></div></div>
+      <div class="setting-row setting-range-row"><strong class="setting-label">テキストスピード</strong><small class="setting-help">メッセージの表示速度を調整します。</small><span class="range-min">MIN</span><input class="system-text-speed" type="range" min="0" max="1" step="0.01" data-setting="ui.textSpeed" aria-label="テキストスピード"><span class="range-max">MAX</span></div>
+      <div class="setting-row setting-range-row"><strong class="setting-label">オートスピード</strong><small class="setting-help">オートプレイの速度を調整します。</small><span class="range-min">MIN</span><input class="system-auto-speed" type="range" min="0" max="1" step="0.01" data-setting="ui.autoSpeed" data-skin="volume" aria-label="オートスピード"><span class="range-max">MAX</span></div>
+      <div class="speed-meter"><span class="speed-block"></span><span class="speed-block"></span><span class="speed-block"></span><span class="speed-block"></span><span class="speed-block"></span><span class="speed-block"></span><span class="speed-block"></span><span class="speed-block"></span><span class="speed-block"></span><span class="speed-block"></span><span class="speed-block"></span><span class="speed-block"></span><span class="speed-block"></span><span class="speed-block"></span><span class="speed-block"></span><span class="speed-block"></span></div>
+    </div>
+    <div class="system-right">
+      <h2 class="setting-section-title">ショートカット</h2><small class="system-help">各キーの欄を押すと機能を切り替えます。割り当てはプレイヤーごとに保存されます。</small>
+      <div class="shortcut-grid">
+        <div class="shortcut-row"><b class="shortcut-key">F1</b><button class="shortcut-value" data-action="shortcut-cycle" data-target="F1">システム　▼</button></div><div class="shortcut-row"><b class="shortcut-key">F7</b><button class="shortcut-value" data-action="shortcut-cycle" data-target="F7">フルスクリーン切替　▼</button></div>
+        <div class="shortcut-row"><b class="shortcut-key">F2</b><button class="shortcut-value" data-action="shortcut-cycle" data-target="F2">セーブ　▼</button></div><div class="shortcut-row"><b class="shortcut-key">F8</b><button class="shortcut-value" data-action="shortcut-cycle" data-target="F8">スキップ　▼</button></div>
+        <div class="shortcut-row"><b class="shortcut-key">F3</b><button class="shortcut-value" data-action="shortcut-cycle" data-target="F3">ロード　▼</button></div><div class="shortcut-row"><b class="shortcut-key">F9</b><button class="shortcut-value" data-action="shortcut-cycle" data-target="F9">クイックセーブ　▼</button></div>
+        <div class="shortcut-row"><b class="shortcut-key">F4</b><button class="shortcut-value" data-action="shortcut-cycle" data-target="F4">最後のボイス再生　▼</button></div><div class="shortcut-row"><b class="shortcut-key">F10</b><button class="shortcut-value" data-action="shortcut-cycle" data-target="F10">テキスト履歴　▼</button></div>
+        <div class="shortcut-row"><b class="shortcut-key">F5</b><button class="shortcut-value" data-action="shortcut-cycle" data-target="F5">オートプレイ　▼</button></div><div class="shortcut-row"><b class="shortcut-key">F11</b><button class="shortcut-value" data-action="shortcut-cycle" data-target="F11">クイックロード　▼</button></div>
+        <div class="shortcut-row"><b class="shortcut-key">F6</b><button class="shortcut-value" data-action="shortcut-cycle" data-target="F6">テキスト消去　▼</button></div><div class="shortcut-row"><b class="shortcut-key">F12</b><button class="shortcut-value" data-action="shortcut-cycle" data-target="F12">無効　▼</button></div>
+      </div>
+      <h2 class="click-section-title">マウス操作</h2><small class="click-help">右クリックへの機能割り当ては、この画面では利用できません。</small>
+    </div>
   </section>
+  <small class="screen-note">表示速度・フォント・再生設定・Fキーの割り当てはプレイヤーごとに保存されます。</small>
   <div class="settings-footer">
-    <button class="footer-button settings-back" data-action="back">メニューへ戻る</button>
-    <button class="footer-button settings-game" data-action="resume">物語へ戻る</button>
-    <button class="footer-button settings-title" data-action="open-screen" data-target="title">タイトルへ</button>
-    <button class="footer-button settings-quit" data-action="quit">終了</button>
+    <button class="footer-button settings-reset" data-action="reset-settings">初期設定に戻す</button>
+    <button class="footer-button settings-size" data-action="reset-window-size">画面サイズを戻す</button>
+    <button class="footer-button settings-back" data-action="back">戻る</button>
+    <button class="footer-button settings-title" data-action="open-screen" data-target="title">タイトルへ戻る</button>
+    <button class="footer-button settings-quit" data-action="quit">ゲーム終了</button>
   </div>
 </main>

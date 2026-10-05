@@ -414,7 +414,7 @@ Architecture: x64-windows
 Multi-Arch: same
 Abi: 6725db004be7922663d7f546c41741d7d77210c644f6fbaabf20946dbcd946b2
 Description: The Windows Implementation Libraries (WIL) is a header-only C++ library created to make life easier for developers on Windows through readable type-safe C++ interfaces for common Windows coding patterns.
-Status: install ok installed
+Status: purge ok not-installed
 
 Package: webview2
 Version: 1.0.4191.47
@@ -423,5 +423,5 @@ Architecture: x64-windows
 Multi-Arch: same
 Abi: 091a452e529504b72b94f1948a12c64a3ed56e60d747ca4c3b3eb17574669539
 Description: The WebView2 control allows you to embed web technologies (HTML, CSS, and JavaScript) using Microsoft Edge
-Status: install ok installed
+Status: purge ok not-installed
 

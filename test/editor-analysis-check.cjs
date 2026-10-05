@@ -43,7 +43,8 @@ const assert = require('node:assert/strict');
       await page.locator('[data-menu="file"]').click();
       await page.locator('[data-menu-action="save"]').click();
     };
-    const rightClickToken = (line, name) => editor.evaluate((element, target) => {
+    const rightClickToken = async (line, name) => {
+      await editor.evaluate((element, target) => {
       const source = element.value;
       const sourceLine = source.split(/\r?\n/)[target.line - 1];
       const index = sourceLine.indexOf(target.name);
@@ -67,7 +68,11 @@ const assert = require('node:assert/strict');
         clientX: rect.left + rect.width / 2,
         clientY: rect.top + rect.height / 2,
       }));
-    }, { line, name });
+      }, { line, name });
+      const menuItems = page.locator('.editor-context-item');
+      await menuItems.nth(1).waitFor({ state: 'visible' });
+      await menuItems.nth(1).click();
+    };
     await page.goto(`${base}/index.html`);
     const editor = page.locator('#editor');
     await editor.waitFor();
@@ -156,11 +161,21 @@ const assert = require('node:assert/strict');
     assert.ok(await page.locator('.language-guide .guide-section').count() >= 8);
     assert.equal(await page.locator('.language-guide .guide-section').first().getAttribute('open'), '');
     const dialogueHelp = page.locator('.language-guide .guide-section').filter({ hasText: '台詞と変数' });
-    assert.match(await dialogueHelp.textContent(), /文字列リテラルから始まる式/);
+    assert.match(await dialogueHelp.textContent(), /文字列リテラルから始まる/);
     assert.match(await dialogueHelp.locator('pre').textContent(), /say "点数: " \+ str\(score\)/);
-    const dslHelpExamples = await page.locator('.language-guide .guide-section pre').evaluateAll((nodes) => nodes.slice(0, 6).map((node) => node.textContent));
+    const dslHelpExamples = await page.locator('.language-guide .guide-section:not(:has(summary:text-is("エディター操作"))) pre').evaluateAll((nodes) => nodes.map((node) => node.textContent));
     for (const example of dslHelpExamples) assert.doesNotThrow(() => parse(example), `IDE help example is invalid TDS:\n${example}`);
     assert.equal((await page.request.get(`${base}/docs/tds-language-and-editor-guide.md`)).ok(), true);
+    const detailedReference = page.locator('.language-guide .guide-reference');
+    await detailedReference.click();
+    await page.locator('.guide-book-entry').first().waitFor();
+    assert.equal(await page.locator('.language-guide').count(), 1, 'full reference opens inside the existing syntax reference instead of a new page');
+    await page.locator('.guide-search').fill('dict[float]');
+    assert.ok(await page.locator('.guide-book-entry').count() > 0, 'book search returns matching reference chapters');
+    await page.locator('.guide-book-entry').first().click();
+    assert.match(await page.locator('.guide-book-page').textContent(), /dict\[float\]/, 'selected chapter displays the matching detailed syntax');
+    await detailedReference.click();
+    assert.ok(await page.locator('.guide-section').first().isVisible(), 'the in-place reader returns to compact help without navigating away');
     await page.locator('.language-guide .guide-close').click();
     const validFunctionTooltipExample = 'fn greet() -> none {\n}';
     assert.doesNotThrow(() => parse(validFunctionTooltipExample));

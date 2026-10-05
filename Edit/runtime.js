@@ -23,12 +23,12 @@
   }
   function integer(value) {
     if (typeof value === 'number') {
-      if (!Number.isFinite(value) || value < Number(MIN) || value >= Number(MAX) + 1) throw Error('64bit 整数の範囲外です');
+      if (!Number.isFinite(value) || value < Number(MIN) || value >= Number(MAX) + 1) throw Error('Integer is outside the supported 64-bit range');
       value = Math.trunc(value);
     }
     if (typeof value === 'string' && !/^[+-]?\d+$/.test(value)) throw Error('int への変換に失敗しました');
     const n = BigInt(value);
-    if (n < MIN || n > MAX) throw Error('64bit 整数オーバーフローが発生しました');
+    if (n < MIN || n > MAX) throw Error('\u6574\u6570\u306e\u7bc4\u56f2\u5916\u3067\u3059');
     return n;
   }
   function floating(value) {
@@ -59,6 +59,11 @@
   }
   const DEFAULT_SLOTS = ['far_left', 'left', 'center', 'right', 'far_right'];
   const MAX_TIME_MS = 2147483647;
+  const DEFAULT_PRESENTATION_DEFAULTS = Object.freeze({
+    audio: Object.freeze({ bgm: 1, se: 1, voice: 0.5 }),
+    dialog: Object.freeze({ opacity: 1 }),
+    layers: Object.freeze({ background: 0, video: 1, character: 2, image: 3, fog: 4, dialogue: 5, controls: 6, menu: 7 }),
+  });
   function createSceneState() {
     return {
       revision: 0,
@@ -69,8 +74,11 @@
       slots: Object.fromEntries(DEFAULT_SLOTS.map(slot => [slot, null])),
       images: Object.create(null),
       video: null,
-      audio: { bgm: null, se: [], voices: [], volumes: { bgm: 1, se: 1, voice: 0.5 }, volumeOverrides: {} },
-      ui: { dialogOpacity: 1 },
+      visualOnly: null,
+      layers: { ...DEFAULT_PRESENTATION_DEFAULTS.layers },
+      audio: { bgm: null, se: [], voices: [], volumes: { ...DEFAULT_PRESENTATION_DEFAULTS.audio }, volumeOverrides: {} },
+      ui: { dialogOpacity: 1, dialogVisible: true },
+      camera: { zoom: 1, focusX: 640, focusY: 360 },
       effects: [],
       choices: [],
       transfers: [],
@@ -84,13 +92,34 @@
     return { type, durationMs: Number(duration) };
   }
   function transitionFrom(args, offset = 0) {
-    if (args[offset] === 'fade' || args[offset] === 'crossfade') {
+    if (['fade', 'crossfade', 'wipe-left', 'wipe-right', 'wipe-up', 'wipe-down'].includes(args[offset])) {
       const duration = args[offset + 1] === undefined ? 500n : integer(args[offset + 1]);
       if (duration < 0n) throw Error('演出時間は0以上でなければなりません');
       return transitionWith(args[offset], duration);
     }
     if (args[offset] === undefined) return { type: 'instant', durationMs: 0 };
     throw Error(`Unknown transition '${args[offset]}'`);
+  }
+  function resolveAssetName(program, type, reference) {
+    const named = program?.assets?.find(asset => asset.type === type && asset.name === reference);
+    if (named) return named.name;
+    const normalize = value => {
+      let result = String(value).split(String.fromCharCode(92)).join('/').toLocaleLowerCase('en-US');
+      if (result.startsWith('asset/')) result = result.slice(6);
+      return result;
+    };
+    const wanted = normalize(reference);
+    const matches = (program?.assets || []).filter(asset => asset.type === type && (
+      normalize(asset.path) === wanted || normalize(asset.path).split('/').at(-1) === wanted
+    ));
+    if (matches.length > 1) throw Error(`Ambiguous ${type} asset filename '${reference}'`);
+    return matches[0]?.name || reference;
+  }
+  function poseYOffset(program, characterName, poseName) {
+    const pose = program?.characters?.find(character => character.name === characterName)
+      ?.poses?.find(item => item.name === poseName);
+    const value = Number(pose?.yOffset ?? 0);
+    return Number.isFinite(value) ? value : 0;
   }
   function characterShowOptions(args, start = 2) {
     const offsets = { x: 0, y: 0 };
@@ -161,6 +190,8 @@
       item.offsetY = interpolation.from.y + (interpolation.to.y - interpolation.from.y) * transition.progress;
     } else if (interpolation.property === 'gain') {
       item.gain = interpolation.from + (interpolation.to - interpolation.from) * transition.progress;
+    } else if (interpolation.property === 'camera') {
+      for (const key of ['zoom', 'focusX', 'focusY']) item[key] = interpolation.from[key] + (interpolation.to[key] - interpolation.from[key]) * transition.progress;
     }
   }
   function transitionOwners(state, id) {
@@ -171,7 +202,7 @@
       if (item.transition?.id === id) owners.push(item);
       for (const [key, child] of Object.entries(item)) if (key !== 'transition') visit(child);
     };
-    [state.background, state.characters, state.images, state.audio, state.effects].forEach(visit);
+    [state.background, state.characters, state.images, state.audio, state.effects, state.camera].forEach(visit);
     return owners;
   }
   function startBgmState(state, asset, transition, actionId, targetGain = 1) {
@@ -223,7 +254,7 @@
         state.actions[value.transition.id].progress = value.transition.progress;
       Object.values(value).forEach(child => { if (child && typeof child === 'object' && child !== value.transition) visit(child); });
     };
-    visit(state.background); visit(state.characters); visit(state.images); visit(state.audio); visit(state.effects);
+    visit(state.background); visit(state.characters); visit(state.images); visit(state.audio); visit(state.effects); visit(state.camera);
     const bgmTransitionId = state.audio.bgm?.transition?.id;
     if (bgmTransitionId) pruneBgmLayers(state, bgmTransitionId);
     return state;
@@ -246,6 +277,7 @@
     action.endedAt = state.logicalTimeMs;
     retireActiveAudio(state, action);
     if (state.video?.actionId === id) state.video = null;
+    if (state.visualOnly?.kind === 'video' && state.visualOnly.actionId === id) state.visualOnly = null;
   }
   function stopAction(state, id, reason = 'stopped', metadata = {}) {
     const action = id && state.actions[id];
@@ -256,6 +288,7 @@
     action.endedAt = state.logicalTimeMs;
     retireActiveAudio(state, action);
     if (state.video?.actionId === id) state.video = null;
+    if (state.visualOnly?.kind === 'video' && state.visualOnly.actionId === id) state.visualOnly = null;
   }
   function normalizeSlot(slot) {
     if (!DEFAULT_SLOTS.includes(slot)) throw Error(`未知の配置場所 '${slot}' です`);
@@ -281,6 +314,11 @@
   }
   function sceneStateCommand(state, name, args, program, defaults) {
     const op = { name, args: copy(args) };
+    const layerIndex = args.indexOf('--layer');
+    const assignedLayer = layerIndex >= 0 ? floating(args[layerIndex + 1]) : undefined;
+    const cleanDisplayArgs = args.filter((argument, index) => argument !== '--only' && argument !== '--layer'
+      && !(index > 0 && args[index - 1] === '--layer'));
+    if (assignedLayer !== undefined && (assignedLayer < 0 || assignedLayer >= 8 || Math.abs(Math.round(assignedLayer * 1000) - assignedLayer * 1000) > 1e-7)) throw Error('Layer must be between 0 and 7.999 in 0.001 steps');
     const boundedUnit = (value, label) => {
       const number = floating(value);
       if (number < 0 || number > 1) throw Error(`${label} must be between 0.0 and 1.0`);
@@ -291,19 +329,49 @@
       const gain = options.volume ?? state.audio.volumeOverrides[kind] ?? definition?.volume ?? state.audio.volumes[kind] ?? defaults?.audio?.[kind] ?? 1;
       return { gain: boundedUnit(gain, 'Audio volume'), mode: options.mode };
     };
-    if (name === 'volume') {
+    if (name === 'layer') {
+      const category = args[0];
+      const layer = floating(args[1]);
+      if (!Object.hasOwn(state.layers, category) || layer < 0 || layer >= 8 || Math.abs(Math.round(layer * 1000) - layer * 1000) > 1e-7) throw Error('Layer must be a known category and a 0.001 step between 0 and 8');
+      state.layers[category] = layer;
+      op.layer = { category, value: layer };
+    } else if (name === 'volume') {
       const volume = boundedUnit(args[1], 'Audio volume');
       state.audio.volumeOverrides[args[0]] = volume;
       op.volume = volume;
-    } else if (name === 'dialog') {
+    } else if (name === 'dialog' && args[0] === 'opacity') {
       const opacity = boundedUnit(args[1], 'Dialog opacity');
       state.ui.dialogOpacity = opacity;
       op.dialogOpacity = opacity;
+    } else if (name === 'dialog' && args[0] === 'visible') {
+      state.ui.dialogVisible = args[1] === true;
+      op.visible = state.ui.dialogVisible;
     } else if (name === 'say' && args.length === 4) {
       op.dialogOpacity = boundedUnit(args[3], 'Dialog opacity');
       op.dialogOpacityTemporary = true;
     }
-    if (name === 'move') {
+    if (name === 'camera') {
+      const reset = args[0] === 'reset';
+      const from = { zoom: state.camera?.zoom ?? 1, focusX: state.camera?.focusX ?? 640, focusY: state.camera?.focusY ?? 360 };
+      const to = reset ? { zoom: 1, focusX: 640, focusY: 360 } : {
+        zoom: floating(args[1]), focusX: Number(integer(args[3])), focusY: Number(integer(args[4])),
+      };
+      const duration = reset ? args[1] === 'over' ? integer(args[2]) : 0n : args[5] === 'over' ? integer(args[6]) : 0n;
+      if (to.zoom < 0.1 || to.zoom > 8) throw Error('Camera zoom must be between 0.1 and 8.0');
+      if (duration < 0n || duration > BigInt(MAX_TIME_MS)) throw Error('Invalid camera duration');
+      const actionId = duration ? `camera:${++state.revision}` : undefined;
+      const transition = beginTransition(state, {
+        type: 'camera', durationMs: Number(duration),
+        ...(duration ? { interpolation: { property: 'camera', from, to } } : {}),
+      }, actionId);
+      state.camera = { ...from, transition };
+      sampleTransition(state.camera, transition);
+      op.camera = { from, to, durationMs: Number(duration) };
+      if (actionId) {
+        op.actionId = actionId; op.blocking = true;
+        registerAction(state, { id: actionId, kind: 'camera', durationMs: Number(duration), startedAt: state.logicalTimeMs, blocking: true });
+      }
+    } else if (name === 'move') {
       const move = moveOptions(args);
       const current = move.targetKind === 'bg' ? state.background : state.characters[move.target];
       if (!current || (move.targetKind === 'character' && !current.visible)) throw Error(`move target '${move.target}' is not currently visible`);
@@ -328,7 +396,22 @@
     } else if (name === 'bg') {
       const replacedAsset = state.background?.asset;
       if (replacedAsset) op.replacedAsset = replacedAsset;
-      state.background = { asset: args[0], transition: beginTransition(state, { type: 'instant', durationMs: 0 }) };
+      op.assetName = resolveAssetName(program, 'bg', args[0]);
+      const transitionArgs = cleanDisplayArgs;
+      const transition = transitionFrom(transitionArgs, 1);
+      const actionId = transition.type === 'instant' ? undefined : `background:${++state.revision}`;
+      op.transition = transition;
+      if (actionId) { op.actionId = actionId; op.blocking = true; }
+      state.background = {
+        asset: op.assetName,
+        layer: assignedLayer,
+        ...(transition.type !== 'instant' && replacedAsset ? { previousAsset: replacedAsset } : {}),
+        transition: beginTransition(state, transition, actionId),
+        ...(actionId ? { actionId } : {}),
+      };
+      state.visualOnly = args.includes('--only') ? { kind: 'background', id: args[0] } : null;
+      op.layer = assignedLayer;
+      if (actionId) registerAction(state, { id: actionId, kind: 'background-transition', asset: op.assetName, durationMs: transition.durationMs, startedAt: state.logicalTimeMs, blocking: true });
     }
     else if (name === 'bgm') {
       const actionId = `bgm:${++state.revision}`;
@@ -374,7 +457,7 @@
       registerAction(state, { id: actionId, kind: 'se', asset: args[1], gain, startedAt: state.logicalTimeMs, blocking: false });
     } else if (name === 'play' && args[0] === 'voice') {
       const options = {};
-      for (let index = 2; index < args.length;) { const option = args[index++]; if (option === 'volume') options.volume = args[index++]; else if (option === 'blocking' || option === 'async') options.mode = option; else throw Error(`Unknown voice option '${option}'`); }
+      for (let index = 2; index < args.length;) { const option = args[index++]; if (option === 'volume') options.volume = args[index++]; else if (option === 'character') options.characterId = args[index++]; else if (option === 'blocking' || option === 'async') options.mode = option; else throw Error(`Unknown voice option '${option}'`); }
       const { gain, mode } = playbackOptions('voice', args[1], options);
       const actionId = `voice:${++state.revision}`;
       const blocking = mode === 'blocking';
@@ -382,20 +465,36 @@
       op.blocking = blocking;
       op.mode = mode || 'async';
       op.gain = gain;
-      state.audio.voices.push({ actionId, asset: args[1], gain, startedAt: state.logicalTimeMs, transition: beginTransition(state, { type: 'instant', durationMs: 0 }) });
-      registerAction(state, { id: actionId, kind: 'voice', asset: args[1], gain, startedAt: state.logicalTimeMs, blocking });
+      if (options.characterId) op.characterId = options.characterId;
+      state.audio.voices.push({ actionId, asset: args[1], ...(options.characterId ? { characterId: options.characterId } : {}), gain, startedAt: state.logicalTimeMs, transition: beginTransition(state, { type: 'instant', durationMs: 0 }) });
+      registerAction(state, { id: actionId, kind: 'voice', asset: args[1], ...(options.characterId ? { characterId: options.characterId } : {}), gain, startedAt: state.logicalTimeMs, blocking });
     } else if (name === 'play' && args[0] === 'video') {
       const actionId = `video:${++state.revision}`;
-      const mode = args[2] === 'blocking' || args[2] === 'async' ? args[2] : args[4] === 'blocking' || args[4] === 'async' ? args[4] : 'async';
+      op.assetName = resolveAssetName(program, 'video', args[1]);
+      // Videos own the presentation surface by default. Parallel story
+      // execution must be explicitly requested with `async`.
+      let mode = 'blocking', opacity = 1;
+      for (let index = 2; index < args.length;) {
+        const option = args[index++];
+        if (option === 'async' || option === 'blocking') mode = option;
+        else if (option === 'opacity') opacity = boundedUnit(args[index++], 'Video opacity');
+        else if (option === '--layer') index++;
+      }
       const blocking = mode === 'blocking';
       op.mode = mode;
+      op.opacity = opacity;
+      const only = args.includes('--only');
+      op.only = only;
+      state.visualOnly = only ? { kind: 'video', asset: op.assetName, actionId } : null;
       if (state.video?.actionId) op.replacedActionId = state.video.actionId;
       op.actionId = actionId;
       op.blocking = blocking;
-      state.video = { asset: args[1], actionId, startedAt: state.logicalTimeMs, blocking, status: 'running' };
-      registerAction(state, { id: actionId, kind: 'video', asset: args[1], startedAt: state.logicalTimeMs, blocking });
+      state.video = { asset: op.assetName, actionId, startedAt: state.logicalTimeMs, blocking, opacity, status: 'running', ...(assignedLayer === undefined ? {} : { layer: assignedLayer }) };
+      op.layer = assignedLayer;
+      registerAction(state, { id: actionId, kind: 'video', asset: op.assetName, startedAt: state.logicalTimeMs, blocking });
     }
     else if (name === 'clear' && args[0] === 'bg') {
+      state.visualOnly = null;
       if (state.background?.asset) op.clearedAsset = state.background.asset;
       state.background = null;
     }
@@ -405,19 +504,28 @@
       stopAction(state, clearedActionId, 'cleared');
       state.audio.bgm = null;
     }
-    else if (name === 'clear' && args[0] === 'image') delete state.images[args[1]];
+    else if (name === 'clear' && args[0] === 'image') { state.visualOnly = null; delete state.images[args[1]]; }
     else if (name === 'show') {
+      const only = args.includes('--only');
       if (args[0] === 'image') {
+        state.visualOnly = only ? { kind: 'image', id: args[1] } : null;
+        const assetName = resolveAssetName(program, 'image', args[1]);
+        op.assetName = assetName;
+        const displayArgs = cleanDisplayArgs;
         state.images[args[1]] = {
-          asset: args[1], slot: normalizeSlot(args[2]), visualOrder: ++state.nextVisualOrder,
-          transition: beginTransition(state, transitionFrom(args, 3)),
+          asset: assetName, slot: normalizeSlot(displayArgs[2]), visualOrder: ++state.nextVisualOrder,
+          ...(assignedLayer === undefined ? {} : { layer: assignedLayer }),
+          transition: beginTransition(state, transitionFrom(displayArgs, 3)),
         };
+        op.layer = assignedLayer;
       } else {
         const match = /^([^\.]+)\.([^\.]+)$/.exec(args[0] || '');
         if (match) {
-          const showOptions = characterShowOptions(args);
+          state.visualOnly = only ? { kind: 'character', id: match[1] } : null;
+          const displayArgs = cleanDisplayArgs;
+          const showOptions = characterShowOptions(displayArgs);
           op.transitionIndex = showOptions.transitionIndex;
-          const slot = normalizeSlot(args[1]);
+          const slot = normalizeSlot(displayArgs[1]);
           const previous = state.slots[slot];
           if (previous && previous !== match[1]) {
             state.characters[previous].visible = false;
@@ -426,7 +534,7 @@
           const old = state.characters[match[1]];
           if (old && old.slot !== slot && state.slots[old.slot] === match[1]) state.slots[old.slot] = null;
           state.slots[slot] = match[1];
-          const transition = transitionFrom(args, showOptions.transitionIndex);
+          const transition = transitionFrom(displayArgs, showOptions.transitionIndex);
           const actionId = transition.type === 'instant' ? undefined : `show:${++state.revision}`;
           if (actionId) {
             op.actionId = actionId;
@@ -438,15 +546,19 @@
             ...(transition.type === 'fade' ? { interpolation: { property: 'opacity', from: 0, to: 1 } } : {}),
           }, actionId);
           state.characters[match[1]] = {
-            id: match[1], pose: match[2], slot, offsetX: showOptions.x, offsetY: showOptions.y,
+            id: match[1], pose: match[2], slot, offsetX: showOptions.x,
+            offsetY: poseYOffset(program, match[1], match[2]) + showOptions.y,
             visible: true, opacity: transition.type === 'fade' ? 0 : 1, zIndex: 0,
+            ...(assignedLayer === undefined ? {} : { layer: assignedLayer }),
             visualOrder: old?.visible ? old.visualOrder : ++state.nextVisualOrder,
             transition: visualTransition, ...(actionId ? { actionId } : {}),
           };
           sampleTransition(state.characters[match[1]], visualTransition);
+          op.layer = assignedLayer;
         }
       }
     } else if (name === 'hide') {
+      state.visualOnly = null;
       const current = state.characters[args[0]];
       if (current) {
         const transition = transitionFrom(args, 1);
@@ -481,11 +593,12 @@
     return op;
   }
   class Runtime {
-    constructor(host = {}) { this.host = host; this.globals = Object.create(null); this.frames = [this.globals]; this.loopFrames = new WeakSet(); this.readonlyFrames = new WeakMap(); this.functions = new Map(); this.program = null; this.currentSceneName = ''; this.presentationDefaults = { audio: { bgm: 1, se: 1, voice: 0.5 }, dialog: { opacity: 1 } }; this.sceneState = createSceneState(); this.pendingSceneActionEvents = null; this.transitionProgressNotifications = new WeakMap(); }
+    constructor(host = {}) { this.host = host; this.globals = Object.create(null); this.frames = [this.globals]; this.loopFrames = new WeakSet(); this.readonlyFrames = new WeakMap(); this.functions = new Map(); this.program = null; this.currentSceneName = ''; this.currentSourceFile = ''; this.currentLine = 0; this.presentationDefaults = { audio: { ...DEFAULT_PRESENTATION_DEFAULTS.audio }, dialog: { ...DEFAULT_PRESENTATION_DEFAULTS.dialog } }; this.sceneState = createSceneState(); this.pendingSceneActionEvents = null; this.transitionProgressNotifications = new WeakMap(); }
     configurePresentationDefaults(theme = {}) {
       this.presentationDefaults = {
-        audio: { bgm: 1, se: 1, voice: 0.5, ...(theme.audio || {}) },
-        dialog: { opacity: 1, ...(theme.dialog || {}) },
+        audio: { ...DEFAULT_PRESENTATION_DEFAULTS.audio, ...(theme.audio || {}) },
+        dialog: { ...DEFAULT_PRESENTATION_DEFAULTS.dialog, ...(theme.dialog || {}) },
+        layers: { ...DEFAULT_PRESENTATION_DEFAULTS.layers, ...(theme.layers || {}) },
       };
       for (const kind of ['bgm', 'se', 'voice']) {
         const value = Number(this.presentationDefaults.audio[kind]);
@@ -495,6 +608,12 @@
       const opacity = Number(this.presentationDefaults.dialog.opacity);
       if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) throw Error('Invalid dialog opacity default');
       this.presentationDefaults.dialog.opacity = opacity;
+      for (const [category, value] of Object.entries(this.presentationDefaults.layers)) {
+        const layer = Number(value);
+        if (!Object.hasOwn(DEFAULT_PRESENTATION_DEFAULTS.layers, category) || !Number.isFinite(layer) || layer < 0 || layer >= 8 || Math.abs(Math.round(layer * 1000) - layer * 1000) > 1e-7) throw Error(`Invalid ${category} layer default`);
+        this.presentationDefaults.layers[category] = layer;
+      }
+      this.sceneState.layers = { ...this.presentationDefaults.layers };
     }
     notifySceneState(event) {
       Promise.resolve(this.host.sceneState?.(this.sceneState, event, this)).catch(() => {});
@@ -662,7 +781,7 @@
           if (typeof key !== 'bigint' || key < 0n || key >= BigInt(target.length)) throw Error(`List index out of range: ${key}`);
           return target[Number(key)];
         }
-        if (!target || typeof target !== 'object' || !own(target, key)) throw Error(`存在しない辞書キー '${key}' です`);
+        if (!target || typeof target !== 'object' || !own(target, key)) throw Error(`\u5b58\u5728\u3057\u306a\u3044\u8f9e\u66f8\u30ad\u30fc '${key}' \u3067\u3059`);
         return target[key];
       }
       if (x.kind === 'unary') {
@@ -719,7 +838,7 @@
         if (x.name === 'text.replace') return replaceText(args[0], args[1], args[2]);
         return this.call(x.name, args);
       }
-      throw Error(`未知の式 '${x.kind}' です`);
+      throw Error(`未知の弁E'${x.kind}' です`);
     }
     async call(name, args) {
       if (name === 'runtime.state.characters.exists') {
@@ -730,6 +849,45 @@
         if (args.length !== 0) throw Error('runtime.state.characters.list expects no arguments');
         return [...new Set(Object.values(this.sceneState.slots).filter(value => typeof value === 'string'))].sort();
       }
+      if (name === 'runtime.state.characters.position') {
+        if (args.length !== 1 || typeof args[0] !== 'string') throw Error('runtime.state.characters.position expects one str argument');
+        return Object.entries(this.sceneState.slots).find(([, character]) => character === args[0])?.[0] ?? '';
+      }
+      if (name === 'runtime.state.background.exists') {
+        if (args.length !== 0) throw Error('runtime.state.background.exists expects no arguments');
+        return typeof this.sceneState.background?.asset === 'string' && this.sceneState.background.asset.length > 0;
+      }
+      if (name === 'runtime.state.background.current') {
+        if (args.length !== 0) throw Error('runtime.state.background.current expects no arguments');
+        return this.sceneState.background?.asset ?? '';
+      }
+      if (name === 'runtime.state.audio.bgm_exists') {
+        if (args.length !== 0) throw Error('runtime.state.audio.bgm_exists expects no arguments');
+        return typeof this.sceneState.audio.bgm?.asset === 'string' && this.sceneState.audio.bgm.asset.length > 0;
+      }
+      if (name === 'runtime.state.audio.current_bgm') {
+        if (args.length !== 0) throw Error('runtime.state.audio.current_bgm expects no arguments');
+        return this.sceneState.audio.bgm?.asset ?? '';
+      }
+      if (name === 'runtime.state.audio.volume') {
+        if (args.length !== 1 || !['bgm', 'se', 'voice'].includes(args[0])) throw Error('runtime.state.audio.volume expects one channel: bgm, se, or voice');
+        return this.sceneState.audio.volumeOverrides[args[0]] ?? this.sceneState.audio.volumes[args[0]] ?? this.presentationDefaults.audio[args[0]];
+      }
+      if (name === 'runtime.state.ui.dialog_opacity') {
+        if (args.length !== 0) throw Error('runtime.state.ui.dialog_opacity expects no arguments');
+        return this.sceneState.ui.dialogOpacity;
+      }
+      if (name === 'runtime.state.variables.exists') {
+        if (args.length !== 1 || typeof args[0] !== 'string') throw Error('runtime.state.variables.exists expects one str argument');
+        return this.frames.some(frame => own(frame, args[0]));
+      }
+      if (name === 'runtime.state.variables.names') {
+        if (args.length !== 0) throw Error('runtime.state.variables.names expects no arguments');
+        return [...new Set(this.frames.flatMap(frame => Object.keys(frame)))].sort();
+      }
+      if (name === 'runtime.state.execution.current_scene') { if (args.length) throw Error('runtime.state.execution.current_scene expects no arguments'); return this.currentSceneName; }
+      if (name === 'runtime.state.execution.current_file') { if (args.length) throw Error('runtime.state.execution.current_file expects no arguments'); return this.currentSceneName ? this.currentSourceFile : ''; }
+      if (name === 'runtime.state.execution.current_line') { if (args.length) throw Error('runtime.state.execution.current_line expects no arguments'); return BigInt(this.currentSceneName ? this.currentLine : 0); }
       const fn = this.functions.get(name);
       if (!fn) throw Error(`未定義の関数 '${name}' です`);
       const saved = this.frames, local = Object.create(null);
@@ -743,8 +901,55 @@
     }
     async exec(list, preserveGlobals = false) {
       for (const c of list) {
+        this.currentSourceFile = this.currentSceneName ? c.file || this.program?.sourceFile || '' : '';
+        this.currentLine = this.currentSceneName && Number.isSafeInteger(c.line) ? c.line : 0;
         await this.host.beforeInstruction?.(c, this);
-        if (c.op === 'declare') {
+        if (c.op === 'parallel') {
+          if (!Array.isArray(c.body) || !c.body.length || c.body.some(instruction => instruction.op !== 'command')) throw Error('parallel requires timed visual commands');
+          const priorState = cloneSceneValue(this.sceneState);
+          const prepared = [];
+          this.pendingSceneActionEvents = [];
+          try {
+            for (const instruction of c.body) {
+              const args = [];
+              for (const argument of instruction.args || []) args.push(await this.value(argument));
+              const operation = sceneStateCommand(this.sceneState, instruction.name, args, this.program, this.presentationDefaults);
+              prepared.push({ name: instruction.name, args, operation });
+            }
+            if (this.host.parallel) await this.host.parallel(prepared, this);
+            else await Promise.all(prepared.map(item => this.host.command(item.name, item.args, this, item.operation)));
+          } catch (error) {
+            for (const key of Object.keys(this.sceneState)) delete this.sceneState[key];
+            Object.assign(this.sceneState, priorState);
+            this.flushSceneActionEvents(this.pendingSceneActionEvents);
+            this.pendingSceneActionEvents = null;
+            throw error;
+          }
+          const events = this.pendingSceneActionEvents;
+          this.pendingSceneActionEvents = null;
+          this.flushSceneActionEvents(events);
+          const durationOf = ({ name, args, operation }) => {
+            if (name === 'bg') return operation.transition?.durationMs || 0;
+            if (name === 'camera') return operation.camera?.durationMs || 0;
+            if (name === 'move') return operation.move?.durationMs || 0;
+            if (name === 'show' && args[0] !== 'image' && args[operation.transitionIndex] === 'fade') return Number(args[operation.transitionIndex + 1] ?? 500n);
+            if (name === 'hide' && args[1] === 'fade') return Number(args[2] ?? 500n);
+            if (name === 'effect') return Number(args[2] ?? 500n);
+            return 0;
+          };
+          const groupDuration = Math.max(0, ...prepared.map(durationOf));
+          advanceSceneTime(this.sceneState, BigInt(groupDuration));
+          for (const item of prepared) {
+            const { name, args, operation } = item;
+            if (operation.blocking) finishAction(this.sceneState, operation.actionId);
+            if (name === 'bg' && this.sceneState.background) delete this.sceneState.background.previousAsset;
+            if (name === 'hide' && args[1] === 'fade') {
+              const character = this.sceneState.characters[args[0]];
+              if (character) { character.visible = false; if (this.sceneState.slots[character.slot] === args[0]) this.sceneState.slots[character.slot] = null; delete character.pendingVisibility; }
+            }
+          }
+          await this.host.sceneState?.(this.sceneState, { name: 'parallel', operations: prepared.map(item => item.operation) }, this);
+        } else if (c.op === 'declare') {
           const frame = this.frames.findLast(f => !this.loopFrames.has(f));
           if (preserveGlobals && frame === this.globals && own(frame, c.name)) {
             if (!matches(frame[c.name], c.type)) throw Error(`ファイル間で変数 '${c.name}' の型が一致しません`);
@@ -766,7 +971,7 @@
           if (c.target.kind === 'load') throw Error('unset は辞書要素を指定してください');
           this.assertMutable(c.target);
           const k = await this.value(c.target.key), d = copy(this.get(c.target.target.name));
-          if (!own(d, k)) throw Error(`存在しない辞書キー '${k}' です`);
+          if (!own(d, k)) throw Error(`\u5b58\u5728\u3057\u306a\u3044\u8f9e\u66f8\u30ad\u30fc '${k}' \u3067\u3059`);
           delete d[k];
           this.set(c.target.target.name, d);
         } else if (c.op === 'command') {
@@ -815,8 +1020,10 @@
           else if (c.name === 'show' && operation.args[0] !== 'image' && operation.args[operation.transitionIndex] === 'fade') advanceSceneTime(this.sceneState, operation.args[operation.transitionIndex + 1]);
           else if (c.name === 'hide' && operation.args[1] === 'fade') advanceSceneTime(this.sceneState, operation.args[2]);
           else if (c.name === 'move' && operation.blocking) advanceSceneTime(this.sceneState, operation.move.durationMs);
+          else if ((c.name === 'bg' || c.name === 'camera') && operation.blocking) advanceSceneTime(this.sceneState, c.name === 'bg' ? operation.transition.durationMs : operation.camera.durationMs);
           if (operation.blocking) {
             finishAction(this.sceneState, operation.actionId);
+            if (c.name === 'bg' && this.sceneState.background) delete this.sceneState.background.previousAsset;
             if (c.name === 'hide' && args[1] === 'fade') {
               const character = this.sceneState.characters[args[0]];
               if (character) {
@@ -841,7 +1048,7 @@
           const labels = []; for (const o of c.options) labels.push(await this.textAsync(await this.value(o.label)));
           const prompt = c.prompt ? await this.textAsync(await this.value(c.prompt)) : '';
           const index = await this.host.choice(prompt, labels);
-          if (!Number.isInteger(index) || !c.options[index]) throw Error('不正な選択肢です');
+          if (!Number.isInteger(index) || !c.options[index]) throw Error('Invalid choice selection');
           const choice = { prompt, labels: labels.slice(), selectedIndex: index, selectedLabel: labels[index], at: this.sceneState.logicalTimeMs };
           this.sceneState.choices.push(choice);
           this.sceneState.revision++;
@@ -851,7 +1058,7 @@
           finally { this.frames.pop(); }
         } else if (c.op === 'for') {
           const start = await this.value(c.start), stop = await this.value(c.stop), step = await this.value(c.step);
-          if (step === 0n || (start < stop && step < 0n) || (start > stop && step > 0n)) throw Error('for ループの step が不正です');
+          if (step === 0n || (start < stop && step < 0n) || (start > stop && step > 0n)) throw Error('Invalid for loop step');
           const loopFrame = Object.create(null); this.loopFrames.add(loopFrame); this.frames.push(loopFrame);
           try {
             let count = 0;
@@ -890,10 +1097,14 @@
       if (debug?.file !== undefined && debug.file !== null && typeof debug.file !== 'string')
         throw Error('Debug source file must be a string.');
       let transferred = false;
+      this.currentSceneName = '';
+      this.currentSourceFile = '';
+      this.currentLine = 0;
       // SceneState contains arrays (effects, choices, transfers, audio events).
       // The lexical-frame copier intentionally produces plain objects, so use
       // the structure-preserving clone for persisted scene snapshots.
       this.sceneState = debug?.sceneState ? cloneSceneValue(debug.sceneState) : createSceneState();
+      this.sceneState.layers = { ...this.presentationDefaults.layers, ...(this.sceneState.layers || {}) };
       this.sceneState.audio.volumes = { ...this.presentationDefaults.audio };
       this.sceneState.ui.dialogOpacity = this.presentationDefaults.dialog.opacity;
       let restored = false;
@@ -904,7 +1115,7 @@
         await this.host.sceneState?.(this.sceneState, { name: 'goto', ...transfer }, this);
       };
       for (;;) {
-        if (p.version !== 2) throw Error('未対応のプログラムバージョンです');
+        if (p.version !== 2) throw Error('Unsupported program version');
         this.program = p;
         this.frames = [this.globals];
         this.loopFrames = new WeakSet();
@@ -942,7 +1153,7 @@
           result = await this.exec(scenes.get(result.scene));
         }
         if (!result) return;
-        if (result.kind !== 'goto' || !this.host.load) throw Error('不正なシーン遷移です');
+        if (result.kind !== 'goto' || !this.host.load) throw Error('Invalid scene transfer');
         await recordTransfer(result.scene, true);
         p = await this.host.load(result.scene);
         transferred = true;
@@ -955,6 +1166,6 @@
     if (!a || !b || typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) !== Array.isArray(b)) return false;
     return Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(k => own(b, k) && equal(a[k], b[k]));
   }
-  if (typeof module !== 'undefined') module.exports = { Runtime, integer, floating, createSceneState, sceneStateCommand, advanceSceneTime };
-  else root.NovelRuntime = { Runtime, integer, floating, createSceneState, sceneStateCommand, advanceSceneTime };
+  if (typeof module !== 'undefined') module.exports = { Runtime, integer, floating, createSceneState, sceneStateCommand, advanceSceneTime, DEFAULT_PRESENTATION_DEFAULTS };
+  else root.NovelRuntime = { Runtime, integer, floating, createSceneState, sceneStateCommand, advanceSceneTime, DEFAULT_PRESENTATION_DEFAULTS };
 })(globalThis);

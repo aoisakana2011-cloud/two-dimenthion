@@ -12,6 +12,7 @@ const { pack, validateVariableFlow } = require('../tools/pack');
 const { compileProject, resolveProjectScript } = require('../tools/project');
 const { readStaticVariables } = require('../tools/static-variables');
 const { seedEmptyProject, projectLayout } = require('../tools/project-layout');
+const { RUNTIME_STATE_APIS, IDE_ANALYSIS_RULES } = require('../dist/language/builtins');
 const program = source => JSON.parse(JSON.stringify(compile(parse(source))));
 async function nativeExecutableForTest(t) {
   if (process.env.NOVEL_NATIVE_EXE) {
@@ -47,14 +48,39 @@ function tinyPng() {
     chunk('IEND', Buffer.alloc(0)),
   ]);
 }
+function tinyWav() {
+  const samples = Buffer.alloc(80);
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0); header.writeUInt32LE(36 + samples.length, 4); header.write('WAVE', 8);
+  header.write('fmt ', 12); header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22); header.writeUInt32LE(8000, 24); header.writeUInt32LE(8000, 28);
+  header.writeUInt16LE(1, 32); header.writeUInt16LE(8, 34); header.write('data', 36);
+  header.writeUInt32LE(samples.length, 40); samples.fill(128);
+  return Buffer.concat([header, samples]);
+}
 async function run(source, host = {}) {
   const rt = new Runtime({ command: async () => {}, choice: async () => 0, ...host });
   await rt.run(program(source)); return rt;
 }
 
 test('runtime.state.characters exposes current presentation occupancy with shared Browser and Native semantics', async t => {
+  const existsApi = RUNTIME_STATE_APIS.get('runtime.state.characters.exists');
+  const backgroundApi = RUNTIME_STATE_APIS.get('runtime.state.background.current');
+  const bgmApi = RUNTIME_STATE_APIS.get('runtime.state.audio.current_bgm');
+  const variablesApi = RUNTIME_STATE_APIS.get('runtime.state.variables.names');
+  const moveRule = IDE_ANALYSIS_RULES.characterMoveRequiresPresence;
+  assert.deepEqual(existsApi.effects, { reads: ['characters'], writes: [] });
+  assert.deepEqual(existsApi.compile.predicate, { kind: 'membership', domain: 'characters', argument: 0, positiveMeans: 'present' });
+  assert.equal(moveRule.domain, existsApi.compile.predicate.domain);
+  assert.equal(moveRule.requiredFact, existsApi.compile.predicate.positiveMeans);
+  assert.equal(moveRule.guardApi, 'runtime.state.characters.exists');
+  assert.deepEqual(backgroundApi.effects, { reads: ['background'], writes: [] });
+  assert.deepEqual(bgmApi.effects, { reads: ['audio.bgm'], writes: [] });
+  assert.deepEqual(variablesApi.returns, { kind: 'list', value: 'str' });
+  assert.deepEqual(variablesApi.effects, { reads: ['variables'], writes: [] });
   const source = `
 asset bg placeholder = "asset/placeholder.png"
+asset bgm theme = "asset/theme.wav"
 character ayase {
   name = "Ayase"
   pose normal = "asset/placeholder.png"
@@ -69,9 +95,37 @@ character zara {
 }
 global bool initially_present = runtime.state.characters.exists("ayase")
 global list[str] initially_present_characters = runtime.state.characters.list()
+global str initial_position = runtime.state.characters.position("ayase")
+global bool background_at_entry = runtime.state.background.exists()
+global str background_at_entry_id = runtime.state.background.current()
+global bool bgm_at_entry = runtime.state.audio.bgm_exists()
+global str bgm_at_entry_id = runtime.state.audio.current_bgm()
+global str execution_scene_at_entry = runtime.state.execution.current_scene()
+global int execution_line_at_entry = runtime.state.execution.current_line()
+global str execution_file_at_entry = runtime.state.execution.current_file()
+global float dialog_opacity_at_entry = runtime.state.ui.dialog_opacity()
+global float bgm_volume_at_entry = runtime.state.audio.volume("bgm")
+global bool watched_global_exists = runtime.state.variables.exists("initially_present")
+global bool future_global_exists = runtime.state.variables.exists("names_in_scene")
 global bool found_after_show = false
 global bool found_missing = true
 global list[str] after_show = []
+global str position_after_show = ""
+global bool background_after_set = false
+global str background_after_set_id = ""
+global bool bgm_after_set = false
+global str bgm_after_set_id = ""
+global bool background_after_clear = true
+global bool bgm_after_clear = true
+global str execution_scene_in_scene = ""
+global int execution_line_in_scene = 0
+global str execution_file_in_scene = ""
+global float dialog_opacity_after_set = 0.0
+global float bgm_volume_after_set = 0.0
+global bool function_parameter_exists = false
+global bool missing_variable_exists = true
+global list[str] names_in_scene = []
+fn sees_parameter(name: str) -> bool { return runtime.state.variables.exists(name) }
 global bool dynamic_move_succeeded = false
 global list[str] after_slot_replacement = []
 global list[str] after_hide = []
@@ -84,11 +138,32 @@ fn move_if_present(id: str) -> bool {
   return false
 }
 scene main {
+  set execution_scene_in_scene = runtime.state.execution.current_scene()
+  set execution_line_in_scene = runtime.state.execution.current_line()
+  set execution_file_in_scene = runtime.state.execution.current_file()
+  dialog opacity 0.65
+  volume bgm 0.35
+  set dialog_opacity_after_set = runtime.state.ui.dialog_opacity()
+  set bgm_volume_after_set = runtime.state.audio.volume("bgm")
+  set function_parameter_exists = sees_parameter("name")
+  set missing_variable_exists = runtime.state.variables.exists("not_declared")
+  set names_in_scene = runtime.state.variables.names()
+  bg placeholder
+  set background_after_set = runtime.state.background.exists()
+  set background_after_set_id = runtime.state.background.current()
+  bgm theme
+  set bgm_after_set = runtime.state.audio.bgm_exists()
+  set bgm_after_set_id = runtime.state.audio.current_bgm()
+  clear bg
+  clear bgm
+  set background_after_clear = runtime.state.background.exists()
+  set bgm_after_clear = runtime.state.audio.bgm_exists()
   show zara.normal left
   show ayase.normal right
   set found_after_show = runtime.state.characters.exists("ayase")
   set found_missing = runtime.state.characters.exists("ghost")
   set after_show = runtime.state.characters.list()
+  set position_after_show = runtime.state.characters.position("ayase")
   set dynamic_move_succeeded = move_if_present("ayase")
   show mio.normal left
   set after_slot_replacement = runtime.state.characters.list()
@@ -96,14 +171,43 @@ scene main {
   set after_hide = runtime.state.characters.list()
   hide mio
   set after_hide_all = runtime.state.characters.list()
+  say narrator str(dialog_opacity_at_entry) + "|" + str(bgm_volume_at_entry) + "|" + str(runtime.state.ui.dialog_opacity()) + "|" + str(runtime.state.audio.volume("bgm"))
 }`;
   const compiled = program(source);
+  const executionLine = source.split('\n').findIndex(line => line.includes('set execution_line_in_scene =')) + 1;
   const browser = await run(source);
   assert.equal(browser.get('initially_present'), false);
   assert.deepEqual(browser.get('initially_present_characters'), []);
+  assert.equal(browser.get('initial_position'), '');
+  assert.equal(browser.get('background_at_entry'), false);
+  assert.equal(browser.get('background_at_entry_id'), '');
+  assert.equal(browser.get('bgm_at_entry'), false);
+  assert.equal(browser.get('bgm_at_entry_id'), '');
+  assert.equal(browser.get('execution_scene_at_entry'), '');
+  assert.equal(browser.get('execution_file_at_entry'), '');
+  assert.equal(browser.get('dialog_opacity_at_entry'), 1);
+  assert.equal(browser.get('bgm_volume_at_entry'), 1);
+  assert.equal(browser.get('watched_global_exists'), true);
+  assert.equal(browser.get('future_global_exists'), false, 'global initializers execute in declaration order, not via a pre-populated table');
+  assert.equal(browser.get('execution_scene_in_scene'), 'main');
+  assert.equal(typeof browser.get('execution_file_in_scene'), 'string');
+  assert.equal(browser.get('execution_line_in_scene'), BigInt(executionLine));
+  assert.equal(browser.get('dialog_opacity_after_set'), 0.65);
+  assert.equal(browser.get('bgm_volume_after_set'), 0.35);
+  assert.equal(browser.get('function_parameter_exists'), true);
+  assert.equal(browser.get('missing_variable_exists'), false);
+  assert.ok(browser.get('names_in_scene').includes('initially_present'));
+  assert.deepEqual(browser.get('names_in_scene'), [...browser.get('names_in_scene')].sort());
+  assert.equal(browser.get('background_after_set'), true);
+  assert.equal(browser.get('background_after_set_id'), 'placeholder');
+  assert.equal(browser.get('bgm_after_set'), true);
+  assert.equal(browser.get('bgm_after_set_id'), 'theme');
+  assert.equal(browser.get('background_after_clear'), false);
+  assert.equal(browser.get('bgm_after_clear'), false);
   assert.equal(browser.get('found_after_show'), true);
   assert.equal(browser.get('found_missing'), false);
   assert.deepEqual(browser.get('after_show'), ['ayase', 'zara']);
+  assert.equal(browser.get('position_after_show'), 'right');
   assert.equal(browser.get('dynamic_move_succeeded'), true);
   assert.deepEqual(browser.get('after_slot_replacement'), ['ayase', 'mio']);
   assert.deepEqual(browser.get('after_hide'), ['mio']);
@@ -112,8 +216,15 @@ scene main {
 
   assert.throws(() => program('global bool bad = runtime.state.characters.exists(1)'), /argument 1 must be str/);
   assert.throws(() => program('global list[str] bad = runtime.state.characters.list("extra")'), /requires 0 argument/);
+  assert.throws(() => program('global str bad = runtime.state.characters.position(1)'), /argument 1 must be str/);
+  assert.throws(() => program('global bool bad = runtime.state.background.exists("extra")'), /requires 0 argument/);
+  assert.throws(() => program('global str bad = runtime.state.background.current("extra")'), /requires 0 argument/);
   assert.throws(() => program('global bool bad = runtime.state.characters.unknown()'), /unknown|未定義の関数/i);
 
+  assert.throws(() => program('global bool bad = compile.characters.always_visible("ayase")'), /unknown|未定義の関数/i,
+    'compile analysis is not a callable game-runtime namespace');
+  assert.throws(() => program('global bool bad = ide.warning("example")'), /unknown|未定義の関数/i,
+    'IDE diagnostics are not executable scenario functions');
   const exe = await nativeExecutableForTest(t);
   if (!exe) return;
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-runtime-state-parity-'));
@@ -121,18 +232,110 @@ scene main {
   const assetsRoot = path.join(root, 'asset'), scenesRoot = path.join(root, 'senario');
   await fs.mkdir(assetsRoot); await fs.mkdir(scenesRoot);
   await fs.writeFile(path.join(assetsRoot, 'placeholder.png'), tinyPng());
+  await fs.writeFile(path.join(assetsRoot, 'theme.wav'), tinyWav());
   const scenario = path.join(scenesRoot, 'main.tds');
   await fs.writeFile(scenario, source);
   const packagePath = path.join(root, 'runtime-state.nsp.json');
   await pack(scenario, packagePath, { scenesRoot, assetsRoot });
+  const packagedBrowser = new Runtime({ command: async () => {}, choice: async () => 0 });
+  await packagedBrowser.run(JSON.parse(await fs.readFile(packagePath, 'utf8')).program);
   const native = spawnSync(exe, [packagePath, '--headless'], { encoding: 'utf8', timeout: 10000 });
   assert.equal(native.status, 0, native.stderr || native.error?.message);
   const nativeGlobals = JSON.parse(native.stdout).globals;
   for (const name of [
-    'initially_present', 'initially_present_characters', 'found_after_show', 'found_missing', 'after_show',
+    'initially_present', 'initially_present_characters', 'initial_position',
+    'background_at_entry', 'background_at_entry_id', 'bgm_at_entry', 'bgm_at_entry_id',
+    'execution_scene_at_entry', 'execution_line_at_entry', 'execution_file_at_entry',
+    'execution_scene_in_scene', 'execution_line_in_scene', 'execution_file_in_scene',
+    'dialog_opacity_at_entry', 'bgm_volume_at_entry', 'dialog_opacity_after_set', 'bgm_volume_after_set',
+    'watched_global_exists', 'future_global_exists', 'function_parameter_exists', 'missing_variable_exists', 'names_in_scene',
+    'background_after_set', 'background_after_set_id', 'bgm_after_set', 'bgm_after_set_id',
+    'background_after_clear', 'bgm_after_clear', 'found_after_show', 'found_missing', 'after_show', 'position_after_show',
     'dynamic_move_succeeded', 'after_slot_replacement', 'after_hide', 'after_hide_all',
-  ]) assert.deepEqual(nativeGlobals[name], browser.get(name), `Native and Browser runtime API result diverged for ${name}`);
+  ]) {
+    const browserValue = packagedBrowser.get(name);
+    assert.deepEqual(nativeGlobals[name], name === 'execution_line_at_entry' || name === 'execution_line_in_scene' ? Number(browserValue) : browserValue,
+      `Native and Browser runtime API result diverged for ${name}`);
+  }
+  assert.equal(typeof nativeGlobals.execution_file_in_scene, 'string');
   assert.deepEqual(nativeGlobals.after_show, ['ayase', 'zara'], 'list() order is identifier-sorted and stable across runtimes');
+  const engineSmoke = spawnSync(exe, [packagePath, '--smoke'], {
+    encoding: 'utf8', timeout: 15000,
+    env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' },
+  });
+  assert.equal(engineSmoke.status, 0, engineSmoke.stderr || engineSmoke.error?.message);
+  assert.equal(JSON.parse(engineSmoke.stdout).dialogue.text, '1|1|0.65|0.35',
+    'the actual Native player provider reads project defaults and scenario-overridden UI/audio state');
+});
+
+test('background and BGM presence predicates refine only facts proven by direct commands', () => {
+  const source = `
+asset bg room = "asset/room.png"
+asset bgm theme = "asset/theme.wav"
+global bool uncertain = false
+fn maybe_clear() -> none { if uncertain { clear bg } }
+fn maybe_clear_music() -> none { if uncertain { clear bgm } }
+scene main {
+  clear bg
+  if runtime.state.background.exists() { move character "ghost" by x+1 }
+  bg room
+  if runtime.state.background.exists() { move character "ghost" by x+1 }
+  maybe_clear()
+  if runtime.state.background.exists() { move character "ghost" by x+1 }
+  bgm theme
+  if runtime.state.audio.bgm_exists() { move character "ghost" by x+1 }
+  clear bgm
+  if runtime.state.audio.bgm_exists() { move character "ghost" by x+1 }
+  bgm theme
+  maybe_clear_music()
+  if runtime.state.audio.bgm_exists() { move character "ghost" by x+1 }
+}`;
+  const diagnostics = analyzeScript(parse(source));
+  assert.equal(diagnostics.filter(item => item.code === 'move-unshown-character').length, 4,
+    'direct state writes prove present/absent branches; a function with possible writes invalidates the proof');
+  assert.ok(diagnostics.some(item => item.code === 'unreachable-runtime-state-branch'),
+    'IDE diagnostics expose branches disproven by proven runtime-state facts');
+});
+
+test('variable-binding predicates respect declaration order and lexical frames without guessing future globals', async () => {
+  const source = `
+global int initialized_from_early_call = read_later()
+fn read_later() -> int {
+  if runtime.state.variables.exists("later_global") { return 1 } else { return 0 }
+}
+fn parameter_is_visible(name: str) -> none {
+  if runtime.state.variables.exists("name") { wait 1 } else { say narrator "impossible" }
+}
+global int later_global = 2
+scene main {
+  int scene_local = 3
+  if runtime.state.variables.exists("later_global") { wait 1 } else { say narrator "impossible" }
+  if runtime.state.variables.exists("scene_local") { wait 1 } else { say narrator "impossible" }
+}`;
+  const diagnostics = analyzeScript(parse(source)).filter(item => item.code === 'unreachable-runtime-state-branch');
+  assert.equal(diagnostics.length, 3,
+    'the declared global, scene local, and function parameter are known; a function called before a later global declaration remains unknown');
+  const ideReport = await validateEditorSource(`int known = 1
+scene main {
+  if runtime.state.variables.exists("known") { wait 1 } else { wait 2 }
+}`, 'runtime-state-ide.tds');
+  assert.ok(ideReport.diagnostics.some(item => item.code === 'unreachable-runtime-state-branch' && item.severity === 'info'),
+    'the editor validation path exposes the analyzer fact as an IDE diagnostic');
+});
+
+test('variable-binding facts do not escape choice-local frames', () => {
+  const source = `
+scene main {
+  if not runtime.state.variables.exists("choice_local") {
+    choice {
+      "first" { int choice_local = 1 }
+      "second" { int choice_local = 2 }
+    }
+    if runtime.state.variables.exists("choice_local") { wait 1 } else { say narrator "still absent" }
+  }
+}`;
+  const diagnostics = analyzeScript(parse(source)).filter(item => item.code === 'unreachable-runtime-state-branch');
+  assert.equal(diagnostics.length, 1, 'only the outer else is impossible; choice-local declarations do not escape their runtime frame');
 });
 
 test('bool, typed lists, for-in, indexing, and text intrinsics share precise value semantics', async () => {
@@ -366,27 +569,19 @@ scene main {
   await assert.rejects(run('int result = int(1e20)\nscene main { wait 1 }'), /overflow|範囲|int/i);
 });
 
-test('standard walk module drives eight blocking movement frames over exactly two seconds', async t => {
+test('walk.character drives its requested distance and gait over exactly two seconds', async t => {
   const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-walk-cycle-'));
   t.after(() => fs.rm(projectRoot, { recursive: true, force: true }));
   seedEmptyProject(projectRoot);
   const { scenesRoot, assetsRoot } = projectLayout(projectRoot);
   const source = `include "std/motion/walk.tds" as walk
-global float walk_phase = 0.0
-global float previous_y = 0.0
-global float walk_y = 0.0
 character rei {
   name = "Rei"
   pose normal = "asset/char/rei.png"
 }
 scene main {
   show rei.normal center
-  for frame from 1 to 8 {
-    set walk_phase = float(frame) / 8.0
-    set walk_y = walk.walk_bob(5.0, walk_phase)
-    move character rei by x+18 y+(walk_y - previous_y) over 250
-    set previous_y = walk_y
-  }
+  walk.character("rei", 144.0, 1, 2.0, 5.0)
 }
 `;
   await fs.writeFile(path.join(scenesRoot, 'main.tds'), source, 'utf8');
@@ -396,19 +591,26 @@ scene main {
   const runtime = new Runtime({ command: async (name, args) => { if (name === 'move') moves.push(args); } });
   await runtime.run(compiled);
   assert.equal(moves.length, 8);
+  let actualX = 0;
   let actualY = 0;
+  let lowestY = 0;
   for (let index = 0; index < moves.length; index++) {
     const args = moves[index];
-    assert.deepEqual(args.slice(0, 5), ['character', 'rei', 'by', 'x+18', 'y+']);
-    assert.equal(args[6], 'over');
-    assert.equal(args[7], 250n);
-    actualY += args[5];
-    assert.ok(Number.isFinite(Number(args[5])), `walk frame ${index + 1} has a finite vertical delta`);
+    assert.deepEqual(args.slice(0, 4), ['character', 'rei', 'by', 'x+']);
+    assert.equal(args[5], 'y+');
+    assert.equal(args[7], 'over');
+    assert.equal(typeof args[8], 'bigint');
+    actualX += args[4];
+    actualY += args[6];
+    assert.ok(index !== 0 || args[6] > 0, 'the first gait segment moves downward');
+    lowestY = Math.max(lowestY, actualY);
+    assert.ok(actualY >= -1e-9, 'the gait never rises above its starting height');
+    assert.ok(Number.isFinite(Number(args[4])) && Number.isFinite(Number(args[6])), `walk frame ${index + 1} has finite deltas`);
   }
-  assert.ok(Math.abs(runtime.get('walk_phase') - 1) < 1e-12);
+  assert.ok(Math.abs(actualX - 144) < 1e-9, 'horizontal deltas sum to the requested distance');
   assert.ok(Math.abs(actualY) < 1e-8, 'the walk returns to its starting vertical position');
-  assert.ok(Math.abs(runtime.get('walk_y')) < 1e-5);
-  assert.equal(moves.reduce((duration, args) => duration + Number(args[7]), 0), 2000, 'the authored walk consists of one 2-second cycle');
+  assert.ok(Math.abs(lowestY - 5) < 1e-8, 'the downward step reaches the configured bob amplitude');
+  assert.equal(moves.reduce((duration, args) => duration + Number(args[8]), 0), 2000, 'segment durations sum to the requested 2 seconds');
   const exe = await nativeExecutableForTest(t);
   if (exe) {
     const packagePath = path.join(projectRoot, 'walk.nsp.json');
@@ -417,8 +619,7 @@ scene main {
     assert.equal(child.status, 0, child.stderr || child.error?.message);
     const output = JSON.parse(child.stdout);
     assert.equal(output.commands.filter(command => command.name === 'move').length, 8);
-    assert.ok(Math.abs(output.globals.walk_phase - 1) < 1e-12);
-    assert.ok(Math.abs(output.globals.walk_y) < 1e-5);
+    assert.equal(output.commands.filter(command => command.name === 'move').reduce((duration, command) => duration + Number(command.args[8]), 0), 2000);
     const start = Date.now();
     const visibleRun = spawnSync(exe, [packagePath, '--smoke'], {
       encoding: 'utf8', timeout: 10000,
@@ -923,6 +1124,82 @@ test('scene state records concurrent audio and blocking or async video actions',
   assert.deepEqual([actions[0].status, actions[1].status], ['complete', 'complete']);
 });
 
+test('voice playback state retains an explicit character binding while legacy playback stays unbound', async () => {
+  const rt = await run(`
+    asset voice ayaka_line = "asset/ayaka.wav"
+    asset voice narration = "asset/narration.wav"
+    character ayaka { name = "綾瀬あやか" }
+    play voice ayaka_line character ayaka
+    play voice narration async
+  `);
+  assert.deepEqual(rt.sceneState.audio.voices.map(voice => voice.characterId || null), ['ayaka', null]);
+  const actions = Object.values(rt.sceneState.actions).filter(action => action.kind === 'voice');
+  assert.equal(actions[0].characterId, 'ayaka');
+  assert.equal(Object.hasOwn(actions[1], 'characterId'), false);
+});
+
+test('visual-only mode isolates background, character, image, and video without deleting scene state', async () => {
+  const rt = await run(`
+    asset bg room = "asset/room.png"
+    asset image card = "asset/card.png"
+    asset video op = "asset/video/op.mp4"
+    character hero {
+      name = "Hero"
+      pose normal = "asset/hero.png"
+    }
+    scene main {
+      bg room --only
+      show hero.normal center --only
+      show image card center --only
+      show image card center
+      play video "op.mp4" async --only
+    }
+  `);
+  assert.equal(rt.sceneState.visualOnly.kind, 'video');
+  assert.equal(rt.sceneState.visualOnly.asset, 'op');
+  assert.equal(rt.sceneState.video.asset, 'op');
+  assert.ok(rt.sceneState.background, 'isolating the video does not erase the previous background state');
+  assert.ok(rt.sceneState.characters.hero.visible, 'isolating the video does not erase the character state');
+  assert.ok(rt.sceneState.images.card, 'isolating the video does not erase the image state');
+  const video = Object.values(rt.sceneState.actions).find((action) => action.kind === 'video');
+  rt.completeAction(video.id);
+  assert.equal(rt.sceneState.video, null);
+  assert.equal(rt.sceneState.visualOnly, null, 'video isolation automatically ends with playback');
+
+  const staticRt = await run(`
+    asset bg room = "asset/room.png"
+    asset image card = "asset/card.png"
+    scene main { bg room --only\nshow image card center --only }
+  `);
+  assert.deepEqual(staticRt.sceneState.visualOnly, { kind: 'image', id: 'card' });
+});
+
+test('video without a mode blocks following story commands until playback ends', async () => {
+  let finishVideo;
+  let reachedFollowingCommand = false;
+  let videoOperation;
+  const runtime = new Runtime({ command: async (name, _args, _rt, operation) => {
+    if (name === 'play') {
+      videoOperation = operation;
+      await new Promise(resolve => { finishVideo = resolve; });
+    } else if (name === 'wait') reachedFollowingCommand = true;
+  } });
+  const running = runtime.run(program(`
+    asset video intro = "asset/intro.mp4"
+    scene main {
+      play video intro
+      wait 1
+    }
+  `));
+  for (let attempt = 0; attempt < 10 && !finishVideo; attempt++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(videoOperation?.mode, 'blocking');
+  assert.equal(videoOperation?.blocking, true);
+  assert.equal(reachedFollowingCommand, false, 'the next instruction is suspended while the video is playing');
+  finishVideo();
+  await running;
+  assert.equal(reachedFollowingCommand, true);
+});
+
 test('SceneState owns the active video and commits replacement only after the candidate starts', async () => {
   const source = `
     asset video first = "asset/first.mp4"
@@ -1289,6 +1566,42 @@ test('presentation defaults, persistent channel settings, and one-play overrides
   assert.equal(rt.sceneState.ui.dialogOpacity, 0.85);
   assert.equal(rt.sceneState.audio.volumeOverrides.bgm, 0.3);
   assert.deepEqual(rt.sceneState.audio.volumes, { bgm: 0.9, se: 0.8, voice: 0.5 });
+});
+
+test('scene presentation effects keep transition, opacity, camera and dialogue state explicit', async () => {
+  const seen = [];
+  const rt = new Runtime({ command: async (name, args, runtime, operation) => {
+    seen.push({ name, args, operation });
+    if (operation?.actionId && operation.blocking) runtime.reportTransitionProgress(operation.actionId, 1);
+  } });
+  await rt.run(program(`
+    asset bg first = "asset/first.png"
+    asset bg second = "asset/second.png"
+    asset video overlay = "asset/overlay.mp4"
+    scene main {
+      bg first
+      bg second crossfade 40
+      play video overlay async opacity 0.35
+      camera zoom 1.5 at 320 240 over 60
+      dialog visible false
+      camera reset over 20
+      dialog visible true
+    }
+  `));
+  const bg = seen.find(item => item.name === 'bg' && item.args[0] === 'second');
+  assert.equal(bg.operation.transition.type, 'crossfade');
+  assert.equal(bg.operation.transition.durationMs, 40);
+  const video = seen.find(item => item.name === 'play');
+  assert.equal(video.operation.opacity, 0.35);
+  assert.equal(video.operation.mode, 'async');
+  const cameras = seen.filter(item => item.name === 'camera');
+  assert.deepEqual(cameras[0].operation.camera.to, { zoom: 1.5, focusX: 320, focusY: 240 });
+  assert.equal(cameras[0].operation.camera.durationMs, 60);
+  assert.deepEqual(cameras[1].operation.camera.to, { zoom: 1, focusX: 640, focusY: 360 });
+  assert.deepEqual(seen.filter(item => item.name === 'dialog').map(item => item.operation.visible), [false, true]);
+  assert.equal(rt.sceneState.ui.dialogVisible, true);
+  assert.deepEqual([rt.sceneState.camera.zoom, rt.sceneState.camera.focusX, rt.sceneState.camera.focusY], [1, 640, 360]);
+  assert.equal(rt.sceneState.logicalTimeMs, 120);
 });
 
 test('SceneState models every audible BGM layer and interpolates gains through interrupted crossfades', async () => {

@@ -1,7 +1,8 @@
 {
   "file": "main.tds",
-  "line": 32,
+  "line": 1,
   "locals": [],
+  "locked": false,
   "loopScopes": [],
   "presentation": {
     "activeMedia": [],
@@ -14,15 +15,11 @@
       }
     },
     "background": {
-      "asset": "bedroom",
+      "asset": "",
       "offsetX": 0.0,
       "offsetY": 0.0
     },
-    "bgm": {
-      "asset": "morning",
-      "gain": 1.0,
-      "transition": "complete"
-    },
+    "bgm": null,
     "characters": [],
     "effect": null,
     "images": [],
@@ -30,22 +27,15 @@
     "ui": {
       "dialogOpacity": 1.0
     },
-    "video": null
+    "video": null,
+    "visualOnly": null
   },
   "readonlyLocals": [],
+  "saveId": "spring-late-love",
+  "savedAt": 1791046907495,
   "scene": "main",
-  "speaker": "",
-  "text": "それを止めるべく、僕は瞼を開ける。",
-  "variables": {
-    "ayaka": {
-      "name": "綾瀬あやか"
-    },
-    "protagonist": {
-      "name": "僕"
-    },
-    "sister": {
-      "name": "妹"
-    }
-  },
+  "speaker": "あやか",
+  "text": "保存画面の下に、直前の物語画面を表示します。",
+  "variables": {},
   "version": 1
 }

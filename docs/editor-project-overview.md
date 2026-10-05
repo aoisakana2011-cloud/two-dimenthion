@@ -123,8 +123,8 @@ Native側はC++ `native/runtime.hpp`、`player.cpp`、`video.hpp`等で命令実
 
 ### 6.1 二つの画面設定
 
-- `setting/player-ui.json`: 1280x720等の基準画面、会話パネルの位置・サイズ・画像・opacity、本文・話者名、choice配置、基準audio volumeを設定する。
-- `setting/game-screens.json`: initial screen、canvas、各screenの背景・music・role・HTML template、共通stylesheet、controlSettingsを指定する。
+- `setting/player-ui.json`: 論理画面の基準サイズ、会話パネルの位置・サイズ・画像・opacity、本文・話者名、choice配置、基準audio volumeを設定する。
+- `setting/game-screens.json`: initial screen、各screenの背景・music・role・HTML template、共通stylesheet、controlSettingsを指定する。新形式のcanvas寸法は`player-ui.json`から導出し、ここには重ねて保存しない。
 - `setting/screens/*.html`: タイトル、pause、system、sound、save/load等の要素・文字・動作。
 - `setting/screens/*.css`: layout、色、フォントサイズ、画像、hover状態等。
 - `setting/screens/ui-controls.txt`: player-local設定の初期値（audio master/BGM/SE/voice、mute、dialog opacity）。
@@ -135,7 +135,7 @@ Native側はC++ `native/runtime.hpp`、`player.cpp`、`video.hpp`等で命令実
 
 ### 6.2 セーブ・ロード
 
-Browserは作品ごとのlocalStorage名前空間にslotとresume stateを保持し、テスト再生は別namespace。状態はversion、ファイル／scene／命令位置、variables、locals、sceneState等を含む。Nativeはpackage横の`saves/slot-N.json`を使うため、配布ゲームを移動するときはsavesを保持する必要がある。保存枠一覧はsave-slots/load-slots roleまたは対応screen actionで構成する。
+Browserは作品ごとのIndexedDB namespaceにセーブsnapshot、一覧metadata、サムネイルBlobを保持し、テスト再生は別namespaceを使う。IndexedDBが使えない場合はlocalStorageへfallbackするが、この経路ではサムネイルは永続化されない。snapshotはversion、ファイル／scene／命令位置、variables、locals、sceneState等を含む。Nativeは通常SDLのユーザーデータ領域を使い、`NOVEL_SAVE_ROOT`で保存場所を上書きできる。slot本体は`slot-N.json`、サムネイルは`thumb-slot-N.png`として別保存する。保存枠一覧はsave-slots/load-slots roleで構成し、HTMLの`data-slot-field="thumbnail"`が同じ番号の画像を表示する。現在の画像は背景・立ち絵・追加画像を合成した物語レイヤーで、会話欄・文字・選択肢までは含まない。旧セーブや画像欠損・破損時も、snapshotが有効ならロード可能である。Browserは破損・非互換slotの状態も表示できるが、Nativeのslot `status`表示は現状saved/emptyのみで、`data-state`スタイルは未対応。
 
 ### 6.3 音声とUI音量
 
@@ -160,11 +160,11 @@ BrowserはHTMLAudioElement/Web Audio経路でBGMのgain transition、チャン�
 
 以下は今回確認できた範囲での具体的な問題であり、将来課題と区別する。
 
-1. **画面UI READMEが実装より古い** — `Title/setting/screens/README.md`は`input`不可、設定コントロールは見た目のみと説明する。しかし`Edit/screen-document.js`は`input[type=range|checkbox]`、制御対象キー、`ui-controls.txt`連携、設定変更callbackを実装し、テストも存在する。`save-slots`要素もREADMEの許可要素一覧に抜けている。
-2. **CSS寸法のvw/vh処理が宣言と一致しない** — parserはpx/%/vw/vhを受け付けるが、`length()`は`%`だけ親寸法へ換算し、`vw`/`vh`は単位を除いた数値をpx扱いする。READMEどおりのviewport単位ではない。寸法の一部はwidth/height文脈で使う親幅／親高も統一的に適用されているとは限らない。
+1. **セーブサムネイルは完全な画面キャプチャではない** — Browser/Nativeとも背景・立ち絵・追加画像の物語レイヤーを表示する。会話欄・文字・選択肢は含まれない。HTML側の`thumbnail`フィールド表示とNativeのファイル読み込みは対応済みで、完全な画面合成を行う場合は両rendererのキャプチャ経路を拡張する必要がある。
+2. **CSS寸法のvw/vh処理** — 修正済み。画面文書は論理基準キャンバスに対する座標系とし、共通画面ツリー生成時に`vw`/`vh`を基準キャンバス幅/高に対するpxへ正規化する。1280×720で`10vw`は128px、`10vh`は72pxとなり、Browser/Nativeが同一の矩形を消費する。回帰テストは`test/game-screen-document.test.js`。
 3. **制限HTML/CSSは“HTML/CSS対応”ではない** — 利用できるのは小さな許可リストで、通常のCSS cascade、子孫セレクター、pseudo-class全般、media query、font-face、animation、外部素材、任意DOM/APIはない。`:hover`も専用コンパイラ／renderer経路。READMEや企画説明で単に「HTML/CSS対応」と言うと自由度を過大に見せる。
 4. **Browser/Nativeは同一UI treeを使うが画素・操作挙動まで同じとは限らない** — BrowserはDOM/CSS/native inputを利用し、NativeはSDLで要素を描画・入力処理する。フォント、文字折返し、range表示、hover/focus、画像fit等はrenderer別実装の差が残る。共通設定モデルはあるが完全な視覚同一性の根拠にはならない。
-5. **保存先と可搬性が実行環境で違う** — BrowserはブラウザーlocalStorage、Nativeはpackage横の`saves/`。同じslot内容が自動同期／相互移行される仕様ではない。ブラウザーの容量・消去・プライベートモード、Native配布時のフォルダー権限も異なる。
+5. **保存先と可搬性が実行環境で違う** — BrowserはIndexedDB（利用不可時はlocalStorage fallback）、Nativeは通常SDLのユーザーデータ領域（`NOVEL_SAVE_ROOT`で上書き可能）。Nativeの旧package横`saves/`は移行元として扱われる。Browser/Native間でslotやサムネイルが自動同期される仕様ではない。ブラウザーの容量・消去・プライベートモード、Nativeユーザーデータのバックアップ／移行方法は異なる。
 6. **文書上の設定場所に履歴差がある** — 現行サンプルは`Title/setting/`にまとめるが、旧形式・互換分岐やREADMEにはroot `setting.txt`、`setting/player-ui.json`、legacy asset配置の記述が混在する。新規実装・移行ではどのlayoutを正とするか明示しないと説明が分岐する。
 7. **開始点説明の適用範囲** — TDSの開始sceneは開始ファイル内の先頭sceneだが、画面設定が有効なplayerでは`game-screens.json`のinitial screen／start actionが先に存在する。作品全体の開始点を説明するとき「先頭sceneから開始」だけではタイトル画面経由の流れを説明しきれない。
 8. **Editorの“保存”と“ビルド”の区別がUI上重要** — 保存済みscenarioでも最後に生成したpackageとは違うことがある。再生が古い成果物を使う状態は、dirty判定とbuild促進表示に依存するため、単なる保存済み表示を最新実行と誤認させない必要がある。
@@ -172,7 +172,7 @@ BrowserはHTMLAudioElement/Web Audio経路でBGMのgain transition、チャン�
 
 ### 改善優先度
 
-- **P0:** `vw/vh`を本当に実装するか、受理対象から外して`%`/pxに限定する。READMEのinput、checkbox/range、role/属性一覧を実装準拠に更新する。
+- **P0:** `vw/vh`の共通ツリー正規化は実装・回帰テスト済み。残るCSS宣言とBrowser/Native描画の対応表を同じ形式で検証し、未対応機能を受理しない。
 - **P1:** 共通UI treeに対するBrowser/Native differential testsを増やし、寸法・折返し・画像・hover/focus・range/checkbox・save slotを同じfixtureで比較する。
 - **P1:** 旧設定layoutと新しい`setting/` layoutの正本、移行規則、互換期限を統一する。
 - **P2:** include catalog統合の名前解決規則とIDEのscope境界を言語仕様として固定し、衝突と定義ジャンプの回帰テストを持つ。
@@ -311,7 +311,7 @@ say/choiceなどはユーザー入力待ち、wait/fade/move/音声videoは時�
 
 ### 14.3 座標・拡大縮小
 
-会話再生画面の基準寸法はplayer-ui theme、フロント画面はgame-screens canvasで別々に管理する。Browserは画面stageへのscaleとDOM座標を使い、NativeはSDL rendererのlogical size／scene geometryを使う。キャラクターslot配置、x/y差分、背景fill、dialogue boxの内部座標、window aspect ratio、letterbox/crop処理の仕様はそれぞれ確認が必要で、同じ1280x720を指定しただけで全解像度の画素一致を保証しない。
+画面の論理基準寸法はplayer-ui themeで管理し、フロント画面のcanvas寸法は同じthemeから導出する。Browserは画面stageへのscaleとDOM座標を使い、NativeはSDL rendererのlogical size／scene geometryを使う。キャラクターslot配置、x/y差分、背景fill、dialogue boxの内部座標、window aspect ratio、letterbox/crop処理の仕様はそれぞれ確認が必要で、同じ寸法を指定しただけで全解像度の画素一致を保証しない。
 
 ## 15. UI文書コンパイラーの詳細
 
@@ -399,7 +399,7 @@ sceneのないmoduleはトップレベル宣言専用で、トップレベル実
 | 背景移動 | `move bg by x-12 over 1000` | 背景を差分移動。波状移動／専用walk動作ではない |
 | 音声 | `play se door`、`play voice greeting volume 0.5 blocking` | SE/voice再生。voice既定async、blockingなら完了待ち |
 | BGM再生 | `play bgm theme volume 0.7 crossfade 400` | BGM再生。crossfadeはBGMのみ。命令volumeはその再生に適用 |
-| 動画 | `play video opening async` | `blocking`/`async`。省略時async |
+| 動画 | `play video opening` | `blocking`/`async`。省略時blocking、並行再生時はasync |
 | チャンネル音量 | `volume voice 0.5` | 以後のシナリオ状態として基準音量を変更 |
 | 会話欄 | `dialog opacity 0.8` | 以後の会話欄背景面のopacity。本文文字そのもののalphaではない |
 | 待機 | `wait 1000` | 1000msのscenario時間を進行 |
@@ -455,8 +455,15 @@ set flags["seen"] = flags["seen"] + 1
 | `text.replace(s, old, new)` | `str, str, str -> str` | 全一致を置換。old空文字不可 |
 | `runtime.state.characters.exists(id)` | `str -> bool` | 現在表示中のIDか |
 | `runtime.state.characters.list()` | `() -> list[str]` | 現在表示中IDを重複なし・昇順で返す |
+| `runtime.state.characters.position(id)` | `str -> str` | 表示中の配置枠。非表示なら空文字列 |
+| `runtime.state.background.exists()` / `current()` | `() -> bool` / `str` | 現在の背景asset ID。未設定時はfalse / 空文字列 |
+| `runtime.state.audio.bgm_exists()` / `current_bgm()` | `() -> bool` / `str` | 現在のBGM asset ID。未設定時はfalse / 空文字列 |
+| `runtime.state.execution.current_scene()` / `current_file()` / `current_line()` | `() -> str` / `int` | 呼び出し命令が属する現在位置。シーン外のsceneは空文字列 |
+| `runtime.state.audio.volume(channel)` | `str -> float` | `bgm` / `se` / `voice` の作品側チャンネル設定。ユーザーのマスター音量・ミュートは別 |
+| `runtime.state.ui.dialog_opacity()` | `() -> float` | `dialog opacity` の通常値。一行限定opacityやユーザー倍率は別 |
+| `runtime.state.variables.exists(name)` / `names()` | `str -> bool` / `() -> list[str]` | 現在のglobal/localフレームから参照できる名前。値の動的取得はしない |
 
-Pure builtinはAnalyzerのconstant folding／副作用推定でも特別扱いされる。runtime APIは状態を読むがcompile-time constantではない。`compile.*`と`ide.*`は実行runtime namespaceとしてまだ公開されず、TDSシナリオから呼べる組込ではない。
+Pure builtinはAnalyzerのconstant folding／副作用推定でも特別扱いされる。runtime APIは状態を読むがcompile-time constantではない。各runtime APIの共有定義（`src/language/builtins.ts`）には引数・戻り値に加えてread/write effectと、解析に使える場合だけpredicate契約を記述する。Analyzerはこの契約に基づき条件分岐の事実を絞り、IDE診断規則も同じ定義に結び付く。たとえば`exists(id)`のtrue側は表示中を証明できるが、動的な`list()`そのものはcompile-timeの値集合に変換しない。`compile.*`と`ide.*`は解析・診断レイヤーを指す概念であり、実行runtime namespaceとしては公開されず、TDSシナリオから呼べる組込ではない。
 
 ### 18.5 TDS標準ライブラリ
 
@@ -471,10 +478,10 @@ Pure builtinはAnalyzerのconstant folding／副作用推定でも特別扱い�
 | 同上 | `smoothstep`, `smootherstep`, `ease_in/out/in_out_quad/cubic` | 0..1進行値のイージング |
 | `std/text.tds` | `split_words(s)`, `join_words(items, separator)` | 単語分割・結合 |
 | `std/collections.tds` | `index_of_str(items,target)`, `append_unique_str(items,item)`, `remove_all_str(items,item)` | 文字列list操作 |
-| `std/motion/walk.tds` | `walk_x(distance,progress)`, `walk_bob(amplitude,progress)` | 進行率から横移動／上下揺れを計算 |
+| `std/motion/walk.tds` | `character(character,distance_px,cycles,seconds,bob_px)`, `walk_x(distance_px,progress)` | 表示中キャラクターの時間付き歩行／横位置計算 |
 | `std/motion/effects.tds` | `shake(amplitude,progress,cycles)`, `breathe(amplitude,progress)`, `hop(height,progress)`, `drift(amplitude,progress,cycles)` | 演出オフセット計算 |
 
-`progress`は通常0..1へ制限される。これらの関数は値を返すだけで、キャラ表示、frame scheduler、animation lifecycleを自動で開始しない。計算結果をシナリオ変数へ入れ、`move`命令へ渡す実装と、runtime内で補間する実装を区別する。
+`walk_x`と演出関数群は計算値を返す。一方 `walk.character` はTDS内のループから通常の時間付き `move` 命令を発行する標準関数で、専用のcompiler/runtime命令ではない。内部でキャラクター存在を実行時確認し、解析器は同じ存在確認APIで守られた関数の呼び出し地点における存在証明を診断する。
 
 ### 18.6 禁止・受理しない構文の代表
 
@@ -483,7 +490,8 @@ Pure builtinはAnalyzerのconstant folding／副作用推定でも特別扱い�
 - 関数内のchoice/goto、再帰呼び出し、型と一致しない代入、異なる要素型のlistは不可。
 - include pathの外部逸脱、循環、同一module重複、aliasなしincludeは不可。
 - arbitrary JavaScriptや標準外のTDS commandを追加命令として書く拡張機構はない。未登録命令はcheckerで拒否される。
-- `runtime.*`は現状characters queryのみ。`runtime.state.audio`等を名前だけで呼び出せるわけではない。
+- `runtime.state`として現在実装済みなのはcharacters、background、BGM/mix、dialog UI opacity、execution location、variable-name introspection。effectsの独立APIと任意型の動的variable-value取得は未実装で、名前だけで呼び出すことはできない。
+- `effects`の問い合わせを公開していないのは、現行のfade/move等がスクリプトを止めて完了まで待つため、後続TDSから「進行中effect」を観測する有意なタイミングがないため。将来non-blocking effect handleを導入する場合は、そのhandleの状態としてAPI化する。
 
 ### 18.7 構文リファレンスとの検査を継続する箇所
 

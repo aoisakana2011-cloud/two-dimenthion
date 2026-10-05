@@ -24,7 +24,7 @@
     "width": 1172,
     "height": 170,
     "message": {
-      "x": 42,
+      "x": 60,
       "y": 55,
       "width": 1088,
       "height": 105,
@@ -81,8 +81,18 @@
     }
   },
   "audio": {
-    "bgm": 1.0,
-    "se": 1.0,
+    "bgm": 1,
+    "se": 1,
     "voice": 0.5
+  },
+  "layers": {
+    "background": 0,
+    "video": 1,
+    "character": 2,
+    "image": 3,
+    "fog": 4,
+    "dialogue": 5,
+    "controls": 6,
+    "menu": 7
   }
 }

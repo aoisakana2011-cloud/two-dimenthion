@@ -216,7 +216,7 @@ async function pack(input, output, roots = {}) {
         if (selected > 0) program.scenes.unshift(...program.scenes.splice(selected, 1));
       }
       if (!layout.legacySettings) {
-        let display = { width: 1280, height: 720 };
+        let display = screenDocumentCompiler.DEFAULT_CANVAS;
         if (layout.settings.native_ui_theme) {
           const themePath = await inside(layout.settingsRoot, layout.settings.native_ui_theme);
           const theme = JSON.parse(await fs.readFile(themePath, 'utf8'));
@@ -244,15 +244,22 @@ async function pack(input, output, roots = {}) {
       }
       nativeUi.game_screens = 'ui/game-screens.json';
       for (const screen of Object.values(screens.screens)) {
-        const imageNames = [screen.background, screen.slotStyle?.image, screen.slotStyle?.hoverImage, ...screen.items.flatMap(item => [item.image || '', item.hoverImage || ''])].filter(Boolean);
+        const imageNames = [screen.background === undefined ? screens.defaultBackground : screen.background, screen.slotStyle?.image, screen.slotStyle?.hoverImage, ...screen.items.flatMap(item => [item.image || '', item.hoverImage || ''])].filter(Boolean);
         const collectTreeImages = node => {
           if (node.attrs?.src) imageNames.push(node.attrs.src);
           const image = node.style?.['background-image'] || (String(node.style?.background || '').startsWith('url(') ? node.style.background : '');
           for (const match of image.matchAll(/url\(["']?([^"')]+)["']?\)/g)) imageNames.push(match[1]);
+          for (const stateStyle of [node.hoverStyle, node.focusStyle]) {
+            const stateImage = stateStyle?.['background-image'] || (String(stateStyle?.background || '').startsWith('url(') ? stateStyle.background : '');
+            for (const match of stateImage.matchAll(/url\(["']?([^"')]+)["']?\)/g)) imageNames.push(match[1]);
+          }
+          for (const key of ['track', 'fill', 'thumb', 'thumbHover', 'off', 'on', 'offHover', 'onHover']) {
+            if (node.controlSkin?.[key]) imageNames.push(node.controlSkin[key]);
+          }
           for (const child of node.children || []) collectTreeImages(child);
         };
         for (const node of screen.uiTree || []) collectTreeImages(node);
-        for (const imageName of imageNames) {
+        for (const imageName of new Set(imageNames)) {
           const relative = imageName.replace(/^asset[\\/]/i, '').replaceAll('\\', '/');
           const imageSource = await inside(assetsRoot, relative);
           const imageTarget = path.resolve(path.dirname(destination), 'asset', relative);

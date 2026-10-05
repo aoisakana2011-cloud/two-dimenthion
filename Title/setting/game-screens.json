@@ -1,24 +1,61 @@
 {
   "version": 1,
+  "scaleMode": "contain",
   "initial": "title",
   "saveId": "spring-late-love",
   "stylesheet": "screens/shared.css",
   "controlSettings": "screens/ui-controls.txt",
+  "controlSkins": {
+    "volume": {
+      "type": "range",
+      "track": "ui/controls/audio/volume/track.png",
+      "fill": "ui/controls/audio/volume/fill.png",
+      "thumb": "ui/controls/audio/volume/thumb.png",
+      "thumbHover": "ui/controls/audio/volume/thumb-hover.png",
+      "trackHeight": 8,
+      "thumbWidth": 24,
+      "thumbHeight": 24,
+      "inset": 12
+    },
+    "volumeVertical": {
+      "type": "range",
+      "orientation": "vertical",
+      "track": "ui/controls/audio/volume/track.png",
+      "fill": "ui/controls/audio/volume/fill.png",
+      "thumb": "ui/controls/audio/volume/thumb.png",
+      "thumbHover": "ui/controls/audio/volume/thumb-hover.png",
+      "trackHeight": 8,
+      "thumbWidth": 24,
+      "thumbHeight": 24,
+      "inset": 12
+    },
+    "mute": {
+      "type": "checkbox",
+      "off": "ui/controls/audio/volume/mute-off.png",
+      "on": "ui/controls/audio/volume/mute-on.png",
+      "offHover": "ui/controls/audio/volume/mute-off-hover.png",
+      "onHover": "ui/controls/audio/volume/mute-on-hover.png"
+    }
+  },
   "canvas": {
     "width": 1280,
     "height": 720
   },
   "screens": {
     "title": {
-      "background": "bg/near_home.jpg",
+      "background": "ui/backgrounds/spring-ensemble-key-visual.jpg",
       "template": "screens/title.html"
     },
     "pause": {
       "background": "",
       "template": "screens/pause.html"
     },
+    "log": {
+      "background": "ui/backgrounds/spring-ensemble-key-visual.jpg",
+      "template": "screens/log.html"
+    },
     "about": {
-      "background": "bg/title.png",
+      "background": "ui/backgrounds/spring-ensemble-key-visual.jpg",
       "template": "screens/about.html"
     },
     "guide": {
@@ -26,26 +63,28 @@
       "template": "screens/guide.html"
     },
     "system": {
-      "background": "bg/school.jpg",
+      "background": "ui/backgrounds/spring-ensemble-key-visual.jpg",
       "template": "screens/system.html"
     },
     "sound": {
-      "background": "bg/school.jpg",
+      "background": "ui/backgrounds/spring-ensemble-key-visual.jpg",
       "template": "screens/sound.html"
     },
     "extra": {
-      "background": "bg/school.jpg",
+      "background": "ui/backgrounds/spring-ensemble-key-visual.jpg",
       "template": "screens/extra.html"
     },
     "save": {
-      "background": "bg/school.jpg",
+      "background": "ui/backgrounds/spring-ensemble-key-visual.jpg",
       "template": "screens/save.html",
-      "role": "save-slots"
+      "role": "save-slots",
+      "slotPages": 10
     },
     "load": {
-      "background": "bg/school.jpg",
+      "background": "ui/backgrounds/spring-ensemble-key-visual.jpg",
       "template": "screens/load.html",
-      "role": "load-slots"
+      "role": "load-slots",
+      "slotPages": 10
     }
   }
 }

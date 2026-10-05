@@ -321,6 +321,31 @@ test('supports explicit blocking and async voice playback modes', () => {
   assert.throws(() => checkTypes(parse('asset voice greeting = "asset/voice.wav"\nplay voice greeting later')), /voice/);
 });
 
+test('rejects conflicting blocking and async playback options', () => {
+  for (const kind of ['voice', 'video']) {
+    const extension = kind === 'voice' ? 'wav' : 'mp4';
+    for (const options of ['async blocking', 'blocking async']) {
+      const source = `asset ${kind} sample = "asset/sample.${extension}"\nscene main { play ${kind} sample ${options} }`;
+      assert.throws(() => checkTypes(parse(source)), /cannot combine blocking and async/);
+    }
+  }
+});
+
+test('binds a voice line to a declared character without changing legacy voice playback', () => {
+  const source = `asset voice greeting = "asset/voice.wav"
+character ayaka { name = "綾瀬あやか" }
+scene main {
+  play voice greeting character ayaka volume 0.8 blocking
+  play voice greeting async
+}`;
+  checkTypes(parse(source));
+  const commands = compile(parse(source)).scenes[0].instructions.filter(instruction => instruction.op === 'command');
+  assert.deepEqual(commands[0].args.map(argument => argument.kind === 'float' ? Number(argument.value) : argument.kind === 'literal' ? argument.value : argument.name), ['voice', 'greeting', 'character', 'ayaka', 'volume', 0.8, 'blocking']);
+  assert.deepEqual(commands[1].args.map(argument => argument.value), ['voice', 'greeting', 'async']);
+  assert.throws(() => checkTypes(parse(`asset voice greeting = "asset/voice.wav"\nscene main { play voice greeting character missing }`)), /character 'missing'/);
+  assert.throws(() => checkTypes(parse(`asset se click = "asset/click.wav"\nscene main { play se click character ayaka }`)), /character/);
+});
+
 test('supports float audio defaults, persistent mix levels, and momentary playback overrides', () => {
   const source = `
 asset bgm music = "asset/music.ogg" volume 0.75
@@ -821,6 +846,18 @@ scene main {
   assert.match(warnings[0].message, /id/);
 });
 
+test('runtime character list stays dynamic and cannot be mistaken for compile-time proof', () => {
+  const diagnostics = analyzeScript(parse(`
+fn guarded_by_list(id: str) -> none {
+  if list.contains(runtime.state.characters.list(), id) {
+    move character (id) by x+1
+  }
+}
+`));
+  assert.ok(diagnostics.some(item => item.code === 'move-unshown-character'),
+    'only a runtime predicate with a declared compile-analysis contract may prove character presence');
+});
+
 test('character-presence path overflow joins facts instead of dropping feasible paths', () => {
   const parameters = Array.from({ length: 7 }, (_, index) => `id${index + 1}: str`).join(', ');
   const guards = Array.from({ length: 7 }, (_, index) => `if runtime.state.characters.exists(id${index + 1}) { wait 1 }`).join('\n');
@@ -1088,6 +1125,42 @@ test('warns when a new video replaces an active async video layer', () => {
   assert.equal(replacements.length, 2);
   assert.deepEqual(replacements.map((item) => item.line), [6, 7]);
   assert.ok(replacements.every((item) => item.column === 7 && item.endColumn > item.column));
+});
+
+test('video mode defaults to blocking in replacement analysis', () => {
+  const diagnostics = analyzeScript(parse(`
+    asset video first = "asset/first.mp4"
+    asset video second = "asset/second.mp4"
+    scene main {
+      play video first
+      play video second async
+    }
+  `));
+  assert.equal(diagnostics.some(item => item.code === 'video-layer-replaced'), false,
+    'the implicit blocking play has ended before the explicitly async video starts');
+});
+
+test('parses --only as a display modifier for image and video commands', () => {
+  const script = parse(`
+    asset image card = "asset/card.png"
+    asset video op = "asset/video/op.mp4"
+    scene main {
+      show image card center --only
+      play video "op.mp4" async --only
+    }
+  `);
+  assert.deepEqual(script.scenes[0].body.map((statement) => statement.args.map((arg) => arg.value)), [
+    ['image', 'card', 'center', '--only'],
+    ['video', 'op.mp4', 'async', '--only'],
+  ]);
+  assert.doesNotThrow(() => compile(script));
+});
+
+test('rejects --only on non-visual media playback', () => {
+  assert.throws(() => compile(parse(`
+    asset se click = "asset/click.wav"
+    scene main { play se click --only }
+  `)), /--only/);
 });
 
 test('warns when clear bgm is path-dependent after a branch merge', () => {

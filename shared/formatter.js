@@ -44,6 +44,14 @@
         tokens.push({ kind: 'string', value: source.slice(start, index), start, end: index });
         continue;
       }
+      // CLI-style modifiers are single DSL tokens. Keep them intact during
+      // editor auto-fix just as the compiler lexer does; otherwise `--only`
+      // is formatted as `- - only` and changes the command's meaning.
+      if (source.startsWith('--only', index) && !isWordPart(source[index + 6])) {
+        index += 6;
+        tokens.push({ kind: 'word', value: '--only', start, end: index });
+        continue;
+      }
       const pair = source.slice(index, index + 2);
       if (MULTI_SYMBOLS.has(pair)) {
         index += 2;

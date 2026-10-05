@@ -76,15 +76,22 @@ scene main {
 
 ### `std/motion/walk.tds`
 
-歩行用の関数は2つだけです。`walk_x(distance, progress)` は歩行中の横位置、`walk_bob(amplitude, progress)` は上下位置を返します。`progress` は歩行全体の進み具合（`0.0`〜`1.0`）です。範囲外の値は自動で制限されます。
+歩行用の関数は `character` と `walk_x` の2つです。`character` は現在表示中のキャラクターを、指定した距離・周期・秒数・揺れ幅で歩かせます。`walk_x` は進行率から横方向の位置を計算する補助関数です。
 
 ```tds
 include "std/motion/walk.tds" as walk
 
-float progress = 0.5
-float x = walk.walk_x(120.0, progress)
-float y = walk.walk_bob(6.0, progress)
+scene main {
+  show ayase.smile left
+  walk.character("ayase", 120.0, 3, 2.0, 6.0)
+}
+
+float x = walk.walk_x(120.0, 0.5)
 ```
+
+`walk.character(character, distance_px, cycles, seconds, bob_px)` の距離と揺れ幅はpx、時間は秒です。距離は開始位置からの最終的な横移動量、周期数は移動中の上下揺れ回数です。各周期は開始位置から下へ動いて戻る軌道で、最初の区間も下方向から始まり、開始位置より上には動きません。関数は1周期8区間の時間付き `move` を発行し、区間時間の合計が指定秒数（ミリ秒に丸めた値）になるよう配分します。`cycles` と `seconds` が正でない場合、またはキャラクターが実行時に表示されていない場合は移動しません。
+
+静的解析で呼び出し地点までに `show` 済み、または `runtime.state.characters.exists(...)` の真分岐内と証明できれば警告は出ません。証明できない場合はIDEが警告します。実行時にも存在確認を行うため、静的に証明できないだけで実行時に未表示のキャラクターへ移動命令を出すことはありません。`walk_x(distance_px, progress)` は `progress` を `[0, 1]` に制限し、指定距離に対する線形位置を返します。
 
 ### `std/motion/effects.tds`
 

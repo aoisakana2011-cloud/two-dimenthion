@@ -11,6 +11,8 @@ const { readRecentProjects, rememberProject } = require('./recent-projects');
 const { ProjectChangeTracker } = require('./project-changes');
 const { defaultGameScreens, validateGameScreens, withSaveLoadScreens } = require('./game-screens');
 const screenDocumentCompiler = require('./screen-document');
+const { DEFAULT_PRESENTATION_DEFAULTS } = require('./runtime');
+const DEFAULT_CANVAS = screenDocumentCompiler.DEFAULT_CANVAS;
 
 const EDIT_ROOT = __dirname;
 const REPO_ROOT = path.resolve(EDIT_ROOT, '..');
@@ -28,6 +30,7 @@ const CATALOG_FILE = path.join(EDIT_ROOT, 'catalog.txt');
 const NATIVE_EXE = path.join(REPO_ROOT, 'native', 'build', 'Release', 'novel_player.exe');
 const IMAGE_CHECK_EXE = path.join(REPO_ROOT, 'native', 'build', 'Release', 'check_image.exe');
 let nativeBuildInFlight = null;
+const nativeDebugPlayers = new Map();
 
 function bindLayout(root) {
   layout = projectLayout(root);
@@ -65,12 +68,12 @@ const HIDDEN_BROWSE = new Set(['$recycle.bin', 'system volume information', 'nod
 const DEFAULT_PLAYER_UI_THEME = Object.freeze({
   version: 1,
   screen: {
-    width: 1280,
-    height: 720,
+    width: DEFAULT_CANVAS.width,
+    height: DEFAULT_CANVAS.height,
     backdrop: { bottomFog: { enabled: false, color: [255, 250, 253, 255], height: 300 } },
   },
   dialog: {
-    image: '', opacity: 1, x: 48, y: 500, width: 1184, height: 190,
+    image: '', opacity: DEFAULT_PRESENTATION_DEFAULTS.dialog.opacity, x: 48, y: 500, width: 1184, height: 190,
     message: { x: 28, y: 48, width: 1128, height: 112, size: 24, color: [255, 255, 255, 255] },
     nameplate: {
       x: 24, y: -46, width: 240, height: 40, image: '',
@@ -81,7 +84,8 @@ const DEFAULT_PLAYER_UI_THEME = Object.freeze({
     x: 330, y: 220, width: 620, height: 240, itemHeight: 48, gap: 10, image: '', activeImage: '',
     text: { x: 24, y: 0, width: 572, height: 48, size: 20, color: [255, 255, 255, 255] },
   },
-  audio: { bgm: 1, se: 1, voice: 0.5 },
+  layers: { background: 0, video: 1, character: 2, image: 3, fog: 4, dialogue: 5, controls: 6, menu: 7 },
+  audio: { ...DEFAULT_PRESENTATION_DEFAULTS.audio },
 });
 
 function validatePlayerUiTheme(theme) {
@@ -90,6 +94,13 @@ function validatePlayerUiTheme(theme) {
   if (theme.audio !== undefined) {
     if (!theme.audio || typeof theme.audio !== 'object' || Array.isArray(theme.audio)) throw Error('Invalid audio defaults.');
     for (const kind of ['bgm', 'se', 'voice']) if (theme.audio[kind] !== undefined && (!Number.isFinite(theme.audio[kind]) || theme.audio[kind] < 0 || theme.audio[kind] > 1)) throw Error(`Invalid ${kind} volume.`);
+  }
+  const layerDefaults = { background: 0, video: 1, character: 2, image: 3, fog: 4, dialogue: 5, controls: 6, menu: 7 };
+  if (theme.layers !== undefined) {
+    if (!theme.layers || typeof theme.layers !== 'object' || Array.isArray(theme.layers)) throw Error('Invalid render layers.');
+    for (const [category, value] of Object.entries(theme.layers)) {
+      if (!Object.hasOwn(layerDefaults, category) || !Number.isFinite(value) || value < 0 || value >= 8 || Math.abs(Math.round(value * 1000) - value * 1000) > 1e-7) throw Error(`Invalid ${category} layer; use 0 through 7.999 in 0.001 steps.`);
+    }
   }
   const controls = theme.controls;
   if (controls === undefined) return theme;
@@ -134,7 +145,7 @@ async function playerUiTheme() {
     : await safeSettingPath(layout.settings.native_ui_theme);
   const theme = JSON.parse(await fs.readFile(themeFile, 'utf8'));
   validatePlayerUiTheme(theme);
-  if (theme.version !== 1 || !theme.screen || !theme.dialog?.message || !theme.dialog?.nameplate?.text || !theme.choices) throw Error('再生機UIテーマは現行のscreen/dialog/choices形式で指定してください');
+  if (theme.version !== 1 || !theme.screen || !theme.dialog?.message || !theme.dialog?.nameplate?.text || !theme.choices) throw Error('\u518d\u751f\u6a5fUI\u30c6\u30fc\u30de\u306f\u73fe\u884c\u306e screen/dialog/choices \u5f62\u5f0f\u3067\u6307\u5b9a\u3057\u3066\u304f\u3060\u3055\u3044');
   return { path: layout.legacySettings ? layout.settings.native_ui_theme : `setting/${layout.settings.native_ui_theme}`, theme };
 }
 
@@ -215,6 +226,8 @@ async function updateGameScreens(value, suppliedDocuments = {}) {
     ? await safeAssetPath('ui/game-screens.json', { createParents: true })
     : await safeSettingPath(GAME_SCREENS_PATH, { createParents: true });
   const stored = { ...value };
+  delete stored.controlDefaults;
+  delete stored.controlSchema;
   if (!legacy) delete stored.canvas;
   for (const screen of Object.values(stored.screens)) {
     delete screen.uiTree;
@@ -241,7 +254,7 @@ async function updateProjectSettings(values) {
   const title = values.title === undefined ? layout.title : String(values.title).replace(/[\r\n]/g, '').trim();
   const source = [
     '# Novel Script project settings',
-    '# すべて作品フォルダーからの相対パス。/ を使用する。',
+    '# Paths are relative to the project folder; use / separators.' ,
     `scenario_dir = ${next.scenario_dir}`,
     `asset_dir = ${next.asset_dir}`,
     `start_file = ${next.start_file}`,
@@ -278,7 +291,7 @@ async function nativeRuntimeExists() {
 function ensureNativeBuild() {
   if (!nativeBuildInFlight) {
     nativeBuildInFlight = nativeRuntimeExists().then((exists) => {
-      if (exists) return { code: 0, output: '配布済みNativeランタイムを使用します。' };
+      if (exists) return { code: 0, output: 'Using the existing Native runtime.' };
       return runTool(process.execPath, [path.join(REPO_ROOT, 'tools', 'native-build.js')]);
     })
       .then((result) => { if (result.code !== 0) throw Error(`ネイティブビルドに失敗しました。\n${result.output}`); return result; })
@@ -306,7 +319,7 @@ async function imagePathsForProject() {
     const normalized = relativePath.replaceAll('\\', '/').replace(/^asset\//i, '');
     const file = await safeAssetPath(normalized);
     const rel = path.relative(path.resolve(ASSETS_ROOT), file);
-    if (!rel || rel === '.' || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw Error(`素材パスがassetフォルダー外です: ${relativePath}`);
+    if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw Error('??UI???????asset????????');
     addFile(file);
   };
   const scan = async (directory) => {
@@ -332,6 +345,24 @@ async function imagePathsForProject() {
   return [...found].sort();
 }
 
+async function listUiImageAssets() {
+  const extensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff']);
+  const files = [];
+  await ensureProjectDirectory(ASSETS_ROOT, 'asset_dir');
+  const root = await realProjectDirectory(ASSETS_ROOT, 'asset_dir');
+  async function walk(directory) {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) await walk(file);
+      else if (entry.isFile() && extensions.has(path.extname(entry.name).toLowerCase())) {
+        files.push(path.relative(root, file).split(path.sep).join('/'));
+      }
+    }
+  }
+  await walk(root);
+  return files.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
 async function checkProjectImages() {
   await ensureNativeBuild();
   await rebuildAssets();
@@ -341,29 +372,94 @@ async function checkProjectImages() {
   for (let i = 0; i < files.length; i += 80) {
     const result = await runTool(IMAGE_CHECK_EXE, files.slice(i, i + 80));
     if (result.output) reports.push(result.output);
-    if (result.code !== 0) return { ok: false, stage: 'image-check', output: `${reports.join('\n')}\n\n画像 ${files.length}件中、${Math.min(i + 80, files.length)}件を検査しました。` };
+    if (result.code !== 0) return { ok: false, stage: 'image-check', output: `${reports.join('\n')}\n\nChecked ${Math.min(i + 80, files.length)} of ${files.length} image assets.` };
   }
-  return { ok: true, stage: 'complete', output: `${files.length}件の画像をネイティブ側で読み込みました。\n${reports.join('\n')}` };
+  return { ok: true, stage: 'complete', output: `${files.length} image assets loaded by the native engine.\n${reports.join('\n')}` };
 }
 
-async function playWithNativeEngine(name) {
+async function playWithNativeEngine(name, debugStart = null) {
   const scene = sceneName(name);
   if (!scene) throw Error('再生するシーンを指定してください');
+  let debugArguments = null;
+  if (debugStart !== null) {
+    if (!debugStart || typeof debugStart !== 'object' || Array.isArray(debugStart)) throw Error('チE��ト�E生�E開始情報が正しくありません');
+    const debugFile = sceneName(debugStart.file || scene);
+    const debugScene = String(debugStart.scene || '');
+    const debugLine = debugStart.line === null || debugStart.line === undefined ? 0 : Number(debugStart.line);
+    const variables = debugStart.variables || {};
+    if (!debugFile || debugFile !== scene) throw Error('チE��ト開始ファイルが�E生対象と一致しません');
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(debugScene)) throw Error('チE��ト開始sceneが正しくありません');
+    if (!Number.isSafeInteger(debugLine) || debugLine < 0) throw Error('チE��ト開始行が正しくありません');
+    if (!variables || typeof variables !== 'object' || Array.isArray(variables)
+      || Object.keys(variables).some((key) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))) throw Error('チE��ト変数が正しくありません');
+    debugArguments = { file: debugFile, scene: debugScene, line: debugLine, variables };
+  }
   const sourceFile = await safeScenePath(scene);
   await fs.access(sourceFile);
   await ensureNativeBuild();
   await ensureProjectDirectory(NATIVE_PACKAGES_ROOT, '.novel/build');
-  const packageName = path.basename(scene, path.extname(scene)) + '.nsp.json';
+  const debugSuffix = debugArguments ? `.flow-debug-${crypto.createHash('sha1').update(scene).digest('hex').slice(0, 8)}` : '';
+  const packageName = path.basename(scene, path.extname(scene)) + debugSuffix + '.nsp.json';
   const packagePath = await safeBuildPath(packageName, { createParents: true });
-  await pack(sourceFile, packagePath, { projectRoot: PROJECT_ROOT });
-  const child = spawn(NATIVE_EXE, [packagePath], {
+  const packageData = await pack(sourceFile, packagePath, { projectRoot: PROJECT_ROOT, debug: Boolean(debugArguments) });
+  const playerArguments = [packagePath];
+  let session = '';
+  let stateFile = '';
+  if (debugArguments) {
+    const debugProgram = packageData.files?.[debugArguments.file];
+    if (!debugProgram?.scenes?.some((item) => item.name === debugArguments.scene)) throw Error('チE��ト開始sceneがパチE��ージにありません');
+    playerArguments.push('--debug-start', debugArguments.file, debugArguments.scene, String(debugArguments.line), JSON.stringify(debugArguments.variables));
+    session = crypto.randomUUID();
+    stateFile = path.join(path.dirname(packagePath), `flow-debug-${session}.json`);
+    playerArguments.push('--debug-state', path.basename(stateFile));
+  }
+  const child = spawn(NATIVE_EXE, playerArguments, {
     cwd: path.dirname(NATIVE_EXE),
     detached: true,
     stdio: 'ignore',
     windowsHide: false,
   });
+  if (debugArguments) {
+    nativeDebugPlayers.set(session, { child, stateFile });
+    child.once('close', () => {
+      nativeDebugPlayers.delete(session);
+      fs.rm(stateFile, { force: true }).catch(() => {});
+      fs.rm(`${stateFile}.tmp`, { force: true }).catch(() => {});
+    });
+  }
+  child.once('error', (error) => {
+    if (session) {
+      nativeDebugPlayers.delete(session);
+      fs.rm(stateFile, { force: true }).catch(() => {});
+      fs.rm(`${stateFile}.tmp`, { force: true }).catch(() => {});
+    }
+    console.error('Could not start native player:', error);
+  });
   child.unref();
-  return { ok: true, package: '.novel/build/' + packageName };
+  return { ok: true, package: '.novel/build/' + packageName, engine: 'native', ...(session ? { session } : {}) };
+}
+
+function stopNativeDebugPlayer(session) {
+  if (typeof session !== 'string' || !/^[0-9a-f-]{36}$/i.test(session)) throw Error('チE��ト�E生セチE��ョンが正しくありません');
+  const active = nativeDebugPlayers.get(session);
+  if (!active) return { ok: true, stopped: false };
+  nativeDebugPlayers.delete(session);
+  fs.rm(active.stateFile, { force: true }).catch(() => {});
+  fs.rm(`${active.stateFile}.tmp`, { force: true }).catch(() => {});
+  return { ok: true, stopped: active.child.kill() };
+}
+
+async function nativeDebugPlayerState(session) {
+  if (typeof session !== 'string' || !/^[0-9a-f-]{36}$/i.test(session)) throw Error('チE��ト�E生セチE��ョンが正しくありません');
+  const active = nativeDebugPlayers.get(session);
+  if (!active) return { ok: true, active: false };
+  try {
+    const state = JSON.parse(await fs.readFile(active.stateFile, 'utf8'));
+    if (!state || typeof state.file !== 'string' || typeof state.scene !== 'string' || !Number.isSafeInteger(state.line)) return { ok: true, active: true };
+    return { ok: true, active: true, location: state };
+  } catch {
+    return { ok: true, active: true };
+  }
 }
 
 async function listDriveRoots() {
@@ -385,7 +481,7 @@ async function browseDirectories(requested) {
   if (!requested) {
     const roots = await listDriveRoots();
     const extras = [];
-    for (const [name, target] of [['ホーム', home], ['デスクトップ', desktop]]) {
+    for (const [name, target] of [['Home', home], ['Desktop', desktop]]) {
       try {
         if ((await fs.stat(target)).isDirectory()) extras.push({ name, path: target, directory: true, shortcut: true });
       } catch { /* optional shortcut */ }
@@ -751,7 +847,7 @@ async function sceneGraph() {
           visitGotos(statement.body, sourceScene, choiceLabel);
           for (const branch of statement.elseIf) visitGotos(branch.body, sourceScene, choiceLabel);
           visitGotos(statement.otherwise, sourceScene, choiceLabel);
-        } else if (statement.kind === 'for' || statement.kind === 'while') visitGotos(statement.body, sourceScene, choiceLabel);
+        } else if (statement.kind === 'for' || statement.kind === 'while' || statement.kind === 'parallel') visitGotos(statement.body, sourceScene, choiceLabel);
         else if (statement.kind === 'choice') for (const option of statement.options) {
           const label = option.label?.kind === 'literal' ? String(option.label.value) : choiceLabel;
           visitGotos(option.body, sourceScene, label);
@@ -885,7 +981,7 @@ function validateGraph(graph, start, end) {
     return { ok: false, errors: [{ file: start || end || 'unknown', message: '開始・終了ファイルの範囲が不正です。' }] };
   }
 
-  // start から end への到達経路（BFS）
+  // start から end への到達経路�E�EFS�E�E
   const queue = [[start]];
   const visited = new Set([start]);
   let pathFound = null;
@@ -906,8 +1002,8 @@ function validateGraph(graph, start, end) {
     }
   }
 
-  // 経路が見つからなければ node.id 順をフォールバックとしつつ通知
-  if (!pathFound) return { ok: false, errors: [{ file: end, message: '開始ファイルから終了ファイルへの経路がありません。' }] };
+  // 経路が見つからなければ node.id 頁E��フォールバックとしつつ通知
+  if (!pathFound) return { ok: false, errors: [{ file: end, message: '\u958b\u59cb\u30d5\u30a1\u30a4\u30eb\u304b\u3089\u7d42\u4e86\u30d5\u30a1\u30a4\u30eb\u3078\u306e\u7d4c\u8def\u304c\u3042\u308a\u307e\u305b\u3093\u3002' }] };
   // Validate every branch in the selected range, but do not continue beyond end.
   const reachable = new Set(), pending = [start];
   while (pending.length) {
@@ -1082,7 +1178,7 @@ async function ensureProjectDirectory(directory, label) {
 
 async function safeScenePath(value, { createParents = false } = {}) {
   const target = scenePath(value);
-  if (!target) throw new Error('無効なシナリオファイル名です');
+  if (!target) throw new Error('Invalid scene filename.');
   const root = await realProjectDirectory(SCENES_ROOT, 'scenario_dir');
 
   // Check existing ancestors before mkdir so a symlink cannot redirect even
@@ -1323,7 +1419,7 @@ async function validate(source, name = '', analysis = null, includeProgram = fal
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const projectDiagnostics = message.split(/\r?\n/).filter(Boolean).map((entry) => {
-        const assetPath = entry.match(/(?:asset|アセット)\s*'([^']+)'/)?.[1] || entry.match(/'(assets[\\/][^']+)'/)?.[1];
+        const assetPath = entry.match(/(?:asset|\u30a2\u30bb\u30c3\u30c8)\s*'([^']+)'/)?.[1] || entry.match(/'(assets[\\/][^']+)'/)?.[1];
         const sourceLines = splitSourceLines(source);
         const assetLineIndex = assetPath ? sourceLines.findIndex((line) => line.includes(assetPath)) : -1;
         const assetLine = assetLineIndex >= 0 ? assetLineIndex + 1 : 0;
@@ -1377,7 +1473,7 @@ async function editorSymbols(source, name = '') {
       }
       if (statement.kind === 'if') { indexListDeclarations(statement.body); statement.elseIf.forEach((branch) => indexListDeclarations(branch.body)); indexListDeclarations(statement.otherwise); }
       else if (statement.kind === 'choice') statement.options.forEach((option) => indexListDeclarations(option.body));
-      else if (statement.kind === 'for' || statement.kind === 'forEach' || statement.kind === 'while') indexListDeclarations(statement.body);
+      else if (statement.kind === 'for' || statement.kind === 'forEach' || statement.kind === 'while' || statement.kind === 'parallel') indexListDeclarations(statement.body);
     }
   };
   indexListDeclarations(script.globals);
@@ -1426,7 +1522,7 @@ async function editorSymbols(source, name = '') {
         for (const branch of statement.elseIf || []) visit(branch.body, scope, container);
         visit(statement.otherwise, scope, container);
       } else if (statement.kind === 'choice') for (const option of statement.options || []) visit(option.body, scope, container);
-      else if (statement.kind === 'while') visit(statement.body, scope, container);
+      else if (statement.kind === 'while' || statement.kind === 'parallel') visit(statement.body, scope, container);
     }
   };
   visit(script.globals, 'global', 'global');
@@ -1562,7 +1658,7 @@ async function serveStatic(response, pathname) {
         text(response, 403, 'Forbidden');
         return;
       }
-      if (error && error.code === 'ENOENT') {
+      if (error?.code === 'ENOENT') {
         text(response, 404, 'Not found');
         return;
       }
@@ -1571,7 +1667,7 @@ async function serveStatic(response, pathname) {
     return;
   }
   const relative = pathname === '/' ? 'index.html' : pathname.slice(1);
-  if (!['index.html', 'editor.js', 'styles.css', 'scrollbars.css', 'player.html', 'player.js', 'runtime.js', 'screen-document.js', 'save-store.js', 'player.css', 'flow.html', 'flow.js', 'flow-layout.js', 'flow.css', 'engine.html', 'assets/desktop-icon.png', 'shared/formatter.js', 'docs/tds-language-and-editor-guide.md'].includes(relative)) {
+  if (!['index.html', 'editor.js', 'ui-settings.js', 'styles.css', 'scrollbars.css', 'player.html', 'player.js', 'runtime.js', 'screen-document.js', 'save-store.js', 'player.css', 'flow.html', 'flow.js', 'flow-layout.js', 'flow.css', 'engine.html', 'assets/desktop-icon.png', 'shared/formatter.js', 'docs/tds-language-and-editor-guide.md'].includes(relative)) {
     text(response, 404, 'Not found');
     return;
   }
@@ -1585,7 +1681,7 @@ async function serveNativePackage(response, url) {
   const name = nativePackageName(url.searchParams.get('name'));
   if (!name) return json(response, 400, { error: 'Invalid native package name' });
   try {
-    const file = await safeBuildPath(name).catch((error) => { if (error?.code === 'EPATHOUTSIDE') return ''; throw error; });
+    const file = await safeBuildPath(name);
     if (!file) return json(response, 403, { error: 'Invalid native package path' });
     const data = await fs.readFile(file);
     response.writeHead(200, {
@@ -1595,7 +1691,8 @@ async function serveNativePackage(response, url) {
     });
     response.end(data);
   } catch (error) {
-    if (error?.code === 'ENOENT') return json(response, 404, { error: 'ネイティブパッケージが見つかりません。' });
+    if (error?.code === 'EPATHOUTSIDE') return json(response, 403, { error: 'Native package path is outside the project.' });
+    if (error?.code === 'ENOENT') return json(response, 404, { error: 'Native package was not found.' });
     throw error;
   }
 }
@@ -1624,7 +1721,7 @@ async function handleApi(request, response, url) {
   if (request.method === 'PUT' && url.pathname === '/api/setting-file') {
     const body = await readJson(request);
     const name = String(body.name || '').replaceAll('\\', '/').replace(/^setting\//, '');
-    if (typeof body.source !== 'string' || Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'Setting file must be text no larger than 2 MB.' });
+    if (Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'Scene file exceeds 2 MB.' });
     let settings = null;
     try {
       if (name === 'setting.txt') {
@@ -1686,7 +1783,7 @@ async function handleApi(request, response, url) {
   }
   if (request.method === 'DELETE' && url.pathname === '/api/file') {
     const body = await readJson(request); const name = String(body.path || '').replaceAll('\\', '/');
-    if (!/^[A-Za-z0-9_./-]+$/.test(name) || name.split('/').some((part) => !part || part === '.' || part === '..')) return json(response, 400, { error: '削除できないパスです' });
+    if (!/^[A-Za-z0-9_./-]+$/.test(name) || name.split('/').some((part) => !part || part === '.' || part === '..')) return json(response, 400, { error: 'Invalid or forbidden path.' });
     const assetPrefix = `${layout.settings.asset_dir}/`;
     const scenePrefix = `${layout.settings.scenario_dir}/`;
     try {
@@ -1695,9 +1792,9 @@ async function handleApi(request, response, url) {
         : name.startsWith(scenePrefix)
           ? await safeScenePath(name.slice(scenePrefix.length))
           : null;
-      if (!target) return json(response, 400, { error: '削除できない場所です' });
+      if (!target) return json(response, 400, { error: 'Invalid or forbidden path.' });
       const info = await fs.lstat(target);
-      if (!info.isFile()) return json(response, 400, { error: 'ファイルだけ削除できます' });
+      if (!info.isFile()) return json(response, 400, { error: 'Invalid or forbidden path.' });
       await fs.unlink(target);
     } catch (error) {
       return json(response, error?.code === 'ENOENT' ? 404 : 400, { error: error instanceof Error ? error.message : String(error) });
@@ -1711,13 +1808,13 @@ async function handleApi(request, response, url) {
     const scene = url.searchParams.get('scene') || '';
     const line = Number(url.searchParams.get('line'));
     const names = (url.searchParams.get('names') || '').split(',').filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)).slice(0, 128);
-    if (!scene || !Number.isSafeInteger(line) || line < 1 || !names.length) return json(response, 400, { error: '開始位置または変数が不正です' });
+    if (!scene || !Number.isSafeInteger(line) || line < 1 || !names.length) return json(response, 400, { error: 'Invalid or forbidden path.' });
     try {
       const { analyzeStartDomains } = require('./flow-domains');
       const source = await readSceneSource(file);
       const ast = await resolveProjectScript(source, SCENES_ROOT, new Set(), file);
       const target = ast.scenes.find((item) => item.name === scene && (item.file || file) === file);
-      if (!target || line < target.line || line > (target.endLine || target.line)) return json(response, 400, { error: 'scene内の行を指定してください' });
+      if (!target || line < target.line || line > (target.endLine || target.line)) return json(response, 400, { error: 'Invalid or forbidden path.' });
       const configured = await readStaticVariables(DATA_ROOT);
       const analysis = await createProjectAnalysisContext();
       const [globalVariables, characters] = await Promise.all([
@@ -1752,7 +1849,7 @@ async function handleApi(request, response, url) {
     catch (error) {
       if (error?.code === 'ENOENT') return json(response, 200, { variables: [] });
       if (error?.code === 'EPATHOUTSIDE' || error instanceof SyntaxError) return json(response, 400, { error: 'Project variables metadata is invalid or outside the project.' });
-      return json(response, 500, { error: 'Could not read project variables metadata.' });
+      return json(response, 500, { error: 'Could not read asset information.' });
     }
   }
   if (request.method === 'GET' && url.pathname === '/api/assets') {
@@ -1760,30 +1857,57 @@ async function handleApi(request, response, url) {
     catch (error) {
       if (error?.code === 'ENOENT') return json(response, 200, { assets: [] });
       if (error?.code === 'EPATHOUTSIDE' || error instanceof SyntaxError) return json(response, 400, { error: 'Project assets metadata is invalid or outside the project.' });
-      return json(response, 500, { error: 'Could not read project assets metadata.' });
+      return json(response, 500, { error: 'Could not read asset information.' });
     }
+  }
+  if (request.method === 'GET' && url.pathname === '/api/asset-info') {
+    const name = String(url.searchParams.get('path') || '').replaceAll('\\', '/');
+    const parts = name.split('/');
+    if (!name.startsWith('asset/') || parts.some((part) => !part || part === '.' || part === '..')) {
+      return json(response, 400, { error: 'Invalid or forbidden path.' });
+    }
+    try {
+      const file = await safeAssetPath(name.slice('asset/'.length));
+      const stat = await fs.stat(file);
+      if (!stat.isFile()) return json(response, 404, { error: 'Asset file was not found.' });
+      const extension = path.extname(file).toLowerCase();
+      return json(response, 200, {
+        path: name,
+        extension: extension.slice(1),
+        mimeType: CONTENT_TYPES[extension] || '',
+        sizeBytes: stat.size,
+        modifiedAt: stat.mtime.toISOString(),
+      });
+    } catch (error) {
+      if (error?.code === 'EPATHOUTSIDE') return json(response, 403, { error: 'Asset path is outside the project.' });
+      if (error?.code === 'ENOENT') return json(response, 404, { error: 'Asset file was not found.' });
+      return json(response, 500, { error: 'Could not read asset information.' });
+    }
+  }
+  if (request.method === 'GET' && url.pathname === '/api/ui-assets') {
+    return json(response, 200, { images: await listUiImageAssets() });
   }
   if (request.method === 'GET' && url.pathname === '/api/catalog') {
     return json(response, 200, await readCatalog());
   }
   if (request.method === 'GET' && url.pathname === '/api/scene') {
     const name = sceneName(url.searchParams.get('name'));
-    if (!name) return json(response, 400, { error: '無効なファイル名です。' });
+    if (!name) return json(response, 400, { error: 'Invalid or forbidden path.' });
     try {
       const target = await safeScenePath(name);
       const source = await fs.readFile(target, 'utf8');
       return json(response, 200, { name, source, revision: sceneRevision(source) });
     } catch (error) {
-      if (error && error.code === 'ENOENT') return json(response, 404, { error: 'ファイルが見つかりません。' });
+      if (error && error.code === 'ENOENT') return json(response, 404, { error: 'Scene file was not found.' });
       return json(response, 400, { error: error instanceof Error ? error.message : String(error) });
     }
   }
   if (request.method === 'PUT' && url.pathname === '/api/scene') {
     const body = await readJson(request);
     const name = sceneName(String(body.name || '').replace(new RegExp(`^${layout.settings.scenario_dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`), ''));
-    if (!name) return json(response, 400, { error: 'ファイル名は英数字・._- を使ってください。' });
-    if (typeof body.source !== 'string') return json(response, 400, { error: '保存する本文がありません。' });
-    if (Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'ファイルは 2 MB 以下にしてください。' });
+    if (!name) return json(response, 400, { error: 'Invalid or forbidden path.' });
+    if (typeof body.source !== 'string') return json(response, 400, { error: 'Invalid or forbidden path.' });
+    if (Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'Scene file exceeds 2 MB.' });
     if (body.expectedRevision !== undefined && typeof body.expectedRevision !== 'string') return json(response, 400, { error: 'Invalid scene revision.' });
     let target;
     try { target = await safeScenePath(name, { createParents: true }); }
@@ -1801,13 +1925,13 @@ async function handleApi(request, response, url) {
     try { await compileSource(body.source, name); }
     catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      // 編集途中の構文・型エラーは保存を妨げないが、既存変数の再宣言だけは
-      // プロジェクト全体の変数契約を壊すため書き込み前に拒否する。
+      // 編雁E��中の構文・型エラーは保存を妨げなぁE��、既存変数の再宣言だけ�E
+      // プロジェクト�E体�E変数契紁E��壊すため書き込み前に拒否する、E
       if (/既に宣言|再宣言/.test(message)) return json(response, 400, { error: message });
     }
     await fs.writeFile(target, body.source, 'utf8');
     await fs.mkdir(DATA_ROOT, { recursive: true });
-    // 保存した1ファイルだけでなく全ファイルの集計を実行して更新
+    // 保存しぁEファイルだけでなく�Eファイルの雁E��を実行して更新
     await rebuildProjectIndexes();
     return json(response, 200, { ok: true, name, revision: sceneRevision(body.source) });
   }
@@ -1825,7 +1949,7 @@ async function handleApi(request, response, url) {
   if (request.method === 'POST' && url.pathname === '/api/editor-symbols') {
     const body = await readJson(request);
     if (typeof body.source !== 'string') return json(response, 400, { error: 'source is required' });
-    if (Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'source must be no larger than 2 MB.' });
+    if (Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'Scene file exceeds 2 MB.' });
     try { return json(response, 200, { symbols: await editorSymbols(body.source, body.name || '') }); }
     catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
   }
@@ -1851,7 +1975,22 @@ async function handleApi(request, response, url) {
   if (request.method === 'POST' && url.pathname === '/api/native-play') {
     try {
       const body = await readJson(request);
-      return json(response, 200, await playWithNativeEngine(body.name));
+      return json(response, 200, await playWithNativeEngine(body.name, body.debugStart ?? null));
+    } catch (error) {
+      return json(response, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  if (request.method === 'GET' && url.pathname === '/api/native-play/state') {
+    try {
+      return json(response, 200, await nativeDebugPlayerState(url.searchParams.get('session')));
+    } catch (error) {
+      return json(response, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  if (request.method === 'POST' && url.pathname === '/api/native-play/stop') {
+    try {
+      const body = await readJson(request);
+      return json(response, 200, stopNativeDebugPlayer(body.session));
     } catch (error) {
       return json(response, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
     }
@@ -1876,7 +2015,7 @@ async function handleApi(request, response, url) {
     const body = await readJson(request);
     return json(response, 200, await projectBuildStatus(body.name));
   }
-  return json(response, 404, { error: 'API が見つかりません。' });
+  return json(response, 404, { error: 'API endpoint was not found.' });
 }
 
 async function main() {
@@ -1897,7 +2036,7 @@ async function main() {
       else text(response, 405, 'Method not allowed');
     } catch (error) {
       console.error(error);
-      json(response, error?.code === 'EPATHOUTSIDE' ? 403 : 500, { error: error instanceof Error ? error.message : '予期しないエラーです。' });
+      json(response, error?.code === 'EPATHOUTSIDE' ? 403 : 500, { error: error instanceof Error ? error.message : 'Unexpected server error.' });
     }
   });
   listenOnAvailablePort(server, INITIAL_PORT);
@@ -1912,7 +2051,7 @@ function listenOnAvailablePort(server, port, attempts = 0) {
     server.off('listening', onListening);
     if (error && error.code === 'EADDRINUSE' && attempts < MAX_PORT_ATTEMPTS) {
       const nextPort = port + 1;
-      console.warn(`Port ${port} は使用中です。${nextPort} を試します。`);
+      console.warn(`Port ${port} は使用中です、E{nextPort} を試します。`);
       listenOnAvailablePort(server, nextPort, attempts + 1);
       return;
     }

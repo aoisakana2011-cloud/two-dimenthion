@@ -33,7 +33,7 @@
     }
     const prefix = `${namespace}:`;
     const slotKey = index => {
-      if (!Number.isInteger(index) || index < 0 || index >= 100) throw Error('Save slot must be between 0 and 99');
+      if (!Number.isInteger(index) || index < 0 || index >= 120) throw Error('Save slot must be between 0 and 119');
       return `${prefix}slot:${index}`;
     };
     const preferenceKey = name => `${prefix}pref:${name}`;
@@ -63,6 +63,44 @@
       for (const store of ['snapshots', 'metadata', 'thumbnails']) tx.objectStore(store).delete(key);
       await done;
     };
+    const transferSlot = async (source, destination, { move = false } = {}) => {
+      if (source === destination) throw Error('Source and destination save slots must differ');
+      const sourceKey = slotKey(source), destinationKey = slotKey(destination);
+      if (!database) {
+        const encoded = storage.getItem(sourceKey);
+        if (typeof encoded !== 'string' || storage.getItem(destinationKey) !== null) return false;
+        storage.setItem(destinationKey, encoded);
+        if (move) storage.removeItem(sourceKey);
+        return true;
+      }
+      // Copy/move is a single database transaction: other readers can never
+      // observe a half-moved slot, and a competing write cannot claim dest.
+      const tx = database.transaction(['snapshots', 'metadata', 'thumbnails'], 'readwrite');
+      const done = transactionDone(tx);
+      const snapshots = tx.objectStore('snapshots'), metadataStore = tx.objectStore('metadata'), thumbnails = tx.objectStore('thumbnails');
+      const values = {};
+      let pending = 4, transferred = false;
+      const finishRead = () => {
+        if (--pending !== 0) return;
+        if (typeof values.encoded !== 'string' || values.destination != null) return;
+        snapshots.put(values.encoded, destinationKey);
+        if (values.metadata != null) metadataStore.put(values.metadata, destinationKey);
+        else metadataStore.delete(destinationKey);
+        if (values.thumbnail instanceof Blob) thumbnails.put(values.thumbnail, destinationKey);
+        else thumbnails.delete(destinationKey);
+        if (move) { snapshots.delete(sourceKey); metadataStore.delete(sourceKey); thumbnails.delete(sourceKey); }
+        transferred = true;
+      };
+      const read = (store, key, name) => {
+        const request = store.get(key);
+        request.onsuccess = () => { values[name] = request.result; finishRead(); };
+        request.onerror = () => { try { tx.abort(); } catch {} };
+      };
+      read(snapshots, sourceKey, 'encoded'); read(snapshots, destinationKey, 'destination');
+      read(metadataStore, sourceKey, 'metadata'); read(thumbnails, sourceKey, 'thumbnail');
+      await done;
+      return transferred;
+    };
     const readPreference = async name => {
       const value = await get('preferences', preferenceKey(name));
       if (database) return value ?? null;
@@ -81,7 +119,7 @@
         const oldKey = storage.key(cursor);
         if (!oldKey?.startsWith(`${legacyPrefix}:slot:`)) continue;
         const index = Number(oldKey.slice(`${legacyPrefix}:slot:`.length));
-        if (Number.isInteger(index) && index >= 0 && index < 100) candidates.push(index);
+        if (Number.isInteger(index) && index >= 0 && index < 120) candidates.push(index);
       }
       for (const index of candidates) {
         if (await readSlot(index)) continue;
@@ -98,7 +136,7 @@
         try { await writePreference('ui-settings', JSON.parse(oldPreferences)); } catch { /* Keep the old preference untouched. */ }
       }
     }
-    return { backend: database ? 'indexeddb' : 'localStorage', readSlot, writeSlot, readThumbnail, readMetadata, deleteSlot, readPreference, writePreference, close: () => database?.close() };
+    return { backend: database ? 'indexeddb' : 'localStorage', readSlot, writeSlot, readThumbnail, readMetadata, deleteSlot, transferSlot, readPreference, writePreference, close: () => database?.close() };
   }
   return { open };
 });

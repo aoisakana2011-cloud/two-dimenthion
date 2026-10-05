@@ -12,6 +12,7 @@
 #include <regex>
 #include <set>
 #include <cmath>
+#include <optional>
 
 namespace novel {
 using json = nlohmann::json;
@@ -146,10 +147,12 @@ class Runtime {
 public:
     json globals = json::object(), program;
     std::function<void(const std::string&, const json&)> command;
+    std::function<void(const json&)> parallel;
     std::function<size_t(const std::string&, const std::vector<std::string>&)> choice;
     std::function<json(const std::string&)> load;
     std::function<void(const json&, const std::string&)> beforeInstruction;
     std::function<void(const json&)> restorePresentation;
+    std::function<std::optional<json>(const std::string&, const json&)> runtimeStateProvider;
     json pendingLoad = nullptr;
     std::string currentSceneName, currentSourceFile;
     int64_t currentLine = 0;
@@ -162,15 +165,39 @@ public:
     std::map<std::string, json> functions;
     // Authoritative query-facing occupancy; updated after successful presentation commands.
     std::map<std::string, std::string> runtimeCharacterSlots;
-    void restoreRuntimeCharacters(const json& state) {
+    std::string runtimeBackground, runtimeBgm;
+    double runtimeDialogOpacity = 1.0;
+    bool runtimeDialogOpacityExplicit = false;
+    std::map<std::string, double> runtimeAudioVolumes;
+    std::map<std::string, double> runtimeAudioVolumeOverrides;
+    void restoreRuntimeState(const json& state) {
         runtimeCharacterSlots.clear();
+        runtimeBackground.clear(); runtimeBgm.clear();
+        runtimeDialogOpacity = state.value("ui", json::object()).value("dialogOpacity", 1.0);
+        runtimeDialogOpacityExplicit = state.value("ui", json::object()).contains("dialogOpacity");
+        runtimeAudioVolumes = {{"bgm", 1.0}, {"se", 1.0}, {"voice", 0.5}};
+        runtimeAudioVolumeOverrides.clear();
+        const auto audio = state.value("audio", json::object());
+        const auto volumes = audio.value("volumes", json::object());
+        const auto overrides = audio.value("volumeOverrides", json::object());
+        for (const auto& [kind, fallback] : runtimeAudioVolumes) if (volumes.contains(kind)) runtimeAudioVolumes[kind] = volumes.at(kind).get<double>();
+        for (const auto& [kind, value] : overrides.items()) if (runtimeAudioVolumes.contains(kind)) runtimeAudioVolumeOverrides[kind] = value.get<double>();
+        if (state.contains("background") && state.at("background").is_object()) runtimeBackground = state.at("background").value("asset", std::string());
+        if (state.contains("bgm") && state.at("bgm").is_object()) runtimeBgm = state.at("bgm").value("asset", std::string());
         for (const auto& character : state.value("characters", json::array())) {
             if (!character.is_object() || !character.contains("id") || !character.at("id").is_string()) continue;
             runtimeCharacterSlots[character.at("id").get<std::string>()] = character.value("slot", std::string("center"));
         }
     }
-    void updateRuntimeCharacters(const std::string& name, const json& args) {
-        if (name == "show" && args.size() >= 2 && args.at(0).is_string() && args.at(1).is_string()) {
+    void updateRuntimeState(const std::string& name, const json& args) {
+        if (name == "volume" && args.size() == 2 && args.at(0).is_string() && args.at(1).is_number()) runtimeAudioVolumeOverrides[args.at(0).get<std::string>()] = args.at(1).get<double>();
+        else if (name == "dialog" && args.size() == 2 && args.at(0) == "opacity" && args.at(1).is_number()) { runtimeDialogOpacity = args.at(1).get<double>(); runtimeDialogOpacityExplicit = true; }
+        else if (name == "bg" && !args.empty() && args.at(0).is_string()) runtimeBackground = args.at(0).get<std::string>();
+        else if (name == "bgm" && !args.empty() && args.at(0).is_string()) runtimeBgm = args.at(0).get<std::string>();
+        else if (name == "play" && args.size() >= 2 && args.at(0) == "bgm" && args.at(1).is_string()) runtimeBgm = args.at(1).get<std::string>();
+        else if (name == "clear" && !args.empty() && args.at(0) == "bg") runtimeBackground.clear();
+        else if (name == "clear" && !args.empty() && args.at(0) == "bgm") runtimeBgm.clear();
+        else if (name == "show" && args.size() >= 2 && args.at(0).is_string() && args.at(1).is_string()) {
             const auto reference = args.at(0).get<std::string>();
             const auto separator = reference.find('.');
             if (reference == "image" || separator == std::string::npos) return;
@@ -195,6 +222,46 @@ public:
             for (const auto& [id, slot] : runtimeCharacterSlots) { (void)slot; result.push_back(id); }
             return result;
         }
+        if (name == "runtime.state.characters.position") {
+            if (args.size() != 1 || !args.at(0).is_string()) throw std::runtime_error("runtime.state.characters.position expects one str argument");
+            const auto id = args.at(0).get<std::string>();
+            for (const auto& [character, slot] : runtimeCharacterSlots) if (character == id) return slot;
+            return "";
+        }
+        if (name == "runtime.state.background.exists") { if (!args.empty()) throw std::runtime_error("runtime.state.background.exists expects no arguments"); return !runtimeBackground.empty(); }
+        if (name == "runtime.state.background.current") { if (!args.empty()) throw std::runtime_error("runtime.state.background.current expects no arguments"); return runtimeBackground; }
+        if (name == "runtime.state.audio.bgm_exists") { if (!args.empty()) throw std::runtime_error("runtime.state.audio.bgm_exists expects no arguments"); return !runtimeBgm.empty(); }
+        if (name == "runtime.state.audio.current_bgm") { if (!args.empty()) throw std::runtime_error("runtime.state.audio.current_bgm expects no arguments"); return runtimeBgm; }
+        if (name == "runtime.state.execution.current_scene") { if (!args.empty()) throw std::runtime_error("runtime.state.execution.current_scene expects no arguments"); return currentSceneName; }
+        if (name == "runtime.state.execution.current_file") { if (!args.empty()) throw std::runtime_error("runtime.state.execution.current_file expects no arguments"); return currentSceneName.empty() ? std::string() : currentSourceFile; }
+        if (name == "runtime.state.execution.current_line") { if (!args.empty()) throw std::runtime_error("runtime.state.execution.current_line expects no arguments"); return Int(currentSceneName.empty() ? 0 : currentLine); }
+        if (name == "runtime.state.ui.dialog_opacity") {
+            if (!args.empty()) throw std::runtime_error("runtime.state.ui.dialog_opacity expects no arguments");
+            if (runtimeStateProvider) if (auto provided = runtimeStateProvider(name, args)) return *provided;
+            return runtimeDialogOpacity;
+        }
+        if (name == "runtime.state.audio.volume") {
+            if (args.size() != 1 || !args.at(0).is_string()) throw std::runtime_error("runtime.state.audio.volume expects one str argument");
+            if (runtimeStateProvider) if (auto provided = runtimeStateProvider(name, args)) return *provided;
+            const auto kind = args.at(0).get<std::string>();
+            if (!runtimeAudioVolumes.contains(kind)) throw std::runtime_error("runtime.state.audio.volume channel must be bgm, se, or voice");
+            const auto override = runtimeAudioVolumeOverrides.find(kind);
+            return override == runtimeAudioVolumeOverrides.end() ? runtimeAudioVolumes.at(kind) : override->second;
+        }
+        if (name == "runtime.state.variables.exists") {
+            if (args.size() != 1 || !args.at(0).is_string()) throw std::runtime_error("runtime.state.variables.exists expects one str argument");
+            const auto variable = args.at(0).get<std::string>();
+            if (globals.contains(variable)) return true;
+            return std::any_of(locals.begin(), locals.end(), [&](const json& frame) { return frame.contains(variable); });
+        }
+        if (name == "runtime.state.variables.names") {
+            if (!args.empty()) throw std::runtime_error("runtime.state.variables.names expects no arguments");
+            std::set<std::string> names;
+            for (auto it = globals.begin(); it != globals.end(); ++it) names.insert(it.key());
+            for (const auto& frame : locals) for (auto it = frame.begin(); it != frame.end(); ++it) names.insert(it.key());
+            return std::vector<std::string>(names.begin(), names.end());
+        }
+        if (runtimeStateProvider) if (auto provided = runtimeStateProvider(name, args)) return *provided;
         throw std::runtime_error("Unknown runtime state API: " + name);
     }
     json get(const std::string& name) const {
@@ -309,7 +376,7 @@ public:
         if (kind == "call") {
             json args = json::array(); for (const auto& a : e.at("args")) args.push_back(value(a));
             auto name = e.at("name").get<std::string>();
-            if (name == "runtime.state.characters.exists" || name == "runtime.state.characters.list") return runtimeStateCall(name, args);
+            if (name.rfind("runtime.state.", 0) == 0) return runtimeStateCall(name, args);
             if (name == "str") return text(args.at(0));
             if (name == "int") {
                 if (args.at(0).is_number_float()) {
@@ -353,6 +420,8 @@ public:
     }
     Signal exec(const json& list, bool preserve = false) {
         for (const auto& c : list) {
+            currentSourceFile = c.value("file", program.value("sourceFile", std::string()));
+            currentLine = c.value("line", int64_t(0));
             if (beforeInstruction) beforeInstruction(c, currentSceneName);
             const auto op = c.at("op").get<std::string>();
             if (op == "declare") {
@@ -393,11 +462,23 @@ public:
                     }
                     set(name, d);
                 }
+            } else if (op == "parallel") {
+                json batch = json::array();
+                for (const auto& instruction : c.at("body")) {
+                    if (instruction.value("op", std::string()) != "command") throw std::runtime_error("parallel accepts timed visual commands only");
+                    json args = json::array(); for (const auto& argument : instruction.at("args")) args.push_back(value(argument));
+                    const auto name = instruction.at("name").get<std::string>();
+                    batch.push_back({{"name", name}, {"args", args}});
+                }
+                if (batch.empty()) throw std::runtime_error("parallel requires at least one command");
+                if (parallel) parallel(batch);
+                else for (const auto& item : batch) command(item.at("name").get<std::string>(), item.at("args"));
+                for (const auto& item : batch) updateRuntimeState(item.at("name").get<std::string>(), item.at("args"));
             } else if (op == "command") {
                 json args = json::array(); for (const auto& a : c.at("args")) args.push_back(value(a));
                 const auto name = c.at("name").get<std::string>();
                 command(name, args);
-                updateRuntimeCharacters(name, args);
+                updateRuntimeState(name, args);
                 if (pendingLoad.is_object()) { auto request = std::move(pendingLoad); pendingLoad = nullptr; return {Signal::Restart, std::move(request)}; }
             } else if (op == "call") value(json{{"kind", "call"}, {"name", c.at("name")}, {"args", c.at("args")}});
             else if (op == "return") return {Signal::Return, c.contains("value") ? value(c.at("value")) : json()};
@@ -488,7 +569,13 @@ public:
     void run(json p, json debug = nullptr) {
         bool transferred = false;
         runtimeCharacterSlots.clear();
-        if (debug.is_object() && debug.contains("presentation")) restoreRuntimeCharacters(debug.at("presentation"));
+        currentSceneName.clear(); currentSourceFile.clear(); currentLine = 0;
+        runtimeBackground.clear(); runtimeBgm.clear();
+        runtimeDialogOpacity = 1.0;
+        runtimeDialogOpacityExplicit = false;
+        runtimeAudioVolumes = {{"bgm", 1.0}, {"se", 1.0}, {"voice", 0.5}};
+        runtimeAudioVolumeOverrides.clear();
+        if (debug.is_object() && debug.contains("presentation")) restoreRuntimeState(debug.at("presentation"));
         for (;;) {
             if (p.at("version") != 2) throw std::runtime_error("Unsupported program version");
             program = p; functions.clear();
@@ -518,7 +605,7 @@ public:
             }
             currentSceneName = first ? first->value("name", std::string()) : std::string();
             if (!transferred && debug.is_object() && debug.contains("presentation")) {
-                restoreRuntimeCharacters(debug.at("presentation"));
+                restoreRuntimeState(debug.at("presentation"));
                 if (restorePresentation) restorePresentation(debug.at("presentation"));
             }
             json instructions = json::array();
@@ -537,7 +624,7 @@ public:
                 const auto file = debug.value("file", std::string());
                 if (file.empty() || !load) throw std::runtime_error("Save slot is missing its scenario file");
                 runtimeCharacterSlots.clear();
-                if (debug.contains("presentation")) restoreRuntimeCharacters(debug.at("presentation"));
+                if (debug.contains("presentation")) restoreRuntimeState(debug.at("presentation"));
                 p = load(file); transferred = false; continue;
             }
             if (r.kind == Signal::Next) return;

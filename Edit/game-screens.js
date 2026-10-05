@@ -1,7 +1,8 @@
 'use strict';
 
 const SCREEN_ID = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/;
-const ACTIONS = new Set(['start', 'continue', 'resume', 'save', 'load', 'open-screen', 'back', 'quit']);
+const ACTIONS = new Set(['start', 'continue', 'resume', 'next', 'auto', 'skip', 'hold', 'save', 'load', 'quick-save', 'quick-load', 'slot-page', 'slot-select', 'slot-commit', 'slot-copy', 'slot-move', 'slot-delete', 'slot-lock', 'open-screen', 'setting-value', 'shortcut-cycle', 'reset-settings', 'reset-window-size', 'back', 'quit']);
+const { validateControlSkins } = require('./screen-document');
 
 function emptyScreenSlots() {
   return { x: 420, y: 190, width: 440, height: 420, rowHeight: 42, gap: 8, count: 8 };
@@ -10,6 +11,7 @@ function emptyScreenSlots() {
 function defaultGameScreens() {
   return {
     version: 1,
+    scaleMode: 'contain',
     initial: 'title',
     screens: {
       title: {
@@ -72,6 +74,9 @@ function validateGameScreens(value) {
   if (!value || value.version !== 1 || canvas && (!Number.isInteger(canvas.width) || !Number.isInteger(canvas.height) || canvas.width < 320 || canvas.width > 4096 || canvas.height < 180 || canvas.height > 4096) || typeof value.initial !== 'string' || !value.screens || typeof value.screens !== 'object' || Array.isArray(value.screens)) {
     throw new Error('画面設定の形式が不正です。');
   }
+  if (value.scaleMode !== undefined && !['contain', 'cover', 'stretch'].includes(value.scaleMode)) throw new Error('scaleMode は contain、cover、stretch のいずれかで指定してください');
+  if (value.defaultBackground !== undefined && typeof value.defaultBackground !== 'string') throw new Error('defaultBackground must be an asset path string.');
+  validateControlSkins(value.controlSkins || {});
   if (value.saveId !== undefined && (typeof value.saveId !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(value.saveId))) throw new Error('saveIdは英数字・_・-で64文字以内にしてください。');
   const screenIds = Object.keys(value.screens);
   if (!screenIds.length || screenIds.length > 24 || !SCREEN_ID.test(value.initial) || !Object.hasOwn(value.screens, value.initial)) {
@@ -95,6 +100,11 @@ function validateGameScreens(value) {
   screenDocument(value.stylesheet, '.css');
   screenDocument(value.controlSettings, '.txt');
   const roles = new Set();
+  const validateImagePath = (image, screenId) => {
+    const relative = String(image || '').replaceAll('\\', '/').replace(/^asset\//i, '');
+    if (relative && (relative.startsWith('/') || /^[A-Za-z]:/.test(relative) || relative.split('/').some(part => !part || part === '.' || part === '..'))) throw new Error(`Screen '${screenId}' has an invalid asset path.`);
+  };
+  if (value.defaultBackground) validateImagePath(value.defaultBackground, 'default');
   for (const [screenId, screen] of Object.entries(value.screens)) {
     if (!SCREEN_ID.test(screenId) || !screen || typeof screen !== 'object' || Array.isArray(screen)) throw new Error(`画面 '${screenId}' の定義が不正です。`);
     if (typeof (screen.title ?? '') !== 'string' || typeof (screen.description ?? '') !== 'string' || (screen.description?.length || 0) > 2000 || typeof (screen.background ?? '') !== 'string' || screen.items !== undefined && (!Array.isArray(screen.items) || screen.items.length > 100) || !screen.template && !Array.isArray(screen.items)) throw new Error(`画面 '${screenId}' の項目が不正です。`);
@@ -108,6 +118,8 @@ function validateGameScreens(value) {
         if (!Number.isInteger(layout[key]) || layout[key] < 0 || layout[key] > 4096 || (['width', 'height', 'rowHeight', 'count'].includes(key) && layout[key] === 0)
           || (key === 'count' && layout[key] > 100)) throw new Error(`画面 '${screenId}' のslotLayout.${key}が不正です。`);
       }
+      const pages = screen.slotPages ?? 1;
+      if (!Number.isInteger(pages) || pages < 1 || pages > 10 || layout.count * pages > 120) throw new Error(`Screen '${screenId}' slotPages must keep the total capacity between 1 and 120.`);
     }
     if (screen.music !== undefined && (typeof screen.music !== 'string' || screen.music.length > 120)) throw new Error(`画面 '${screenId}' のmusic指定が不正です。`);
     if (screen.music !== undefined && (typeof screen.music !== 'string' || screen.music.length > 240 || screen.music && screen.music.replaceAll('\\', '/').split('/').some(part => !part || part === '.' || part === '..'))) throw new Error('Invalid screen music asset path');
@@ -116,11 +128,8 @@ function validateGameScreens(value) {
       if (screen.slotStyle?.[key] !== undefined && (typeof screen.slotStyle[key] !== 'string' || screen.slotStyle[key].length > 240)) throw new Error(`Invalid slotStyle.${key}`);
     }
     if (screen.slotStyle?.fontSize !== undefined && (!Number.isInteger(screen.slotStyle.fontSize) || screen.slotStyle.fontSize < 8 || screen.slotStyle.fontSize > 48)) throw new Error('Invalid slotStyle.fontSize');
-    const imageNames = [screen.background, screen.slotStyle?.image, screen.slotStyle?.hoverImage, ...screen.items.flatMap(item => [item?.image || '', item?.hoverImage || ''])];
-    for (const image of imageNames) {
-      const relative = String(image || '').replaceAll('\\', '/').replace(/^asset\//i, '');
-      if (relative && (relative.startsWith('/') || /^[A-Za-z]:/.test(relative) || relative.split('/').some(part => !part || part === '.' || part === '..'))) throw new Error(`画面 '${screenId}' に作品フォルダー外の素材パスがあります。`);
-    }
+    const imageNames = [screen.background === undefined ? value.defaultBackground : screen.background, screen.slotStyle?.image, screen.slotStyle?.hoverImage, ...screen.items.flatMap(item => [item?.image || '', item?.hoverImage || ''])];
+    for (const image of imageNames) validateImagePath(image, screenId);
     const itemIds = new Set();
     for (const item of screen.items) {
       if (!item || item.type !== 'button' || typeof item.id !== 'string' || !SCREEN_ID.test(item.id) || itemIds.has(item.id)) throw new Error(`画面 '${screenId}' のボタンIDが不正または重複しています。`);
@@ -135,6 +144,7 @@ function validateGameScreens(value) {
       }
       if (item.display !== undefined && !['text', 'image', 'both'].includes(item.display)) throw new Error(`Invalid button display mode: ${item.id}`);
       if (item.action === 'open-screen' && (typeof item.target !== 'string' || !Object.hasOwn(value.screens, item.target))) throw new Error(`ボタン '${item.id}' の遷移先画面がありません。`);
+      if (item.action === 'slot-page' && !/^[0-9]$/.test(String(item.target ?? ''))) throw new Error(`Button '${item.id}' slot page must be an integer from 0 to 9.`);
     }
   }
   if (!value.titleScene && !value.screens[value.initial].template && !value.screens[value.initial].items.some(item => item.action === 'start')) throw new Error('開始画面には「ゲーム開始」ボタンまたはTDSタイトルシーンが必要です。');

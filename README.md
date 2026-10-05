@@ -1,12 +1,13 @@
 # Novel Script パーサー・コンパイラー
 
-ビジュアルノベル用DSL、ブラウザーエディター、browser player、SDLベースnative playerを含むプロジェクトです。言語仕様の正本は [syntax-draft.md](syntax-draft.md) です。旧立ち絵構文や `say` ブロック構文は互換実装を持たず、正式構文だけを受理します。
+ビジュアルノベル用DSL、ブラウザーエディター、browser player、SDLベースnative playerを含むプロジェクトです。詳細な仕様書は[docs/README.md](docs/README.md)から分野ごとに参照できます。構文例と作家向け言語リファレンスは [syntax-draft.md](syntax-draft.md) です。旧立ち絵構文や `say` ブロック構文は互換実装を持たず、正式構文だけを受理します。
 
 ## 最初に読むもの
 
 - [構文リファレンス](syntax-draft.md): 文法、型、命令、完全例
+- [分野別技術仕様](docs/README.md): 構文、解析、compiler、runtime、IDE、UI、project/pack、保存、整形、配布
 - [native player](native/README.md): native build・実行・headless検証
-- `Title/setting/setting.txt`: 作品レイアウトと開始ファイルの設定
+- `Title/setting/setting.txt`: 現行標準レイアウトの作品設定。旧layoutではproject root直下の`setting.txt`も読み込めます。
 
 ## GUIエディター
 
@@ -20,7 +21,7 @@ npm.cmd run editor
 Title/                  # 名前は自由
   asset/                # 画像・音声・動画
   senario/              # .tds シナリオ
-  setting.txt           # scenario_dir / asset_dir / start_file / title
+  setting/setting.txt   # scenario_dir / asset_dir / start_file / title
   .novel/               # 生成メタデータとbuild成果物
 Edit/                   # エディター本体
 ```

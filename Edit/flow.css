@@ -95,6 +95,7 @@
 @media(max-width:1240px) { .canvas>header .flow-instructions { display:none; } }
 .flow-test-panel { position:absolute; top:128px; bottom:190px; left:0; right:0; padding:10px 12px; overflow:auto; color:#bdbdbd; font-size:11px; }
 .flow-test-panel h2 { margin:0 0 9px; padding:0 0 7px; border-bottom:1px solid var(--line); color:#ccc; font-size:11px; font-weight:500; }
+.flow-test-engine { margin:-3px 0 9px; color:#818d97; font-size:9px; }
 .flow-test-file { margin-bottom:10px; overflow:hidden; color:#9ab9d0; font:11px Consolas,monospace; text-overflow:ellipsis; white-space:nowrap; }
 .flow-test-field,.flow-test-variable { display:grid; gap:4px; margin:0 0 9px; color:#aaa; }
 .flow-test-field input,.flow-test-field select,.flow-test-variable input { width:100%; min-width:0; height:26px; padding:3px 6px; border:1px solid #3c3c3c; border-radius:2px; outline:none; color:#ddd; background:#202020; font:11px Consolas,monospace; }
@@ -116,8 +117,15 @@
 .flow-test-confirmed-name { color:#aab7bf; }
 .flow-test-confirmed-value { color:#d0d7dc; }
 .flow-test-uncertain-group .flow-test-variable { margin:0 0 4px; }
-#flow-test-run { width:100%; height:27px; margin-top:10px; border:1px solid #356487; border-radius:2px; color:#e6f2fa; background:#1c5b89; cursor:pointer; font-size:11px; }
+#flow-test-run,#flow-test-stop { height:27px; border-radius:2px; cursor:pointer; font-size:11px; }
+.flow-test-actions { display:grid; grid-template-columns:minmax(0,1fr) 64px; gap:6px; margin-top:10px; }
+#flow-test-run { width:100%; border:1px solid #356487; color:#e6f2fa; background:#1c5b89; }
 #flow-test-run:hover:not(:disabled) { background:#236b9e; }
 #flow-test-run:disabled { opacity:.48; cursor:default; }
+#flow-test-stop { border:1px solid #555; color:#ddd; background:#292929; }
+#flow-test-stop:hover:not(:disabled) { border-color:#777; background:#383838; }
+#flow-test-stop:disabled { opacity:.45; cursor:default; }
 #flow-test-message { min-height:15px; margin-top:7px; line-height:1.4; }
+#flow-test-location { margin-top:7px; padding:5px 6px; border-left:2px solid #4d8ab3; color:#c4ddeb; background:#202a30; font:10px/1.4 Consolas,monospace; overflow-wrap:anywhere; }
+#flow-test-message[data-state="error"] { color:#f48771; }
 .flow-test-panel [hidden] { display:none!important; }

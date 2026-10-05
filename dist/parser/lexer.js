@@ -22,6 +22,15 @@ class Lexer {
             return this.readString(start);
         if (this.isDigit(c))
             return this.readNumber(start);
+        if (c === '-' && this.peek(1) === '-') {
+            const option = ['--only', '--layer'].find(value => this.source.slice(this.offset, this.offset + value.length) === value
+                && !this.isAlphaNumeric(this.peek(value.length)));
+            if (option) {
+                for (let i = 0; i < option.length; i++)
+                    this.advance();
+                return this.token('symbol', option, start);
+            }
+        }
         const pair = `${c}${this.peek(1) ?? ''}`;
         if (['==', '!=', '>=', '<=', '->', '=>', '..'].includes(pair)) {
             this.advance();

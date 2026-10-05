@@ -1,14 +1,16 @@
 <main class="screen pause-screen">
   <div class="pause-dimmer"></div>
   <section class="pause-panel">
-    <div class="pause-heading">しおり</div>
-    <div class="pause-rule"></div>
+    <div class="pause-heading">MENU</div><div class="pause-rule"></div>
     <div class="pause-grid">
-      <button class="pause-button" data-action="resume">物語へ戻る</button>
-      <button class="pause-button" data-action="save">この場面を記録</button>
-      <button class="pause-button" data-action="load">記録から再開</button>
-      <button class="pause-button" data-action="open-screen" data-target="system">環境設定</button>
-      <button class="pause-button" data-action="open-screen" data-target="title">表紙へ戻る</button>
+      <button class="pause-button" data-action="back"><img class="pause-icon" src="ui/icons/menu-back.png" alt=""><small class="pause-label">BACK</small></button><button class="pause-button" data-action="next"><img class="pause-icon" src="ui/icons/menu-next.png" alt=""><small class="pause-label">NEXT</small></button>
+      <button class="pause-button" data-action="save"><img class="pause-icon" src="ui/icons/save.png" alt=""><small class="pause-label">SAVE</small></button><button class="pause-button" data-action="load"><img class="pause-icon" src="ui/icons/load.png" alt=""><small class="pause-label">LOAD</small></button>
+      <button class="pause-button" data-action="quick-save"><img class="pause-icon" src="ui/icons/save.png" alt=""><small class="pause-label">Q.SAVE</small></button><button class="pause-button" data-action="quick-load"><img class="pause-icon" src="ui/icons/load.png" alt=""><small class="pause-label">Q.LOAD</small></button>
+      <button class="pause-button" data-action="auto"><img class="pause-icon" src="ui/icons/menu-auto.png" alt=""><small class="pause-label">AUTO</small></button><button class="pause-button" data-action="skip"><img class="pause-icon" src="ui/icons/menu-skip.png" alt=""><small class="pause-label">SKIP</small></button>
+      <button class="pause-button" data-action="open-screen" data-target="log"><img class="pause-icon" src="ui/icons/menu-log.png" alt=""><small class="pause-label">LOG</small></button><button class="pause-button" data-action="open-screen" data-target="system"><img class="pause-icon" src="ui/icons/system.png" alt=""><small class="pause-label">SYSTEM</small></button>
+      <button class="pause-button" data-action="resume"><img class="pause-icon" src="ui/icons/menu-close.png" alt=""><small class="pause-label">CLOSE</small></button><button class="pause-button" data-action="hold"><img class="pause-icon" src="ui/icons/menu-hold.png" alt=""><small class="pause-label">HOLD</small></button>
+      <button class="pause-button" data-action="open-screen" data-target="guide"><img class="pause-icon" src="ui/icons/favorite.png" alt=""><small class="pause-label">FAVORITE</small></button><button class="pause-button" data-action="open-screen" data-target="about"><img class="pause-icon" src="ui/icons/tips.png" alt=""><small class="pause-label">TIPS</small></button>
     </div>
+    <input class="pause-volume-control" type="range" min="0" max="1" step="0.01" data-setting="audio.master" data-skin="volumeVertical" aria-label="マスター音量"><small class="pause-volume-max">MAX</small><small class="pause-volume-min">MIN</small>
   </section>
 </main>

@@ -131,7 +131,9 @@ scene main { wait 1 }
 test('bundled standard-library source can be opened by definition navigation without allowing path escape', async () => {
   const file = await readStandardLibraryFile('std/motion/walk.tds');
   assert.equal(file.name, 'std/motion/walk.tds');
-  assert.match(file.source, /fn walk_x\(distance: float, progress: float\)/);
+  assert.match(file.source, /fn character\(target_character: str, distance_px: float, cycles: int, seconds: float, bob_px: float\)/);
+  assert.match(file.source, /fn walk_x\(distance_px: float, progress: float\)/);
+  assert.doesNotMatch(file.source, /fn walk_bob\(/);
   await assert.rejects(readStandardLibraryFile('std/..\\package.json'));
   await assert.rejects(readStandardLibraryFile('main.tds'));
 });
@@ -208,7 +210,7 @@ test('std include paths are reserved, bundled, and cannot escape the library roo
   }
 });
 
-test('std motion modules provide deterministic walk and presentation-effect offsets', async () => {
+test('std motion modules provide walk_x and presentation-effect offsets', async () => {
   const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-stdlib-motion-'));
   try {
     seedEmptyProject(projectRoot);
@@ -217,11 +219,8 @@ test('std motion modules provide deterministic walk and presentation-effect offs
 include "std/motion/walk.tds" as walk
 include "std/motion/effects.tds" as motion
 float walk_x = walk.walk_x(100.0, 0.25)
-float walk_bob = walk.walk_bob(10.0, 0.25)
 float walk_start_x = walk.walk_x(100.0, 0.0)
 float walk_end_x = walk.walk_x(100.0, 1.0)
-float walk_start_y = walk.walk_bob(10.0, 0.0)
-float walk_end_y = walk.walk_bob(10.0, 1.0)
 float shake = motion.shake(4.0, 0.25, 1.0)
 float breathing = motion.breathe(2.0, 0.25)
 float hop = motion.hop(10.0, 0.5)
@@ -233,8 +232,8 @@ scene main { wait 1 }
     const runtime = new Runtime({ command: async () => {} });
     await runtime.run(compiled);
     const expected = {
-      walk_x: 25, walk_bob: 10, walk_start_x: 0, walk_end_x: 100,
-      walk_start_y: 0, walk_end_y: 0, shake: 3, breathing: 2, hop: -10, drift: 0,
+      walk_x: 25, walk_start_x: 0, walk_end_x: 100,
+      shake: 3, breathing: 2, hop: -10, drift: 0,
     };
     for (const [name, value] of Object.entries(expected)) {
       assert.ok(Math.abs(runtime.get(name) - value) <= 1e-8, `${name}: expected ${value}, got ${runtime.get(name)}`);
@@ -242,6 +241,58 @@ scene main { wait 1 }
   } finally {
     await fs.rm(projectRoot, { recursive: true, force: true });
   }
+});
+
+test('walk.character requires a statically proven visible character and guards runtime moves', async (t) => {
+  const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-walk-presence-'));
+  t.after(() => fs.rm(projectRoot, { recursive: true, force: true }));
+  seedEmptyProject(projectRoot);
+  const { scenesRoot, assetsRoot } = projectLayout(projectRoot);
+  const visible = `include "std/motion/walk.tds" as walk
+character rei {
+  name = "Rei"
+  pose normal = "asset/char/rei.png"
+}
+scene main {
+  show rei.normal center
+  walk.character("rei", 72.0, 1, 1.0, 4.0)
+}`;
+  await fs.writeFile(path.join(scenesRoot, 'main.tds'), visible, 'utf8');
+  await fs.writeFile(path.join(assetsRoot, 'char/rei.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p8sAAAAASUVORK5CYII=', 'base64'));
+  const resolved = await resolveProjectScript(visible, scenesRoot, new Set(), 'main.tds');
+  const diagnostics = analyzeScript(resolved, 'main.tds');
+  assert.equal(diagnostics.some(item => item.code === 'unproven-character-presence-at-call'), false, JSON.stringify(diagnostics));
+
+  const guarded = `include "std/motion/walk.tds" as walk
+character rei {
+  name = "Rei"
+  pose normal = "asset/char/rei.png"
+}
+scene main {
+  if runtime.state.characters.exists("rei") {
+    walk.character("rei", 72.0, 1, 1.0, 4.0)
+  }
+}`;
+  const guardedResolved = await resolveProjectScript(guarded, scenesRoot, new Set(), 'main.tds');
+  assert.equal(analyzeScript(guardedResolved, 'main.tds').some(item => item.code === 'unproven-character-presence-at-call'), false,
+    'the shared runtime-state predicate proves presence in its true branch');
+
+  const uncertain = `include "std/motion/walk.tds" as walk
+character rei {
+  name = "Rei"
+  pose normal = "asset/char/rei.png"
+}
+scene main { walk.character("rei", 72.0, 1, 1.0, 4.0) }`;
+  const uncertainResolved = await resolveProjectScript(uncertain, scenesRoot, new Set(), 'main.tds');
+  const warning = analyzeScript(uncertainResolved, 'main.tds').find(item => item.code === 'unproven-character-presence-at-call');
+  assert.ok(warning, 'call without a guaranteed show or runtime-state guard is reported');
+  assert.match(warning.message, /runtime\.state\.characters\.exists/);
+
+  const compiled = await compileProject(uncertain, assetsRoot, scenesRoot, new Map(), new Map(), 'main.tds');
+  const moves = [];
+  const runtime = new Runtime({ command: async (name, args) => { if (name === 'move') moves.push(args); } });
+  await runtime.run(compiled);
+  assert.equal(moves.length, 0, 'the function runtime guard skips movement when the character is absent');
 });
 
 test('std text and collection helpers are implemented in TDS and work in both runtimes', async (t) => {

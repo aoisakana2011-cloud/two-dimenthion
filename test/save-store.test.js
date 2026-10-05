@@ -32,5 +32,25 @@ test('save store falls back safely and imports valid legacy slots without overwr
   assert.equal(await reopened.readSlot(0), 'new');
   await reopened.deleteSlot(0);
   assert.equal(await reopened.readSlot(0), null);
-  await assert.rejects(reopened.readSlot(100), /0 and 99/);
+  await reopened.writeSlot(119, 'page-ten');
+  assert.equal(await reopened.readSlot(119), 'page-ten');
+  await assert.rejects(reopened.readSlot(120), /0 and 119/);
+});
+
+test('slot copy and move preserve snapshots and never overwrite an occupied destination', async () => {
+  const storage = memoryStorage();
+  const store = await open({ namespace: 'transfer-test', indexedDb: null, storage });
+  const original = JSON.stringify({ version: 1, scene: 'intro', line: 12, text: 'checkpoint' });
+  await store.writeSlot(2, original);
+  await store.writeSlot(4, 'occupied');
+  assert.equal(await store.transferSlot(2, 4), false);
+  assert.equal(await store.readSlot(4), 'occupied');
+  assert.equal(await store.transferSlot(2, 3), true);
+  assert.equal(await store.readSlot(2), original);
+  assert.equal(await store.readSlot(3), original);
+  assert.equal(await store.transferSlot(3, 5, { move: true }), true);
+  assert.equal(await store.readSlot(3), null);
+  assert.equal(await store.readSlot(5), original);
+  await assert.rejects(store.transferSlot(5, 5), /must differ/);
+  await assert.rejects(store.transferSlot(0, 120), /0 and 119/);
 });

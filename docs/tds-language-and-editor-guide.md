@@ -120,6 +120,8 @@ asset video opening = "asset/video/opening.mp4"
 
 種別は bg、char、image、bgm、se、voice、video。画像は png/jpg/jpeg/webp/gif、音声は wav/ogg/mp3/flac、動画は mp4/webm を使います。
 
+Browser は GIF の再生をブラウザーに任せます。Native は GIF の各フレームを更新し、埋め込みのループ回数を尊重します。ループ指定がない GIF は一度だけ再生され、0 回指定は無限、正数は初回の後に指定回数だけ繰り返します。
+
 ## キャラクター
 
 ~~~tds
@@ -128,11 +130,13 @@ character hero {
   affection = 0
   route = "common"
   pose normal = "asset/char/hero/normal.png"
-  pose smile = "asset/char/hero/smile.png"
+  pose smile = "asset/char/hero/smile.png" y_offset = -20
 }
 ~~~
 
 name は表示名です。その他のフィールドは `int`、`float`、`str`、`bool` の初期値、pose は立ち絵宣言です。
+
+`pose` 宣言の画像パスの後ろに `y_offset = -20` のように書くと、その画像だけの基本Y位置を整数pxで設定できます。指定できる範囲は `-1000000`〜`1000000` です。正の値は下、負の値は上で、省略時は0です。`show` の `y+` / `y-` 指定はこの画像設定に加算されます。
 
 ## 型と変数
 
@@ -273,12 +277,12 @@ play se door
 play voice greeting
 play voice greeting blocking
 play voice greeting async
-play video opening blocking
+play video opening
 play video opening async
 play bgm morning
 ~~~
 
-voice/video は blocking なら完了待ち、async なら進行を止めません。
+voice は blocking なら完了待ち、async または省略時は進行を止めません。動画は省略時blockingで完了まで物語の進行と入力を止めます。動画と物語を並行させる場合だけ `async` を明記します。
 
 待機・効果:
 
@@ -289,6 +293,56 @@ effect fade white 300
 ~~~
 
 時間はミリ秒の非負整数。effectの色はblackまたはwhiteです。
+
+背景切替・カメラ・会話欄:
+
+~~~tds
+bg classroom fade 500
+bg classroom crossfade 500
+bg classroom wipe-left 500
+play video rain async opacity 0.5
+camera zoom 1.25 at 640 360 over 700
+camera reset over 400
+dialog visible false
+dialog visible true
+~~~
+
+### Simultaneous timed visuals
+
+Use `parallel { ... }` to start several timed visual commands together. The block completes after the longest animation, then the next script command runs. Supported commands are timed `bg` transitions, character `show`/`hide` fades, `move`, timed `camera` changes, and `effect fade`. Keep each target to one animation of the same property in a block.
+
+~~~tds
+parallel {
+  bg classroom crossfade 600
+  show sister.normal left fade 400
+  camera zoom 1.08 at 640 360 over 600
+}
+say sister "The scene changed together."
+~~~
+
+A block accepts visual commands only; dialogue, choices, waits, assignments, and control flow stay outside it. Browser and Native playback use the same start-together, wait-for-all behavior.
+
+### Render layers
+
+The player has eight render categories with defaults: background `0`, video `1`, character `2`, image `3`, bottom fog `4`, dialogue and choices `5`, player controls `6`, and menus/overlays `7`. The UI Settings IDE's Layers page changes these defaults and saves them with the player UI theme. A script can also set a category while it runs:
+
+~~~tds
+layer dialogue 5.2
+layer menu 7.1
+~~~
+
+Use `--layer <number>` on a displayed element to override its category default. It is supported by `bg`, `show <character>.<pose>`, `show image`, and `play video`:
+
+~~~tds
+bg classroom --layer 0.3
+show sister.normal center --layer 2.2
+show image sparkle center --layer 3.5
+play video rain async --layer 1.4
+~~~
+
+Layer numbers range from `0` through `7.999`, with at most three decimal places. Higher values draw in front of lower values. Items with the same value keep their existing insertion order. `--only` can follow `--layer` when both options are used.
+
+背景切替は `fade` / `crossfade` / `wipe-left` / `wipe-right` / `wipe-up` / `wipe-down` を指定できます。遷移中も次の命令へ進まず、時間はミリ秒です。動画の `opacity` は 0.0〜1.0。動画は背景より上、キャラクターより下に描画され、`async` と組み合わせると背後で物語を進行できます。`camera zoom` の焦点座標はゲーム画面（標準1280×720）のpxで、ズームは背景・動画・キャラクター・画像に適用され、会話欄とメニューUIは画面位置に残ります。`dialog visible` は会話欄と選択肢を一時的に隠し、再表示します。背景揺れなどの反復演出は専用命令を増やさず、`move` と `std/motion/effects.tds` の計算関数を組み合わせて表現します。
 
 ## 変数テーブル
 

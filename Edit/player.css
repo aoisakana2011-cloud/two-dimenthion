@@ -1,14 +1,17 @@
 @import url("./scrollbars.css");
 *{box-sizing:border-box}
 html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#111;color:#fff;font-family:"Yu Gothic UI",Meiryo,system-ui,sans-serif}
-#stage{position:fixed;left:50%;top:50%;width:1280px;height:720px;margin:0;overflow:hidden;background:#222;transform:translate(-50%,-50%);transform-origin:center center}
+#stage{position:fixed;left:50%;top:50%;margin:0;overflow:hidden;background:#222;transform:translate(-50%,-50%);transform-origin:center center}
+#world{position:absolute;left:0;top:0;width:100%;height:100%;transform-origin:center center}
 #background{position:absolute;inset:0;background:center/cover no-repeat #222}
+#video-layer{position:absolute;inset:0;pointer-events:none}
+#video-layer video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
 #characters,#images{position:absolute;inset:0;pointer-events:none}
 .actor,.image{position:absolute;bottom:0;object-fit:contain;transform:translateX(-50%)}
 .far-left{left:8%}.left{left:26%}.center{left:50%}.right{left:74%}.far-right{left:92%}
 #dialogue{position:absolute;left:4%;right:4%;bottom:2%;min-height:20%;padding:14px 55px 14px 20px;background:transparent;border:0;border-radius:12px;cursor:pointer;isolation:isolate}
 #dialogue::before{content:"";position:absolute;inset:0;z-index:0;background:var(--dialog-background,#07111ddd);opacity:var(--dialog-opacity,1);border-radius:inherit;border:var(--dialog-border,1px solid #8ab8d8);pointer-events:none}
-#dialogue>*{z-index:1}
+#dialogue>*{position:relative;z-index:1}
 .dialogue-name{color:#9ee2ff;font-weight:700}
 #text{font-size:clamp(18px,2.5vw,30px);line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:hidden;overflow-y:auto}
 #speaker-text{line-height:1.2;white-space:nowrap;text-overflow:ellipsis}
@@ -18,7 +21,18 @@ html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#111;color:
 #bgm{display:none}
 #screen-overlay{position:absolute;z-index:100;inset:0;overflow:hidden;background-position:center;background-size:cover;color:#fff}
 #screen-overlay[hidden]{display:none}
+/* Screen controls get their focus appearance from the renderer-neutral UI tree.
+   Suppress the Browser's extra UA button ring so it cannot diverge from SDL. */
+#screen-overlay button:focus-visible{outline:none}
 #player-controls{position:absolute;z-index:90;inset:0;pointer-events:none}
+#stage[data-game-screen-open="true"] #player-controls{visibility:hidden;pointer-events:none}
+#stage[data-video-blocking="true"] #dialogue,#stage[data-video-blocking="true"] #player-controls{visibility:hidden;pointer-events:none}
+#stage[data-visual-only="video"] #background,#stage[data-visual-only="video"] #characters,#stage[data-visual-only="video"] #images,#stage[data-visual-only="video"] #bottom-fog,#stage[data-visual-only="video"] #dialogue,#stage[data-visual-only="video"] #player-controls,#stage[data-visual-only="video"] #screen-overlay{visibility:hidden;pointer-events:none}
+#stage[data-visual-only="video"] #video-layer{visibility:visible}
+#dialogue[hidden]{display:none}
+#stage[data-visual-only="video"] .player-effect{visibility:hidden}
+#stage[data-visual-only="background"] #video-layer,#stage[data-visual-only="background"] #characters,#stage[data-visual-only="background"] #images,#stage[data-visual-only="background"] #bottom-fog,#stage[data-visual-only="character"] #video-layer,#stage[data-visual-only="character"] #background,#stage[data-visual-only="character"] #images,#stage[data-visual-only="character"] #bottom-fog,#stage[data-visual-only="image"] #video-layer,#stage[data-visual-only="image"] #background,#stage[data-visual-only="image"] #characters,#stage[data-visual-only="image"] #bottom-fog{visibility:hidden}
+#stage[data-visual-only="character"] #characters .actor:not(.visual-only-target),#stage[data-visual-only="image"] #images .image:not(.visual-only-target){visibility:hidden}
 .player-control-button{position:absolute;display:grid;place-items:center;overflow:hidden;padding:2px 10px;border:1px solid #b9c7ce88;border-radius:3px;color:#f3f3ef;background:#101820df;background-position:center;background-size:100% 100%;font:600 15px/1.1 "Yu Gothic UI",Meiryo,sans-serif;text-shadow:0 1px 3px #000;cursor:pointer;pointer-events:auto}
 .player-control-button:hover,.player-control-button:focus-visible{outline:1px solid #d7e8ee;border-color:#d7e8ee;background-color:#283b47}
 .player-control-button img{width:100%;height:100%;object-fit:fill}

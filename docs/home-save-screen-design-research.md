@@ -3,18 +3,24 @@
 調査日: 2026-09-30  
 目的: Novel Scriptのホーム、pause/menu、save/load、preferences画面を、作品テーマに合わせて自由にデザインでき、BrowserとNativeでできるだけ同じ操作・見た目にする方式を決める。
 
+## 現行実装への追記（2026-10-04）
+
+現在の配信経路はBrowser DOMとSDL Native rendererであり、NativeにWebView2/Chromiumを組み込む提案は採用していない。画面HTML/CSSは任意Webページではなく、`Edit/screen-document.js`が共通UI treeへ変換する制限付きサブセットである。slotカードはHTMLテンプレートから設定数を展開し、`data-slot-field`で番号・状態・scene・speaker・text・保存時刻・サムネイルを結び付ける。空・保存済み・破損・非互換の全状態を両rendererが分類し、カードrootの限定的な`data-state` CSSも共通で描画する。
+
+サムネイルは保存時の物語画面から取得し、BrowserではIndexedDB、Nativeではuser-data内の`thumb-slot-N.png`に保存する。キャプチャ範囲や保存形式は異なるため、自動同期はしない。両方ともセーブ本体が有効ならサムネイル欠損・破損だけでロード不可にはしない。画面描画の現在の制限は[画面描画互換性](../Title/setting/screens/RENDERING-COMPATIBILITY.md)、操作・保存仕様は[画面設定README](../Title/setting/screens/README.md)を正とする。
+
 ## 結論
 
-採るべきなのは、**レイアウトにTDS専用命令を大量追加する方式でも、任意JavaScriptを実行する無制限Webページ方式でもなく、「HTML/CSSを主表現にした画面文書＋型付きEngine UI部品＋型付きAction API＋共通画面データモデル」**である。
+採用した方式は、**レイアウトをHTML/CSSで記述する画面文書＋型付きEngine UI部品＋許可済みAction API＋共通UI tree**である。
 
 1. ゲーム制御と画面遷移の正本は `game-screens.json`（または将来の同等manifest）。
-2. 表示構造と独自レイアウトはHTML、見た目はCSS。画像素材・hover/focus/disabled・Grid/Flex・responsive rulesを画面側で指定する。
-3. save grid、slider、toggle、tab/page selector等の状態依存部品は、engine-managed componentとして登録する。save slotを固定数のbuttonに展開するだけの実装から、テンプレート反復に拡張する。
-4. HTMLから任意JSを実行せず、`data-action`が許可済みのengine commandを送る。画面から読める値は型付きread-only view modelに限定する。
-5. BrowserとNativeは同じ画面文書を使う。Nativeで本物のHTML/CSS自由度まで求めるならWebView/Chromiumをホストし、SDL描画との境界を作る。Native独自SDL widgetへHTML/CSS全仕様を翻訳する方向は取らない。
-6. セーブデータ本体、セーブ一覧用metadata／thumbnail、ユーザー設定を分離し、Browser/Nativeに同じ論理APIを提供する。
+2. 表示構造と独自レイアウトはHTML、見た目は共通CSSサブセット。画像、hover/focus、Flex/Gridの一部を指定できる。一般ブラウザーと同等の全CSS・responsive機能は提供しない。
+3. save gridはHTMLカードprototypeを設定数へ展開し、state/slot-fieldをengine-managed view modelから結ぶ。range/checkbox、tab/page、slot操作も共通部品として実装済み。
+4. HTMLから任意JSを実行せず、検証済み`data-action`だけをengineへ送る。UI設定は宣言済みキーと型を検証して永続化する。
+5. BrowserとNativeは同じ画面文書・compiled UI treeを使う。Browser DOMとSDL Native rendererは別描画実装であり、ピクセル完全一致は保証しない。WebView2/Chromiumの採用提案は過去案で、現行rendererではない。
+6. セーブsnapshot、slot metadata/thumbnail、ユーザー設定を分けて管理する。Browser/Nativeで保存先・物理形式は異なり、自動同期はしない。
 
-この設計は現行機能が既に全部あるという説明ではなく、現在の画面HTML/CSS変換器、Browser DOM、SDL Native、保存形式を一段ずつ置き換えるための目標設計である。
+タイトル、ゲーム内MENU、SAVE/LOAD、SYSTEM、SOUNDはHTML/CSS・manifest・型付きactionで構成され、BrowserとNativeの実画面・操作テストを持つ。残作業はrenderer差を縮める個別改善であり、以下の調査・段階案は設計根拠と未解決要件を記録した履歴として読むこと。
 
 ## 1. 参考にした公式設計と読み取れること
 
@@ -59,14 +65,14 @@ Nativeは作品package横ではなくユーザー書込み可能な専用user-da
 - Native側にも画面設定／コントロールをpackageする経路とsmoke testがある。
 - Browser save snapshotはfile/scene/line、variables、locals、sceneState、現在の話者・本文・時刻等を保存する。
 
-現在の大きな不足:
+調査時点の課題を現行コードで再評価:
 
 1. HTML/CSSはnative browser documentではなく独自の小さなparser/layoutであり、標準CSSの表現力を大きく制限する。
-2. save slotは標準情報を1行の文字列にして出す経路が中心で、カード内部のthumbnail、章、時刻、本文、空きslot等を個別に自由配置しにくい。
-3. save gridは画面構成の汎用repeat/data binding部品でなく、roleから既定slotを生成する特例処理である。
-4. BrowserはlocalStorage、Nativeはpackage横`saves/slot-N.json`を使う。保存場所・容量・可搬性・backup性が一致しない。
-5. Save recordの表示用metadata、snapshot、player preferenceが明確な独立schema/serviceになっていない。
-6. main menu、in-game pause、save/load/preferences間のnavigationはscreen historyとactionに寄るが、共通navigation model、dirty-state/confirmation、continue availability等の契約が限定的。
+2. **解消済み:** save/load slotはHTMLテンプレートから複製され、thumbnail、number、status、scene、speaker、text、saved-atを個別に配置できる。サムネイルは両rendererで表示される。ただし現状の画像は背景・立ち絵・追加画像で、会話欄・本文・選択肢を含む全画面ではない。
+3. save gridは汎用の任意data bindingではなく、`save-slots`／`load-slots` roleに結び付いた固定数展開である。
+4. BrowserはIndexedDB（利用不能時はlocalStorage fallback）、NativeはSDLユーザーデータ領域を使う。Nativeはslot JSONとthumbnail PNGを別ファイルで保存し、`NOVEL_SAVE_ROOT`で保存先を指定できる。Browser/Native間の自動同期はなく、可搬性・容量・backup方法も異なる。
+5. **一部解消:** BrowserのSaveStoreはsnapshot／metadata／thumbnailを分離し、IndexedDBでは同一トランザクションで更新する。NativeはsnapshotとPNGを別ファイルに保存する。preferenceも別管理だが、両platformで同一の物理schema/serviceを共有するわけではない。
+6. title、pause、save/load/preferences間のnavigation、continue availability、page switching、slot copy/move/delete/lockは実装済み。screen history/actionを中心とした契約であり、複雑な任意遷移workflowやgamepad navigationは未実装。
 7. Web画面とNative画面のrenderer差により、同じUI treeでもfocus、font、range、text wrap、hover、image cropの見た目が一致する保証はない。
 
 ## 3. 推奨する4層モデル
@@ -74,7 +80,7 @@ Nativeは作品package横ではなくユーザー書込み可能な専用user-da
 ```text
 作品画面文書                 Engine services                 Renderer
 HTML structure + CSS theme -> typed UI tree / view models -> Browser DOM
-Screen manifest + actions  -> Navigation / SaveStore       -> Native WebView
+Screen manifest + actions  -> Navigation / SaveStore       -> SDL Native renderer
 ```
 
 ### A. Screen manifest（画面の意味・遷移）
@@ -326,13 +332,15 @@ WebView2配布ではRuntimeの存在確認が必要。Evergreenはsecurity/featu
 
 CEFはChromiumを別アプリへ埋め込むframeworkだが、browser engineそのものを同梱・更新・security対応する責任が増える。[CEF project](https://github.com/chromiumembedded/cef)
 
-### 推奨
+### 当時の推奨案（現行採用仕様ではない）
 
-最初にBrowser DOMをsource-of-truth rendererとしてscreen systemを完成させ、Native Windows playerはWebView2で同じscreen documentを描画するprototypeを作る。SDLはstory stage、音声／動画／scenario executionを継続担当。screen actionはWebViewからTyped messageをNative engineへ送り、Native側の許可action dispatcherだけが実行する。
+以下は調査時に検討したWebView案である。現在は採用していない。現行Native playerはSDL rendererであり、共通の限定HTML/CSSをUI treeへ変換して描画する。WebView2/CEFは将来の選択肢として比較した記録で、実装手順や現在の方式として読まないこと。
 
-ただしSDLとWebViewの合成（特に透明menu overlay、resize、focus/input、fullscreen、IME）は先に小さなrisk prototypeで確認する。透過合成が不安定なら、HTML screenをopaque full-window routeに限定するか、CEF offscreen renderingを比較する。プロトタイプ前にpackageへWebViewを全面導入しない。
+当時はBrowser DOMを正本とし、NativeでWebView2を利用する案を推奨した。現在はこの判断を採用せず、Native独自SDL rendererで共通UI treeを描画する方式に決定している。WebView合成やCEF prototypeに関する以下の旧検討は、現行実装の要件ではない。
 
-## 9. 実装順序と合格条件
+## 9. 当初の実装順序と合格条件（履歴）
+
+以下は調査時点の計画であり、現在の残作業一覧ではない。Phase 0–3は一部差分を残しつつ実装済み。Phase 4のWebView renderer案は不採用で、SDL Native rendererを継続している。
 
 ### Phase 0: 現行契約を固定
 
@@ -376,9 +384,9 @@ CEFはChromiumを別アプリへ埋め込むframeworkだが、browser engineそ�
 
 ## 10. 最終判断
 
-**画面はHTML/CSS、画面遷移はmanifest、動作は型付きengine actions、save listやsettings controlsはengine-managed semantic components、保存は共通SaveStore。** これが現在のエンジンの設計を活かし、作品側にデザイン自由度を渡しながら、story言語とUIの責務を混ぜない最良の落としどころである。
+**現行方式は、画面HTML/CSS＋manifest遷移＋許可済みengine actions＋共通UI treeをBrowser DOM/SDL Nativeの両方で描画する構成である。** セーブsnapshot・thumbnail・preferenceは分離し、renderer固有の保存adapterを使う。作品側はテンプレートや画像・色・レイアウトを編集できるが、使えるCSSは互換性表に記載した限定サブセットである。
 
-ただし「自由度が高いHTML/CSS」と「自前SDLで完全に同じ描画」を同時にタダで得ることはできない。Windows NativeではWebView2を画面UIのrendererとして実験するのが合理的であり、将来複数OSの完全一致を求めるならCEFまたは同等の埋め込みrendererを製品コストとして受け入れる。HTMLを小さな独自CSS parserで受け続けるだけでは、ユーザーが求める自由なホーム／save cardには到達しない。
+完全なHTML/CSS自由度と自前SDLの低依存配布を同時に得ることはできない。現在は配布サイズ・Web runtime依存を避けるためSDL共有treeを選択している。将来renderer方針を再検討する場合は、WebView2/CEFを「すでに採用済み」と誤読せず、配布・セキュリティ・OS範囲を再評価する必要がある。
 
 ## Sources
 
