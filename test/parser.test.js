@@ -1,6 +1,17 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { parse, compile, checkTypes, analyzeScript } = require('../dist');
+
+test('parser reports excessive expression nesting as a syntax error instead of overflowing the stack', () => {
+  const parenthesized = depth => `int value = ${'('.repeat(depth)}1${')'.repeat(depth)}`;
+  assert.doesNotThrow(() => parse(parenthesized(255)), 'nesting below the documented limit remains accepted');
+  assert.throws(() => parse(parenthesized(256)), error => error.name === 'ParseError' && /expression nesting depth exceeds 256/.test(error.message));
+
+  const unary = `int value = ${'not '.repeat(1000)}true`;
+  assert.throws(() => parse(unary), error => error.name === 'ParseError' && /expression nesting depth exceeds 256/.test(error.message));
+});
 
 test('parses and compiles assets, globals, characters, functions and scenes', () => {
   const script = parse(`
@@ -45,6 +56,54 @@ test('parses and compiles assets, globals, characters, functions and scenes', ()
   ]);
 });
 
+test('compiler and parser diagnostics use English technical terms with Japanese explanations', () => {
+  assert.throws(() => parse('include'), /include path を指定してください/);
+  assert.throws(() => parse('asset bg image_id = 1'), /asset path は文字列で指定してください/);
+  assert.throws(() => parse('scene main { fn nested() -> none {} }'), /関数宣言はファイルの top-level でのみ使用できます/);
+  assert.throws(() => checkTypes(parse('fn bad() -> none { global int value = 1 }')), /global 宣言はファイルの top-level でのみ使用できます/);
+  assert.throws(() => checkTypes(parse('scene main { parallel {} }')), /parallel block には時間指定のある表示命令が1つ以上必要です/);
+});
+
+test('type diagnostics keep DSL type and access terms in English', () => {
+  assert.throws(
+    () => compile(parse('list[int] xs = [1]\nint x = xs[true]')),
+    error => error.message === 'line 2, column 9: list の添字は int で指定してください',
+  );
+  assert.throws(
+    () => compile(parse('int x = 2[0]')),
+    error => error.message === 'line 1, column 9: Type error (current): index access の対象は dict でなければなりません',
+  );
+  assert.throws(
+    () => compile(parse('list[int] xs = list.append([1], [2])')),
+    error => error.message === 'line 1, column 16: list.append には primitive type を要素とする list を指定してください',
+  );
+});
+
+test('asset and playback type diagnostics keep technical identifiers in English', () => {
+  assert.throws(
+    () => compile(parse('scene main { bg missing }')),
+    /background asset 'missing' が未定義か、type が bg ではありません/,
+  );
+  assert.throws(
+    () => compile(parse('asset bgm music = "asset/music.ogg"\nscene main { play bgm music volume 1 }')),
+    /play の volume は float で指定してください/,
+  );
+});
+
+test('checker diagnostics name DSL types and fields in English', () => {
+  assert.throws(() => compile(parse('global bool value = not 1')), /not の対象は bool でなければなりません/);
+  assert.throws(() => compile(parse('str left = "a"\nint right = 1\nbool result = left < right')), /同じ int または float 型/);
+  assert.throws(() => compile(parse('global str text = "x"\nstr result = str(true)')), /int または float 型の引数/);
+  assert.throws(() => compile(parse('str layer = "bad"\nasset image logo = "asset/logo.png"\nscene main { show image logo center --layer layer }')), /--layer は int または float で指定してください/);
+});
+
+test('validates --layer range and three-decimal precision', () => {
+  const source = precision => `asset image logo = "asset/logo.png"\nscene main { show image logo center --layer ${precision} }`;
+  assert.doesNotThrow(() => compile(parse(source('7.999'))));
+  assert.throws(() => compile(parse(source('8'))), /--layer/);
+  assert.throws(() => compile(parse(source('1.2345'))), /--layer/);
+});
+
 test('parses bool values, primitive lists, list indexing, and typed for-in variables', () => {
   const script = parse(`
     struct Status {
@@ -71,8 +130,8 @@ test('parses bool values, primitive lists, list indexing, and typed for-in varia
   const compiled = compile(script);
   assert.deepEqual(compiled.variables.find(item => item.name === 'value').type, 'int');
   assert.deepEqual(compiled.functions[0].body[1].iterable, { kind: 'load', name: 'values' });
-  assert.throws(() => compile(parse('global list[int] values = [1]\nscene main { set values[0] = "wrong" }')), /蝙弓|type/i);
-  assert.throws(() => compile(parse('scene main { for value in 5 { wait value } }')), /list|蝙弓/i);
+  assert.throws(() => compile(parse('global list[int] values = [1]\nscene main { set values[0] = "wrong" }')), /list への代入/);
+  assert.throws(() => compile(parse('scene main { for value in 5 { wait value } }')), /for-in では list 型の値を指定してください/);
 });
 
 test('supports typed const declarations and rejects reassignment', () => {
@@ -90,17 +149,17 @@ test('parses explicit global declarations', () => {
     ['declare', true, false],
     ['declare', true, true],
   ]);
-  assert.throws(() => checkTypes(parse('fn bad() -> none { global int value = 1 }')), /global.*トップレベル/);
+  assert.throws(() => checkTypes(parse('fn bad() -> none { global int value = 1 }')), /global.*top-level/);
 });
 
 test('top-level declarations report their own restriction when nested in executable blocks', () => {
   for (const [declaration, label] of [
-    ['fn nested() -> none {}', /関数宣言.*トップレベル/],
-    ['scene nested {}', /scene 宣言.*トップレベル/],
-    ['struct Nested { value: int }', /struct 宣言.*トップレベル/],
-    ['include "module.tds" as module', /include 宣言.*トップレベル/],
-    ['asset bg nested = "asset/bg.png"', /asset 宣言.*トップレベル/],
-    ['character nested {}', /character 宣言.*トップレベル/],
+    ['fn nested() -> none {}', /関数宣言.*top-level/],
+    ['scene nested {}', /scene 宣言.*top-level/],
+    ['struct Nested { value: int }', /struct 宣言.*top-level/],
+    ['include "module.tds" as module', /include 宣言.*top-level/],
+    ['asset bg nested = "asset/bg.png"', /asset 宣言.*top-level/],
+    ['character nested {}', /character 宣言.*top-level/],
   ]) {
     assert.throws(() => parse(`scene main { ${declaration} }`), label, declaration);
     assert.throws(() => parse(`fn outer() -> none { ${declaration} }`), label, declaration);
@@ -108,13 +167,14 @@ test('top-level declarations report their own restriction when nested in executa
 });
 
 test('rejects every DSL keyword documented as unavailable for identifiers', () => {
-  const reserved = [
-    'scene', 'asset', 'character', 'struct', 'pose', 'include',
-    'int', 'float', 'str', 'dict', 'none', 'global', 'set', 'unset',
-    'say', 'bg', 'bgm', 'char', 'show', 'at', 'hide', 'image', 'clear', 'play', 'effect', 'wait',
-    'if', 'elif', 'else', 'and', 'or', 'not', 'choice', 'for', 'from', 'to', 'step', 'while',
-    'fn', 'return', 'goto', 'async', 'blocking', 'voice', 'video', 'const', 'let',
-  ];
+  const implementation = fs.readFileSync(path.join(__dirname, '..', 'src', 'parser', 'parser.ts'), 'utf8');
+  const syntax = fs.readFileSync(path.join(__dirname, '..', 'docs', 'syntax-reference.md'), 'utf8');
+  const implementationList = implementation.match(/const KEYWORDS = new Set\(\[([\s\S]*?)\]\);/)?.[1];
+  const documentedList = syntax.match(/予約語集合は `parser\.ts` の `KEYWORDS` が唯一の実装基準であり、次を含む。\n\n```text\n([\s\S]*?)\n```/)?.[1];
+  assert.ok(implementationList, 'KEYWORDS must remain a directly auditable literal set');
+  assert.ok(documentedList, 'syntax reference must keep the canonical keyword list');
+  const reserved = [...implementationList.matchAll(/'([^']+)'/g)].map((match) => match[1]);
+  assert.deepEqual(documentedList.trim().split(/\s+/).sort(), [...reserved].sort(), 'syntax reference keyword inventory must exactly match Parser');
   for (const name of reserved) {
     assert.throws(() => parse(`int ${name} = 1`), /予約語/, `${name} must remain reserved`);
   }
@@ -127,11 +187,18 @@ test('defaults shorthand say to narrator', () => {
 });
 
 test('requires a text expression for say', () => {
-  assert.throws(() => parse('say message'), /quoted text/);
-  assert.throws(() => parse('say narrator'), /quoted text/);
+  assert.throws(() => parse('say message'), /say body.*\u5f15\u7528\u7b26/);
+  assert.throws(() => parse('say narrator'), /say body.*\u5f15\u7528\u7b26/);
   const hero = 'character hero {\n  name = "Hero"\n  pose normal = "asset/hero.png"\n}\n';
   assert.doesNotThrow(() => checkTypes(parse(hero + 'show hero.normal center')));
-  assert.throws(() => parse('Unknown value = { "x": 1 }'), /Expected expression/);
+  assert.throws(() => parse('Unknown value = { "x": 1 }'), /\u5f0f\u3092\u6307\u5b9a/);
+});
+
+test('ambiguous asset references use English Asset terminology in diagnostics', () => {
+  const source = `asset bg first = "asset/one/shared.png"
+asset bg second = "asset/two/shared.png"
+scene main { bg "shared.png" }`;
+  assert.throws(() => checkTypes(parse(source)), /Asset reference "shared\.png".*assets.*asset ID/);
 });
 
 test('character fields are typed runtime state with dotted interpolation', () => {
@@ -156,7 +223,7 @@ test('character fields are typed runtime state with dotted interpolation', () =>
     ['ayase.smile', 'center'],
     ['ayase'],
   ]);
-  assert.throws(() => checkTypes(parse('character ayase {\nname = "A"\npose normal = "asset/a.png"\n}\nshow ayase.missing center')), /ポーズ/);
+  assert.throws(() => checkTypes(parse('character ayase {\nname = "A"\npose normal = "asset/a.png"\n}\nshow ayase.missing center')), /pose/);
 });
 
 test('parses pixel offsets on character show commands before an optional fade', () => {
@@ -202,7 +269,7 @@ move bg by x-12 y+4`);
   assert.throws(() => checkTypes(parse('character hero { name = "Hero"\npose normal = "asset/hero.png" }\nmove character hero by x+1 x-2')), /x \/ y をそれぞれ1回/);
   assert.throws(() => checkTypes(parse('move bg by x+1000001')), /±1000000 px/);
   assert.throws(() => checkTypes(parse('move bg by x+1 over -1')), /2147483647/);
-  assert.throws(() => checkTypes(parse('character ghost { name = "Ghost"\npose normal = "asset/ghost.png" }\nmove character absent by y+1')), /未定義のキャラクター/);
+  assert.throws(() => checkTypes(parse('character ghost { name = "Ghost"\npose normal = "asset/ghost.png" }\nmove character absent by y+1')), /未定義の character/);
 });
 
 test('warns when a move target is not statically established', () => {
@@ -306,7 +373,7 @@ test('validates and preserves non-blocking BGM crossfade options', () => {
   const command = compiled.scenes[0].instructions.find(statement => statement.op === 'command');
   assert.deepEqual(command.args.slice(0, 3).map(item => item.kind === 'literal' ? item.value : item.name), ['bgm', 'calm', 'crossfade']);
   assert.equal(command.args[3].name, 'fade_ms');
-  assert.throws(() => checkTypes(parse(`asset bgm calm = "asset/calm.ogg"\nplay bgm calm dissolve 100`)), /crossfade/);
+  assert.throws(() => checkTypes(parse(`asset bgm calm = "asset/calm.ogg"\nplay bgm calm dissolve 100`)), /play の option 'dissolve' は未対応です。BGM では crossfade、voice では blocking \/ async/);
   assert.throws(() => checkTypes(parse(`asset bgm calm = "asset/calm.ogg"\nplay bgm calm crossfade -1`)), /譎る俣|duration|0/);
 });
 
@@ -326,8 +393,14 @@ test('rejects conflicting blocking and async playback options', () => {
     const extension = kind === 'voice' ? 'wav' : 'mp4';
     for (const options of ['async blocking', 'blocking async']) {
       const source = `asset ${kind} sample = "asset/sample.${extension}"\nscene main { play ${kind} sample ${options} }`;
-      assert.throws(() => checkTypes(parse(source)), /cannot combine blocking and async/);
+      assert.throws(() => checkTypes(parse(source)), /blocking \u3068 async \u3092\u540c\u6642\u306b\u6307\u5b9a\u3067\u304d\u307e\u305b\u3093/);
     }
+  }
+});
+
+test('rejects legacy-looking words that are not engine command names', () => {
+  for (const command of ['char hero', 'at center', 'image logo', 'se click']) {
+    assert.throws(() => checkTypes(parse(`scene main { ${command} }`)), /未知の命令/, command);
   }
 });
 
@@ -342,7 +415,7 @@ scene main {
   const commands = compile(parse(source)).scenes[0].instructions.filter(instruction => instruction.op === 'command');
   assert.deepEqual(commands[0].args.map(argument => argument.kind === 'float' ? Number(argument.value) : argument.kind === 'literal' ? argument.value : argument.name), ['voice', 'greeting', 'character', 'ayaka', 'volume', 0.8, 'blocking']);
   assert.deepEqual(commands[1].args.map(argument => argument.value), ['voice', 'greeting', 'async']);
-  assert.throws(() => checkTypes(parse(`asset voice greeting = "asset/voice.wav"\nscene main { play voice greeting character missing }`)), /character 'missing'/);
+  assert.throws(() => checkTypes(parse(`asset voice greeting = "asset/voice.wav"\nscene main { play voice greeting character missing }`)), /\u767b\u5834\u4eba\u7269 'missing' \u304c\u5b9a\u7fa9\u3055\u308c\u3066\u3044\u307e\u305b\u3093/);
   assert.throws(() => checkTypes(parse(`asset se click = "asset/click.wav"\nscene main { play se click character ayaka }`)), /character/);
 });
 
@@ -374,6 +447,12 @@ scene main {
   assert.throws(() => checkTypes(parse('const float too_opaque = 1.2\nscene main { say narrator "test" opacity too_opaque }')), /0.0 から 1.0/);
 });
 
+test('reports struct field diagnostics with the language term used by the syntax', () => {
+  assert.throws(() => parse('struct User { : int }'), /field nameを指定してください/);
+  assert.throws(() => parse('struct User { age: string }'), /struct field の type は int、float、str、bool/);
+  assert.throws(() => parse('struct User { age: int\n age: int }'), /struct field 'age' が重複しています/);
+});
+
 test('parses and type-checks named structs with field access', () => {
   const script = parse(`
     struct User {
@@ -386,7 +465,58 @@ test('parses and type-checks named structs with field access', () => {
   `);
   assert.doesNotThrow(() => checkTypes(script));
   assert.equal(compile(script).globals[1].op, 'set');
-  assert.throws(() => checkTypes(parse('struct User { age: int }\nUser user = { "age": "bad" }')), /フィールド 'age' の型が一致しません/);
+  assert.throws(() => checkTypes(parse('struct User { age: int }\nUser user = { "age": "bad" }')), /field 'age' の型が一致しません/);
+});
+
+test('parses postfix field and index access in source order', () => {
+  const script = parse('int result = root.field[0].tail');
+  const expression = script.globals[0].initial;
+  assert.equal(expression.kind, 'index');
+  assert.equal(expression.key.value, 'tail');
+  assert.equal(expression.target.kind, 'index');
+  assert.equal(expression.target.key.value, 0);
+  assert.equal(expression.target.target.key.value, 'field');
+});
+
+test('accepts empty and trivia-only source as an empty script', () => {
+  for (const source of ['', ' \t\n', '# comment only\n// another comment']) {
+    const script = parse(source);
+    assert.deepEqual(script.globals, [], 'empty source has no global statements');
+    assert.deepEqual(script.scenes, [], 'empty source has no scenes');
+    assert.deepEqual(script.functions, [], 'empty source has no functions');
+    assert.deepEqual(script.includes, [], 'empty source has no includes');
+  }
+});
+
+test('parenthesized expressions remain valid postfix targets', () => {
+  const expression = parse('int result = (root.field)[0].tail').globals[0].initial;
+  assert.equal(expression.kind, 'index');
+  assert.equal(expression.key.value, 'tail');
+  assert.equal(expression.target.kind, 'index');
+  assert.equal(expression.target.key.value, 0);
+  assert.equal(expression.target.target.kind, 'index');
+  assert.equal(expression.target.target.key.value, 'field');
+});
+
+test('struct fields treat object prototype names as ordinary declared fields', () => {
+  const script = parse(`
+    struct UserFields {
+      constructor: int
+      __proto__: str
+    }
+    UserFields user = { "constructor": 1, "__proto__": "plain data" }
+    set user.constructor = 2
+    say narrator user.__proto__
+  `);
+  assert.equal(Object.hasOwn(script.structs[0].fields, '__proto__'), true);
+  assert.equal(Object.hasOwn(script.structs[0].fieldLocations, '__proto__'), true);
+  assert.deepEqual(script.structs[0].fieldLocations.__proto__, { line: 4, column: 7 });
+  assert.doesNotThrow(() => checkTypes(script));
+  assert.doesNotThrow(() => compile(script));
+  assert.throws(() => checkTypes(parse(`
+    struct UserFields { name: str }
+    UserFields user = { "name": "ok", "toString": "not a field" }
+  `)), /field.*toString.*ありません/);
 });
 
 test('allows struct types to be referenced before their declaration', () => {
@@ -432,7 +562,19 @@ test('parses logical conditions and choice expressions', () => {
 });
 
 test('reports unterminated strings', () => {
-  assert.throws(() => parse('say narrator "broken'), /Unterminated string at line 1/);
+  assert.throws(() => parse('say narrator "broken'), /string literal が閉じられていません（1行、14列）/);
+});
+
+test('records asset and character pose source positions at the path text', () => {
+  const assetSource = 'asset image cover = "asset/cover.png"';
+  const asset = parse(assetSource).assets[0];
+  assert.equal(asset.line, 1);
+  assert.equal(asset.column, assetSource.indexOf('asset/cover.png') + 1);
+
+  const poseSource = 'character hero { pose normal = "asset/hero.png" }';
+  const pose = parse(poseSource).characters[0].poses[0];
+  assert.equal(pose.line, 1);
+  assert.equal(pose.column, poseSource.indexOf('asset/hero.png') + 1);
 });
 
 test('treats all supported external line separators as DSL newlines', () => {
@@ -446,26 +588,63 @@ test('accepts a leading UTF-8 BOM without shifting token locations', () => {
   const script = parse('\uFEFFsay narrator "hello"');
   assert.equal(script.globals[0].line, 1);
   assert.equal(script.globals[0].column, 1);
-  assert.throws(() => parse('say narrator "before"\uFEFF\nsay narrator "after"'), /Unexpected character/);
+  assert.throws(() => parse('say narrator "before"\uFEFF\nsay narrator "after"'), /不明な文字/);
+});
+
+test('lexer syntax errors retain the exact invalid-character and unterminated-string spans', () => {
+  const { tokenize } = require('../dist');
+  assert.throws(() => tokenize('scene main {\n  say narrator "ok"\n  §\n}'), (error) => {
+    assert.equal(error.token.line, 3);
+    assert.equal(error.token.column, 3);
+    assert.equal(error.token.value, '§');
+    return true;
+  });
+  assert.throws(() => tokenize('scene main {\n  say narrator "unfinished'), (error) => {
+    assert.equal(error.token.line, 2);
+    assert.equal(error.token.column, 16);
+    assert.equal(error.token.value, '"unfinished');
+    return true;
+  });
+  assert.throws(() => tokenize('😀'), (error) => {
+    assert.equal(error.token.value, '😀');
+    assert.equal(error.token.value.length, 2);
+    return true;
+  });
+});
+
+test('treats a mid-file BOM according to string and comment context', () => {
+  const value = parse('str text = "before\uFEFFafter"').globals[0].initial.value;
+  assert.equal(value, 'before\uFEFFafter', 'a BOM inside a string remains literal text');
+  assert.doesNotThrow(() => parse('say narrator "before" # comment\uFEFF\nsay narrator "after"'), 'a BOM inside a line comment is ignored with the comment');
+  assert.throws(() => parse('say narrator "before"\uFEFF\nsay narrator "after"'), /不明な文字/, 'a BOM in ordinary code remains invalid');
 });
 
 test('rejects non-canonical Windows separators in asset paths', () => {
-  assert.throws(() => compile(parse('asset bg school = "asset\\\\bg\\\\mori.jpg"')), /アセットパス|asset.*path/i);
+  assert.throws(() => compile(parse('asset bg school = "asset\\\\bg\\\\mori.jpg"')), /asset path/i);
 });
 
 test('reports malformed dictionary and blocks at exact locations', () => {
-  assert.throws(() => parse('dict[int] x = {foo: 1}\n'), /Dictionary keys must be strings/);
-  assert.throws(() => checkTypes(parse('dict[str] x = {"same": "first", "same": "second"}')), /duplicate dictionary key/);
-  assert.throws(() => parse('scene broken {\n  say narrator "x"\n'), /Expected '}'/);
+  assert.throws(() => parse('dict[int] x = {foo: 1}\n'), /dict の key には string literal を指定してください/);
+  assert.throws(() => checkTypes(parse('dict[str] x = {"same": "first", "same": "second"}')), /dict の key .* が重複/);
+  assert.throws(() => parse('scene broken {\n  say narrator "x"\n'), /'}' が必要です/);
 });
 
 test('rejects unknown escapes and non-canonical asset paths', () => {
-  assert.throws(() => parse(String.raw`say "hello\q"`), /Unknown escape sequence/);
-  assert.throws(() => parse(String.raw`asset bg school = "asset\q\mori.jpg"`), /Unknown escape sequence/);
-  assert.throws(() => parse(String.raw`character hero { pose normal = "asset\q\hero.png" }`), /Unknown escape sequence/);
-  assert.throws(() => parse(String.raw`include "chapter\q.tds"`), /Unknown escape sequence/);
-  assert.throws(() => parse(String.raw`goto "chapter\q.tds"`), /Unknown escape sequence/);
-  assert.throws(() => compile(parse(String.raw`asset bg school = "asset\\bg\\mori.jpg"`)), /アセットパス|asset.*path/i);
+  assert.throws(() => parse(String.raw`say "hello\q"`), /不明な escape sequence/);
+  assert.throws(() => parse(String.raw`str value = "hello\q"`), /不明な escape sequence/);
+  assert.throws(() => parse(String.raw`dict[str] values = {"key\q": "value"}`), /不明な escape sequence/);
+  assert.throws(() => parse(String.raw`character hero { name = "Hero\q" }`), /不明な escape sequence/);
+  assert.throws(() => parse(String.raw`asset bg school = "asset\q\mori.jpg"`), /不明な escape sequence/);
+  assert.throws(() => parse(String.raw`character hero { pose normal = "asset\q\hero.png" }`), /不明な escape sequence/);
+  assert.throws(() => parse(String.raw`include "chapter\q.tds"`), /不明な escape sequence/);
+  const astralEscape = String.raw`say "x\🚀"`;
+  assert.throws(() => parse(astralEscape), error => {
+    assert.equal(error.startColumn, astralEscape.indexOf('🚀') + 1);
+    assert.equal(error.endColumn, astralEscape.indexOf('🚀') + 3);
+    return true;
+  });
+  assert.throws(() => parse(String.raw`goto "chapter\q.tds"`), /不明な escape sequence/);
+  assert.throws(() => compile(parse(String.raw`asset bg school = "asset\\bg\\mori.jpg"`)), /asset path/i);
 });
 
 test('speakerless say accepts any string expression that starts with a string literal', () => {
@@ -475,7 +654,7 @@ test('speakerless say accepts any string expression that starts with a string li
   assert.equal(say.kind, 'command');
   assert.equal(say.args[0].value, 'narrator');
   assert.equal(say.args[1].kind, 'binary');
-  assert.throws(() => parse('scene main { say name }'), /say requires quoted text/);
+  assert.throws(() => parse('scene main { say name }'), /say body.*\u5f15\u7528\u7b26/);
 });
 
 test('preserves engine commands and scene transitions for the browser player', () => {
@@ -609,6 +788,31 @@ test('precedence of not correctly captures comparison expressions', () => {
   assert.equal(cond.operator, 'not');
   assert.equal(cond.value.kind, 'binary');
   assert.equal(cond.value.operator, '==');
+});
+
+test('binary operator precedence and equal-precedence operators are left associative', () => {
+  const expressions = parse(`
+    global int arithmetic = 1 + 2 * 3 - 4 / 2 % 2
+    global bool logic = true or false and not false == true
+    global bool comparison = 1 < 2 == true
+  `).globals.map((declaration) => declaration.initial);
+
+  const arithmetic = expressions[0];
+  assert.equal(arithmetic.operator, '-');
+  assert.equal(arithmetic.left.operator, '+');
+  assert.equal(arithmetic.left.right.operator, '*');
+  assert.equal(arithmetic.right.operator, '%');
+  assert.equal(arithmetic.right.left.operator, '/');
+
+  const logic = expressions[1];
+  assert.equal(logic.operator, 'or');
+  assert.equal(logic.right.operator, 'and');
+  assert.equal(logic.right.right.operator, 'not');
+  assert.equal(logic.right.right.value.operator, '==');
+
+  const comparison = expressions[2];
+  assert.equal(comparison.operator, '==');
+  assert.equal(comparison.left.operator, '<');
 });
 
 test('type checks elif condition for boolean expression', () => {
@@ -752,9 +956,16 @@ test('float division by zero and overflow are diagnosed statically', () => {
     }
   `));
   assert.ok(diagnostics.some((item) => item.code === 'division-by-zero' && item.severity === 'warning'));
-  assert.ok(diagnostics.some((item) => item.code === 'float-overflow' && item.severity === 'error'));
-  assert.throws(() => parse('float value = 1e309'), /float literal must be finite/);
+  assert.ok(diagnostics.some((item) => item.code === 'float-overflow' && item.severity === 'error' && item.message === 'float の演算結果が表現可能な範囲を超えます'));
+  assert.throws(() => parse('float value = 1e309'), /float literal/);
   assert.doesNotThrow(() => compile(parse('float value = 5e-324')), 'finite subnormal literals remain valid');
+});
+
+test('numeric literal syntax matches the documented decimal and exponent forms', () => {
+  assert.doesNotThrow(() => parse('float a = 12.0\nfloat b = 0.25\nfloat c = 1e3\nfloat d = 2.5E-2'));
+  assert.throws(() => parse('float value = .5'), /\u5f0f\u3092\u6307\u5b9a/);
+  assert.throws(() => parse('float value = 5.'), /1行、17列/);
+  assert.throws(() => parse('float value = 1e+'), /\u884c\u672b/);
 });
 
 test('float arithmetic is evaluated before rejecting out-of-range show offsets', () => {
@@ -796,6 +1007,29 @@ test('float arithmetic is evaluated before rejecting out-of-range show offsets',
       if flag == 0 { float shift = 1.0 } else { float shift = 2.0 }
       show hero.normal center x+(shift)
     }`)));
+});
+
+test('parallel character shows cannot compete for the same exclusive slot', () => {
+  const source = `character first {
+    name = "First"
+    pose normal = "asset/first.png"
+  }
+  character second {
+    name = "Second"
+    pose normal = "asset/second.png"
+  }
+  scene main {
+    parallel {
+      show first.normal left fade 300
+      show second.normal left fade 500
+    }
+  }`;
+  assert.throws(() => checkTypes(parse(source)), error => {
+    assert.match(error.message, /same target|同じ対象/);
+    assert.match(error.message, /line 12, column 7/, 'nested parallel command errors point at the offending child command');
+    return true;
+  });
+  assert.doesNotThrow(() => checkTypes(parse(source.replace('second.normal left', 'second.normal right'))));
 });
 test('warns about statically conflicting character slots without rejecting intentional switches', () => {
   const diagnostics = analyzeScript(parse(`
@@ -1037,8 +1271,8 @@ test('reports each possible branch image when a later image overlays a merged sl
   const conflicts = diagnostics.filter((item) => item.code === 'image-slot-conflict');
   assert.equal(conflicts.length, 2);
   assert.ok(conflicts.every((item) => item.line === 12 && item.column === 7 && item.endColumn === 30));
-  assert.ok(conflicts.some((item) => item.message.includes("image 'first'")));
-  assert.ok(conflicts.some((item) => item.message.includes("image 'second'")));
+  assert.ok(conflicts.some((item) => item.message.includes("\u753b\u50cf 'first'")));
+  assert.ok(conflicts.some((item) => item.message.includes("\u753b\u50cf 'second'")));
 });
 
 test('does not report character slot conflicts after a terminating transfer', () => {
@@ -1078,8 +1312,12 @@ test('warns when background or BGM is replaced without an explicit clear', () =>
   const bgm = diagnostics.filter((item) => item.code === 'bgm-replacement');
   assert.equal(background.length, 1);
   assert.equal(bgm.length, 1);
-  assert.ok(background[0].message.includes("'first' is replaced by 'second'"));
-  assert.ok(bgm[0].message.includes("'calm' is replaced by 'tense'"));
+  assert.ok(background[0].message.includes("'first'"));
+  assert.ok(background[0].message.includes("'second'"));
+  assert.ok(background[0].message.includes("\u7f6e\u304d\u63db\u308f\u308a\u307e\u3059"));
+  assert.ok(bgm[0].message.includes("'calm'"));
+  assert.ok(bgm[0].message.includes("'tense'"));
+  assert.ok(bgm[0].message.includes("\u7f6e\u304d\u63db\u308f\u308a\u307e\u3059"));
 });
 
 test('does not warn when a positive-duration BGM crossfade intentionally replaces the active track', () => {
@@ -1235,27 +1473,31 @@ test('requires external goto paths to be quoted while preserving local scene nam
   assert.equal(local.scenes[0].body[0].scene, 'next_scene');
   const quoted = parse('scene start { goto "chapter-2/route.next.tds" }');
   assert.equal(quoted.scenes[0].body[0].scene, 'chapter-2/route.next.tds');
-  assert.throws(() => parse('scene start { goto chapter-1/route.next.tds }'), /External scene paths must be quoted/);
-  assert.throws(() => parse(String.raw`scene start { goto chapter\\next.tds }`), /External scene paths must be quoted/);
-  assert.throws(() => parse('scene start { goto "chapter//route.tds" }'), /Invalid scene path/);
-  assert.throws(() => parse('scene start { goto "con.tds" }'), /Invalid scene path/);
-  assert.throws(() => parse('scene start { goto "chapter/next." }'), /Invalid scene path/);
-  assert.throws(() => parse('include chapter / route.tds'), /Include path cannot contain spaces/);
+  assert.throws(() => parse('scene start { goto chapter-1/route.next.tds }'), /external scene path \u306f\u5f15\u7528\u7b26/);
+  assert.throws(() => parse(String.raw`scene start { goto chapter\\next.tds }`), /external scene path \u306f\u5f15\u7528\u7b26/);
+  assert.throws(() => parse('scene start { goto "chapter//route.tds" }'), /scene path が不正です/);
+  assert.throws(() => parse('scene start { goto "con.tds" }'), /scene path が不正です/);
+  assert.throws(() => parse('scene start { goto "chapter/next." }'), /scene path が不正です/);
+  assert.throws(() => parse('include chapter / route.tds'), /include path \u306b\u7a7a\u767d/);
 });
 
 test('parses aliased module imports and qualified function calls', () => {
   const script = parse('include "math/numtd.tds" as nt\nscene main { int answer = nt.add(1, 2)\nnt.log(answer) }');
   assert.deepEqual(script.includes.map(({ path, alias }) => ({ path, alias })), [{ path: 'math/numtd.tds', alias: 'nt' }]);
+  assert.deepEqual(parse('include asset/as.tds as items').includes.map(({ path, alias }) => ({ path, alias })), [{ path: 'asset/as.tds', alias: 'items' }],
+    'the alias delimiter must be whitespace-separated so an `as` path segment remains part of an unquoted path');
+  assert.deepEqual(parse('include as as items').includes.map(({ path, alias }) => ({ path, alias })), [{ path: 'as', alias: 'items' }]);
   assert.equal(script.scenes[0].body[0].initial.name, 'nt.add');
   assert.equal(script.scenes[0].body[1].name, 'nt.log');
-  assert.throws(() => parse('include "math.tds"'), /Expected 'as'/);
-  assert.throws(() => parse('include a.tds as math\ninclude b.tds as math'), /already used/);
+  assert.throws(() => parse('include "math.tds"'), /'as' が必要です/);
+  assert.throws(() => parse('include a.tds as math\ninclude b.tds as math'), /include alias 'math' \u306f\u3059\u3067\u306b\u4f7f\u7528/);
+  assert.throws(() => parse('fn character() -> none {}'), /reserved|識別子|character/i);
 });
 
 test('rejects non-canonical asset path components', () => {
-  assert.throws(() => checkTypes(parse('asset bg broken = "asset//bg.png"')), /アセットパス|asset.*path/i);
-  assert.throws(() => checkTypes(parse('asset bg broken = "asset/./bg.png"')), /アセットパス|asset.*path/i);
-  assert.throws(() => checkTypes(parse('asset bg broken = "asset/con.png"')), /アセットパス|asset.*path/i);
+  assert.throws(() => checkTypes(parse('asset bg broken = "asset//bg.png"')), /asset path/i);
+  assert.throws(() => checkTypes(parse('asset bg broken = "asset/./bg.png"')), /asset path/i);
+  assert.throws(() => checkTypes(parse('asset bg broken = "asset/con.png"')), /asset path/i);
 });
 
 test('rejects removed compatibility spellings', () => {
@@ -2082,11 +2324,16 @@ test('analyzes constant builtin conversions for flow and range safety', () => {
   assert.ok(diagnostics.some((item) => item.code === 'constant-condition'));
   assert.ok(diagnostics.some((item) => item.code === 'unreachable-scene' && /hidden/.test(item.message)));
   assert.throws(() => compile(parse('int value = int("9223372036854775808")')), /64bit/);
-  assert.throws(() => compile(parse('int value = int("+-1")')), /整数形式/);
-  assert.throws(() => compile(parse('float value = float(" ")')), /有限数値形式/);
-  assert.throws(() => compile(parse('int value = int(1e20)')), /64bit整数/);
-  assert.throws(() => compile(parse('float value = float("1e999")')), /有限数値形式/);
+  assert.throws(() => compile(parse('int value = int("+-1")')), /int 形式/);
+  assert.throws(() => compile(parse('float value = float(" ")')), /有限の float 形式/);
+  assert.throws(() => compile(parse('int value = int(1e20)')), /64-bit int/);
+  assert.throws(() => compile(parse('float value = float("1e999")')), /有限の float 形式/);
   assert.doesNotThrow(() => compile(parse('int value = int("+1")\nfloat ratio = float("-1.25e2")')));
+});
+
+test('conversion diagnostics localize prose and preserve API and type names', () => {
+  const item = analyzeScript(parse('int value = int("bad")')).find(entry => entry.code === 'invalid-conversion');
+  assert.equal(item.message, 'int() conversion error: \u6e21\u3055\u308c\u305f str \u304c int \u5f62\u5f0f\u3067\u306f\u3042\u308a\u307e\u305b\u3093');
 });
 
 test('float conversions participate in side-effect-safe condition deduplication', () => {
@@ -2111,6 +2358,18 @@ test('warns when a constant for range exceeds the runtime loop limit', () => {
   assert.ok(diagnostics.some((item) => item.code === 'loop-limit' && item.severity === 'warning'));
   const exact = analyzeScript(parse('scene start { for i from 0 to 99999 { wait 1 } }'));
   assert.equal(exact.some((item) => item.code === 'loop-limit'), false);
+});
+
+test('loop diagnostics use the English DSL term consistently', () => {
+  const diagnostics = analyzeScript(parse(`scene start { for i from 0 to 100000 { wait 1 } }
+fn too_long() -> none {
+  int value = 0
+  while value < 100001 { set value = value + 1 }
+}`));
+  const messages = diagnostics.filter(item => item.code === 'loop-limit').map(item => item.message);
+  assert.ok(messages.some(message => message.includes('while loop')));
+  assert.ok(messages.some(message => message.includes('for loop')));
+  assert.ok(messages.every(message => !message.includes('ループ')));
 });
 
 test('while loop updates invalidate entry value constraints before infinite-loop analysis', () => {
@@ -2182,7 +2441,7 @@ test('warns when a provably bounded while exceeds the runtime loop limit', () =>
     }
   `);
   const overflowDiagnostics = analyzeScript(overflow);
-  assert.ok(overflowDiagnostics.some((item) => item.code === 'integer-overflow' && item.severity === 'error'));
+  assert.ok(overflowDiagnostics.some((item) => item.code === 'integer-overflow' && item.severity === 'error' && item.message.includes('integer overflow')));
   assert.throws(() => compile(overflow), /64bit/);
   const finalUpdateOverflow = parse(`
     fn final_update_overflow() -> none {

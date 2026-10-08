@@ -7,7 +7,7 @@
 | 分野 | 文書 | 主な範囲 |
 |---|---|---|
 | 構文・言語 | [syntax-reference.md](syntax-reference.md) | 文字からtoken、AST、型、スコープ、asset、control flowに至るTDS言語契約 |
-| コンパイラ | [compiler-pipeline.md](compiler-pipeline.md) | 単体構文解析からproject graph、診断、NSP命令、最適化、pack成果物まで |
+| Compiler pipeline | [compiler-pipeline.md](compiler-pipeline.md) | 単体構文解析からproject graph、診断、NSP命令、最適化、pack成果物まで |
 | UI・Player | [ui-runtime-spec.md](ui-runtime-spec.md) | UI設定、screen-document中間表現、論理layout、操作・状態、Browser/Native描画と永続化 |
 | IDE | [ide-spec.md](ide-spec.md) | Editor画面、project I/O、解析API、候補・定義参照、Scene Flow、実行ツール連携 |
 | 静的解析 | [analysis-and-diagnostics.md](analysis-and-diagnostics.md) | 型検査、診断契約、定数/effect、値域解析、分岐合流、IDE/Flow連携 |
@@ -24,7 +24,15 @@
 - [UI設計リファレンス](ui-design-reference.md): UIスキーマ、画面文書、描画・編集工程の詳説です。
 - [標準ライブラリ](../std/README.md): `std/` の関数一覧と利用例です。
 - [Native Player](../native/README.md): C++エンジンのビルドと実行上の注意です。
-- [DSL構文リファレンス](../syntax-draft.md): 構文・型・例の詳細なリファレンスです。
+- [旧DSLリファレンス](../syntax-draft.md): 過去に作成した構文例・解説です。現行の受理構文・型契約は本書の [syntax-reference.md](syntax-reference.md) と現行Parser/Checkerを参照してください。
+
+## 設計監査・調査資料
+
+次の資料は特定時点の監査結果や設計案を記録したもので、現行契約の正本ではありません。実装状況を確認するときは、上の分野別仕様と現行コード・テストを優先してください。
+
+- [ゲーム画面再現のデザイン・UI設計監査](game-ui-recreation-audit.md): 画面再現上の課題、実装済み修正、未対応の設計課題を記録します。
+- [ホーム／セーブ画面方式の調査](home-save-screen-design-research.md): UI方式の比較と推奨案、および現行実装との差を記録します。
+- [UI画像素材の調査](ui-assets-research.md): 参考資料、素材案、現行のスキン対応と残る拡張点を記録します。
 
 ## 読み方と仕様の優先順位
 
@@ -70,3 +78,7 @@ Editor UI ──HTTP──> Edit/server.js ──> project APIs / parser / check
 - IDE: `Edit/editor.js`, `Edit/server.js`, `Edit/flow.js`, `Edit/flow-domains.js`
 - UI: `Edit/screen-document.js`, `Edit/game-screens.js`, `Edit/player.js`, `Edit/runtime.js`, `native/player.cpp`
 - 回帰テスト: `test/parser.test.js`, `test/compiler-differential.test.js`, `test/editor-*.browser.cjs`, `test/game-screens*`, `test/ui-controls.browser.cjs`
+
+## Startup flow
+
+`start()`のlifecycle、Browser/Nativeの動作、packageの制約、Scene Flowでのscreen node表現は[startup-flow.md](startup-flow.md)に記載しています。

@@ -300,7 +300,7 @@
                   }
                 },
                 "file": "main.tds",
-                "line": 43
+                "line": 42
               },
               {
                 "op": "declare",
@@ -338,7 +338,7 @@
                   ]
                 },
                 "file": "main.tds",
-                "line": 44
+                "line": 43
               },
               {
                 "op": "declare",
@@ -376,7 +376,7 @@
                   ]
                 },
                 "file": "main.tds",
-                "line": 45
+                "line": 44
               },
               {
                 "op": "declare",
@@ -396,7 +396,7 @@
                   }
                 },
                 "file": "main.tds",
-                "line": 46
+                "line": 45
               },
               {
                 "op": "declare",
@@ -416,7 +416,7 @@
                   }
                 },
                 "file": "main.tds",
-                "line": 47
+                "line": 46
               },
               {
                 "op": "command",
@@ -444,7 +444,7 @@
                   }
                 ],
                 "file": "main.tds",
-                "line": 48
+                "line": 47
               },
               {
                 "op": "command",
@@ -456,11 +456,11 @@
                   }
                 ],
                 "file": "main.tds",
-                "line": 49
+                "line": 48
               }
             ],
             "file": "main.tds",
-            "line": 42
+            "line": 41
           },
           {
             "op": "command",
@@ -480,7 +480,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 51
+            "line": 50
           }
         ]
       },
@@ -504,7 +504,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 55
+            "line": 54
           },
           {
             "op": "declare",
@@ -516,7 +516,7 @@
               "value": "0"
             },
             "file": "main.tds",
-            "line": 56
+            "line": 55
           },
           {
             "op": "for",
@@ -558,7 +558,7 @@
                   }
                 },
                 "file": "main.tds",
-                "line": 58
+                "line": 57
               },
               {
                 "op": "declare",
@@ -592,7 +592,7 @@
                   ]
                 },
                 "file": "main.tds",
-                "line": 59
+                "line": 58
               },
               {
                 "op": "command",
@@ -628,7 +628,7 @@
                   }
                 ],
                 "file": "main.tds",
-                "line": 60
+                "line": 59
               },
               {
                 "op": "command",
@@ -640,7 +640,7 @@
                   }
                 ],
                 "file": "main.tds",
-                "line": 61
+                "line": 60
               },
               {
                 "op": "set",
@@ -653,11 +653,11 @@
                   "name": "offset_y"
                 },
                 "file": "main.tds",
-                "line": 62
+                "line": 61
               }
             ],
             "file": "main.tds",
-            "line": 57
+            "line": 56
           }
         ]
       },
@@ -681,7 +681,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 67
+            "line": 66
           },
           {
             "op": "declare",
@@ -693,7 +693,7 @@
               "value": "0"
             },
             "file": "main.tds",
-            "line": 68
+            "line": 67
           },
           {
             "op": "for",
@@ -735,7 +735,7 @@
                   }
                 },
                 "file": "main.tds",
-                "line": 70
+                "line": 69
               },
               {
                 "op": "declare",
@@ -769,7 +769,7 @@
                   ]
                 },
                 "file": "main.tds",
-                "line": 71
+                "line": 70
               },
               {
                 "op": "command",
@@ -805,7 +805,7 @@
                   }
                 ],
                 "file": "main.tds",
-                "line": 72
+                "line": 71
               },
               {
                 "op": "command",
@@ -817,7 +817,7 @@
                   }
                 ],
                 "file": "main.tds",
-                "line": 73
+                "line": 72
               },
               {
                 "op": "set",
@@ -830,11 +830,11 @@
                   "name": "offset_y"
                 },
                 "file": "main.tds",
-                "line": 74
+                "line": 73
               }
             ],
             "file": "main.tds",
-            "line": 69
+            "line": 68
           }
         ]
       },
@@ -854,7 +854,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 79
+            "line": 78
           },
           {
             "op": "declare",
@@ -866,7 +866,7 @@
               "value": "0"
             },
             "file": "main.tds",
-            "line": 80
+            "line": 79
           },
           {
             "op": "for",
@@ -908,7 +908,7 @@
                   }
                 },
                 "file": "main.tds",
-                "line": 82
+                "line": 81
               },
               {
                 "op": "declare",
@@ -946,7 +946,7 @@
                   ]
                 },
                 "file": "main.tds",
-                "line": 83
+                "line": 82
               },
               {
                 "op": "command",
@@ -978,7 +978,7 @@
                   }
                 ],
                 "file": "main.tds",
-                "line": 84
+                "line": 83
               },
               {
                 "op": "command",
@@ -990,7 +990,7 @@
                   }
                 ],
                 "file": "main.tds",
-                "line": 85
+                "line": 84
               },
               {
                 "op": "set",
@@ -1003,11 +1003,11 @@
                   "name": "offset_x"
                 },
                 "file": "main.tds",
-                "line": 86
+                "line": 85
               }
             ],
             "file": "main.tds",
-            "line": 81
+            "line": 80
           }
         ]
       },
@@ -11749,7 +11749,7 @@
       {
         "name": "main",
         "file": "main.tds",
-        "line": 90,
+        "line": 89,
         "instructions": [
           {
             "op": "command",
@@ -11761,7 +11761,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 91
+            "line": 90
           },
           {
             "op": "command",
@@ -11781,7 +11781,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 92
+            "line": 91
           },
           {
             "op": "command",
@@ -11797,7 +11797,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 93
+            "line": 92
           },
           {
             "op": "command",
@@ -11813,7 +11813,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 94
+            "line": 93
           },
           {
             "op": "command",
@@ -11837,7 +11837,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 95
+            "line": 94
           },
           {
             "op": "command",
@@ -11853,7 +11853,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 96
+            "line": 95
           },
           {
             "op": "command",
@@ -11881,7 +11881,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 97
+            "line": 96
           },
           {
             "op": "command",
@@ -11897,7 +11897,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 98
+            "line": 97
           },
           {
             "op": "command",
@@ -11921,7 +11921,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 99
+            "line": 98
           },
           {
             "op": "command",
@@ -11937,7 +11937,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 100
+            "line": 99
           },
           {
             "op": "command",
@@ -11957,7 +11957,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 101
+            "line": 100
           },
           {
             "op": "command",
@@ -11973,7 +11973,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 102
+            "line": 101
           },
           {
             "op": "command",
@@ -11989,7 +11989,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 103
+            "line": 102
           },
           {
             "op": "command",
@@ -12001,7 +12001,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 104
+            "line": 103
           },
           {
             "op": "command",
@@ -12017,7 +12017,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 105
+            "line": 104
           },
           {
             "op": "command",
@@ -12029,7 +12029,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 106
+            "line": 105
           },
           {
             "op": "command",
@@ -12045,7 +12045,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 107
+            "line": 106
           },
           {
             "op": "call",
@@ -12073,7 +12073,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 108
+            "line": 107
           },
           {
             "op": "command",
@@ -12089,7 +12089,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 109
+            "line": 108
           },
           {
             "op": "command",
@@ -12125,7 +12125,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 110
+            "line": 109
           },
           {
             "op": "command",
@@ -12141,7 +12141,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 111
+            "line": 110
           },
           {
             "op": "command",
@@ -12173,7 +12173,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 112
+            "line": 111
           },
           {
             "op": "command",
@@ -12189,20 +12189,20 @@
               }
             ],
             "file": "main.tds",
-            "line": 113
+            "line": 112
           },
           {
             "op": "goto",
             "scene": "motion_effects",
             "file": "main.tds",
-            "line": 114
+            "line": 113
           }
         ]
       },
       {
         "name": "motion_effects",
         "file": "main.tds",
-        "line": 117,
+        "line": 116,
         "instructions": [
           {
             "op": "command",
@@ -12214,7 +12214,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 118
+            "line": 117
           },
           {
             "op": "command",
@@ -12226,7 +12226,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 119
+            "line": 118
           },
           {
             "op": "command",
@@ -12242,7 +12242,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 120
+            "line": 119
           },
           {
             "op": "command",
@@ -12258,7 +12258,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 121
+            "line": 120
           },
           {
             "op": "command",
@@ -12274,14 +12274,14 @@
               }
             ],
             "file": "main.tds",
-            "line": 122
+            "line": 121
           },
           {
             "op": "call",
             "name": "shake_camera",
             "args": [],
             "file": "main.tds",
-            "line": 123
+            "line": 122
           },
           {
             "op": "command",
@@ -12297,7 +12297,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 124
+            "line": 123
           },
           {
             "op": "command",
@@ -12313,14 +12313,14 @@
               }
             ],
             "file": "main.tds",
-            "line": 125
+            "line": 124
           },
           {
             "op": "call",
             "name": "breathe_sister",
             "args": [],
             "file": "main.tds",
-            "line": 126
+            "line": 125
           },
           {
             "op": "command",
@@ -12336,14 +12336,14 @@
               }
             ],
             "file": "main.tds",
-            "line": 127
+            "line": 126
           },
           {
             "op": "call",
             "name": "hop_sister",
             "args": [],
             "file": "main.tds",
-            "line": 128
+            "line": 127
           },
           {
             "op": "command",
@@ -12359,14 +12359,14 @@
               }
             ],
             "file": "main.tds",
-            "line": 129
+            "line": 128
           },
           {
             "op": "call",
             "name": "drift_background",
             "args": [],
             "file": "main.tds",
-            "line": 130
+            "line": 129
           },
           {
             "op": "command",
@@ -12398,7 +12398,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 131
+            "line": 130
           },
           {
             "op": "command",
@@ -12414,7 +12414,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 132
+            "line": 131
           },
           {
             "op": "command",
@@ -12450,7 +12450,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 133
+            "line": 132
           },
           {
             "op": "command",
@@ -12486,7 +12486,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 134
+            "line": 133
           },
           {
             "op": "command",
@@ -12502,7 +12502,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 135
+            "line": 134
           },
           {
             "op": "command",
@@ -12538,7 +12538,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 136
+            "line": 135
           },
           {
             "op": "command",
@@ -12558,7 +12558,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 137
+            "line": 136
           },
           {
             "op": "command",
@@ -12574,20 +12574,20 @@
               }
             ],
             "file": "main.tds",
-            "line": 138
+            "line": 137
           },
           {
             "op": "goto",
             "scene": "background_transitions",
             "file": "main.tds",
-            "line": 139
+            "line": 138
           }
         ]
       },
       {
         "name": "background_transitions",
         "file": "main.tds",
-        "line": 142,
+        "line": 141,
         "instructions": [
           {
             "op": "command",
@@ -12607,7 +12607,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 143
+            "line": 142
           },
           {
             "op": "command",
@@ -12623,7 +12623,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 144
+            "line": 143
           },
           {
             "op": "command",
@@ -12643,7 +12643,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 145
+            "line": 144
           },
           {
             "op": "command",
@@ -12659,7 +12659,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 146
+            "line": 145
           },
           {
             "op": "command",
@@ -12679,7 +12679,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 147
+            "line": 146
           },
           {
             "op": "command",
@@ -12695,7 +12695,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 148
+            "line": 147
           },
           {
             "op": "command",
@@ -12715,7 +12715,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 149
+            "line": 148
           },
           {
             "op": "command",
@@ -12731,7 +12731,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 150
+            "line": 149
           },
           {
             "op": "command",
@@ -12751,7 +12751,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 151
+            "line": 150
           },
           {
             "op": "command",
@@ -12767,7 +12767,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 152
+            "line": 151
           },
           {
             "op": "command",
@@ -12787,7 +12787,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 153
+            "line": 152
           },
           {
             "op": "command",
@@ -12803,7 +12803,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 154
+            "line": 153
           },
           {
             "op": "command",
@@ -12827,7 +12827,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 155
+            "line": 154
           },
           {
             "op": "command",
@@ -12839,7 +12839,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 156
+            "line": 155
           },
           {
             "op": "command",
@@ -12859,7 +12859,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 157
+            "line": 156
           },
           {
             "op": "command",
@@ -12875,7 +12875,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 158
+            "line": 157
           },
           {
             "op": "command",
@@ -12891,7 +12891,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 159
+            "line": 158
           },
           {
             "op": "command",
@@ -12911,7 +12911,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 160
+            "line": 159
           },
           {
             "op": "command",
@@ -12923,7 +12923,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 161
+            "line": 160
           },
           {
             "op": "command",
@@ -12939,7 +12939,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 162
+            "line": 161
           },
           {
             "op": "command",
@@ -12963,7 +12963,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 163
+            "line": 162
           },
           {
             "op": "command",
@@ -12975,7 +12975,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 164
+            "line": 163
           },
           {
             "op": "command",
@@ -12999,7 +12999,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 165
+            "line": 164
           },
           {
             "op": "command",
@@ -13015,20 +13015,20 @@
               }
             ],
             "file": "main.tds",
-            "line": 166
+            "line": 165
           },
           {
             "op": "goto",
             "scene": "dialogue_and_audio",
             "file": "main.tds",
-            "line": 167
+            "line": 166
           }
         ]
       },
       {
         "name": "dialogue_and_audio",
         "file": "main.tds",
-        "line": 170,
+        "line": 169,
         "instructions": [
           {
             "op": "command",
@@ -13044,7 +13044,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 171
+            "line": 170
           },
           {
             "op": "command",
@@ -13060,7 +13060,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 172
+            "line": 171
           },
           {
             "op": "command",
@@ -13084,7 +13084,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 173
+            "line": 172
           },
           {
             "op": "command",
@@ -13100,7 +13100,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 174
+            "line": 173
           },
           {
             "op": "command",
@@ -13116,7 +13116,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 175
+            "line": 174
           },
           {
             "op": "command",
@@ -13129,13 +13129,13 @@
               {
                 "kind": "literal",
                 "value": false,
-                "line": 176,
+                "line": 175,
                 "column": 18,
                 "file": "main.tds"
               }
             ],
             "file": "main.tds",
-            "line": 176
+            "line": 175
           },
           {
             "op": "command",
@@ -13147,7 +13147,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 177
+            "line": 176
           },
           {
             "op": "command",
@@ -13160,13 +13160,13 @@
               {
                 "kind": "literal",
                 "value": true,
-                "line": 178,
+                "line": 177,
                 "column": 18,
                 "file": "main.tds"
               }
             ],
             "file": "main.tds",
-            "line": 178
+            "line": 177
           },
           {
             "op": "command",
@@ -13182,7 +13182,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 179
+            "line": 178
           },
           {
             "op": "command",
@@ -13202,7 +13202,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 180
+            "line": 179
           },
           {
             "op": "command",
@@ -13218,7 +13218,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 181
+            "line": 180
           },
           {
             "op": "command",
@@ -13238,7 +13238,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 182
+            "line": 181
           },
           {
             "op": "command",
@@ -13254,7 +13254,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 183
+            "line": 182
           },
           {
             "op": "command",
@@ -13270,7 +13270,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 184
+            "line": 183
           },
           {
             "op": "command",
@@ -13286,7 +13286,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 185
+            "line": 184
           },
           {
             "op": "command",
@@ -13302,7 +13302,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 186
+            "line": 185
           },
           {
             "op": "command",
@@ -13318,7 +13318,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 187
+            "line": 186
           },
           {
             "op": "command",
@@ -13330,7 +13330,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 188
+            "line": 187
           },
           {
             "op": "command",
@@ -13362,7 +13362,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 189
+            "line": 188
           },
           {
             "op": "command",
@@ -13386,7 +13386,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 190
+            "line": 189
           },
           {
             "op": "command",
@@ -13410,7 +13410,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 191
+            "line": 190
           },
           {
             "op": "command",
@@ -13422,7 +13422,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 192
+            "line": 191
           },
           {
             "op": "command",
@@ -13434,7 +13434,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 193
+            "line": 192
           },
           {
             "op": "command",
@@ -13450,7 +13450,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 194
+            "line": 193
           },
           {
             "op": "command",
@@ -13466,7 +13466,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 195
+            "line": 194
           },
           {
             "op": "command",
@@ -13482,7 +13482,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 196
+            "line": 195
           },
           {
             "op": "command",
@@ -13498,7 +13498,7 @@
               }
             ],
             "file": "main.tds",
-            "line": 197
+            "line": 196
           },
           {
             "op": "choice",
@@ -13539,7 +13539,7 @@
                       }
                     ],
                     "file": "main.tds",
-                    "line": 200
+                    "line": 199
                   }
                 ]
               },
@@ -13559,13 +13559,13 @@
                       }
                     ],
                     "file": "main.tds",
-                    "line": 203
+                    "line": 202
                   }
                 ]
               }
             ],
             "file": "main.tds",
-            "line": 198
+            "line": 197
           },
           {
             "op": "command",
@@ -13580,6 +13580,13 @@
                 "value": "演出チェックを終了します。"
               }
             ],
+            "file": "main.tds",
+            "line": 205
+          },
+          {
+            "op": "call",
+            "name": "start",
+            "args": [],
             "file": "main.tds",
             "line": 206
           }
@@ -13628,14 +13635,21 @@
           {
             "scope": "function",
             "container": "breathe_sister",
-            "line": 55,
+            "line": 54,
             "column": 8,
             "kind": "expression"
           },
           {
             "scope": "function",
             "container": "hop_sister",
-            "line": 67,
+            "line": 66,
+            "column": 8,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 94,
             "column": 8,
             "kind": "expression"
           },
@@ -13643,69 +13657,62 @@
             "scope": "scene",
             "container": "main",
             "line": 95,
-            "column": 8,
+            "column": 3,
             "kind": "expression"
           },
           {
             "scope": "scene",
             "container": "main",
             "line": 96,
-            "column": 3,
+            "column": 8,
             "kind": "expression"
           },
           {
             "scope": "scene",
             "container": "main",
             "line": 97,
-            "column": 8,
-            "kind": "expression"
-          },
-          {
-            "scope": "scene",
-            "container": "main",
-            "line": 98,
             "column": 3,
             "kind": "expression"
           },
           {
             "scope": "scene",
             "container": "main",
-            "line": 109,
+            "line": 108,
             "column": 3,
             "kind": "expression"
           },
           {
             "scope": "scene",
             "container": "motion_effects",
-            "line": 120,
+            "line": 119,
             "column": 8,
             "kind": "expression"
           },
           {
             "scope": "scene",
             "container": "motion_effects",
-            "line": 125,
+            "line": 124,
             "column": 3,
             "kind": "expression"
           },
           {
             "scope": "scene",
             "container": "motion_effects",
-            "line": 127,
+            "line": 126,
             "column": 3,
             "kind": "expression"
           },
           {
             "scope": "scene",
             "container": "background_transitions",
-            "line": 158,
+            "line": 157,
             "column": 8,
             "kind": "expression"
           },
           {
             "scope": "scene",
             "container": "background_transitions",
-            "line": 165,
+            "line": 164,
             "column": 8,
             "kind": "expression"
           }
@@ -13733,42 +13740,42 @@
           {
             "scope": "scene",
             "container": "main",
-            "line": 99,
+            "line": 98,
             "column": 8,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 99,
+            "column": 3,
             "kind": "expression"
           },
           {
             "scope": "scene",
             "container": "main",
             "line": 100,
+            "column": 8,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 102,
+            "column": 8,
+            "kind": "expression"
+          },
+          {
+            "scope": "scene",
+            "container": "main",
+            "line": 104,
             "column": 3,
-            "kind": "expression"
-          },
-          {
-            "scope": "scene",
-            "container": "main",
-            "line": 101,
-            "column": 8,
-            "kind": "expression"
-          },
-          {
-            "scope": "scene",
-            "container": "main",
-            "line": 103,
-            "column": 8,
             "kind": "expression"
           },
           {
             "scope": "scene",
             "container": "main",
             "line": 105,
-            "column": 3,
-            "kind": "expression"
-          },
-          {
-            "scope": "scene",
-            "container": "main",
-            "line": 106,
             "column": 8,
             "kind": "expression"
           }
@@ -13784,7 +13791,7 @@
           {
             "scope": "local",
             "container": "shake_camera:for1",
-            "line": 42,
+            "line": 41,
             "column": 7,
             "kind": "definition"
           }
@@ -13793,7 +13800,7 @@
           {
             "scope": "local",
             "container": "shake_camera:for1",
-            "line": 43,
+            "line": 42,
             "column": 28,
             "kind": "definition"
           }
@@ -13809,7 +13816,7 @@
           {
             "scope": "function",
             "container": "shake_camera",
-            "line": 43,
+            "line": 42,
             "column": 11,
             "kind": "definition"
           }
@@ -13818,14 +13825,14 @@
           {
             "scope": "local",
             "container": "shake_camera:for1",
-            "line": 44,
+            "line": 43,
             "column": 55,
             "kind": "definition"
           },
           {
             "scope": "local",
             "container": "shake_camera:for1",
-            "line": 45,
+            "line": 44,
             "column": 55,
             "kind": "definition"
           }
@@ -13834,6 +13841,31 @@
       },
       {
         "name": "offset_x",
+        "type": "int",
+        "scope": "function",
+        "definedIn": "shake_camera",
+        "definitions": [
+          {
+            "scope": "function",
+            "container": "shake_camera",
+            "line": 43,
+            "column": 9,
+            "kind": "definition"
+          }
+        ],
+        "references": [
+          {
+            "scope": "local",
+            "container": "shake_camera:for1",
+            "line": 45,
+            "column": 25,
+            "kind": "definition"
+          }
+        ],
+        "mutable": true
+      },
+      {
+        "name": "offset_y",
         "type": "int",
         "scope": "function",
         "definedIn": "shake_camera",
@@ -13851,31 +13883,6 @@
             "scope": "local",
             "container": "shake_camera:for1",
             "line": 46,
-            "column": 25,
-            "kind": "definition"
-          }
-        ],
-        "mutable": true
-      },
-      {
-        "name": "offset_y",
-        "type": "int",
-        "scope": "function",
-        "definedIn": "shake_camera",
-        "definitions": [
-          {
-            "scope": "function",
-            "container": "shake_camera",
-            "line": 45,
-            "column": 9,
-            "kind": "definition"
-          }
-        ],
-        "references": [
-          {
-            "scope": "local",
-            "container": "shake_camera:for1",
-            "line": 47,
             "column": 25,
             "kind": "definition"
           }
@@ -13891,7 +13898,7 @@
           {
             "scope": "function",
             "container": "shake_camera",
-            "line": 46,
+            "line": 45,
             "column": 9,
             "kind": "definition"
           }
@@ -13900,7 +13907,7 @@
           {
             "scope": "local",
             "container": "shake_camera:for1",
-            "line": 48,
+            "line": 47,
             "column": 25,
             "kind": "definition"
           }
@@ -13916,7 +13923,7 @@
           {
             "scope": "function",
             "container": "shake_camera",
-            "line": 47,
+            "line": 46,
             "column": 9,
             "kind": "definition"
           }
@@ -13925,7 +13932,7 @@
           {
             "scope": "local",
             "container": "shake_camera:for1",
-            "line": 48,
+            "line": 47,
             "column": 33,
             "kind": "definition"
           }
@@ -13941,7 +13948,7 @@
           {
             "scope": "function",
             "container": "breathe_sister",
-            "line": 56,
+            "line": 55,
             "column": 7,
             "kind": "definition"
           }
@@ -13950,14 +13957,14 @@
           {
             "scope": "local",
             "container": "breathe_sister:for2",
-            "line": 60,
+            "line": 59,
             "column": 46,
             "kind": "definition"
           },
           {
             "scope": "local",
             "container": "breathe_sister:for2",
-            "line": 62,
+            "line": 61,
             "column": 9,
             "kind": "assignment"
           }
@@ -13973,7 +13980,7 @@
           {
             "scope": "local",
             "container": "breathe_sister:for2",
-            "line": 57,
+            "line": 56,
             "column": 7,
             "kind": "definition"
           }
@@ -13982,7 +13989,7 @@
           {
             "scope": "local",
             "container": "breathe_sister:for2",
-            "line": 58,
+            "line": 57,
             "column": 28,
             "kind": "definition"
           }
@@ -13998,7 +14005,7 @@
           {
             "scope": "function",
             "container": "breathe_sister",
-            "line": 58,
+            "line": 57,
             "column": 11,
             "kind": "definition"
           }
@@ -14007,7 +14014,7 @@
           {
             "scope": "local",
             "container": "breathe_sister:for2",
-            "line": 59,
+            "line": 58,
             "column": 55,
             "kind": "definition"
           }
@@ -14023,7 +14030,7 @@
           {
             "scope": "function",
             "container": "breathe_sister",
-            "line": 59,
+            "line": 58,
             "column": 9,
             "kind": "definition"
           }
@@ -14032,14 +14039,14 @@
           {
             "scope": "local",
             "container": "breathe_sister:for2",
-            "line": 60,
+            "line": 59,
             "column": 35,
             "kind": "definition"
           },
           {
             "scope": "local",
             "container": "breathe_sister:for2",
-            "line": 62,
+            "line": 61,
             "column": 22,
             "kind": "definition"
           }
@@ -14055,7 +14062,7 @@
           {
             "scope": "function",
             "container": "hop_sister",
-            "line": 68,
+            "line": 67,
             "column": 7,
             "kind": "definition"
           }
@@ -14064,14 +14071,14 @@
           {
             "scope": "local",
             "container": "hop_sister:for3",
-            "line": 72,
+            "line": 71,
             "column": 46,
             "kind": "definition"
           },
           {
             "scope": "local",
             "container": "hop_sister:for3",
-            "line": 74,
+            "line": 73,
             "column": 9,
             "kind": "assignment"
           }
@@ -14087,7 +14094,7 @@
           {
             "scope": "local",
             "container": "hop_sister:for3",
-            "line": 69,
+            "line": 68,
             "column": 7,
             "kind": "definition"
           }
@@ -14096,7 +14103,7 @@
           {
             "scope": "local",
             "container": "hop_sister:for3",
-            "line": 70,
+            "line": 69,
             "column": 28,
             "kind": "definition"
           }
@@ -14112,7 +14119,7 @@
           {
             "scope": "function",
             "container": "hop_sister",
-            "line": 70,
+            "line": 69,
             "column": 11,
             "kind": "definition"
           }
@@ -14121,7 +14128,7 @@
           {
             "scope": "local",
             "container": "hop_sister:for3",
-            "line": 71,
+            "line": 70,
             "column": 52,
             "kind": "definition"
           }
@@ -14137,7 +14144,7 @@
           {
             "scope": "function",
             "container": "hop_sister",
-            "line": 71,
+            "line": 70,
             "column": 9,
             "kind": "definition"
           }
@@ -14146,14 +14153,14 @@
           {
             "scope": "local",
             "container": "hop_sister:for3",
-            "line": 72,
+            "line": 71,
             "column": 35,
             "kind": "definition"
           },
           {
             "scope": "local",
             "container": "hop_sister:for3",
-            "line": 74,
+            "line": 73,
             "column": 22,
             "kind": "definition"
           }
@@ -14169,7 +14176,7 @@
           {
             "scope": "function",
             "container": "drift_background",
-            "line": 80,
+            "line": 79,
             "column": 7,
             "kind": "definition"
           }
@@ -14178,14 +14185,14 @@
           {
             "scope": "local",
             "container": "drift_background:for4",
-            "line": 84,
+            "line": 83,
             "column": 32,
             "kind": "definition"
           },
           {
             "scope": "local",
             "container": "drift_background:for4",
-            "line": 86,
+            "line": 85,
             "column": 9,
             "kind": "assignment"
           }
@@ -14201,7 +14208,7 @@
           {
             "scope": "local",
             "container": "drift_background:for4",
-            "line": 81,
+            "line": 80,
             "column": 7,
             "kind": "definition"
           }
@@ -14210,7 +14217,7 @@
           {
             "scope": "local",
             "container": "drift_background:for4",
-            "line": 82,
+            "line": 81,
             "column": 28,
             "kind": "definition"
           }
@@ -14226,7 +14233,7 @@
           {
             "scope": "function",
             "container": "drift_background",
-            "line": 82,
+            "line": 81,
             "column": 11,
             "kind": "definition"
           }
@@ -14235,7 +14242,7 @@
           {
             "scope": "local",
             "container": "drift_background:for4",
-            "line": 83,
+            "line": 82,
             "column": 54,
             "kind": "definition"
           }
@@ -14251,7 +14258,7 @@
           {
             "scope": "function",
             "container": "drift_background",
-            "line": 83,
+            "line": 82,
             "column": 9,
             "kind": "definition"
           }
@@ -14260,14 +14267,14 @@
           {
             "scope": "local",
             "container": "drift_background:for4",
-            "line": 84,
+            "line": 83,
             "column": 21,
             "kind": "definition"
           },
           {
             "scope": "local",
             "container": "drift_background:for4",
-            "line": 86,
+            "line": 85,
             "column": 22,
             "kind": "definition"
           }
@@ -23866,7 +23873,7 @@
                     }
                   },
                   "file": "main.tds",
-                  "line": 43
+                  "line": 42
                 },
                 {
                   "op": "declare",
@@ -23904,7 +23911,7 @@
                     ]
                   },
                   "file": "main.tds",
-                  "line": 44
+                  "line": 43
                 },
                 {
                   "op": "declare",
@@ -23942,7 +23949,7 @@
                     ]
                   },
                   "file": "main.tds",
-                  "line": 45
+                  "line": 44
                 },
                 {
                   "op": "declare",
@@ -23962,7 +23969,7 @@
                     }
                   },
                   "file": "main.tds",
-                  "line": 46
+                  "line": 45
                 },
                 {
                   "op": "declare",
@@ -23982,7 +23989,7 @@
                     }
                   },
                   "file": "main.tds",
-                  "line": 47
+                  "line": 46
                 },
                 {
                   "op": "command",
@@ -24010,7 +24017,7 @@
                     }
                   ],
                   "file": "main.tds",
-                  "line": 48
+                  "line": 47
                 },
                 {
                   "op": "command",
@@ -24022,11 +24029,11 @@
                     }
                   ],
                   "file": "main.tds",
-                  "line": 49
+                  "line": 48
                 }
               ],
               "file": "main.tds",
-              "line": 42
+              "line": 41
             },
             {
               "op": "command",
@@ -24046,7 +24053,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 51
+              "line": 50
             }
           ]
         },
@@ -24070,7 +24077,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 55
+              "line": 54
             },
             {
               "op": "declare",
@@ -24082,7 +24089,7 @@
                 "value": "0"
               },
               "file": "main.tds",
-              "line": 56
+              "line": 55
             },
             {
               "op": "for",
@@ -24124,7 +24131,7 @@
                     }
                   },
                   "file": "main.tds",
-                  "line": 58
+                  "line": 57
                 },
                 {
                   "op": "declare",
@@ -24158,7 +24165,7 @@
                     ]
                   },
                   "file": "main.tds",
-                  "line": 59
+                  "line": 58
                 },
                 {
                   "op": "command",
@@ -24194,7 +24201,7 @@
                     }
                   ],
                   "file": "main.tds",
-                  "line": 60
+                  "line": 59
                 },
                 {
                   "op": "command",
@@ -24206,7 +24213,7 @@
                     }
                   ],
                   "file": "main.tds",
-                  "line": 61
+                  "line": 60
                 },
                 {
                   "op": "set",
@@ -24219,11 +24226,11 @@
                     "name": "offset_y"
                   },
                   "file": "main.tds",
-                  "line": 62
+                  "line": 61
                 }
               ],
               "file": "main.tds",
-              "line": 57
+              "line": 56
             }
           ]
         },
@@ -24247,7 +24254,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 67
+              "line": 66
             },
             {
               "op": "declare",
@@ -24259,7 +24266,7 @@
                 "value": "0"
               },
               "file": "main.tds",
-              "line": 68
+              "line": 67
             },
             {
               "op": "for",
@@ -24301,7 +24308,7 @@
                     }
                   },
                   "file": "main.tds",
-                  "line": 70
+                  "line": 69
                 },
                 {
                   "op": "declare",
@@ -24335,7 +24342,7 @@
                     ]
                   },
                   "file": "main.tds",
-                  "line": 71
+                  "line": 70
                 },
                 {
                   "op": "command",
@@ -24371,7 +24378,7 @@
                     }
                   ],
                   "file": "main.tds",
-                  "line": 72
+                  "line": 71
                 },
                 {
                   "op": "command",
@@ -24383,7 +24390,7 @@
                     }
                   ],
                   "file": "main.tds",
-                  "line": 73
+                  "line": 72
                 },
                 {
                   "op": "set",
@@ -24396,11 +24403,11 @@
                     "name": "offset_y"
                   },
                   "file": "main.tds",
-                  "line": 74
+                  "line": 73
                 }
               ],
               "file": "main.tds",
-              "line": 69
+              "line": 68
             }
           ]
         },
@@ -24420,7 +24427,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 79
+              "line": 78
             },
             {
               "op": "declare",
@@ -24432,7 +24439,7 @@
                 "value": "0"
               },
               "file": "main.tds",
-              "line": 80
+              "line": 79
             },
             {
               "op": "for",
@@ -24474,7 +24481,7 @@
                     }
                   },
                   "file": "main.tds",
-                  "line": 82
+                  "line": 81
                 },
                 {
                   "op": "declare",
@@ -24512,7 +24519,7 @@
                     ]
                   },
                   "file": "main.tds",
-                  "line": 83
+                  "line": 82
                 },
                 {
                   "op": "command",
@@ -24544,7 +24551,7 @@
                     }
                   ],
                   "file": "main.tds",
-                  "line": 84
+                  "line": 83
                 },
                 {
                   "op": "command",
@@ -24556,7 +24563,7 @@
                     }
                   ],
                   "file": "main.tds",
-                  "line": 85
+                  "line": 84
                 },
                 {
                   "op": "set",
@@ -24569,11 +24576,11 @@
                     "name": "offset_x"
                   },
                   "file": "main.tds",
-                  "line": 86
+                  "line": 85
                 }
               ],
               "file": "main.tds",
-              "line": 81
+              "line": 80
             }
           ]
         },
@@ -35315,7 +35322,7 @@
         {
           "name": "main",
           "file": "main.tds",
-          "line": 90,
+          "line": 89,
           "instructions": [
             {
               "op": "command",
@@ -35327,7 +35334,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 91
+              "line": 90
             },
             {
               "op": "command",
@@ -35347,7 +35354,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 92
+              "line": 91
             },
             {
               "op": "command",
@@ -35363,7 +35370,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 93
+              "line": 92
             },
             {
               "op": "command",
@@ -35379,7 +35386,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 94
+              "line": 93
             },
             {
               "op": "command",
@@ -35403,7 +35410,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 95
+              "line": 94
             },
             {
               "op": "command",
@@ -35419,7 +35426,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 96
+              "line": 95
             },
             {
               "op": "command",
@@ -35447,7 +35454,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 97
+              "line": 96
             },
             {
               "op": "command",
@@ -35463,7 +35470,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 98
+              "line": 97
             },
             {
               "op": "command",
@@ -35487,7 +35494,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 99
+              "line": 98
             },
             {
               "op": "command",
@@ -35503,7 +35510,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 100
+              "line": 99
             },
             {
               "op": "command",
@@ -35523,7 +35530,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 101
+              "line": 100
             },
             {
               "op": "command",
@@ -35539,7 +35546,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 102
+              "line": 101
             },
             {
               "op": "command",
@@ -35555,7 +35562,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 103
+              "line": 102
             },
             {
               "op": "command",
@@ -35567,7 +35574,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 104
+              "line": 103
             },
             {
               "op": "command",
@@ -35583,7 +35590,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 105
+              "line": 104
             },
             {
               "op": "command",
@@ -35595,7 +35602,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 106
+              "line": 105
             },
             {
               "op": "command",
@@ -35611,7 +35618,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 107
+              "line": 106
             },
             {
               "op": "call",
@@ -35639,7 +35646,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 108
+              "line": 107
             },
             {
               "op": "command",
@@ -35655,7 +35662,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 109
+              "line": 108
             },
             {
               "op": "command",
@@ -35691,7 +35698,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 110
+              "line": 109
             },
             {
               "op": "command",
@@ -35707,7 +35714,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 111
+              "line": 110
             },
             {
               "op": "command",
@@ -35739,7 +35746,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 112
+              "line": 111
             },
             {
               "op": "command",
@@ -35755,20 +35762,20 @@
                 }
               ],
               "file": "main.tds",
-              "line": 113
+              "line": 112
             },
             {
               "op": "goto",
               "scene": "motion_effects",
               "file": "main.tds",
-              "line": 114
+              "line": 113
             }
           ]
         },
         {
           "name": "motion_effects",
           "file": "main.tds",
-          "line": 117,
+          "line": 116,
           "instructions": [
             {
               "op": "command",
@@ -35780,7 +35787,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 118
+              "line": 117
             },
             {
               "op": "command",
@@ -35792,7 +35799,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 119
+              "line": 118
             },
             {
               "op": "command",
@@ -35808,7 +35815,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 120
+              "line": 119
             },
             {
               "op": "command",
@@ -35824,7 +35831,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 121
+              "line": 120
             },
             {
               "op": "command",
@@ -35840,14 +35847,14 @@
                 }
               ],
               "file": "main.tds",
-              "line": 122
+              "line": 121
             },
             {
               "op": "call",
               "name": "shake_camera",
               "args": [],
               "file": "main.tds",
-              "line": 123
+              "line": 122
             },
             {
               "op": "command",
@@ -35863,7 +35870,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 124
+              "line": 123
             },
             {
               "op": "command",
@@ -35879,14 +35886,14 @@
                 }
               ],
               "file": "main.tds",
-              "line": 125
+              "line": 124
             },
             {
               "op": "call",
               "name": "breathe_sister",
               "args": [],
               "file": "main.tds",
-              "line": 126
+              "line": 125
             },
             {
               "op": "command",
@@ -35902,14 +35909,14 @@
                 }
               ],
               "file": "main.tds",
-              "line": 127
+              "line": 126
             },
             {
               "op": "call",
               "name": "hop_sister",
               "args": [],
               "file": "main.tds",
-              "line": 128
+              "line": 127
             },
             {
               "op": "command",
@@ -35925,14 +35932,14 @@
                 }
               ],
               "file": "main.tds",
-              "line": 129
+              "line": 128
             },
             {
               "op": "call",
               "name": "drift_background",
               "args": [],
               "file": "main.tds",
-              "line": 130
+              "line": 129
             },
             {
               "op": "command",
@@ -35964,7 +35971,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 131
+              "line": 130
             },
             {
               "op": "command",
@@ -35980,7 +35987,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 132
+              "line": 131
             },
             {
               "op": "command",
@@ -36016,7 +36023,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 133
+              "line": 132
             },
             {
               "op": "command",
@@ -36052,7 +36059,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 134
+              "line": 133
             },
             {
               "op": "command",
@@ -36068,7 +36075,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 135
+              "line": 134
             },
             {
               "op": "command",
@@ -36104,7 +36111,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 136
+              "line": 135
             },
             {
               "op": "command",
@@ -36124,7 +36131,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 137
+              "line": 136
             },
             {
               "op": "command",
@@ -36140,20 +36147,20 @@
                 }
               ],
               "file": "main.tds",
-              "line": 138
+              "line": 137
             },
             {
               "op": "goto",
               "scene": "background_transitions",
               "file": "main.tds",
-              "line": 139
+              "line": 138
             }
           ]
         },
         {
           "name": "background_transitions",
           "file": "main.tds",
-          "line": 142,
+          "line": 141,
           "instructions": [
             {
               "op": "command",
@@ -36173,7 +36180,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 143
+              "line": 142
             },
             {
               "op": "command",
@@ -36189,7 +36196,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 144
+              "line": 143
             },
             {
               "op": "command",
@@ -36209,7 +36216,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 145
+              "line": 144
             },
             {
               "op": "command",
@@ -36225,7 +36232,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 146
+              "line": 145
             },
             {
               "op": "command",
@@ -36245,7 +36252,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 147
+              "line": 146
             },
             {
               "op": "command",
@@ -36261,7 +36268,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 148
+              "line": 147
             },
             {
               "op": "command",
@@ -36281,7 +36288,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 149
+              "line": 148
             },
             {
               "op": "command",
@@ -36297,7 +36304,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 150
+              "line": 149
             },
             {
               "op": "command",
@@ -36317,7 +36324,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 151
+              "line": 150
             },
             {
               "op": "command",
@@ -36333,7 +36340,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 152
+              "line": 151
             },
             {
               "op": "command",
@@ -36353,7 +36360,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 153
+              "line": 152
             },
             {
               "op": "command",
@@ -36369,7 +36376,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 154
+              "line": 153
             },
             {
               "op": "command",
@@ -36393,7 +36400,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 155
+              "line": 154
             },
             {
               "op": "command",
@@ -36405,7 +36412,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 156
+              "line": 155
             },
             {
               "op": "command",
@@ -36425,7 +36432,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 157
+              "line": 156
             },
             {
               "op": "command",
@@ -36441,7 +36448,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 158
+              "line": 157
             },
             {
               "op": "command",
@@ -36457,7 +36464,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 159
+              "line": 158
             },
             {
               "op": "command",
@@ -36477,7 +36484,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 160
+              "line": 159
             },
             {
               "op": "command",
@@ -36489,7 +36496,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 161
+              "line": 160
             },
             {
               "op": "command",
@@ -36505,7 +36512,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 162
+              "line": 161
             },
             {
               "op": "command",
@@ -36529,7 +36536,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 163
+              "line": 162
             },
             {
               "op": "command",
@@ -36541,7 +36548,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 164
+              "line": 163
             },
             {
               "op": "command",
@@ -36565,7 +36572,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 165
+              "line": 164
             },
             {
               "op": "command",
@@ -36581,20 +36588,20 @@
                 }
               ],
               "file": "main.tds",
-              "line": 166
+              "line": 165
             },
             {
               "op": "goto",
               "scene": "dialogue_and_audio",
               "file": "main.tds",
-              "line": 167
+              "line": 166
             }
           ]
         },
         {
           "name": "dialogue_and_audio",
           "file": "main.tds",
-          "line": 170,
+          "line": 169,
           "instructions": [
             {
               "op": "command",
@@ -36610,7 +36617,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 171
+              "line": 170
             },
             {
               "op": "command",
@@ -36626,7 +36633,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 172
+              "line": 171
             },
             {
               "op": "command",
@@ -36650,7 +36657,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 173
+              "line": 172
             },
             {
               "op": "command",
@@ -36666,7 +36673,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 174
+              "line": 173
             },
             {
               "op": "command",
@@ -36682,7 +36689,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 175
+              "line": 174
             },
             {
               "op": "command",
@@ -36695,13 +36702,13 @@
                 {
                   "kind": "literal",
                   "value": false,
-                  "line": 176,
+                  "line": 175,
                   "column": 18,
                   "file": "main.tds"
                 }
               ],
               "file": "main.tds",
-              "line": 176
+              "line": 175
             },
             {
               "op": "command",
@@ -36713,7 +36720,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 177
+              "line": 176
             },
             {
               "op": "command",
@@ -36726,13 +36733,13 @@
                 {
                   "kind": "literal",
                   "value": true,
-                  "line": 178,
+                  "line": 177,
                   "column": 18,
                   "file": "main.tds"
                 }
               ],
               "file": "main.tds",
-              "line": 178
+              "line": 177
             },
             {
               "op": "command",
@@ -36748,7 +36755,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 179
+              "line": 178
             },
             {
               "op": "command",
@@ -36768,7 +36775,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 180
+              "line": 179
             },
             {
               "op": "command",
@@ -36784,7 +36791,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 181
+              "line": 180
             },
             {
               "op": "command",
@@ -36804,7 +36811,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 182
+              "line": 181
             },
             {
               "op": "command",
@@ -36820,7 +36827,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 183
+              "line": 182
             },
             {
               "op": "command",
@@ -36836,7 +36843,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 184
+              "line": 183
             },
             {
               "op": "command",
@@ -36852,7 +36859,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 185
+              "line": 184
             },
             {
               "op": "command",
@@ -36868,7 +36875,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 186
+              "line": 185
             },
             {
               "op": "command",
@@ -36884,7 +36891,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 187
+              "line": 186
             },
             {
               "op": "command",
@@ -36896,7 +36903,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 188
+              "line": 187
             },
             {
               "op": "command",
@@ -36928,7 +36935,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 189
+              "line": 188
             },
             {
               "op": "command",
@@ -36952,7 +36959,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 190
+              "line": 189
             },
             {
               "op": "command",
@@ -36976,7 +36983,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 191
+              "line": 190
             },
             {
               "op": "command",
@@ -36988,7 +36995,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 192
+              "line": 191
             },
             {
               "op": "command",
@@ -37000,7 +37007,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 193
+              "line": 192
             },
             {
               "op": "command",
@@ -37016,7 +37023,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 194
+              "line": 193
             },
             {
               "op": "command",
@@ -37032,7 +37039,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 195
+              "line": 194
             },
             {
               "op": "command",
@@ -37048,7 +37055,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 196
+              "line": 195
             },
             {
               "op": "command",
@@ -37064,7 +37071,7 @@
                 }
               ],
               "file": "main.tds",
-              "line": 197
+              "line": 196
             },
             {
               "op": "choice",
@@ -37105,7 +37112,7 @@
                         }
                       ],
                       "file": "main.tds",
-                      "line": 200
+                      "line": 199
                     }
                   ]
                 },
@@ -37125,13 +37132,13 @@
                         }
                       ],
                       "file": "main.tds",
-                      "line": 203
+                      "line": 202
                     }
                   ]
                 }
               ],
               "file": "main.tds",
-              "line": 198
+              "line": 197
             },
             {
               "op": "command",
@@ -37146,6 +37153,13 @@
                   "value": "演出チェックを終了します。"
                 }
               ],
+              "file": "main.tds",
+              "line": 205
+            },
+            {
+              "op": "call",
+              "name": "start",
+              "args": [],
               "file": "main.tds",
               "line": 206
             }
@@ -37194,14 +37208,21 @@
             {
               "scope": "function",
               "container": "breathe_sister",
-              "line": 55,
+              "line": 54,
               "column": 8,
               "kind": "expression"
             },
             {
               "scope": "function",
               "container": "hop_sister",
-              "line": 67,
+              "line": 66,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 94,
               "column": 8,
               "kind": "expression"
             },
@@ -37209,69 +37230,62 @@
               "scope": "scene",
               "container": "main",
               "line": 95,
-              "column": 8,
+              "column": 3,
               "kind": "expression"
             },
             {
               "scope": "scene",
               "container": "main",
               "line": 96,
-              "column": 3,
+              "column": 8,
               "kind": "expression"
             },
             {
               "scope": "scene",
               "container": "main",
               "line": 97,
-              "column": 8,
-              "kind": "expression"
-            },
-            {
-              "scope": "scene",
-              "container": "main",
-              "line": 98,
               "column": 3,
               "kind": "expression"
             },
             {
               "scope": "scene",
               "container": "main",
-              "line": 109,
+              "line": 108,
               "column": 3,
               "kind": "expression"
             },
             {
               "scope": "scene",
               "container": "motion_effects",
-              "line": 120,
+              "line": 119,
               "column": 8,
               "kind": "expression"
             },
             {
               "scope": "scene",
               "container": "motion_effects",
-              "line": 125,
+              "line": 124,
               "column": 3,
               "kind": "expression"
             },
             {
               "scope": "scene",
               "container": "motion_effects",
-              "line": 127,
+              "line": 126,
               "column": 3,
               "kind": "expression"
             },
             {
               "scope": "scene",
               "container": "background_transitions",
-              "line": 158,
+              "line": 157,
               "column": 8,
               "kind": "expression"
             },
             {
               "scope": "scene",
               "container": "background_transitions",
-              "line": 165,
+              "line": 164,
               "column": 8,
               "kind": "expression"
             }
@@ -37299,42 +37313,42 @@
             {
               "scope": "scene",
               "container": "main",
-              "line": 99,
+              "line": 98,
               "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 99,
+              "column": 3,
               "kind": "expression"
             },
             {
               "scope": "scene",
               "container": "main",
               "line": 100,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 102,
+              "column": 8,
+              "kind": "expression"
+            },
+            {
+              "scope": "scene",
+              "container": "main",
+              "line": 104,
               "column": 3,
-              "kind": "expression"
-            },
-            {
-              "scope": "scene",
-              "container": "main",
-              "line": 101,
-              "column": 8,
-              "kind": "expression"
-            },
-            {
-              "scope": "scene",
-              "container": "main",
-              "line": 103,
-              "column": 8,
               "kind": "expression"
             },
             {
               "scope": "scene",
               "container": "main",
               "line": 105,
-              "column": 3,
-              "kind": "expression"
-            },
-            {
-              "scope": "scene",
-              "container": "main",
-              "line": 106,
               "column": 8,
               "kind": "expression"
             }
@@ -37350,7 +37364,7 @@
             {
               "scope": "local",
               "container": "shake_camera:for1",
-              "line": 42,
+              "line": 41,
               "column": 7,
               "kind": "definition"
             }
@@ -37359,7 +37373,7 @@
             {
               "scope": "local",
               "container": "shake_camera:for1",
-              "line": 43,
+              "line": 42,
               "column": 28,
               "kind": "definition"
             }
@@ -37375,7 +37389,7 @@
             {
               "scope": "function",
               "container": "shake_camera",
-              "line": 43,
+              "line": 42,
               "column": 11,
               "kind": "definition"
             }
@@ -37384,14 +37398,14 @@
             {
               "scope": "local",
               "container": "shake_camera:for1",
-              "line": 44,
+              "line": 43,
               "column": 55,
               "kind": "definition"
             },
             {
               "scope": "local",
               "container": "shake_camera:for1",
-              "line": 45,
+              "line": 44,
               "column": 55,
               "kind": "definition"
             }
@@ -37400,6 +37414,31 @@
         },
         {
           "name": "offset_x",
+          "type": "int",
+          "scope": "function",
+          "definedIn": "shake_camera",
+          "definitions": [
+            {
+              "scope": "function",
+              "container": "shake_camera",
+              "line": 43,
+              "column": 9,
+              "kind": "definition"
+            }
+          ],
+          "references": [
+            {
+              "scope": "local",
+              "container": "shake_camera:for1",
+              "line": 45,
+              "column": 25,
+              "kind": "definition"
+            }
+          ],
+          "mutable": true
+        },
+        {
+          "name": "offset_y",
           "type": "int",
           "scope": "function",
           "definedIn": "shake_camera",
@@ -37417,31 +37456,6 @@
               "scope": "local",
               "container": "shake_camera:for1",
               "line": 46,
-              "column": 25,
-              "kind": "definition"
-            }
-          ],
-          "mutable": true
-        },
-        {
-          "name": "offset_y",
-          "type": "int",
-          "scope": "function",
-          "definedIn": "shake_camera",
-          "definitions": [
-            {
-              "scope": "function",
-              "container": "shake_camera",
-              "line": 45,
-              "column": 9,
-              "kind": "definition"
-            }
-          ],
-          "references": [
-            {
-              "scope": "local",
-              "container": "shake_camera:for1",
-              "line": 47,
               "column": 25,
               "kind": "definition"
             }
@@ -37457,7 +37471,7 @@
             {
               "scope": "function",
               "container": "shake_camera",
-              "line": 46,
+              "line": 45,
               "column": 9,
               "kind": "definition"
             }
@@ -37466,7 +37480,7 @@
             {
               "scope": "local",
               "container": "shake_camera:for1",
-              "line": 48,
+              "line": 47,
               "column": 25,
               "kind": "definition"
             }
@@ -37482,7 +37496,7 @@
             {
               "scope": "function",
               "container": "shake_camera",
-              "line": 47,
+              "line": 46,
               "column": 9,
               "kind": "definition"
             }
@@ -37491,7 +37505,7 @@
             {
               "scope": "local",
               "container": "shake_camera:for1",
-              "line": 48,
+              "line": 47,
               "column": 33,
               "kind": "definition"
             }
@@ -37507,7 +37521,7 @@
             {
               "scope": "function",
               "container": "breathe_sister",
-              "line": 56,
+              "line": 55,
               "column": 7,
               "kind": "definition"
             }
@@ -37516,14 +37530,14 @@
             {
               "scope": "local",
               "container": "breathe_sister:for2",
-              "line": 60,
+              "line": 59,
               "column": 46,
               "kind": "definition"
             },
             {
               "scope": "local",
               "container": "breathe_sister:for2",
-              "line": 62,
+              "line": 61,
               "column": 9,
               "kind": "assignment"
             }
@@ -37539,7 +37553,7 @@
             {
               "scope": "local",
               "container": "breathe_sister:for2",
-              "line": 57,
+              "line": 56,
               "column": 7,
               "kind": "definition"
             }
@@ -37548,7 +37562,7 @@
             {
               "scope": "local",
               "container": "breathe_sister:for2",
-              "line": 58,
+              "line": 57,
               "column": 28,
               "kind": "definition"
             }
@@ -37564,7 +37578,7 @@
             {
               "scope": "function",
               "container": "breathe_sister",
-              "line": 58,
+              "line": 57,
               "column": 11,
               "kind": "definition"
             }
@@ -37573,7 +37587,7 @@
             {
               "scope": "local",
               "container": "breathe_sister:for2",
-              "line": 59,
+              "line": 58,
               "column": 55,
               "kind": "definition"
             }
@@ -37589,7 +37603,7 @@
             {
               "scope": "function",
               "container": "breathe_sister",
-              "line": 59,
+              "line": 58,
               "column": 9,
               "kind": "definition"
             }
@@ -37598,14 +37612,14 @@
             {
               "scope": "local",
               "container": "breathe_sister:for2",
-              "line": 60,
+              "line": 59,
               "column": 35,
               "kind": "definition"
             },
             {
               "scope": "local",
               "container": "breathe_sister:for2",
-              "line": 62,
+              "line": 61,
               "column": 22,
               "kind": "definition"
             }
@@ -37621,7 +37635,7 @@
             {
               "scope": "function",
               "container": "hop_sister",
-              "line": 68,
+              "line": 67,
               "column": 7,
               "kind": "definition"
             }
@@ -37630,14 +37644,14 @@
             {
               "scope": "local",
               "container": "hop_sister:for3",
-              "line": 72,
+              "line": 71,
               "column": 46,
               "kind": "definition"
             },
             {
               "scope": "local",
               "container": "hop_sister:for3",
-              "line": 74,
+              "line": 73,
               "column": 9,
               "kind": "assignment"
             }
@@ -37653,7 +37667,7 @@
             {
               "scope": "local",
               "container": "hop_sister:for3",
-              "line": 69,
+              "line": 68,
               "column": 7,
               "kind": "definition"
             }
@@ -37662,7 +37676,7 @@
             {
               "scope": "local",
               "container": "hop_sister:for3",
-              "line": 70,
+              "line": 69,
               "column": 28,
               "kind": "definition"
             }
@@ -37678,7 +37692,7 @@
             {
               "scope": "function",
               "container": "hop_sister",
-              "line": 70,
+              "line": 69,
               "column": 11,
               "kind": "definition"
             }
@@ -37687,7 +37701,7 @@
             {
               "scope": "local",
               "container": "hop_sister:for3",
-              "line": 71,
+              "line": 70,
               "column": 52,
               "kind": "definition"
             }
@@ -37703,7 +37717,7 @@
             {
               "scope": "function",
               "container": "hop_sister",
-              "line": 71,
+              "line": 70,
               "column": 9,
               "kind": "definition"
             }
@@ -37712,14 +37726,14 @@
             {
               "scope": "local",
               "container": "hop_sister:for3",
-              "line": 72,
+              "line": 71,
               "column": 35,
               "kind": "definition"
             },
             {
               "scope": "local",
               "container": "hop_sister:for3",
-              "line": 74,
+              "line": 73,
               "column": 22,
               "kind": "definition"
             }
@@ -37735,7 +37749,7 @@
             {
               "scope": "function",
               "container": "drift_background",
-              "line": 80,
+              "line": 79,
               "column": 7,
               "kind": "definition"
             }
@@ -37744,14 +37758,14 @@
             {
               "scope": "local",
               "container": "drift_background:for4",
-              "line": 84,
+              "line": 83,
               "column": 32,
               "kind": "definition"
             },
             {
               "scope": "local",
               "container": "drift_background:for4",
-              "line": 86,
+              "line": 85,
               "column": 9,
               "kind": "assignment"
             }
@@ -37767,7 +37781,7 @@
             {
               "scope": "local",
               "container": "drift_background:for4",
-              "line": 81,
+              "line": 80,
               "column": 7,
               "kind": "definition"
             }
@@ -37776,7 +37790,7 @@
             {
               "scope": "local",
               "container": "drift_background:for4",
-              "line": 82,
+              "line": 81,
               "column": 28,
               "kind": "definition"
             }
@@ -37792,7 +37806,7 @@
             {
               "scope": "function",
               "container": "drift_background",
-              "line": 82,
+              "line": 81,
               "column": 11,
               "kind": "definition"
             }
@@ -37801,7 +37815,7 @@
             {
               "scope": "local",
               "container": "drift_background:for4",
-              "line": 83,
+              "line": 82,
               "column": 54,
               "kind": "definition"
             }
@@ -37817,7 +37831,7 @@
             {
               "scope": "function",
               "container": "drift_background",
-              "line": 83,
+              "line": 82,
               "column": 9,
               "kind": "definition"
             }
@@ -37826,14 +37840,14 @@
             {
               "scope": "local",
               "container": "drift_background:for4",
-              "line": 84,
+              "line": 83,
               "column": 21,
               "kind": "definition"
             },
             {
               "scope": "local",
               "container": "drift_background:for4",
-              "line": 86,
+              "line": 85,
               "column": 22,
               "kind": "definition"
             }

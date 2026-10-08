@@ -1,12 +1,14 @@
 # 静的解析と診断の仕様
 
-この文書は、現行実装の `src/checker/analyzer.ts`、`src/checker/type-checker.ts`、`src/language/builtins.ts`、IDE検証APIとScene Flowの解析連携を説明する。構文定義は[構文リファレンス](syntax-reference.md)、コンパイルは[コンパイラ仕様](compiler-pipeline.md)、IDE上の操作と診断表示は[IDE仕様](ide-spec.md)を参照。
+この文書は、現行実装の `src/checker/analyzer.ts`、`src/checker/type-checker.ts`、`src/language/builtins.ts`、IDE検証APIとScene Flowの解析連携を説明する。構文定義は[構文リファレンス](syntax-reference.md)、コンパイルは[Compiler pipeline仕様](compiler-pipeline.md)、IDE上の操作と診断表示は[IDE仕様](ide-spec.md)を参照。
 
 ## 1. 解析APIと診断データ
 
 ### `analyzeScript`
 
 `analyzeScript(script, file = 'current', externalGlobals = new Map(), externalCharacters = new Map())` は `Diagnostic[]` を返す。`script` はParserの `Script` AST、外部変数は名前から `ValueType` へのMap、外部キャラクターはポーズ集合または `ExternalCharacter` へのMapで渡す。プロジェクトはexternalGlobals Mapに追加の `constraints` 情報を付与し、型情報とは別の値域検査に使う。
+
+診断メッセージでは、`Type error`、`scene`、`list`、`float literal`、`escape sequence` など、ソース上の言語要素や一般的な開発用語は英語表記を使う。説明文は日本語で記述し、技術用語を不自然なカタカナ表記へ置き換えない。
 
 おおよその検査順は、(1)グローバル定数の初期評価、(2) `checkTypes`、(3)外部変数制約、(4)ランタイム状態フロー、(5)画像/動画レイヤー・背景/BGM置換・clear状態、(6)一般ブロック制御フローと値域、(7)関数未使用・戻り値、(8)シーン到達性。型検査エラーを記録しても通常は他の解析を続け、エラーと警告を同じ配列に返す。
 
@@ -24,7 +26,7 @@
 | `endLine`, `endColumn` | ASTに終端位置がある場合に限る |
 | `variable` | `variable-constraint`等の対象変数名。常に存在するとは限らない |
 
-`errorDiagnostic` は `TypeCheckError` の位置とfileを優先する。その他の例外ではmessage中の `line N`、`column N` を抽出し、得られなければ1を使う。SyntaxErrorのcodeは `syntax-error`、その他の型検査例外は `type-error`、どちらもerror severity。type checker由来診断には通常end位置がない。
+`errorDiagnostic` は `TypeCheckError` の位置とfileを優先する。その他の例外ではトークン位置、またはmessage中の `N行`、`M列` を抽出し、得られなければ1を使う。SyntaxErrorのcodeは `syntax-error`、その他の型検査例外は `type-error`、どちらもerror severity。type checker由来診断には通常end位置がない。
 
 `assertAnalyzed` は `analyzeScript` を呼び、最初のerrorを `line N, column N: message` のErrorとしてthrowする。warning/infoのみなら診断配列を返す。Compiler入口ではIDE向け一覧APIというより、error時にコンパイルを止めるゲートとして使う。
 
@@ -44,9 +46,11 @@
 
 ### 組み込みと関数効果
 
-`PURE_BUILTIN_NAMES` は `str`, `int`, `float`, `list.length`, `list.append`, `list.contains`, `text.trim`, `text.normalize_space`, `text.split`, `text.replace`。コメント上、Browser/Nativeで同一値意味を持つ純粋intrinsicとして扱う。`text.split` のseparatorと `text.replace` のsearchが空文字と静的に確定すればtype checkerが拒否する。
+`PURE_BUILTIN_NAMES` は `str`, `int`, `float`, `list.length`, `list.append`, `list.contains`, `list.remove_all`, `text.trim`, `text.normalize_space`, `text.split`, `text.replace`, `text.join`。コメント上、Browser/Nativeで同一値意味を持つ純粋intrinsicとして扱う。`text.split` のseparatorと `text.replace` のsearchが空文字と静的に確定すればtype checkerが拒否する。
 
 Runtime State APIは実行時host intrinsicであり、pure builtinsとは別物。読み取り値は動的で、Compile APIとして公開されるものではない。定義済みsignature/effectは以下。
+
+`start()` はゼロ引数・戻り値 `none` の予約intrinsicで、関数としての再宣言と式値としての使用はできない。画面を開いて実行を中断するためpure expressionではなく、`isNonMutatingBuiltin` もfalseを返す。一方、シナリオ変数を書かないためglobal write effectとは区別する。Editor BuildとCLI `tools/pack.js` では、entryから到達するgoto経路に対してbuild専用の `start-screen-not-returned` blocking warningを検査する。Editor APIは診断objectのfile/line/column/codeを返し、CLIは同じ情報を `file:line:column [code]` として表示する。exportされた `pack()` APIは部分的なTDS programのコンパイルにも使えるため、このプロジェクト運用規則を強制しない。通常の入力中診断もこのプロジェクト全体規則を適用しない。詳細は[スタート画面の実行フロー](startup-flow.md)。
 
 | API | 引数 → 戻り値 | 読み取り領域 | 条件推論metadata |
 | --- | --- | --- | --- |
@@ -71,13 +75,13 @@ Runtime State APIは実行時host intrinsicであり、pure builtinsとは別物
 
 `checkTypes` はstruct/asset/character/function/scene等の重複、asset pathと拡張子、volume、character properties/poses、関数再帰を検証し、その後に式・文用の型環境を組む。外部characterはstruct風型とglobal bindingとして登録され、external globalとの同名衝突を検査する。Runtime State API名は関数名として予約される。
 
-文脈上、global blockは宣言を許可し、scene宣言がない場合は暗黙シーンとしてgoto/choiceを許す。関数内はgoto/choice禁止、return許可。scene内はgoto/choice許可、returnと変数宣言は禁止。関数parameter名は重複できない。readonly external globalは変更不可だが、関数parameterが同名ならparameter側のbindingとなる。
+文脈上、global blockは宣言を許可し、scene宣言がない場合は暗黙シーンとしてgoto/choiceを許す。関数内はgoto/choice禁止、return許可。scene内はgoto/choice許可、return禁止で、scene直下の変数宣言も禁止。choice各選択肢の本体では分岐内宣言を許可する。関数parameter名は重複できない。readonly external globalは変更不可だが、関数parameterが同名ならparameter側のbindingとなる。
 
 条件式はtruthy値では足りず、比較演算 `== != > >= < <=` または論理式を要求する。`checkRecursion` は関数call graphをDFSで走査し、再帰経路を含むTypeCheckErrorを出す。
 
 ### コマンド固有検証の例
 
-`checkCommand` はコマンドごとの識別子・引数・範囲も検証する。表示コマンドの識別子はリテラルであること、`--only` / `--layer` は重複や不正順序を持たないこと、layerは0以上8未満で小数第3位までであること、volume/dialog opacityはfloatの0..1であることを要求する。アセットIDは宣言済みかつ期待kindと一致する必要がある。durationはint millisecondで0..2147483647、character offsetはx/y各1回、±1,000,000px以内。これらはtype-check/compileを拒否する規則で、analyzerの警告とは別層。
+`checkCommand` はコマンドごとの識別子・引数・範囲も検証する。表示コマンドの識別子はリテラルであること、`--only` / `--layer` は重複や不正順序を持たないこと、コンパイル時に値が静的に分かるlayerは0以上8未満で小数第3位までであること、volume/dialog opacityはfloatの0..1であることを要求する。変数など実行時まで値が分からないlayer式は型を検査し、実行時にも同じ範囲・精度を検証してから適用する。アセットIDは宣言済みかつ期待kindと一致する必要がある。durationはint millisecondで0..2147483647、character offsetはx/y各1回、±1,000,000px以内。これらはtype-check/compile時とruntimeの各段階で該当する検査を行う規則で、analyzerの警告とは別層。
 
 ## 3. 定数・値域・effect解析 (`analyzer.ts`)
 
@@ -107,18 +111,19 @@ Runtime State APIは実行時host intrinsicであり、pure builtinsとは別物
 
 ## 4. 診断code一覧
 
-診断messageは日本語/英語表記が変更され得る。連携側はcodeとseverityを使う。
+診断の説明文は日本語で表示し、ソース上の言語要素や標準的な技術ラベルは英語表記を維持する。連携側は表示文言に依存せず、安定した `code` と `severity` を使う。
 
 | code | severity | 条件 |
 | --- | --- | --- |
 | `syntax-error` | error | IDE serverのparse失敗またはSyntaxError |
+| `syntax-diagnostics-truncated` | warning | 100件を返した後も構文エラーが残るため、残りを省略 |
 | `type-error` | error | TypeCheckError等の型/意味検査失敗 |
 | `missing-return` | error | none以外を返す関数で全経路returnを証明できない |
 | `duration-range` | error/warning | durationが0..2147483647ms外。候補全て外ならerror、一部ならwarning |
 | `presentation-offset-range` | error/warning | presentation offsetの確定/可能範囲が許容外 |
 | `variable-constraint` | error/warning | 変数テーブル制約への代入。完全逸脱error、可能逸脱warning。対象名を `variable` に保持 |
-| `integer-overflow` | error | 定数式またはループ更新/反復で64bit overflow |
-| `float-overflow` | error | 小数演算結果が有限値でない |
+| `integer-overflow` | error/warning | 定数式・ループ更新/反復で64bit integer overflow。超過が確定する場合はerror、値域解析から可能性だけを確認できる場合はwarning |
+| `float-overflow` | error | float の演算結果が表現可能な範囲を超える |
 | `division-by-zero` | warning | 定数/可能値から0除算または剰余を検出 |
 | `invalid-conversion` | error/warning | 静的に不正な変換。valid/invalid候補混在時warning |
 | `invalid-for-step` | error | stepの符号/値でstartからstopへ進めない |
@@ -164,9 +169,11 @@ if difficulty >= 1 and difficulty <= 3 {
 
 ### `POST /api/validate`
 
-`Edit/server.js` のrouteは `{source, name}` を受け `validate(source, sceneName(name), null, true)` を呼ぶ。`collectSyntaxDiagnostics` は失敗行を空白化して再parseし、最大min(行数,100)回まで複数syntax errorを回収する。構文診断があれば意味解析へ進まず返す。
+`Edit/server.js` のrouteは `{source, name}` を受け `validate(source, sceneName(name), null, true)` を呼ぶ。`collectSyntaxDiagnostics` はLexerのunknown-symbol errorで offending token span を空白化して再parseし、同じ行の複数syntax errorも回収する。それ以外のParser errorは行全体を空白化して復旧する。最大100件の構文診断を返し、さらに診断が残っていれば `syntax-diagnostics-truncated` warning を追加して省略を明示する。構文診断があれば意味解析へ進まない。
 
 構文成功後 `resolveProjectScript` がincludeを解決し、asset宣言pathの存在とproject内安全性を別途検証する。global variable/character tableからproject contextを作り、static declarationがあれば解析用ASTのglobals/body先頭に合成する。`analyzeScript` のerrorがあれば `ok:false`。errorなしなら警告/infoを返却に残しつつ、`compileSource` も実行する。成功応答は `ok`, `diagnostics`, `statements`, `instructions` を返し、includeProgram指定時はprogramも含む。compileやproject resolution errorはserver側で `project-error` 等へ変換される。
+
+include module 内のParser errorはresolverがmoduleのfile名を保持し、tokenのline/columnを使って診断する。Checkerが`parallel` child commandで検出したerrorは、外側blockではなくchild commandの位置を報告する。既存runtime testsはinclude先のsyntax/type error file/line/columnを、parser testsはnested commandのline/columnを確認する。
 
 ### `POST /api/compile`
 
@@ -196,10 +203,12 @@ queryは `file`, `scene`, `line`, comma区切りの `names`。lineは1以上のi
 - project-layout tests: configured variable constraints、character/image slot conflict、background clear path divergence、video layer replacement。
 - standard-library tests: include alias後のeffect/presence proof、関数call越しのcharacter guard。
 
-これらはテストファイル内のテスト名・アサーションを調査した根拠。今回テストは実行していない。
+上記は初回の静的調査で確認したテスト名・アサーションの根拠であり、その時点ではテストを実行していない。後続監査で追加した対実行・回帰テストの現在範囲は末尾の「未網羅範囲」と `EDITOR_AUDIT_PROGRESS.md` に記録する。
 
 ## 8. 調査範囲
 
 直接確認した主要箇所は `src/checker/analyzer.ts`（定数、制約、effects、runtime state、block解析、`analyzeScript` / `assertAnalyzed`）、`src/checker/type-checker.ts`（式/文/コマンド検査、`checkTypes`）、`src/language/builtins.ts`、`Edit/server.js`（validate/compile/flow-domains/scene-graph）、`Edit/editor.js`・`Edit/flow.js`（診断連携）、上記テストの関連部分。
 
-未調査範囲: Browser/Native runtime intrinsicの完全な意味同値性、全compiler命令変換、全コマンドの引数行列と各エラー文言、診断UIのCSS/アクセシビリティ詳細。各領域は[コンパイラ仕様](compiler-pipeline.md)、[UI仕様](ui-runtime-spec.md)、[IDE仕様](ide-spec.md)を参照。
+未網羅範囲: Browser/Native runtime intrinsicは `test/native-intrinsic-parity.cjs` で最適化ON/OFF双方のcharacter、background/BGM、execution位置、音量、variable state遷移と、6 API groupのinvalid package rejectionを比較する。全引数値、全副作用順序、実Player provider経由、すべての異常系の意味同値性までは証明していない。compilerの全命令・式・引数の組合せとエラー文言も網羅していない。CSSはpadding/画像fit/opacity/hover/wide border/flex basis/z-orderの一部をBrowser/Native実画素で比較したが、全CSS組合せは未検証であり、特にGridの異なるtrack sizing kindを組み合わせた全geometry、align/justifyとoverflowの組合せ、別OS/DPIは残る。`grid-template-columns` の `auto` / `minmax()` は未対応で、compilerが拒否する。複数implicit auto rowのoverflowと異なるintrinsic寄与はBrowser／Nativeで検査済み。診断UIのARIA DOM検査はあるが、実スクリーンリーダーでの読み上げ検証は未実施。各領域は[Compiler pipeline仕様](compiler-pipeline.md)、[UI仕様](ui-runtime-spec.md)、[IDE仕様](ide-spec.md)、[screen rendering compatibility](../Title/setting/screens/RENDERING-COMPATIBILITY.md)を参照。
+
+Pure builtin inventoryには `list.remove_all` と `text.join` も含まれる。どちらも決定的な値操作で、scenario variableを書き換えない。

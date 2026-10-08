@@ -45,6 +45,9 @@ the shared CSS. Ranges use normalized `0..1` values; checkboxes are for boolean
 keys. A range key must be numeric and a checkbox key boolean. Playback settings
 supported by both players:
 
+Range `step` values must be at least `Number.EPSILON` (`2.220446049250313e-16`)
+so the shared Browser/Native control can represent and apply each increment.
+
 | Key | Type | Runtime effect |
 | --- | --- | --- |
 | `ui.skipUnseen` | checkbox | When enabled, SKIP advances read dialogue only and stops at the first unseen line. |

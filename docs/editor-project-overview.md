@@ -37,19 +37,19 @@ Novel Script Editorは、テキストDSL「TDS」でビジュアルノベルを�
 
 ```text
 Project/
-  setting.txt                 # 作品の場所・開始ファイル等
+  setting/
+    setting.txt               # 作品の場所・開始ファイル等
+    game-screens.json         # タイトル・メニュー等の画面定義
+    player-ui.json            # 会話枠・選択肢・基準音量等
+    screens/*.html            # 画面テンプレート
+    screens/*.css             # 共通画面CSS
+    screens/ui-controls.txt   # 安全なUI設定値
   senario/*.tds               # TDSシナリオ（ディレクトリ名は設定可能）
   asset/                       # bg/char/bgm/se/voice/video/image等
-  setting/
-    game-screens.json          # タイトル・メニュー等の画面定義
-    player-ui.json             # 会話枠・選択肢・基準音量等
-    screens/*.html             # 画面テンプレート
-    screens/*.css              # 共通画面CSS
-    screens/ui-controls.txt    # 安全なUI設定値
   .novel/                      # IDE生成の索引・キャッシュ・ビルド成果物
 ```
 
-`tools/project-layout.js` がプロジェクトルート、scenario/settings/assets/buildの各ルートを解決する。`setting.txt` の `scenario_dir`、`asset_dir`、`start_file` が基本設定で、titleも指定できる。CLI引数 `--project` と `NOVEL_PROJECT_ROOT` によるルート指定を持つ。最近開いた作品の管理は `Edit/recent-projects.js`。
+`tools/project-layout.js` がプロジェクトルート、scenario/settings/assets/buildの各ルートを解決する。標準形式では `setting/setting.txt` の `scenario_dir`、`asset_dir`、`start_file` が基本設定で、titleも指定できる。互換用にルート直下の `setting.txt` も読み込み、入れ子の `setting/setting.txt` がある場合はこちらを優先する。CLI引数 `--project` と `NOVEL_PROJECT_ROOT` によるルート指定を持つ。最近開いた作品の管理は `Edit/recent-projects.js`。
 
 作品内参照は安全のため相対パスに制限し、作品ルート外へのパス逸脱を検証する。includeと外部gotoはシナリオディレクトリ基準、asset宣言はassetディレクトリ基準。`std/` はエディター同梱標準ライブラリの予約名前空間で、プロジェクト側の同名パスより優先される。
 
@@ -88,7 +88,7 @@ Project/
 
 字句器 `src/parser/lexer.ts` は文字列、コメント、数値、記号、改行、位置情報を扱い、構文器 `src/parser/parser.ts` はAST (`src/parser/ast.ts`) を生成する。トップレベル宣言にはinclude、asset、character、struct、global、関数、sceneがあり、ステートメントには宣言／代入／unset、if/else、for／foreach／while、choice、関数呼出し／return、goto、演出コマンドがある。式にはリテラル、変数、添字、単項・二項演算、呼び出し、dict、listを含む。
 
-プリミティブ型は `int`（符号付き64bit）、`float`（有限倍精度数）、`str`、`bool`。複合型に `dict[T]`、`list[T]`（基本型の要素）、名前付きstruct、専用character値がある。関数戻り値の `none` は値型としては宣言できない。listは値コピー、添字は0始まり。詳細は構文リファレンスを参照する。
+primitive types は `int`（符号付き64bit）、`float`（有限倍精度数）、`str`、`bool`。複合型に `dict[T]`、`list[T]`（基本型の要素）、名前付きstruct、専用character値がある。関数戻り値の `none` は値型としては宣言できない。listは値コピー、添字は0始まり。詳細は構文リファレンスを参照する。
 includeは別名必須で `include "std/math.tds" as math`、呼出しは `math.sin(x)`。モジュールは宣言主体でsceneや実行命令を含まず、関数はaliasで修飾される。asset/character/struct/globalカタログはプロジェクト全体へ統合される。
 
 ### 5.2 型検査・意味解析
@@ -135,7 +135,7 @@ Native側はC++ `native/runtime.hpp`、`player.cpp`、`video.hpp`等で命令実
 
 ### 6.2 セーブ・ロード
 
-Browserは作品ごとのIndexedDB namespaceにセーブsnapshot、一覧metadata、サムネイルBlobを保持し、テスト再生は別namespaceを使う。IndexedDBが使えない場合はlocalStorageへfallbackするが、この経路ではサムネイルは永続化されない。snapshotはversion、ファイル／scene／命令位置、variables、locals、sceneState等を含む。Nativeは通常SDLのユーザーデータ領域を使い、`NOVEL_SAVE_ROOT`で保存場所を上書きできる。slot本体は`slot-N.json`、サムネイルは`thumb-slot-N.png`として別保存する。保存枠一覧はsave-slots/load-slots roleで構成し、HTMLの`data-slot-field="thumbnail"`が同じ番号の画像を表示する。現在の画像は背景・立ち絵・追加画像を合成した物語レイヤーで、会話欄・文字・選択肢までは含まない。旧セーブや画像欠損・破損時も、snapshotが有効ならロード可能である。Browserは破損・非互換slotの状態も表示できるが、Nativeのslot `status`表示は現状saved/emptyのみで、`data-state`スタイルは未対応。
+Browserは作品ごとのIndexedDB namespaceにセーブsnapshot、一覧metadata、サムネイルBlobを保持し、テスト再生は別namespaceを使う。IndexedDBが使えない場合はlocalStorageへfallbackするが、この経路ではサムネイルは永続化されない。snapshotはversion、ファイル／scene／命令位置、variables、locals、sceneState等を含む。Nativeは通常SDLのユーザーデータ領域を使い、`NOVEL_SAVE_ROOT`で保存場所を上書きできる。slot本体は`slot-N.json`、サムネイルは`thumb-slot-N.png`として別保存する。保存枠一覧はsave-slots/load-slots roleで構成し、HTMLの`data-slot-field="thumbnail"`が同じ番号の画像を表示する。現在の画像は背景・立ち絵・追加画像を合成した物語レイヤーで、会話欄・文字・選択肢までは含まない。旧セーブや画像欠損・破損時も、snapshotが有効ならロード可能である。BrowserとNativeの両方で破損・非互換slotの状態を表示し、共通UI treeのslotStateStylesからdata-state相当の状態別スタイルを適用する。slotの表示差（文字折返し、画像fit、focus等）はrendererごとの実画面で引き続き比較する。
 
 ### 6.3 音声とUI音量
 
@@ -165,7 +165,7 @@ BrowserはHTMLAudioElement/Web Audio経路でBGMのgain transition、チャン�
 3. **制限HTML/CSSは“HTML/CSS対応”ではない** — 利用できるのは小さな許可リストで、通常のCSS cascade、子孫セレクター、pseudo-class全般、media query、font-face、animation、外部素材、任意DOM/APIはない。`:hover`も専用コンパイラ／renderer経路。READMEや企画説明で単に「HTML/CSS対応」と言うと自由度を過大に見せる。
 4. **Browser/Nativeは同一UI treeを使うが画素・操作挙動まで同じとは限らない** — BrowserはDOM/CSS/native inputを利用し、NativeはSDLで要素を描画・入力処理する。フォント、文字折返し、range表示、hover/focus、画像fit等はrenderer別実装の差が残る。共通設定モデルはあるが完全な視覚同一性の根拠にはならない。
 5. **保存先と可搬性が実行環境で違う** — BrowserはIndexedDB（利用不可時はlocalStorage fallback）、Nativeは通常SDLのユーザーデータ領域（`NOVEL_SAVE_ROOT`で上書き可能）。Nativeの旧package横`saves/`は移行元として扱われる。Browser/Native間でslotやサムネイルが自動同期される仕様ではない。ブラウザーの容量・消去・プライベートモード、Nativeユーザーデータのバックアップ／移行方法は異なる。
-6. **文書上の設定場所に履歴差がある** — 現行サンプルは`Title/setting/`にまとめるが、旧形式・互換分岐やREADMEにはroot `setting.txt`、`setting/player-ui.json`、legacy asset配置の記述が混在する。新規実装・移行ではどのlayoutを正とするか明示しないと説明が分岐する。
+6. **設定レイアウトには互換形式がある** — 新規プロジェクトの標準は`setting/setting.txt`と`setting/`内の設定文書。ルート直下の`setting.txt`を使う旧形式も読み込み対象であり、`tools/pack.js`には旧形式のUI文書／アセット参照を処理する互換分岐がある。新規作成では標準形式を使い、既存作品の実際の配置は`docs/project-format-and-packaging.md`のlegacy分岐を参照する。
 7. **開始点説明の適用範囲** — TDSの開始sceneは開始ファイル内の先頭sceneだが、画面設定が有効なplayerでは`game-screens.json`のinitial screen／start actionが先に存在する。作品全体の開始点を説明するとき「先頭sceneから開始」だけではタイトル画面経由の流れを説明しきれない。
 8. **Editorの“保存”と“ビルド”の区別がUI上重要** — 保存済みscenarioでも最後に生成したpackageとは違うことがある。再生が古い成果物を使う状態は、dirty判定とbuild促進表示に依存するため、単なる保存済み表示を最新実行と誤認させない必要がある。
 9. **includeの宣言統合と名前空間の非対称** — 関数呼び出しはalias修飾される一方、assets/characters/structs/globalsはproject-wide catalogへ統合される。`math.sin()`のような一様なmodule namespaceを期待すると、同名衝突やIDEスコープ表示で直感とずれる可能性がある。現行仕様として明記し、衝突検査・補完表示を継続監査すべき。
@@ -328,7 +328,7 @@ say/choiceなどはユーザー入力待ち、wait/fade/move/音声videoは時�
 7. save/load slotsを専用roleから生成し、control defaultsを結び付ける。
 8. Browser rendererまたはNative package rendererに渡すデータとしてシリアライズする。
 
-画面HTMLは最大120KB、CSS80KB、controls text20KB、要素数2000・入れ子64の上限がある。属性はid/class/src/alt/type/min/max/step/value/checked/aria-label/data-action/data-target/data-role/data-count/data-setting等の許可形式に限定される。
+画面HTMLは最大120KB、CSS80KB、controls text20KB、要素数2000・入れ子64の上限がある。属性はid/class/src/alt/type/min/max/step/value/checked/aria-label/data-action/data-target/data-role/data-count/data-setting等の許可形式に限定される。`img`には`alt`属性を必須とし、装飾画像は`alt=""`を指定する。
 
 ### 15.2 自由度の範囲
 
@@ -449,10 +449,12 @@ set flags["seen"] = flags["seen"] + 1
 | `list.length(xs)` | `list[T] -> int` | 要素数 |
 | `list.append(xs, x)` | `list[T], T -> list[T]` | 元listを変更せず末尾追加した値 |
 | `list.contains(xs, x)` | `list[T], T -> bool` | 等価要素の有無 |
+| `list.remove_all(xs, x)` | `list[T], T -> list[T]` | primitive要素をすべて除いた新しいlist。最大100,000要素 |
 | `text.trim(s)` | `str -> str` | 対応空白を両端除去 |
 | `text.normalize_space(s)` | `str -> str` | 空白連続をASCII space 1個へ正規化 |
 | `text.split(s, sep)` | `str, str -> list[str]` | separatorで分割。空要素を保持、空separator不可 |
 | `text.replace(s, old, new)` | `str, str, str -> str` | 全一致を置換。old空文字不可 |
+| `text.join(xs, sep)` | `list[str], str -> str` | 文字列listをseparatorで結合。最大100,000要素 |
 | `runtime.state.characters.exists(id)` | `str -> bool` | 現在表示中のIDか |
 | `runtime.state.characters.list()` | `() -> list[str]` | 現在表示中IDを重複なし・昇順で返す |
 | `runtime.state.characters.position(id)` | `str -> str` | 表示中の配置枠。非表示なら空文字列 |
@@ -471,11 +473,11 @@ Pure builtinはAnalyzerのconstant folding／副作用推定でも特別扱い�
 
 | module | API | 用途 |
 |---|---|---|
-| `std/math.tds` | `pi()`, `tau()`, `radians(x)`, `degrees(x)`, `sin(x)`, `cos(x)` | 角度・三角関数（Taylor近似） |
-| 同上 | `abs(x)`, `min(a,b)`, `max(a,b)`, `clamp(x,lo,hi)`, `sign(x)` | 基本計算 |
+| `std/math.tds` | `pi()`, `tau()`, `radians(x)`, `degrees(x)`, `sin(x)`, `cos(x)` | 角度・三角関数（Browser/Native標準数学関数） |
+| 同上 | `abs(x)`, `min(a,b)`, `max(a,b)`, `clamp(x,lo,hi)`, `sign(x)` | 基本計算。`clamp` は `lo > hi` なら端点を入れ替える |
 | 同上 | `floor(x)`, `ceil(x)`, `round(x)`, `sqrt(x)` | 丸め・近似平方根。演出向けで科学計算精度保証なし |
 | 同上 | `lerp(a,b,t)`, `map_range(x,in0,in1,out0,out1)`, `distance(x1,y1,x2,y2)`, `approach(current,target,delta)` | 補間・距離・追従 |
-| 同上 | `smoothstep`, `smootherstep`, `ease_in/out/in_out_quad/cubic` | 0..1進行値のイージング |
+| 同上 | `smoothstep`, `smootherstep`, `ease_in_quad`, `ease_out_quad`, `ease_in_out_quad`, `ease_in_cubic`, `ease_out_cubic`, `ease_in_out_cubic` | 0..1進行値のイージング |
 | `std/text.tds` | `split_words(s)`, `join_words(items, separator)` | 単語分割・結合 |
 | `std/collections.tds` | `index_of_str(items,target)`, `append_unique_str(items,item)`, `remove_all_str(items,item)` | 文字列list操作 |
 | `std/motion/walk.tds` | `character(character,distance_px,cycles,seconds,bob_px)`, `walk_x(distance_px,progress)` | 表示中キャラクターの時間付き歩行／横位置計算 |
@@ -496,3 +498,5 @@ Pure builtinはAnalyzerのconstant folding／副作用推定でも特別扱い�
 ### 18.7 構文リファレンスとの検査を継続する箇所
 
 言語機能を足したときは、最低限、`parser.ts`の受理形、`type-checker.ts`の型・範囲、`analyzer.ts`の定数／副作用解釈、`compiler.ts`のIR化、Browser `runtime.js`、Native `runtime.hpp`、補完／tooltip、`syntax-draft.md`、unit/differential/GUI testsを照合する。文書に構文があるだけ、Browser runtimeだけにあるだけ、compilerが任意call名を保持するだけでは、TDS機能として完成とはみなさない。
+
+pure builtinの `list.remove_all(xs, x)` と `text.join(xs, separator)` はO(n)で結果を作る。`list.remove_all` は新しいlistを返し、`xs`を変更しない。各intrinsicは最大100,000要素を処理し、それを超える入力には共通のloop-limit errorを返す。

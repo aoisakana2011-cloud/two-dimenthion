@@ -156,6 +156,18 @@ scene main { wait 1 }`;
     assert.ok((await editor.inputValue()).includes('text.normalize_space()'), 'text intrinsic members are completed in their namespace');
     assert.equal(await caret(), textBuiltinCaret + 'lize_space('.length, 'text intrinsic completion leaves the caret inside the call');
 
+    const runtimeStateSource = 'scene main {\n  wait runtime.state.characters.exi\n}';
+    await editor.fill(runtimeStateSource);
+    const runtimeStateCaret = runtimeStateSource.indexOf('runtime.state.characters.exi') + 'runtime.state.characters.exi'.length;
+    await editor.evaluate((element, position) => {
+      element.setSelectionRange(position, position);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }, runtimeStateCaret);
+    await page.waitForFunction(() => [...document.querySelectorAll('#suggestions .suggestion')].some(item => item.textContent.trim().endsWith('exists()')));
+    await editor.press('Enter');
+    assert.ok((await editor.inputValue()).includes('runtime.state.characters.exists()'), 'runtime state API methods are completed under their shared namespace');
+    assert.equal(await caret(), runtimeStateCaret + 'sts('.length, 'runtime state method completion leaves the caret inside call parentheses');
+
     const loopSymbolResponse = await page.evaluate(async () => {
       const response = await fetch('/api/editor-symbols', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -265,6 +277,24 @@ scene main { wait 1 }`;
     assert.equal(await editor.inputValue(), 'scene main {\n    wait 1\n}', 'Ctrl+] indents the current line');
     await editor.press('Control+BracketLeft');
     assert.equal(await editor.inputValue(), 'scene main {\n  wait 1\n}', 'Ctrl+[ outdents the current line');
+
+    const unicodeFormatSource = 'scene main{say narrator"😀 hello"}';
+    await editor.fill(unicodeFormatSource);
+    const selectedTextStart = unicodeFormatSource.indexOf('hello');
+    await editor.evaluate((element, range) => element.setSelectionRange(range.start, range.end), {
+      start: selectedTextStart, end: selectedTextStart + 'hello'.length,
+    });
+    await page.keyboard.press('Control+Shift+f');
+    const unicodeFormatted = 'scene main {\n  say narrator "😀 hello"\n}';
+    assert.equal(await editor.inputValue(), unicodeFormatted, 'the actual editor shortcut formats through the shared formatter');
+    const restoredSelection = await editor.evaluate(element => ({
+      text: element.value.slice(element.selectionStart, element.selectionEnd),
+      start: element.selectionStart,
+      end: element.selectionEnd,
+    }));
+    assert.deepEqual(restoredSelection, {
+      text: 'hello', start: unicodeFormatted.indexOf('hello'), end: unicodeFormatted.indexOf('hello') + 'hello'.length,
+    }, 'the editor restores a selection after astral Unicode text using UTF-16 offsets');
 
     await editor.fill('scene analysis {\n  if 1 == 2 {\n    wait 1\n  }\n}');
     await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('constant-condition'), null, { timeout: 5000 });

@@ -12,23 +12,23 @@
     </nav>
   </header>
   <section class="volume-panel">
-    <div class="volume-row volume-row-0"><div class="volume-name">マスターボリューム</div></div>
-    <div class="volume-row volume-row-1"><div class="volume-name">BGMボリューム</div></div>
-    <div class="volume-row volume-row-2"><div class="volume-name">SEボリューム</div></div>
-    <div class="volume-row volume-row-4"><div class="volume-name">ボイスボリューム</div></div>
-    <input class="audio-control audio-master" type="range" min="0" max="1" step="0.01" data-setting="audio.master" data-skin="volume" aria-label="マスターボリューム">
-    <input class="audio-control audio-bgm" type="range" min="0" max="1" step="0.01" data-setting="audio.bgm" data-skin="volume" aria-label="BGMボリューム">
-    <input class="audio-control audio-se" type="range" min="0" max="1" step="0.01" data-setting="audio.se" data-skin="volume" aria-label="SEボリューム">
-    <input class="audio-control audio-voice" type="range" min="0" max="1" step="0.01" data-setting="audio.voice" data-skin="volume" aria-label="ボイスボリューム">
-    <input class="audio-mute audio-bgm-mute" type="checkbox" data-setting="audio.bgmMuted" data-skin="mute" aria-label="BGMミュート"><small class="audio-mute-label audio-bgm-mute-label">ミュート</small>
-    <input class="audio-mute audio-se-mute" type="checkbox" data-setting="audio.seMuted" data-skin="mute" aria-label="SEミュート"><small class="audio-mute-label audio-se-mute-label">ミュート</small>
-    <input class="audio-mute audio-voice-mute" type="checkbox" data-setting="audio.voiceMuted" data-skin="mute" aria-label="ボイスミュート"><small class="audio-mute-label audio-voice-mute-label">ミュート</small>
-    <div class="dialog-opacity-label">メッセージウィンドウの透過率</div><input class="audio-control dialog-opacity-control" type="range" min="0" max="1" step="0.01" data-setting="ui.dialogOpacity" data-skin="volume" aria-label="メッセージウィンドウの透過率">
-    <section class="sound-limit"><h2 class="sound-limit-heading">キャラクター別ボイス</h2><small class="sound-description">各キャラクターの音声だけを個別に調整できます。キャラクターIDを指定した voice 再生に反映されます。</small>
-      <article class="sound-voice-card"><img class="sound-portrait" src="ui/portraits/ayaka-volume.png" alt=""><strong class="sound-character">綾瀬 あやか</strong><small class="sound-voice-id">ayaka</small><input class="voice-character-volume" type="range" min="0" max="1" step="0.01" data-setting="audio.voice.ayaka" data-skin="volume" aria-label="綾瀬あやかのボイス音量"><input class="voice-character-mute" type="checkbox" data-setting="audio.voice.ayaka.muted" data-skin="mute" aria-label="綾瀬あやかをミュート"><small class="voice-character-mute-label">ミュート</small></article>
-      <article class="sound-voice-card sound-voice-card-sister"><img class="sound-portrait" src="ui/portraits/sister-volume.png" alt=""><strong class="sound-character">妹</strong><small class="sound-voice-id">sister</small><input class="voice-character-volume" type="range" min="0" max="1" step="0.01" data-setting="audio.voice.sister" data-skin="volume" aria-label="妹のボイス音量"><input class="voice-character-mute" type="checkbox" data-setting="audio.voice.sister.muted" data-skin="mute" aria-label="妹をミュート"><small class="voice-character-mute-label">ミュート</small></article>
+    <div class="volume-row volume-row-0"><div class="volume-name">Master Volume</div></div>
+    <div class="volume-row volume-row-1"><div class="volume-name">BGM Volume</div></div>
+    <div class="volume-row volume-row-2"><div class="volume-name">SE Volume</div></div>
+    <div class="volume-row volume-row-4"><div class="volume-name">Voice Volume</div></div>
+    <input class="audio-control audio-master" type="range" min="0" max="1" step="0.01" data-setting="audio.master" data-skin="volume" aria-label="Master Volume">
+    <input class="audio-control audio-bgm" type="range" min="0" max="1" step="0.01" data-setting="audio.bgm" data-skin="volume" aria-label="BGM Volume">
+    <input class="audio-control audio-se" type="range" min="0" max="1" step="0.01" data-setting="audio.se" data-skin="volume" aria-label="SE Volume">
+    <input class="audio-control audio-voice" type="range" min="0" max="1" step="0.01" data-setting="audio.voice" data-skin="volume" aria-label="Voice Volume">
+    <input class="audio-mute audio-bgm-mute" type="checkbox" data-setting="audio.bgmMuted" data-skin="mute" aria-label="Mute BGM"><small class="audio-mute-label audio-bgm-mute-label">Mute</small>
+    <input class="audio-mute audio-se-mute" type="checkbox" data-setting="audio.seMuted" data-skin="mute" aria-label="Mute SE"><small class="audio-mute-label audio-se-mute-label">Mute</small>
+    <input class="audio-mute audio-voice-mute" type="checkbox" data-setting="audio.voiceMuted" data-skin="mute" aria-label="Mute Voice"><small class="audio-mute-label audio-voice-mute-label">Mute</small>
+    <div class="dialog-opacity-label">Message Window Opacity</div><input class="audio-control dialog-opacity-control" type="range" min="0" max="1" step="0.01" data-setting="ui.dialogOpacity" data-skin="volume" aria-label="Message Window Opacity">
+    <section class="sound-limit"><h2 class="sound-limit-heading">Character Voice</h2><small class="sound-description">各キャラクターの音声だけを個別に調整できます。キャラクターIDを指定した voice 再生に反映されます。</small>
+      <article class="sound-voice-card"><img class="sound-portrait" src="ui/portraits/ayaka-volume.png" alt=""><strong class="sound-character">綾瀬 あやか</strong><small class="sound-voice-id">ayaka</small><input class="voice-character-volume" type="range" min="0" max="1" step="0.01" data-setting="audio.voice.ayaka" data-skin="volume" aria-label="Voice Volume: Ayaka Ayase"><input class="voice-character-mute" type="checkbox" data-setting="audio.voice.ayaka.muted" data-skin="mute" aria-label="Mute Ayaka Ayase"><small class="voice-character-mute-label">Mute</small></article>
+      <article class="sound-voice-card sound-voice-card-sister"><img class="sound-portrait" src="ui/portraits/sister-volume.png" alt=""><strong class="sound-character">妹</strong><small class="sound-voice-id">sister</small><input class="voice-character-volume" type="range" min="0" max="1" step="0.01" data-setting="audio.voice.sister" data-skin="volume" aria-label="Voice Volume: Sister"><input class="voice-character-mute" type="checkbox" data-setting="audio.voice.sister.muted" data-skin="mute" aria-label="Mute Sister"><small class="voice-character-mute-label">Mute</small></article>
     </section>
   </section>
-  <small class="screen-note">変更内容はこの作品のプレイヤー設定として自動保存されます。</small>
+  <small class="screen-note">変更内容はこの作品のPlayer settingsとして自動保存されます。</small>
   <div class="settings-footer sound-footer"><button class="footer-button settings-reset" data-action="reset-settings">初期設定に戻す</button><button class="footer-button settings-back" data-action="back">戻る</button><button class="footer-button settings-title" data-action="open-screen" data-target="title">タイトルへ戻る</button><button class="footer-button settings-quit" data-action="quit">ゲーム終了</button></div>
 </main>

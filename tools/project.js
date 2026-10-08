@@ -35,20 +35,20 @@ async function listStandardLibrary() {
 
 async function readStandardLibraryFile(name) {
   const normalized = sceneFile(name);
-  if (!isStandardLibraryInclude(normalized)) throw Error('Only bundled std/ modules can be opened here.');
+  if (!isStandardLibraryInclude(normalized)) throw Error('ここでは同梱のstd/ moduleだけを開けます。');
   const file = await resolveIncludeFile(normalized, '');
   return { name: normalized, source: await fs.readFile(file, 'utf8') };
 }
 
 function sceneFile(name) {
-  if (typeof name !== 'string') throw Error('不正なシーンパスです');
+  if (typeof name !== 'string') throw Error('Scene path が不正です');
   name = name.replaceAll('\\', '/');
-  if (/\.txt$/i.test(name)) throw Error('Only .tds scene files are supported');
+  if (/\.txt$/i.test(name)) throw Error('.tds形式のシナリオファイルだけを開けます');
   const parts = name.split('/');
   const safeDirectory = (part) => part.length > 0 && part.length <= 120 && part !== '.' && part !== '..' && !/[<>:"|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part);
   const file = parts.pop();
   const safeFile = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$/.test(file) && !/[. ]$/.test(file) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(file);
-  if (name.startsWith('/') || parts.some((part) => !safeDirectory(part)) || !safeFile) throw Error('Invalid scene path');
+  if (name.startsWith('/') || parts.some((part) => !safeDirectory(part)) || !safeFile) throw Error('シナリオのパスが不正です');
   name = [...parts, file].join('/');
   return /\.tds$/i.test(name) ? name : name + '.tds';
 }
@@ -59,7 +59,7 @@ async function inside(root, relative) {
   if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1) throw Error('作品ファイルは通常の単独ファイルである必要があります');
   const resolved = await fs.realpath(requested);
   const rel = path.relative(base, resolved);
-  if (path.isAbsolute(rel) || rel === '..' || rel.startsWith('..' + path.sep)) throw Error('プロジェクト外のパスです');
+  if (path.isAbsolute(rel) || rel === '..' || rel.startsWith('..' + path.sep)) throw Error('Path is outside the project.');
   if (!(await fs.stat(resolved)).isFile()) throw Error('ファイルではありません');
   return resolved;
 }
@@ -90,7 +90,7 @@ async function validateProgram(program, assetsRoot, scenesRoot) {
   for (const entry of assetEntries) {
     const asset = entry.path;
     try { await inside(assetsRoot, asset.replace(/^asset[\\/]/, '')); }
-    catch (e) { errors.push(`アセット '${asset}' を読み込めません: ${fsErrorMessage(e)} (行 ${entry.line || 1})`); }
+    catch (e) { errors.push(`asset '${asset}' を読み込めません: ${fsErrorMessage(e)} (行 ${entry.line || 1})`); }
   }
   const local = new Set(program.scenes.map(s => s.name));
   for (const target of gotos([...program.globals, ...program.scenes.flatMap(s => s.instructions)])) {
@@ -140,35 +140,40 @@ function scanTopLevelDeclarations(source) {
       } else {
         const parts = [];
         let previous;
-        for (; cursor < tokens.length && tokens[cursor].type !== 'newline' && tokens[cursor].type !== 'eof' && !(tokens[cursor].type === 'word' && tokens[cursor].value === 'as'); cursor++) {
+        for (; cursor < tokens.length && tokens[cursor].type !== 'newline' && tokens[cursor].type !== 'eof'
+          && !(previous && tokens[cursor].type === 'word' && tokens[cursor].value === 'as' && tokens[cursor].offset > previous.offset + previous.value.length); cursor++) {
           const pathToken = tokens[cursor];
-          if (previous && pathToken.offset > previous.offset + previous.value.length) throw Error('Include path cannot contain spaces');
+          if (previous && pathToken.offset > previous.offset + previous.value.length) throw Error('includeパスに空白は使用できません');
           parts.push(pathToken.value);
           previous = pathToken;
         }
         includePath = parts.join('');
       }
-      if (tokens[cursor]?.value !== 'as' || tokens[cursor + 1]?.type !== 'word') throw Error('include requires an alias: include "module.tds" as module');
+      if (tokens[cursor]?.value !== 'as' || tokens[cursor + 1]?.type !== 'word') throw Error('includeには別名が必要です: include "module.tds" as module');
       const alias = tokens[cursor + 1].value;
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(alias)) throw Error(`Invalid include alias '${alias}'`);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(alias)) throw Error(`includeの別名 '${alias}' が不正です`);
       includes.push({ path: includePath, alias });
       index = cursor + 1;
     }
-    if (token.value === '{') depth++;
-    else if (token.value === '}') depth = Math.max(0, depth - 1);
+    if (token.type === 'symbol' && token.value === '{') depth++;
+    else if (token.type === 'symbol' && token.value === '}') depth = Math.max(0, depth - 1);
     if (token.type === 'eof') break;
   }
   return { structs, functions, includes };
 }
 
-async function collectIncludedStructs(source, scenesRoot, seen = new Set()) {
-  const declarations = scanTopLevelDeclarations(source);
+async function collectIncludedStructs(source, scenesRoot, seen = new Set(), sourceName = 'current') {
+  let declarations;
+  try { declarations = scanTopLevelDeclarations(source); }
+  catch (error) { if (error && typeof error === 'object' && !error.file) error.file = sourceName; throw error; }
   const discovered = new Set(declarations.structs);
   for (const include of declarations.includes) {
     const name = sceneFile(include.path);
-    if (seen.has(name)) throw Error(`include が循環しています: ${name}`);
     const file = await resolveIncludeFile(name, scenesRoot);
-    const child = await collectIncludedStructs(await fs.readFile(file, 'utf8'), scenesRoot, new Set([...seen, name]));
+    if (seen.has(file)) throw Error(`includeが循環しています: ${name}`);
+    let child;
+    try { child = await collectIncludedStructs(await fs.readFile(file, 'utf8'), scenesRoot, new Set([...seen, file]), name); }
+    catch (error) { if (error && typeof error === 'object' && !error.file) error.file = name; throw error; }
     for (const struct of child) discovered.add(struct);
   }
   return discovered;
@@ -191,11 +196,16 @@ function qualifyImportedFunctions(script, alias) {
   script.functions.forEach((fn) => { fn.name = names.get(fn.name); });
 }
 async function resolveProjectScript(source, scenesRoot, seen = new Set(), sourceName = 'current', isModule = false) {
-  const includedStructs = await collectIncludedStructs(source, scenesRoot, seen);
-  const script = tagLocations(parse(source, includedStructs), sourceName);
+  let includedStructs;
+  try { includedStructs = await collectIncludedStructs(source, scenesRoot, seen, sourceName); }
+  catch (error) { if (error && typeof error === 'object' && !error.file) error.file = sourceName; throw error; }
+  const normalizedSourceName = sourceName.replaceAll('\\', '/');
+  const script = tagLocations(parse(source, includedStructs, {
+    allowCharacterMethodDeclaration: normalizedSourceName === 'std/motion/walk.tds',
+  }), sourceName);
   if (isModule) {
-    if (script.scenes.length) throw Error(`Module '${sourceName}' cannot declare scenes; use goto to enter a scenario file`);
-    if (script.globals.some((statement) => statement.kind !== 'declare')) throw Error(`Module '${sourceName}' may contain declarations only`);
+    if (script.scenes.length) throw Error(`module '${sourceName}' ではSceneを宣言できません。シナリオファイルへ移動するにはgotoを使ってください`);
+    if (script.globals.some((statement) => statement.kind !== 'declare')) throw Error(`module '${sourceName}' には宣言だけを記述できます`);
   }
   const assets = [...script.assets];
   const characters = [...script.characters];
@@ -210,11 +220,13 @@ async function resolveProjectScript(source, scenesRoot, seen = new Set(), source
   const uniqueGlobals = new Set(script.globals.filter((item) => item.kind === 'declare').map((item) => `${item.file || sourceName}:${item.name}`));
   for (const include of script.includes) {
     const name = sceneFile(include.path);
-    if (seen.has(name)) throw Error(`include が循環しています: ${name}`);
-    if (includedPaths.has(name)) throw Error(`Module '${name}' is included more than once in '${sourceName}'`);
-    includedPaths.add(name);
     const file = await resolveIncludeFile(name, scenesRoot);
-    const child = await resolveProjectScript(await fs.readFile(file, 'utf8'), scenesRoot, new Set([...seen, name]), name, true);
+    if (seen.has(file)) throw Error(`includeが循環しています: ${name}`);
+    if (includedPaths.has(file)) throw Error(`module '${name}' が '${sourceName}' 内で重複してincludeされています`);
+    includedPaths.add(file);
+    let child;
+    try { child = await resolveProjectScript(await fs.readFile(file, 'utf8'), scenesRoot, new Set([...seen, file]), name, true); }
+    catch (error) { if (error && typeof error === 'object' && !error.file) error.file = name; throw error; }
     qualifyImportedFunctions(child, include.alias);
     for (const item of child.assets) { const key = `${item.file || name}:${item.name}`; if (!uniqueAssets.has(key)) { uniqueAssets.add(key); assets.push(item); } }
     for (const item of child.characters) { const key = `${item.file || name}:${item.name}`; if (!uniqueCharacters.has(key)) { uniqueCharacters.add(key); characters.push(item); } }

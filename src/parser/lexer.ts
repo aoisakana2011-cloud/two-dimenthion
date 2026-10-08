@@ -26,7 +26,8 @@ export class Lexer {
     if (['==', '!=', '>=', '<=', '->', '=>', '..'].includes(pair)) { this.advance(); this.advance(); return this.token('symbol', pair, start); }
     if ('{}[]=():,+-*/%<>!.\\'.includes(c)) { this.advance(); return this.token('symbol', c, start); }
     if (this.isAlpha(c)) return this.readWord(start);
-    throw this.error(`Unexpected character '${c}'`, start);
+    const invalid = String.fromCodePoint(this.source.codePointAt(this.offset)!);
+    throw this.error(`不明な文字 '${invalid}' です`, start, invalid);
   }
 
   private skipTrivia(): void {
@@ -50,24 +51,37 @@ export class Lexer {
     return this.token('newline', '\n', start);
   }
   private readString(start: Pos): Token {
-    this.advance(); let value = ''; const unknownEscapes: string[] = []; const sourceColumns: number[] = [];
+    this.advance(); let value = ''; const unknownEscapes: string[] = []; const unknownEscapeColumns: number[] = []; const unknownEscapeEndColumns: number[] = []; const sourceColumns: number[] = [];
     while (true) {
       const c = this.peek();
-      if (c === undefined || this.isLineBreak(c)) throw this.error('Unterminated string', start);
+      if (c === undefined || this.isLineBreak(c)) throw this.error('string literal が閉じられていません', start, this.source.slice(start.offset, this.offset));
       if (c === '"') {
         this.advance();
         const token = this.token('string', value, start);
         if (unknownEscapes.length) token.unknownEscapes = unknownEscapes;
+        if (unknownEscapeColumns.length) token.unknownEscapeColumns = unknownEscapeColumns;
+        if (unknownEscapeEndColumns.length) token.unknownEscapeEndColumns = unknownEscapeEndColumns;
         token.sourceColumns = sourceColumns;
         return token;
       }
       if (c !== '\\') { sourceColumns.push(this.column); value += this.advance(); continue; }
       const escapeColumn = this.column;
       this.advance(); const escaped = this.peek();
-      if (escaped === undefined || this.isLineBreak(escaped)) throw this.error('Unterminated string', start);
+      if (escaped === undefined || this.isLineBreak(escaped)) throw this.error('string literal が閉じられていません', start, this.source.slice(start.offset, this.offset));
       if (escaped === 'n') { sourceColumns.push(escapeColumn); value += '\n'; }
       else if (escaped === '\\' || escaped === '"') { sourceColumns.push(escapeColumn); value += escaped; }
-      else { sourceColumns.push(escapeColumn, escapeColumn + 1); value += `\\${escaped}`; unknownEscapes.push(escaped); }
+      else {
+        const codePoint = String.fromCodePoint(this.source.codePointAt(this.offset)!);
+        const endColumn = this.column + codePoint.length;
+        sourceColumns.push(escapeColumn, escapeColumn + 1);
+        if (codePoint.length === 2) sourceColumns.push(escapeColumn + 2);
+        value += `\\${codePoint}`;
+        unknownEscapes.push(codePoint);
+        unknownEscapeColumns.push(escapeColumn + 1);
+        unknownEscapeEndColumns.push(endColumn);
+        for (let i = 0; i < codePoint.length; i++) this.advance();
+        continue;
+      }
       this.advance();
     }
   }
@@ -99,8 +113,20 @@ export class Lexer {
   private isLineBreak(c: string | undefined): boolean { return c === '\n' || c === '\r' || c === '\u2028' || c === '\u2029'; }
   private peek(ahead = 0): string | undefined { return this.source[this.offset + ahead]; }
   private advance(): string { const c = this.source[this.offset++]!; if (this.isLineBreak(c)) { this.line++; this.column = 1; } else this.column++; return c; }
-  private token(type: TokenType, value: string, position: Pos): Token { return { type, value, ...position }; }
-  private error(message: string, p: Pos): SyntaxError { return new SyntaxError(`${message} at line ${p.line}, column ${p.column}`); }
+  private token(type: TokenType, value: string, position: Pos): Token {
+    const sourceEndColumn = this.line === position.line ? this.column : position.column + this.offset - position.offset;
+    return { type, value, ...position, sourceEndColumn };
+  }
+  private error(message: string, p: Pos, value = ''): SyntaxError & { token: Token } {
+    const error = new SyntaxError(`${message}（${p.line}行、${p.column}列）`) as SyntaxError & { token: Token };
+    // Keep the offending source span so IDE diagnostics can underline the
+    // actual bad character/string instead of the rest of the line.
+    const sourceEndColumn = value.startsWith('"')
+      ? (this.line === p.line ? this.column : p.column + this.offset - p.offset)
+      : p.column + Math.max(value.length, 1);
+    error.token = { type: value.startsWith('"') ? 'string' : 'symbol', value, ...p, sourceEndColumn };
+    return error;
+  }
 }
 type Pos = Pick<Token, 'line' | 'column' | 'offset'>;
 export function tokenize(source: string): Token[] { const lexer = new Lexer(source); const result: Token[] = []; while (true) { const token = lexer.next(); result.push(token); if (token.type === 'eof') return result; } }

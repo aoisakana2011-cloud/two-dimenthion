@@ -8,8 +8,10 @@
   const FORMAT_MARKER_PATTERN = /^\uE000NOVEL_EDITOR_(?:CURSOR|SELECTION_END)\uE001_*$/;
   const MULTI_SYMBOLS = new Set(['==', '!=', '>=', '<=', '->', '=>', '..']);
   const SYMBOLS = new Set('{}[]=():,+-*/%<>!.\\');
-  const BLOCK_KEYWORDS = /^(?:scene|fn|if|elif|else|for|while|choice|character|struct)\b/;
+  const BLOCK_KEYWORDS = /^(?:scene|fn|if|elif|else|for|while|parallel|choice|character|struct)\b/;
   const COMMAND_KEYWORDS = /^(?:return|set|unset|say|show|hide|clear|bg|bgm|play|wait|effect|goto|include|global|const|int|str|dict)\b/;
+
+  function trimFormatterSpace(value) { return value.replace(/^[ \t]+|[ \t]+$/g, ''); }
 
   function isWordStart(value) { return /[A-Za-z_]/.test(value || ''); }
   function isWordPart(value) { return /[A-Za-z0-9_]/.test(value || ''); }
@@ -23,11 +25,11 @@
     while (index < source.length) {
       const start = index;
       const char = source[index];
-      if (/\s/.test(char)) { index++; continue; }
+      if (char === ' ' || char === '\t') { index++; continue; }
       const marker = source.slice(index).match(/^\uE000NOVEL_EDITOR_(?:CURSOR|SELECTION_END)\uE001_*/);
       if (marker) {
         index += marker[0].length;
-        tokens.push({ kind: 'marker', value: marker[0], start, end: index, embedded: start > 0 && index < source.length && !/\s/.test(source[start - 1]) && !/\s/.test(source[index]) });
+        tokens.push({ kind: 'marker', value: marker[0], start, end: index, embedded: start > 0 && index < source.length && !/[ \t]/.test(source[start - 1]) && !/[ \t]/.test(source[index]) });
         continue;
       }
       if (char === '#' || (char === '/' && source[index + 1] === '/')) {
@@ -47,9 +49,11 @@
       // CLI-style modifiers are single DSL tokens. Keep them intact during
       // editor auto-fix just as the compiler lexer does; otherwise `--only`
       // is formatted as `- - only` and changes the command's meaning.
-      if (source.startsWith('--only', index) && !isWordPart(source[index + 6])) {
-        index += 6;
-        tokens.push({ kind: 'word', value: '--only', start, end: index });
+      const option = ['--only', '--layer'].find((value) => source.startsWith(value, index)
+        && !isWordPart(source[index + value.length]));
+      if (option) {
+        index += option.length;
+        tokens.push({ kind: 'word', value: option, start, end: index });
         continue;
       }
       const pair = source.slice(index, index + 2);
@@ -88,6 +92,9 @@
 
   function formatTokens(line) {
     const tokens = lex(line);
+    const includeAs = tokens[0]?.kind === 'word' && tokens[0].value === 'include'
+      ? tokens.findIndex((token, index) => index > 1 && token.kind === 'word' && token.value === 'as')
+      : -1;
     const unary = tokens.map((token, index) => {
       const previousIndex = realTokenIndex(tokens, index);
       const previous = previousIndex >= 0 ? tokens[previousIndex] : undefined;
@@ -103,6 +110,9 @@
       if (token.kind === 'marker') { result += token.value; continue; }
       if (token.kind === 'comment') { result += `${result ? '  ' : ''}${token.value}`; continue; }
       let spaced = previousIndex >= 0;
+      // Unquoted include paths are a concatenation of adjacent lexer tokens.
+      // Preserve those token boundaries exactly: inserting normal operator
+      // spacing turns a valid path such as dir/module.tds into an invalid one.
       const embeddedMarker = tokens[index - 1]?.kind === 'marker' && tokens[index - 1].embedded;
       const markerJoinsToken = embeddedMarker && (
         (['word', 'number'].includes(previous?.kind) && ['word', 'number'].includes(token.kind))
@@ -117,13 +127,14 @@
       if (previous?.value === '{') spaced = token.value !== '}';
       if (token.value === '{') spaced = index > 0 && !['(', '[', '{'].includes(previous?.value);
       if (previous?.value === ',' || previous?.value === ':') spaced = true;
+      if (includeAs > 1 && index > 1 && index < includeAs) spaced = false;
       if (markerJoinsToken) spaced = false;
       result += `${spaced && result && !result.endsWith(' ') ? ' ' : ''}${token.value}`;
     }
-    return { text: result.trimEnd(), tokens: tokens.filter((token) => token.kind !== 'comment' && token.kind !== 'marker') };
+    return { text: result.replace(/[ \t]+$/, ''), tokens: tokens.filter((token) => token.kind !== 'comment' && token.kind !== 'marker') };
   }
 
-  function textBefore(raw, token) { return raw.slice(0, token.start).trim(); }
+  function textBefore(raw, token) { return trimFormatterSpace(raw.slice(0, token.start)); }
 
   // Build only the CST information needed by formatting. Literal braces are
   // retained on the stack for correct matching but are never split into lines.
@@ -139,16 +150,16 @@
       if (token.value === ']') { state.bracketDepth = Math.max(0, state.bracketDepth - 1); continue; }
       if (token.value === '{') {
         const before = textBefore(raw, token);
-        const statementPrefix = raw.slice(previousBrace + 1, token.start).trim();
+        const statementPrefix = trimFormatterSpace(raw.slice(previousBrace + 1, token.start));
         const headerPrefix = before;
         const keyword = /^(\w+)\b/.exec(statementPrefix)?.[1] || '';
-        const dictionary = state.parenthesisDepth > 0 || state.bracketDepth > 0 || /(?:=|:|\[)\s*$/.test(before);
+        const dictionary = state.parenthesisDepth > 0 || state.bracketDepth > 0 || /(?:=|:|\[)[ \t]*$/.test(before);
         const statementCommand = COMMAND_KEYWORDS.test(statementPrefix);
         const parent = state.stack.at(-1);
-        const choiceExpression = parent?.kind === 'choice' && !statementCommand && /^(?:"(?:\\.|[^"\\])*"|[A-Za-z_][A-Za-z0-9_.]*(?:\s*\([^{}]*\))?|\d+|[+-]|\(|!|not\b)/.test(statementPrefix);
+        const choiceExpression = parent?.kind === 'choice' && !statementCommand && /^(?:"(?:\\.|[^"\\])*"|[A-Za-z_][A-Za-z0-9_.]*(?:[ \t]*\([^{}]*\))?|\d+|[+-]|\(|!|not\b)/.test(statementPrefix);
         const block = !dictionary && (BLOCK_KEYWORDS.test(statementPrefix)
           || (previousBrace < 0 && BLOCK_KEYWORDS.test(headerPrefix))
-          || /"[^"\\]*(?:\\.[^"\\]*)*"\s*$/.test(statementPrefix)
+          || /"[^"\\]*(?:\\.[^"\\]*)*"[ \t]*$/.test(statementPrefix)
           || choiceExpression);
         const node = { kind: block ? (choiceExpression ? 'choiceOption' : keyword) : 'literal', block, open: token };
         if (state.stack.length) state.stack.at(-1).children.push(node);
@@ -163,9 +174,9 @@
     const result = [];
     let cursor = 0;
     for (const brace of structural) {
-      const before = raw.slice(cursor, brace.index).trim();
+      const before = trimFormatterSpace(raw.slice(cursor, brace.index));
       if (brace.type === 'open') {
-        const opening = raw.slice(cursor, brace.index + 1).trim();
+        const opening = trimFormatterSpace(raw.slice(cursor, brace.index + 1));
         if (opening) result.push(opening);
         cursor = brace.index + 1;
       } else {
@@ -174,7 +185,7 @@
         cursor = brace.index + 1;
       }
     }
-    const tail = raw.slice(cursor).trim();
+    const tail = trimFormatterSpace(raw.slice(cursor));
     if (tail) {
       const trailingComment = /^(?:#|\/\/)/.test(tail);
       if (trailingComment && result.length) result[result.length - 1] += `  ${tail}`;
@@ -189,7 +200,7 @@
     const lines = normalized.split('\n').flatMap((raw) => {
       const expanded = expandStructuralLine(raw, state);
       return expanded.flatMap((line) => {
-        const closingOnly = /^\s*((?:}\s*){2,})(#.*)?$/.exec(line);
+        const closingOnly = /^[ \t]*((?:}[ \t]*){2,})(#.*)?$/.exec(line);
         if (!closingOnly) return [line];
         const count = (closingOnly[1].match(/}/g) || []).length;
         return Array.from({ length: count }, (_, index) => `}${index === count - 1 && closingOnly[2] ? `  ${closingOnly[2]}` : ''}`);
@@ -197,30 +208,36 @@
     });
     let indent = 0;
     const formattedLines = lines.map((raw) => {
-      if (!raw.trim()) return '';
-      const formatted = formatTokens(raw.trim());
+      const trimmed = trimFormatterSpace(raw);
+      if (!trimmed) return { text: '', canJoinBranch: false };
+      const formatted = formatTokens(trimmed);
       const leadingClosers = formatted.tokens.findIndex((token) => token.value !== '}');
       const closeIndent = leadingClosers < 0 ? formatted.tokens.length : leadingClosers;
+      const depthBeforeLine = indent;
       const lineIndent = Math.max(0, indent - closeIndent);
       const opens = formatted.tokens.filter((token) => token.value === '{').length;
       const closes = formatted.tokens.filter((token) => token.value === '}').length;
       indent = Math.max(0, indent + opens - closes);
-      return `${'  '.repeat(lineIndent)}${formatted.text}`;
+      return {
+        text: `${'  '.repeat(lineIndent)}${formatted.text}`,
+        canJoinBranch: formatted.text === '}' && depthBeforeLine >= closeIndent,
+      };
     });
     const joined = [];
-    for (const line of formattedLines) {
-      if (/^\s*(?:else|elif)\b/.test(line)) {
+    for (const formattedLine of formattedLines) {
+      const line = formattedLine.text;
+      if (/^[ \t]*(?:else|elif)\b/.test(line)) {
         let previous = joined.length - 1;
-        while (previous >= 0 && !joined[previous].trim()) previous--;
-        if (previous >= 0 && joined[previous].trim() === '}') {
-          joined[previous] += ` ${line.trimStart()}`;
+        while (previous >= 0 && !trimFormatterSpace(joined[previous].text)) previous--;
+        if (previous >= 0 && joined[previous].canJoinBranch && trimFormatterSpace(joined[previous].text) === '}') {
+          joined[previous].text += ` ${line.replace(/^[ \t]+/, '')}`;
           joined.splice(previous + 1);
           continue;
         }
       }
-      joined.push(line);
+      joined.push(formattedLine);
     }
-    return joined.join('\n').replace(/[ \t]+$/gm, '');
+    return joined.map((line) => line.text).join('\n').replace(/[ \t]+$/gm, '');
   }
 
   return { format, lex };

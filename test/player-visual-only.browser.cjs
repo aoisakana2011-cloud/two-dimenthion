@@ -17,20 +17,21 @@ const { seedEmptyProject } = require('../tools/project-layout');
   const gifEncode = spawnSync(process.env.FFMPEG_EXE || 'ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=red:s=32x32:r=10:d=0.2', '-f', 'lavfi', '-i', 'color=c=blue:s=32x32:r=10:d=0.2', '-filter_complex', '[0:v][1:v]concat=n=2:v=1:a=0,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse', '-loop', '0', animatedCard], { encoding: 'utf8', timeout: 20000 });
   assert.equal(gifEncode.status, 0, gifEncode.stderr || gifEncode.error?.message);
   await fs.copyFile(pixel, path.join(project.assetsRoot, 'bg', 'room.png'));
-  await fs.copyFile(animatedCard, path.join(project.assetsRoot, 'image', 'card.gif'));
+  await fs.copyFile(animatedCard, path.join(project.assetsRoot, 'image', 'card#special%.gif'));
   await fs.copyFile(pixel, path.join(project.assetsRoot, 'char', 'hero.png'));
   await fs.copyFile(video, path.join(project.assetsRoot, 'video', 'op.mp4'));
+  await fs.copyFile(pixel, path.join(project.assetsRoot, 'dialogue-flat.png'));
   await fs.mkdir(path.join(project.assetsRoot, 'ui'), { recursive: true });
   await fs.copyFile(pixel, path.join(project.assetsRoot, 'ui', 'dialogue.png'));
   await fs.copyFile(pixel, path.join(project.assetsRoot, 'ui', 'nameplate.png'));
   const playerUi = JSON.parse(await fs.readFile(path.resolve(__dirname, '../Title/setting/player-ui.json'), 'utf8'));
-  playerUi.dialog.image = 'ui/dialogue.png';
+  playerUi.dialog.image = 'dialogue-flat.png';
   playerUi.dialog.nameplate.image = 'ui/nameplate.png';
   await fs.writeFile(path.join(project.settingsRoot, 'player-ui.json'), JSON.stringify(playerUi), 'utf8');
   await fs.appendFile(project.settingFile, '\nnative_ui_theme = player-ui.json\n', 'utf8');
   await fs.writeFile(path.join(project.scenesRoot, 'main.tds'), `
 asset bg room = "asset/bg/room.png"
-asset image card = "asset/image/card.gif"
+asset image card = "asset/image/card#special%.gif"
 asset video op = "asset/video/op.mp4"
 character hero {
   name = "Hero"
@@ -78,8 +79,8 @@ scene main {
     const compiled = await compiledResponse.json();
     assert.equal(compiled.ok, true, JSON.stringify(compiled));
     await page.goto(`${base}/player.html?debug=visual-only-test`);
-    await page.waitForFunction(() => getComputedStyle(document.querySelector('#dialogue'), '::before').backgroundImage.includes('/asset/ui/dialogue.png'));
-    assert.equal((await page.request.get(`${base}/asset/ui/dialogue.png`)).status(), 200, 'dialogue artwork resolves from the project asset root');
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('#dialogue'), '::before').backgroundImage.includes('/asset/dialogue-flat.png'));
+    assert.equal((await page.request.get(`${base}/asset/dialogue-flat.png`)).status(), 200, 'flat theme artwork resolves from the project asset root');
     assert.equal((await page.request.get(`${base}/asset/ui/nameplate.png`)).status(), 200, 'speaker artwork resolves from the project asset root');
     await page.evaluate(async () => {
       const context = getBgmAudioContext();
@@ -136,7 +137,7 @@ scene main {
     assert.equal(await page.locator('#images .visual-only-target').count(), 1);
     await page.waitForFunction(() => {
       const image = document.querySelector('#images .visual-only-target');
-      return image?.complete && image.naturalWidth === 32 && image.currentSrc.endsWith('/asset/image/card.gif');
+      return image?.complete && image.naturalWidth === 32 && image.currentSrc.endsWith('/asset/image/card%23special%25.gif');
     });
     await page.locator('#next').click();
 

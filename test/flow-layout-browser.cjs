@@ -64,6 +64,10 @@ async function main() {
   const folders = Array.from({ length: 10 }, (_, index) => `chapter${String(index + 1).padStart(2, '0')}`);
   const nodes = folders.flatMap((folder) => Array.from({ length: 5 }, (_, index) => ({
     id: `${folder}/scene${index + 1}.tds`, label: `scene${index + 1}`, reachable: true, diagnostics: [],
+    ...(folder === 'chapter01' && index === 0 ? {
+      sceneNames: ['scene1', 'scene2', 'scene3', 'scene4'], scenes: { reachable: 3, total: 4 },
+    } : {}),
+    ...(folder === 'chapter01' && index === 1 ? { reachable: false, error: true } : {}),
     variables: folder === 'chapter01' && index === 0
       ? Array.from({ length: 80 }, (_, number) => ({ name: `variable_${number + 1}`, type: 'int' })) : [],
   })));
@@ -84,6 +88,14 @@ async function main() {
     browser = await chromium.launch({ channel: 'msedge', headless: true });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     const errors = [];
+    let refreshRaceMode = false;
+    let refreshRequestCount = 0;
+    let releaseOlderRefresh;
+    let olderRefreshFinished = false;
+    let olderRefreshFinishedResolve;
+    const olderRefreshFinishedPromise = new Promise((resolve) => { olderRefreshFinishedResolve = resolve; });
+    let firstRefreshSeenResolve;
+    const firstRefreshSeen = new Promise((resolve) => { firstRefreshSeenResolve = resolve; });
     page.on('pageerror', (error) => errors.push(error.message));
     const storageKey = `novel-scene-flow-layout:${project.projectRoot}`;
     await page.addInitScript(({ key }) => {
@@ -91,17 +103,54 @@ async function main() {
         chapter03: { x: -950, y: -1200 }, chapter06: { x: 4200, y: 2300 },
       }));
     }, { key: storageKey });
-    await page.route('**/api/scene-graph', (route) => route.fulfill({ json: graphPayload }));
+    await page.route('**/api/scene-graph', async (route) => {
+      if (!refreshRaceMode) return route.fulfill({ json: graphPayload });
+      refreshRequestCount += 1;
+      if (refreshRequestCount === 1) {
+        firstRefreshSeenResolve();
+        await new Promise((resolve) => { releaseOlderRefresh = resolve; });
+        await route.fulfill({ json: { nodes: [{ id: 'stale-refresh.tds', label: 'stale-refresh', sceneNames: ['stale'], reachable: true, diagnostics: [] }], edges: [] } });
+        olderRefreshFinished = true;
+        olderRefreshFinishedResolve();
+        return;
+      }
+      return route.fulfill({ json: { nodes: [{ id: 'latest-refresh.tds', label: 'latest-refresh', sceneNames: ['latest'], reachable: true, diagnostics: [] }], edges: [] } });
+    });
     await page.goto(`${server.base}/flow.html`);
     await page.waitForFunction(() => document.querySelectorAll('.flow-node').length === 50, null, { timeout: 12_000 }).catch(async (error) => {
       const state = await page.evaluate(() => ({ status: document.querySelector('#status')?.textContent, flowCount: document.querySelector('#flow-count')?.textContent, helper: Boolean(window.FlowLayout) }));
       throw Error(`Synthetic graph did not render: ${JSON.stringify(state)}; page errors=${errors.join(' | ')}; ${error.message}`);
     });
+    assert.match(await page.locator('#flow-count').textContent(), /scenes/);
+    const multiSceneNode = page.locator('.flow-node text').filter({ hasText: 'scene1' }).first();
+    assert.equal((await multiSceneNode.textContent()).trim(), 'scene1 · 4 scenes', 'scene counts use the standard English UI term');
+    assert.equal(await page.locator('.detail-title').textContent(), 'chapter01/scene1.tds');
+    assert.match(await page.locator('.detail-meta').allTextContents().then(items => items.join(' ')), /Scenes \(4\).*Reachable scenes: 3\/4/);
+    assert.doesNotMatch(await page.locator('.flow-node text').allTextContents().then(items => items.join(' ')), /シーン/);
+    assert.equal(await page.locator('.canvas header small').textContent(), ' | Drag folders | Scroll vertically | Ctrl+Scroll: Zoom | Double-click: Open file');
+    assert.match(await page.locator('.flow-count-label').textContent(), /50 scenes/);
+    assert.equal(await page.locator('.flow-node[data-file="chapter01/scene1.tds"] text').textContent(), 'scene1 · 4 scenes');
     assert.equal(await page.locator('#start, #end, #validate, #swap-range, #result, [data-range-target]').count(), 0,
       'the redundant manual route-validation panel is absent');
     assert.equal(await page.locator('.controls .flow-filters').count(), 1, 'scene filtering remains available');
+    assert.equal(await page.locator('#flow-search').getAttribute('placeholder'), 'Scene name or diagnostic text');
+    assert.equal((await page.locator('label.flow-check').textContent()).trim(), 'Show include transitions');
+    const flowTestFields = await page.locator('.flow-test-field').allTextContents();
+    assert.match(flowTestFields[0], /^Start Scene/);
+    assert.match(flowTestFields[1], /^Start Line/);
+    assert.equal(await page.locator('.flow-test-engine').textContent(), 'Native Player');
+    assert.equal(await page.locator('#flow-test-pick-line').getAttribute('aria-label'), 'Select start line in Editor');
+    await page.locator('#flow-search').fill('no-such-scene-name');
+    await page.waitForFunction(() => document.querySelectorAll('.flow-node').length === 0);
+    assert.equal(await page.locator('#details').textContent(), 'No matching scenes');
+    await page.locator('#flow-search').fill('');
+    await page.waitForFunction(() => document.querySelectorAll('.flow-node').length === 50);
     assert.equal(await page.locator('.controls .legend').count(), 1, 'reachability and edge legend remains available');
+    assert.match(await page.locator('.controls .legend').textContent(), /Reachable.*Unreachable.*Parse error/);
     await page.locator('.flow-node[data-file="chapter01/scene1.tds"]').click();
+    assert.equal(await page.locator('#details .detail-meta').filter({ hasText: 'Reachable scenes:' }).textContent(), 'Reachable scenes: 3/4');
+    assert.equal(await page.locator('#details .detail-group .group-label').first().textContent(), 'Sources');
+    assert.equal(await page.locator('#details .variable').first().getAttribute('title'), 'Ctrl+Click to open definition');
     const detailsGeometry = await page.locator('#details').evaluate((element) => {
       const pane = element.closest('.details');
       return {
@@ -127,6 +176,7 @@ async function main() {
       `last variable is reachable: ${JSON.stringify(scrollAtEnd)}`);
     await page.locator('.flow-node[data-file="chapter01/scene2.tds"]').click();
     assert.equal(await page.locator('#details').evaluate((element) => element.scrollTop), 0, 'selecting another file resets details scroll');
+    assert.match(await page.locator('#details').textContent(), /Unreachable from entry file.*Parse error: unable to parse scene2/);
     assert.equal(await page.locator('.include-edge').count(), 0, 'include dependencies are hidden by default');
     await page.locator('#show-includes').check();
 
@@ -149,8 +199,10 @@ async function main() {
     assert.ok(edgeSummary.includeOpacity >= 0.8, 'include dependencies remain clearly visible');
     assert.ok(edgeSummary.includeWidth >= 1.5, 'include lines are thicker than background decoration');
     assert.equal(edgeSummary.includeColor, 'rgb(194, 160, 102)', 'include lines use the theme-matched brass accent');
-    assert.match(edgeSummary.legend, /シーン遷移/);
+    assert.match(edgeSummary.legend, /Scene transitions/);
     assert.match(edgeSummary.legend, /include/);
+    assert.match(edgeSummary.legend, /Reachable.*Unreachable.*Parse error/);
+    assert.match(edgeSummary.legend, /Reverse arrows indicate reverse transitions or transitions within the same folder/);
     assert.equal(await page.locator('.flow-crossings').count(), 0, 'crossings remain ordinary plus-shaped intersections without gap overlays');
     const chosenMetrics = await page.locator('.flow-svg').evaluate((svg) => ({
       columns: Number(svg.dataset.layoutColumns), score: Number(svg.dataset.layoutScore), metrics: JSON.parse(svg.dataset.layoutMetrics),
@@ -187,7 +239,7 @@ async function main() {
     await page.mouse.wheel(0, -180);
     await page.keyboard.up('Control');
     await page.waitForFunction((width) => Number(document.querySelector('.flow-svg')?.getAttribute('width')) > Number(width), fitWidth);
-    await page.getByRole('button', { name: '全体表示' }).click();
+    await page.getByRole('button', { name: '自動配置' }).click();
     const refitted = await page.locator('.flow-svg').evaluate((svg) => ({
       graph: document.querySelector('#graph').getBoundingClientRect(), rendered: svg.getBoundingClientRect(),
     }));
@@ -355,6 +407,23 @@ async function main() {
     });
     assert.deepEqual(sharedSegmentHits, [], `Title transitions do not draw on top of each other: ${JSON.stringify(sharedSegmentHits)}`);
     await assertTopLevelFoldersDoNotOverlap(page, 'Title geometric placement keeps its real folders separate');
+    refreshRaceMode = true;
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', {
+      data: { type: 'scene-flow:refresh' }, origin: location.origin, source: window,
+    })));
+    await firstRefreshSeen;
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', {
+      data: { type: 'scene-flow:refresh' }, origin: location.origin, source: window,
+    })));
+    await page.waitForFunction(() => document.querySelector('.flow-node')?.dataset.file === 'latest-refresh.tds');
+    releaseOlderRefresh();
+    await olderRefreshFinishedPromise;
+    await page.waitForTimeout(50);
+    assert.equal(olderRefreshFinished, true, 'the delayed earlier Scene Flow response completed');
+    assert.equal(await page.locator('.flow-node').first().getAttribute('data-file'), 'latest-refresh.tds', 'an older graph response cannot replace the latest refresh');
+    await page.evaluate(() => window.showFlowLoadError(new Error('Scene Flow request failed (HTTP 500)')));
+    assert.equal(await page.locator('#status').textContent(), 'Error', 'technical error status uses the standard English label');
+    assert.equal(await page.locator('#status').getAttribute('title'), 'Scene Flow request failed (HTTP 500)');
     if (process.env.NOVEL_FLOW_SCREENSHOT) await page.screenshot({ path: process.env.NOVEL_FLOW_SCREENSHOT, fullPage: false });
     assert.deepEqual(errors, [], 'Scene Flow renders without browser errors');
     console.log('PASS Scene Flow layout: dense and current Title graphs, shared ports, cycles, fit and collision-free auto-arrange');

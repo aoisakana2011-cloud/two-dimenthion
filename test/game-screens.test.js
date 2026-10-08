@@ -26,6 +26,10 @@ test('front-end validation constrains title scene paths, slot geometry, and butt
   config.titleScene = { file: '../outside.tds', scene: 'title' };
   assert.throws(() => validateGameScreens(config));
   config.titleScene = { file: 'title.tds', scene: 'title' };
+  const startItem = config.screens.title.items[0];
+  config.screens.title.items = [];
+  assert.throws(() => validateGameScreens(config), /ゲーム開始/);
+  config.screens.title.items = [startItem];
   config.screens.save.slotLayout.count = 101;
   assert.throws(() => validateGameScreens(config));
   config.screens.save.slotLayout.count = 8;

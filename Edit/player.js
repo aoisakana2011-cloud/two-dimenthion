@@ -69,6 +69,7 @@ function applyRenderLayers(layers = activeRenderLayers) {
 }
 let gameStarted = false;
 let gameStartHandler = null;
+let startWaitResolve = null;
 let saveStoragePrefix = '';
 let saveStore = null;
 const saveSlotCache = new Map();
@@ -87,7 +88,6 @@ let activeTextReveal = null;
 let lastVoiceAsset = '';
 let lastVoiceCharacter = '';
 let autoAdvanceTimer = null;
-let resumeAtLaunch = null;
 let pendingScreenMusic = '';
 const bgmLayers = new Set();
 const bgmAnimationIds = new WeakMap();
@@ -128,7 +128,7 @@ window.addEventListener('message', event => {
   try {
     applyPlayerUi(event.data.path, event.data.theme);
   } catch (error) {
-    console.warn('Could not apply the draft UI theme to the preview.', error);
+    console.warn('編集中のUIテーマをプレビューに適用できませんでした。', error);
   }
 });
 let nextBgmAnimationId = 0;
@@ -488,13 +488,26 @@ function decodeSave(value) {
 }
 function isLoadableSave(saved) {
   return saved?.version === 1 && typeof saved.file === 'string' && saved.file.length > 0
-    && (!saved.saveId || saved.saveId === (gameScreenConfig?.saveId || ''))
-    && typeof saved.scene === 'string' && saved.scene.length > 0
+    && (saved.saveId === undefined || saved.saveId === '' || saved.saveId === (gameScreenConfig?.saveId || ''))
+    && typeof saved.scene === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(saved.scene)
     && Number.isSafeInteger(saved.line) && saved.line >= 1
-    && saved.variables !== null && typeof saved.variables === 'object' && !Array.isArray(saved.variables);
+    && saved.variables !== null && typeof saved.variables === 'object' && !Array.isArray(saved.variables)
+    && (saved.locals === undefined || Array.isArray(saved.locals) && saved.locals.every(frame => frame !== null && typeof frame === 'object' && !Array.isArray(frame)))
+    && (saved.readonlyLocals === undefined || Array.isArray(saved.readonlyLocals)
+      && saved.readonlyLocals.every(frame => Array.isArray(frame) && frame.every(name => typeof name === 'string'))
+      && (saved.locals === undefined ? saved.readonlyLocals.length === 0 : saved.readonlyLocals.length === saved.locals.length));
 }
 function readSaveSlot(index) {
   return saveSlotCache.get(index) || null;
+}
+function showPlayerToast(message, isError = false) {
+  const toast = document.createElement('div');
+  toast.className = isError ? 'player-toast player-toast-error' : 'player-toast';
+  toast.setAttribute('role', isError ? 'alert' : 'status');
+  toast.textContent = message;
+  $('stage').append(toast);
+  setTimeout(() => toast.remove(), 3000);
+  return toast;
 }
 function saveSlotState(index) {
   return readSaveSlot(index) ? 'ready' : saveSlotStates.get(index) || 'empty';
@@ -528,7 +541,7 @@ function updateSlotTools(overlay) {
   const summary = overlay.querySelector('[data-role="selected-slot-summary"]');
   const saved = selectedSlotIndex >= 0 ? readSaveSlot(selectedSlotIndex) : null;
   if (summary) summary.textContent = selectedSlotIndex < 0
-    ? 'セーブ枠を選択してください'
+    ? 'Select a Save Slot.'
     : `枠 ${String(selectedSlotIndex + 1).padStart(2, '0')}　${saved ? `${saved.scene || ''}\n${saved.speaker || 'Narrator'}: ${saved.text || ''}\n${formatSavedAt(saved.savedAt || 0)}${saved.locked ? '\n保護中' : ''}` : '空き枠'}`;
   const role = selectedSlotRole();
   const ready = Boolean(saved) && saveSlotState(selectedSlotIndex) === 'ready';
@@ -771,6 +784,7 @@ async function saveGameToSlot(index, overlay = $('screen-overlay')) {
   if (!execution?.file || !execution.scene || !execution.line) return;
   if (readSaveSlot(index)?.locked) return;
   try {
+    runtime.assertSaveBoundary();
     const snapshot = {
       version: 1, saveId: gameScreenConfig?.saveId || '', file: execution.file, scene: execution.scene, line: execution.line,
       variables: runtime.globals, locals: runtime.frames.slice(1),
@@ -780,7 +794,7 @@ async function saveGameToSlot(index, overlay = $('screen-overlay')) {
       savedAt: Date.now(), locked: false,
     };
     const encoded = encodeSave(snapshot);
-    if (encoded.length > 3_500_000) throw Error('セーブデータが大きすぎます。変数または演出状態を減らしてください。');
+    if (encoded.length > 3_500_000) throw Error('Save dataのサイズが上限を超えています。変数または演出状態を減らしてください。');
     const thumbnail = await captureSaveThumbnail();
     await saveStore.writeSlot(index, encoded, { scene: snapshot.scene, speaker: snapshot.speaker, text: snapshot.text, savedAt: snapshot.savedAt }, thumbnail);
     saveSlotCache.set(index, snapshot);
@@ -801,6 +815,7 @@ async function saveQuickGame() {
   const execution = currentExecution;
   if (!execution?.file || !execution.scene || !execution.line) return;
   try {
+    runtime.assertSaveBoundary();
     const snapshot = {
       version: 1, saveId: gameScreenConfig?.saveId || '', file: execution.file, scene: execution.scene, line: execution.line,
       variables: runtime.globals, locals: runtime.frames.slice(1),
@@ -808,23 +823,22 @@ async function saveQuickGame() {
       sceneState: runtime.sceneState, text: $('text').textContent, speaker: $('speaker-text').textContent, savedAt: Date.now(),
     };
     const encoded = encodeSave(snapshot);
-    if (encoded.length > 3_500_000) throw Error('クイックセーブのデータが大きすぎます。');
+    if (encoded.length > 3_500_000) throw Error('Quick Save dataのサイズが上限を超えています。');
     await saveStore.writePreference('quick-save', encoded);
-    const notice = document.createElement('div'); notice.className = 'game-screen-notice'; notice.textContent = 'クイックセーブしました'; $('screen-overlay').append(notice);
-    setTimeout(() => notice.remove(), 2500);
+    showPlayerToast('Quick Saveを実行しました。');
   } catch (error) {
-    const notice = document.createElement('div'); notice.className = 'game-screen-error'; notice.textContent = `クイックセーブできませんでした: ${error.message}`; $('screen-overlay').append(notice);
+    showPlayerToast(`Quick Saveに失敗しました: ${error.message}`, true);
   }
 }
 async function loadQuickGame() {
   try {
     const encoded = await saveStore.readPreference('quick-save');
     const saved = typeof encoded === 'string' ? decodeSave(encoded) : null;
-    if (!isLoadableSave(saved)) throw Error('ロードできるクイックセーブがありません。');
+    if (!isLoadableSave(saved)) throw Error('Quick Saveがありません。');
     sessionStorage.setItem(`${saveStoragePrefix}:resume`, encoded);
     location.reload();
   } catch (error) {
-    const notice = document.createElement('div'); notice.className = 'game-screen-error'; notice.textContent = `クイックロードできませんでした: ${error.message}`; $('screen-overlay').append(notice);
+    const notice = document.createElement('div'); notice.className = 'game-screen-error'; notice.textContent = `Quick Loadに失敗しました: ${error.message}`; $('screen-overlay').append(notice);
   }
 }
 function loadGameSlot(index) {
@@ -834,7 +848,7 @@ function loadGameSlot(index) {
     sessionStorage.setItem(`${saveStoragePrefix}:resume-slot`, String(index));
     location.reload();
   } catch (error) {
-    const notice = document.createElement('div'); notice.className = 'game-screen-error'; notice.textContent = `ロードできませんでした: ${error.message}`; $('screen-overlay').append(notice);
+    const notice = document.createElement('div'); notice.className = 'game-screen-error'; notice.textContent = `Loadに失敗しました: ${error.message}`; $('screen-overlay').append(notice);
   }
 }
 async function activateGameScreenAction(action, target, node) {
@@ -864,7 +878,8 @@ async function activateGameScreenAction(action, target, node) {
     await runSelectedSlotAction(action);
   } else if (action === 'start') {
     primeBgmAudioContext(); resumeScreenMusic(); overlay.hidden = true; setActiveGameScreen(null); screenHistory.length = 0;
-    try { await gameStartHandler?.(); } catch (error) { $('speaker-text').textContent = 'PLAYER ERROR'; $('text').textContent = error.message; }
+    if (startWaitResolve) { const resolve = startWaitResolve; startWaitResolve = null; resolve(); }
+    else try { await gameStartHandler?.(); } catch (error) { $('speaker-text').textContent = 'Runtime Error'; $('text').textContent = error.message; }
   } else if (action === 'continue') {
     const index = latestSaveSlotIndex();
     if (index >= 0) loadGameSlot(index);
@@ -893,7 +908,11 @@ async function activateGameScreenAction(action, target, node) {
     activeSlotPages[role] = Number(target);
     showGameScreen(activeGameScreen, { push: false });
   } else if (action === 'reset-settings') {
-    for (const [key, value] of Object.entries(gameScreenConfig?.controlDefaults || {})) updateUiSetting(key, value);
+    for (const [key, value] of Object.entries(gameScreenConfig?.controlDefaults || {})) updateUiSetting(key, value, true, false);
+    void saveStore.writePreference('ui-settings', { ...userUiSettings }).catch(error => {
+      const notice = document.createElement('div'); notice.className = 'game-screen-error';
+      notice.textContent = `險ｭ螳壹ｒ菫晏ｭ倥〒縺阪∪縺帙ｓ縺ｧ縺励◆: ${error.message}`; $('screen-overlay').append(notice);
+    });
     showGameScreen(activeGameScreen, { push: false });
   } else if (action === 'reset-window-size') {
     if (document.fullscreenElement) void document.exitFullscreen?.();
@@ -917,6 +936,10 @@ function showGameScreen(id, { push = true } = {}) {
   if (push && activeGameScreen && activeGameScreen !== id) screenHistory.push(activeGameScreen);
   setActiveGameScreen(id);
   const overlay = $('screen-overlay');
+  const screenAccessibleNames = { title: 'Title screen', pause: 'Pause menu', save: 'Save slots', load: 'Load slots', system: 'System settings', sound: 'Sound settings', log: 'Dialogue history', guide: 'Guide', about: 'About', extra: 'Extra screen' };
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', screen.title || screenAccessibleNames[id] || `${id} screen`);
   const transform = NovelScreenDocument.canvasTransform(playerTheme.screen.width, playerTheme.screen.height, gameScreenConfig.canvas, gameScreenConfig.scaleMode || 'contain');
   const { scaleX, scaleY, offsetX, offsetY } = transform;
   overlay.replaceChildren(); overlay.hidden = false;
@@ -945,7 +968,7 @@ function showGameScreen(id, { push = true } = {}) {
       slotField: saveSlotField,
       slotState: saveSlotState,
       roleContent: (host, node) => {
-        if (node.attrs['data-role'] === 'selected-slot-summary') { host.textContent = 'セーブ枠を選択してください'; return; }
+        if (node.attrs['data-role'] === 'selected-slot-summary') { host.textContent = 'Select a Save Slot.'; return; }
         if (node.attrs['data-role'] !== 'dialogue-history') return;
         host.style.overflowY = 'auto';
         host.replaceChildren();
@@ -974,6 +997,18 @@ function showGameScreen(id, { push = true } = {}) {
         button.disabled = node.attrs['data-action'] === 'slot-select' && screen.role === 'load-slots' ? !saved : screen.role === 'save-slots' && !currentExecution?.line;
       },
     }));
+    if (saveStore?.backend === 'localStorage' && ['save-slots', 'load-slots'].includes(screen.role)) {
+      const message = 'Browser storage fallbackを使用中のため、再読み込み後はthumbnail previewを表示できません。';
+      const hint = overlay.querySelector('.data-hint');
+      if (hint) hint.textContent = message;
+      else {
+        const notice = document.createElement('div');
+        notice.className = 'game-screen-notice';
+        notice.setAttribute('role', 'note');
+        notice.textContent = message;
+        overlay.append(notice);
+      }
+    }
     overlay.querySelectorAll('[data-action="setting-value"]').forEach(button => {
       const setting = button.dataset.target;
       const selectedValue = typeof userUiSettings[setting] === 'boolean' ? button.dataset.value === 'true' : button.dataset.value;
@@ -1030,16 +1065,26 @@ function showGameScreen(id, { push = true } = {}) {
   focusFirstScreenControl(overlay);
 }
 function focusFirstScreenControl(overlay) {
-  overlay.querySelector('button:not(:disabled),input:not(:disabled)')?.focus();
+  screenFocusCandidates(overlay)[0]?.focus();
 }
 function navigateScreenFocus(overlay, event) {
+  const controls = screenFocusCandidates(overlay);
+  if (event.key === 'Tab') {
+    if (!controls.length) { event.preventDefault(); overlay.focus(); return; }
+    const currentIndex = controls.indexOf(document.activeElement);
+    const step = event.shiftKey ? -1 : 1;
+    const nextIndex = currentIndex < 0
+      ? (step > 0 ? 0 : controls.length - 1)
+      : (currentIndex + step + controls.length) % controls.length;
+    event.preventDefault();
+    controls[nextIndex].focus();
+    return;
+  }
   const direction = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] })[event.key];
   if (!direction) return;
   const current = document.activeElement;
   if (current instanceof HTMLInputElement && current.type === 'range' && direction[1] === 0) return;
   if (current instanceof HTMLInputElement && current.type === 'checkbox' && direction[1] === 0) { event.preventDefault(); current.click(); return; }
-  const controls = [...overlay.querySelectorAll('button:not(:disabled),input:not(:disabled)')]
-    .filter(control => control.getClientRects().length && getComputedStyle(control).visibility !== 'hidden');
   if (!controls.length) return;
   let target = controls[0];
   if (controls.includes(current)) {
@@ -1067,6 +1112,17 @@ function navigateScreenFocus(overlay, event) {
   }
   if (target !== current) { event.preventDefault(); target.focus(); }
 }
+function screenFocusCandidates(overlay) {
+  const candidates = [...overlay.querySelectorAll('a[href],button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]')]
+    .filter(control => control.tabIndex >= 0 && control.getClientRects().length && getComputedStyle(control).visibility !== 'hidden');
+  return candidates.map((control, index) => ({ control, index })).sort((a, b) => {
+    const aTab = a.control.tabIndex, bTab = b.control.tabIndex;
+    if (aTab > 0 && bTab > 0) return aTab - bTab || a.index - b.index;
+    if (aTab > 0) return -1;
+    if (bTab > 0) return 1;
+    return a.index - b.index;
+  }).map(({ control }) => control);
+}
 const screenHistory = [];
 function url(type, name, pose) {
   let a = runtime.program?.assets?.find((x) => x.name === name && x.type === type);
@@ -1074,7 +1130,7 @@ function url(type, name, pose) {
     const c = runtime.program?.characters?.find((x) => x.name === name);
     a = c?.poses?.find((x) => x.name === pose) || a;
   }
-  return a ? `/asset/${a.path.replace(/^asset[\\/]/, '').replaceAll('\\', '/')}` : name;
+  return a ? `/asset/${a.path.replace(/^asset[\\/]/, '').replaceAll('\\', '/').split('/').map(encodeURIComponent).join('/')}` : name;
 }
 function slotClass(slot) {
   return slot === 'far_left' ? 'far-left' : slot === 'far_right' ? 'far-right' : slot;
@@ -1370,7 +1426,7 @@ async function media(type, name, mode, operation, runtime) {
       runtime?.completeAction(operation?.actionId);
       resolveEnded();
     };
-    a.onerror = () => fail(Error('Audio playback failed'));
+    a.onerror = () => fail(Error('音声の再生に失敗しました。'));
     try { await connectUiAudio(a, kind, gain * (kind === 'voice' ? characterVoiceGain(characterId) : 1)); await a.play(); }
     catch (error) { fail(error); throw error; }
     if (mode === 'blocking') await ended;
@@ -1382,6 +1438,7 @@ async function playVideo(name, mode, operation, runtime) {
   const previous = $('active-video');
   const video = document.createElement('video');
   const blocksStory = mode !== 'async';
+  const previousVisualOnly = $('stage').dataset.visualOnly;
   // Keep the current video until its replacement has actually started. This
   // matches Native, where make_unique constructs the new decoder before the
   // assignment destroys the previous Video.
@@ -1407,7 +1464,10 @@ async function playVideo(name, mode, operation, runtime) {
     video.pause();
     video.remove();
     if (blocksStory) delete $('stage').dataset.videoBlocking;
-    if (operation?.only && $('stage').dataset.visualOnly === 'video') delete $('stage').dataset.visualOnly;
+    if (operation?.only) {
+      if (previousVisualOnly === undefined) delete $('stage').dataset.visualOnly;
+      else $('stage').dataset.visualOnly = previousVisualOnly;
+    }
     runtime?.stopAction(operation?.actionId, reason);
   };
   video.onended = () => { video.remove(); if (blocksStory) delete $('stage').dataset.videoBlocking; if (operation?.only && $('stage').dataset.visualOnly === 'video') delete $('stage').dataset.visualOnly; runtime?.completeAction(operation?.actionId); resolveEnded(); };
@@ -1520,9 +1580,9 @@ async function applyEffect(type, color, ms = 500n, runtime, actionId) {
 }
 async function moveLayer(operation, runtime) {
   const move = operation?.move;
-  if (!move) throw Error('move operation metadata is missing');
+  if (!move) throw Error('移動操作の情報がありません。');
   const element = move.targetKind === 'bg' ? $('background') : $(`char-${move.target}`);
-  if (!element) throw Error(`move target '${move.target}' is not currently visible`);
+  if (!element) throw Error(`moveの対象「${move.target}」は表示されていません`);
   if (move.targetKind === 'bg') {
     const apply = progress => {
       visualBackgroundOffset = {
@@ -1609,14 +1669,20 @@ async function command(c, deferAnimation = false) {
     await e.decode();
     sizeSpriteLikeNative(e);
     positionSpriteInSlot(e, pos, offsetX);
-    if (existing) existing.replaceWith(e);
-    else $('characters').append(e);
-    document.querySelectorAll(`#characters .actor[data-slot="${CSS.escape(pos)}"]`).forEach(actor => {
-      if (actor !== e) actor.remove();
-    });
-    applyRenderLayers(c.runtime?.sceneState?.layers || activeRenderLayers);
+    const install = () => {
+      if (existing) existing.replaceWith(e);
+      else $('characters').append(e);
+      document.querySelectorAll(`#characters .actor[data-slot="${CSS.escape(pos)}"]`).forEach(actor => {
+        if (actor !== e) actor.remove();
+      });
+      applyRenderLayers(c.runtime?.sceneState?.layers || activeRenderLayers);
+    };
+    if (deferAnimation) return async () => {
+      install();
+      if (a[transitionIndex] === 'fade') await fade(e, 0, 1, a[transitionIndex + 1], c.runtime, c.operation?.actionId);
+    };
+    install();
     if (a[transitionIndex] === 'fade') {
-      if (deferAnimation) return () => fade(e, 0, 1, a[transitionIndex + 1], c.runtime, c.operation?.actionId);
       await fade(e, 0, 1, a[transitionIndex + 1], c.runtime, c.operation?.actionId);
     }
   } else if (n === 'hide') {
@@ -1652,11 +1718,14 @@ async function command(c, deferAnimation = false) {
     applyRenderLayers(c.runtime?.sceneState?.layers || activeRenderLayers);
   } else if (n === 'effect') {
     if (deferAnimation) {
-      const overlay = document.createElement('div');
-      overlay.className = 'player-effect';
-      Object.assign(overlay.style, { position: 'absolute', inset: '0', backgroundColor: a[1], opacity: '0', zIndex: String(layerZIndex(activeRenderLayers.menu, 90000)), pointerEvents: 'none' });
-      $('stage').append(overlay);
-      return async () => { overlay.style.opacity = '1'; try { await fade(overlay, 1, 0, a[2] ?? 500n, c.runtime, c.operation?.actionId); } finally { overlay.remove(); } };
+      return async () => {
+        const overlay = document.createElement('div');
+        overlay.className = 'player-effect';
+        Object.assign(overlay.style, { position: 'absolute', inset: '0', backgroundColor: a[1], opacity: '0', zIndex: String(layerZIndex(activeRenderLayers.menu, 90000)), pointerEvents: 'none' });
+        $('stage').append(overlay);
+        overlay.style.opacity = '1';
+        try { await fade(overlay, 1, 0, a[2] ?? 500n, c.runtime, c.operation?.actionId); } finally { overlay.remove(); }
+      };
     }
     await applyEffect(a[0], a[1], a[2], c.runtime, c.operation?.actionId);
   } else if (n === 'show' && a[0] === 'image') {
@@ -1712,7 +1781,17 @@ window.addEventListener('keydown', (event) => {
     if (activeTextReveal) activeTextReveal(); else $('next').click();
     return;
   }
-  if (event.key !== 'Escape' || !gameStarted || !gameScreenConfig?.screens?.pause || activeGameScreen) return;
+  if (event.key !== 'Escape' || !gameStarted || !gameScreenConfig?.screens?.pause) return;
+  if (activeGameScreen) {
+    if (activeGameScreen === 'pause') {
+      event.preventDefault();
+      $('screen-overlay').hidden = true; setActiveGameScreen(null); screenHistory.length = 0;
+    } else if (screenHistory.length) {
+      event.preventDefault();
+      showGameScreen(screenHistory.pop(), { push: false });
+    }
+    return;
+  }
   event.preventDefault(); activeTextReveal?.(); pausePlaybackModes(); showGameScreen('pause', { push: false });
 });
 
@@ -1772,7 +1851,7 @@ const runtime = new NovelRuntime.Runtime({
     const start = [];
     for (const item of items) {
       const begin = await command({ name: item.name, args: item.args, operation: item.operation, runtime: rt }, true);
-      if (typeof begin !== 'function') throw Error(`Command '${item.name}' cannot be scheduled as a parallel visual`);
+      if (typeof begin !== 'function') throw Error(`命令「${item.name}」は並列の画面演出として実行できません`);
       start.push(begin);
     }
     await Promise.all(start.map(begin => begin()));
@@ -1807,6 +1886,17 @@ const runtime = new NovelRuntime.Runtime({
       if (args[0] < 0n || args[0] > 2147483647n) throw Error('待機時間が不正です');
       await new Promise(resolve => setTimeout(resolve, Number(args[0])));
     } else await command({ name, args, operation, runtime: rt });
+  },
+  async start() {
+    if (!gameScreenConfig?.screens?.[gameScreenConfig.initial]) throw Error('start()を使うには開始画面を設定してください');
+    await new Promise((resolve, reject) => {
+      startWaitResolve = resolve;
+      try { showGameScreen(gameScreenConfig.initial, { push: false }); }
+      catch (error) {
+        if (startWaitResolve === resolve) startWaitResolve = null;
+        reject(error);
+      }
+    });
   },
   sceneState(state, event) {
     document.body.dataset.sceneRevision = String(state.revision);
@@ -1918,7 +2008,6 @@ async function launchGame(source = launchName || scenarioLaunchName, debug = lau
       $('images').replaceChildren();
       $('background').style.backgroundImage = 'none';
       currentExecution = null;
-      if (gameScreenConfig?.screens?.[gameScreenConfig.initial]) showGameScreen(gameScreenConfig.initial, { push: false });
     }
   }
 }
@@ -1953,58 +2042,58 @@ async function launchGame(source = launchName || scenarioLaunchName, debug = lau
   if (debugSession) {
     const supplied = JSON.parse(debugParams.get('variables') || '{}');
     for (const [key, entry] of Object.entries(supplied)) {
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw Error(`Invalid debug variable: ${key}`);
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw Error(`debug variable 名が正しくありません: ${key}`);
       if (entry?.type === 'int' && typeof entry.value === 'string') variables[key] = NovelRuntime.integer(entry.value);
       else if (entry?.type === 'float' && typeof entry.value === 'string') variables[key] = NovelRuntime.floating(entry.value);
       else if (entry?.type === 'str' && typeof entry.value === 'string') variables[key] = entry.value;
       else if (entry?.type === 'bool' && ['true', 'false'].includes(entry.value)) variables[key] = entry.value === 'true';
       else if (/^list<(int|float|str|bool)>$/.test(entry?.type || '')) {
         const source = JSON.parse(entry.value);
-        if (!Array.isArray(source)) throw Error(`Invalid debug list: ${key}`);
+        if (!Array.isArray(source)) throw Error(`debug list が正しくありません: ${key}`);
         const elementType = entry.type.slice(5, -1);
         variables[key] = source.map((value) => {
           if (elementType === 'int' && (Number.isSafeInteger(value) || typeof value === 'string' && /^[+-]?\d+$/.test(value))) return NovelRuntime.integer(value);
           if (elementType === 'float' && (typeof value === 'number' || typeof value === 'string')) return NovelRuntime.floating(value);
           if (elementType === 'str' && typeof value === 'string') return value;
           if (elementType === 'bool' && typeof value === 'boolean') return value;
-          throw Error(`Invalid debug list element type: ${key}`);
+          throw Error(`debug list の要素typeが正しくありません: ${key}`);
         });
       }
       else if (entry?.type === 'dict<int>' || entry?.type === 'dict<float>' || entry?.type === 'dict<str>' || entry?.type === 'dict<bool>') {
         const source = JSON.parse(entry.value);
-        if (!source || typeof source !== 'object' || Array.isArray(source)) throw Error(`Invalid debug dictionary: ${key}`);
+        if (!source || typeof source !== 'object' || Array.isArray(source)) throw Error(`debug dictionary が正しくありません: ${key}`);
         const dictionary = Object.create(null);
         for (const [field, value] of Object.entries(source)) {
           if (entry.type === 'dict<int>') dictionary[field] = NovelRuntime.integer(value);
           else if (entry.type === 'dict<float>') dictionary[field] = NovelRuntime.floating(value);
           else if (entry.type === 'dict<bool>' && typeof value === 'boolean') dictionary[field] = value;
           else if (typeof value === 'string') dictionary[field] = value;
-          else throw Error(`Invalid debug dictionary element type: ${key}.${field}`);
+          else throw Error(`debug dictionary の要素typeが正しくありません: ${key}.${field}`);
         }
         variables[key] = dictionary;
       } else if (entry?.type === 'struct') {
         const source = JSON.parse(entry.value);
         const fields = entry.fields;
-        if (!source || typeof source !== 'object' || Array.isArray(source) || !fields || typeof fields !== 'object' || Object.keys(source).length !== Object.keys(fields).length) throw Error(`Invalid debug structure: ${key}`);
+        if (!source || typeof source !== 'object' || Array.isArray(source) || !fields || typeof fields !== 'object' || Object.keys(source).length !== Object.keys(fields).length) throw Error(`debug struct が正しくありません: ${key}`);
         const structure = Object.create(null);
         for (const [field, type] of Object.entries(fields)) {
-          if (!Object.hasOwn(source, field)) throw Error(`Missing debug structure field: ${field}`);
+          if (!Object.hasOwn(source, field)) throw Error(`debug struct にfieldがありません: ${field}`);
           if (type === 'int') structure[field] = NovelRuntime.integer(source[field]);
           else if (type === 'float') structure[field] = NovelRuntime.floating(source[field]);
           else if (type === 'str' && typeof source[field] === 'string') structure[field] = source[field];
           else if (type === 'bool' && typeof source[field] === 'boolean') structure[field] = source[field];
-          else throw Error(`Invalid debug structure field: ${field}`);
+          else throw Error(`debug struct のfieldが正しくありません: ${field}`);
         }
         variables[key] = structure;
-      } else throw Error(`Unsupported debug variable type: ${key}`);
+      } else throw Error(`未対応のdebug variable typeです: ${key}`);
     }
   }
   const debugLineText = debugParams.get('line');
   let debugLine;
   if (debugSession && debugLineText !== null) {
-    if (!/^\d+$/.test(debugLineText)) throw Error('Debug line must be a non-negative integer.');
+    if (!/^\d+$/.test(debugLineText)) throw Error('debug line は0以上の整数で指定してください');
     debugLine = Number(debugLineText);
-    if (!Number.isSafeInteger(debugLine)) throw Error('Debug line is outside the supported integer range.');
+    if (!Number.isSafeInteger(debugLine)) throw Error('debug line が整数の有効範囲外です');
   }
   launchDebug = debugSession ? {
     file: debugParams.get('source') || undefined,
@@ -2017,11 +2106,15 @@ async function launchGame(source = launchName || scenarioLaunchName, debug = lau
   saveStore = await NovelSaveStore.open({ namespace: `${gameScreenConfig.saveId || projectInfo.projectRoot || location.origin}:${debugSession ? 'test' : 'game'}`, legacyPrefix: saveStoragePrefix });
   await Promise.all(Array.from({ length: 120 }, async (_, index) => {
     const encoded = await saveStore.readSlot(index);
-    if (!encoded) return;
+    if (encoded === null) return;
     try {
       const saved = decodeSave(encoded);
       if (!isLoadableSave(saved)) {
-        saveSlotStates.set(index, saved?.version !== 1 || saved?.saveId && saved.saveId !== (gameScreenConfig.saveId || '') ? 'incompatible' : 'corrupt');
+        const incompatibleVersion = saved && typeof saved === 'object' && !Array.isArray(saved)
+          && Number.isSafeInteger(saved.version) && saved.version !== 1;
+        const incompatibleSaveId = saved && typeof saved === 'object' && !Array.isArray(saved)
+          && typeof saved.saveId === 'string' && saved.saveId !== '' && saved.saveId !== (gameScreenConfig.saveId || '');
+        saveSlotStates.set(index, incompatibleVersion || incompatibleSaveId ? 'incompatible' : 'corrupt');
         return;
       }
       saveSlotCache.set(index, saved);
@@ -2039,25 +2132,15 @@ async function launchGame(source = launchName || scenarioLaunchName, debug = lau
       sessionStorage.removeItem(`${saveStoragePrefix}:resume`);
       if (rawResume) localStorage.removeItem(`${saveStoragePrefix}:resume`);
       if (slotPointer !== null || rawResume) {
-        resumeAtLaunch = slotPointer !== null && /^\d+$/.test(slotPointer) ? readSaveSlot(Number(slotPointer)) : decodeSave(rawResume);
-        if (resumeAtLaunch?.version === 1 && typeof resumeAtLaunch.file === 'string' && typeof resumeAtLaunch.scene === 'string'
-          && /^[A-Za-z_][A-Za-z0-9_]*$/.test(resumeAtLaunch.scene) && Number.isSafeInteger(resumeAtLaunch.line) && resumeAtLaunch.line > 0) {
-          launchName = resumeAtLaunch.file;
-          launchDebug = { file: resumeAtLaunch.file, scene: resumeAtLaunch.scene, line: resumeAtLaunch.line, variables: resumeAtLaunch.variables || {}, locals: resumeAtLaunch.locals || [], readonlyLocals: resumeAtLaunch.readonlyLocals || [], sceneState: resumeAtLaunch.sceneState };
-          $('text').textContent = String(resumeAtLaunch.text || ''); $('speaker-text').textContent = String(resumeAtLaunch.speaker || '');
-        } else resumeAtLaunch = null;
+        const savedResume = slotPointer !== null && /^\d+$/.test(slotPointer) ? readSaveSlot(Number(slotPointer)) : decodeSave(rawResume);
+        if (isLoadableSave(savedResume)) {
+          launchName = savedResume.file;
+          launchDebug = { file: savedResume.file, scene: savedResume.scene, line: savedResume.line, variables: savedResume.variables || {}, locals: savedResume.locals || [], readonlyLocals: savedResume.readonlyLocals || [], sceneState: savedResume.sceneState };
+          $('text').textContent = String(savedResume.text || ''); $('speaker-text').textContent = String(savedResume.speaker || '');
+        }
       }
-    } catch { resumeAtLaunch = null; }
+    } catch {}
   }
-  if (!debugSession && menu.screens?.titleScene && !resumeAtLaunch) {
-    launchName = menu.screens.titleScene.file;
-    launchDebug = { file: menu.screens.titleScene.file, scene: menu.screens.titleScene.scene };
-    await launchGame();
-  } else if (!debugSession && resumeAtLaunch) {
-    await launchGame();
-  } else if (!debugSession && menu.configured) {
-    runtime.program = await loadScene(launchName);
-    gameStartHandler = () => launchGame(scenarioLaunchName, null);
-    showGameScreen(gameScreenConfig.initial, { push: false });
-  } else await launchGame();
-})().catch(error => { $('speaker-text').textContent = 'PLAYER ERROR'; $('text').textContent = error.message; $('choices').replaceChildren(); reportDebug('novel-debug:error', { error: error.message }); });
+  if (!debugSession) gameStartHandler = () => launchGame(scenarioLaunchName, null);
+  await launchGame();
+})().catch(error => { $('speaker-text').textContent = 'Runtime Error'; $('text').textContent = error.message; $('choices').replaceChildren(); reportDebug('novel-debug:error', { error: error.message }); });

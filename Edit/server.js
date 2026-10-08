@@ -4,6 +4,7 @@ const { spawn } = require('node:child_process');
 const { compileProject, resolveProjectScript, projectContext, inside, isStandardLibraryInclude, listStandardLibrary, readStandardLibraryFile } = require('../tools/project');
 const { pack } = require('../tools/pack');
 const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
 const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
@@ -12,6 +13,8 @@ const { ProjectChangeTracker } = require('./project-changes');
 const { defaultGameScreens, validateGameScreens, withSaveLoadScreens } = require('./game-screens');
 const screenDocumentCompiler = require('./screen-document');
 const { DEFAULT_PRESENTATION_DEFAULTS } = require('./runtime');
+const projectFileLock = require('@bybrave/proper-lockfile2');
+const { createProjectLockFs } = require('./project-lock-fs');
 const DEFAULT_CANVAS = screenDocumentCompiler.DEFAULT_CANVAS;
 
 const EDIT_ROOT = __dirname;
@@ -89,17 +92,41 @@ const DEFAULT_PLAYER_UI_THEME = Object.freeze({
 });
 
 function validatePlayerUiTheme(theme) {
-  if (!(theme?.version === 1 && theme.screen && theme.dialog?.message && theme.dialog?.nameplate?.text && theme.choices)) throw Error('Invalid player UI theme shape.');
-  if (theme.dialog.opacity !== undefined && (!Number.isFinite(theme.dialog.opacity) || theme.dialog.opacity < 0 || theme.dialog.opacity > 1)) throw Error('Dialog opacity must be between 0.0 and 1.0.');
+  const geometry = [
+    [['screen', 'width'], 320, 4096], [['screen', 'height'], 180, 4096],
+    [['screen', 'backdrop', 'bottomFog', 'height'], 0, 4096],
+    [['dialog', 'x'], -32768, 32768], [['dialog', 'y'], -32768, 32768],
+    [['dialog', 'width'], 1, 8192], [['dialog', 'height'], 1, 8192],
+    [['dialog', 'message', 'x'], -32768, 32768], [['dialog', 'message', 'y'], -32768, 32768],
+    [['dialog', 'message', 'width'], 1, 8192], [['dialog', 'message', 'height'], 1, 8192], [['dialog', 'message', 'size'], 1, 512],
+    [['dialog', 'nameplate', 'x'], -32768, 32768], [['dialog', 'nameplate', 'y'], -32768, 32768],
+    [['dialog', 'nameplate', 'width'], 1, 8192], [['dialog', 'nameplate', 'height'], 1, 8192],
+    [['dialog', 'nameplate', 'text', 'x'], -32768, 32768], [['dialog', 'nameplate', 'text', 'y'], -32768, 32768],
+    [['dialog', 'nameplate', 'text', 'width'], 1, 8192], [['dialog', 'nameplate', 'text', 'height'], 1, 8192], [['dialog', 'nameplate', 'text', 'size'], 1, 512],
+    [['choices', 'x'], -32768, 32768], [['choices', 'y'], -32768, 32768],
+    [['choices', 'width'], 1, 8192], [['choices', 'height'], 1, 8192], [['choices', 'itemHeight'], 1, 8192], [['choices', 'gap'], 0, 4096],
+    [['choices', 'text', 'x'], -32768, 32768], [['choices', 'text', 'y'], -32768, 32768],
+    [['choices', 'text', 'width'], 1, 8192], [['choices', 'text', 'height'], 1, 8192], [['choices', 'text', 'size'], 1, 512],
+  ];
+  for (const [parts, minimum, maximum] of geometry) {
+    const value = parts.reduce((node, key) => node?.[key], theme);
+    if (value !== undefined && (!Number.isInteger(value) || value < minimum || value > maximum)) throw Error(`${parts.join('.')} must be an integer from ${minimum} to ${maximum}`);
+  }
+  for (const parts of [['dialog', 'message', 'color'], ['dialog', 'nameplate', 'text', 'color'], ['choices', 'text', 'color'], ['screen', 'backdrop', 'bottomFog', 'color']]) {
+    const color = parts.reduce((node, key) => node?.[key], theme);
+    if (color !== undefined && (!Array.isArray(color) || color.length !== 4 || color.some(channel => !Number.isInteger(channel) || channel < 0 || channel > 255))) throw Error(`${parts.join('.')} must contain four integer RGBA channels from 0 to 255`);
+  }
+  if (!(theme?.version === 1 && theme.screen && theme.dialog?.message && theme.dialog?.nameplate?.text && theme.choices)) throw Error('再生UIテーマの形式が正しくありません');
+  if (theme.dialog.opacity !== undefined && (!Number.isFinite(theme.dialog.opacity) || theme.dialog.opacity < 0 || theme.dialog.opacity > 1)) throw Error('会話欄の不透明度は0.0〜1.0の範囲で指定してください');
   if (theme.audio !== undefined) {
-    if (!theme.audio || typeof theme.audio !== 'object' || Array.isArray(theme.audio)) throw Error('Invalid audio defaults.');
-    for (const kind of ['bgm', 'se', 'voice']) if (theme.audio[kind] !== undefined && (!Number.isFinite(theme.audio[kind]) || theme.audio[kind] < 0 || theme.audio[kind] > 1)) throw Error(`Invalid ${kind} volume.`);
+    if (!theme.audio || typeof theme.audio !== 'object' || Array.isArray(theme.audio)) throw Error('音量の既定値の形式が正しくありません');
+    for (const kind of ['bgm', 'se', 'voice']) if (theme.audio[kind] !== undefined && (!Number.isFinite(theme.audio[kind]) || theme.audio[kind] < 0 || theme.audio[kind] > 1)) throw Error(`${kind}の音量は0.0〜1.0の範囲で指定してください`);
   }
   const layerDefaults = { background: 0, video: 1, character: 2, image: 3, fog: 4, dialogue: 5, controls: 6, menu: 7 };
   if (theme.layers !== undefined) {
-    if (!theme.layers || typeof theme.layers !== 'object' || Array.isArray(theme.layers)) throw Error('Invalid render layers.');
+    if (!theme.layers || typeof theme.layers !== 'object' || Array.isArray(theme.layers)) throw Error('描画layerの既定値の形式が正しくありません');
     for (const [category, value] of Object.entries(theme.layers)) {
-      if (!Object.hasOwn(layerDefaults, category) || !Number.isFinite(value) || value < 0 || value >= 8 || Math.abs(Math.round(value * 1000) - value * 1000) > 1e-7) throw Error(`Invalid ${category} layer; use 0 through 7.999 in 0.001 steps.`);
+      if (!Object.hasOwn(layerDefaults, category) || !Number.isFinite(value) || value < 0 || value >= 8 || Math.abs(Math.round(value * 1000) - value * 1000) > 1e-7) throw Error(`${category}のlayerは0〜7.999の範囲で0.001刻みに指定してください`);
     }
   }
   const controls = theme.controls;
@@ -107,21 +134,22 @@ function validatePlayerUiTheme(theme) {
   if (!controls || typeof controls !== 'object' || Array.isArray(controls)
     || controls.enabled !== undefined && typeof controls.enabled !== 'boolean'
     || controls.anchor !== undefined && !['dialogue-top-left', 'stage'].includes(controls.anchor)
-    || !Array.isArray(controls.buttons) || controls.buttons.length > 8) throw Error('Invalid player controls settings.');
+    || !Array.isArray(controls.buttons) || controls.buttons.length > 8) throw Error('再生コントロールの設定が正しくありません');
   const actions = new Set();
   for (const button of controls.buttons) {
-    if (!button || !['save', 'load'].includes(button.action) || actions.has(button.action)) throw Error('Player controls must have unique save/load actions.');
+    if (!button || !['save', 'load'].includes(button.action) || actions.has(button.action)) throw Error('再生コントロールには重複しないセーブ・ロード動作を指定してください');
     actions.add(button.action);
     for (const key of ['label', 'hoverLabel', 'image', 'hoverImage', 'color', 'hoverColor', 'backgroundColor', 'hoverBackgroundColor', 'borderColor', 'hoverBorderColor']) {
-      if (button[key] !== undefined && (typeof button[key] !== 'string' || button[key].length > 240)) throw Error(`Invalid player control ${key}.`);
+      if (button[key] !== undefined && (typeof button[key] !== 'string' || button[key].length > 240)) throw Error(`再生コントロールの${key}が正しくありません`);
     }
-    if (button.display !== undefined && !['text', 'image', 'both'].includes(button.display)) throw Error('Invalid player control display mode.');
-    for (const key of ['x', 'y', 'width', 'height', 'fontSize', 'borderRadius']) {
-      if (button[key] !== undefined && (!Number.isFinite(button[key]) || ['width', 'height', 'fontSize'].includes(key) && button[key] <= 0 || key === 'borderRadius' && button[key] < 0)) throw Error(`Invalid player control ${key}.`);
+    if (button.display !== undefined && !['text', 'image', 'both'].includes(button.display)) throw Error('再生コントロールの表示形式が正しくありません');
+    for (const key of ['x', 'y', 'width', 'height', 'borderRadius']) {
+      if (button[key] !== undefined && (!Number.isFinite(button[key]) || ['width', 'height', 'fontSize'].includes(key) && button[key] <= 0 || key === 'borderRadius' && button[key] < 0)) throw Error(`再生コントロールの${key}が正しくありません`);
     }
+    if (button.fontSize !== undefined && (!Number.isInteger(button.fontSize) || button.fontSize < 1 || button.fontSize > 512)) throw Error('Player control fontSize must be an integer from 1 to 512');
     for (const key of ['image', 'hoverImage']) {
       const relative = String(button[key] || '').replaceAll('\\', '/').replace(/^asset\//i, '');
-      if (relative && (relative.startsWith('/') || /^[A-Za-z]:/.test(relative) || relative.split('/').some(part => !part || part === '.' || part === '..'))) throw Error('Player control images must stay inside the asset folder.');
+      if (relative && (relative.startsWith('/') || /^[A-Za-z]:/.test(relative) || relative.split('/').some(part => !part || part === '.' || part === '..'))) throw Error('再生コントロールの画像は作品のassetフォルダー内に指定してください');
     }
   }
   return theme;
@@ -129,7 +157,12 @@ function validatePlayerUiTheme(theme) {
 
 function isEditorTree(root) {
   const resolved = path.resolve(root);
-  return resolved === EDIT_ROOT || resolved === REPO_ROOT;
+  let physical = resolved;
+  try { physical = fsSync.realpathSync(resolved); }
+  catch { /* Keep the lexical path for a not-yet-created project folder. */ }
+  const editorRoot = fsSync.realpathSync(REPO_ROOT);
+  const editRoot = fsSync.realpathSync(EDIT_ROOT);
+  return physical === editorRoot || physical === editRoot;
 }
 
 async function projectInfo() {
@@ -294,7 +327,7 @@ function ensureNativeBuild() {
       if (exists) return { code: 0, output: 'Using the existing Native runtime.' };
       return runTool(process.execPath, [path.join(REPO_ROOT, 'tools', 'native-build.js')]);
     })
-      .then((result) => { if (result.code !== 0) throw Error(`ネイティブビルドに失敗しました。\n${result.output}`); return result; })
+      .then((result) => { if (result.code !== 0) throw Error(`Native buildに失敗しました。\n${result.output}`); return result; })
       .finally(() => { nativeBuildInFlight = null; });
   }
   return nativeBuildInFlight;
@@ -319,7 +352,7 @@ async function imagePathsForProject() {
     const normalized = relativePath.replaceAll('\\', '/').replace(/^asset\//i, '');
     const file = await safeAssetPath(normalized);
     const rel = path.relative(path.resolve(ASSETS_ROOT), file);
-    if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw Error('??UI???????asset????????');
+    if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw Error('再生UIの設定は作品のassetフォルダー外を参照できません');
     addFile(file);
   };
   const scan = async (directory) => {
@@ -379,19 +412,19 @@ async function checkProjectImages() {
 
 async function playWithNativeEngine(name, debugStart = null) {
   const scene = sceneName(name);
-  if (!scene) throw Error('再生するシーンを指定してください');
+  if (!scene) throw Error('再生するSceneを指定してください');
   let debugArguments = null;
   if (debugStart !== null) {
-    if (!debugStart || typeof debugStart !== 'object' || Array.isArray(debugStart)) throw Error('チE��ト�E生�E開始情報が正しくありません');
+    if (!debugStart || typeof debugStart !== 'object' || Array.isArray(debugStart)) throw Error('デバッグ開始情報が正しくありません');
     const debugFile = sceneName(debugStart.file || scene);
     const debugScene = String(debugStart.scene || '');
     const debugLine = debugStart.line === null || debugStart.line === undefined ? 0 : Number(debugStart.line);
     const variables = debugStart.variables || {};
-    if (!debugFile || debugFile !== scene) throw Error('チE��ト開始ファイルが�E生対象と一致しません');
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(debugScene)) throw Error('チE��ト開始sceneが正しくありません');
-    if (!Number.isSafeInteger(debugLine) || debugLine < 0) throw Error('チE��ト開始行が正しくありません');
+    if (!debugFile || debugFile !== scene) throw Error('デバッグ開始ファイルが対象Sceneと一致しません');
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(debugScene)) throw Error('デバッグ開始Scene名が正しくありません');
+    if (!Number.isSafeInteger(debugLine) || debugLine < 0) throw Error('デバッグ開始行が正しくありません');
     if (!variables || typeof variables !== 'object' || Array.isArray(variables)
-      || Object.keys(variables).some((key) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))) throw Error('チE��ト変数が正しくありません');
+      || Object.keys(variables).some((key) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))) throw Error('デバッグ開始変数が正しくありません');
     debugArguments = { file: debugFile, scene: debugScene, line: debugLine, variables };
   }
   const sourceFile = await safeScenePath(scene);
@@ -407,7 +440,7 @@ async function playWithNativeEngine(name, debugStart = null) {
   let stateFile = '';
   if (debugArguments) {
     const debugProgram = packageData.files?.[debugArguments.file];
-    if (!debugProgram?.scenes?.some((item) => item.name === debugArguments.scene)) throw Error('チE��ト開始sceneがパチE��ージにありません');
+    if (!debugProgram?.scenes?.some((item) => item.name === debugArguments.scene)) throw Error('debug start に指定した Scene が package にありません');
     playerArguments.push('--debug-start', debugArguments.file, debugArguments.scene, String(debugArguments.line), JSON.stringify(debugArguments.variables));
     session = crypto.randomUUID();
     stateFile = path.join(path.dirname(packagePath), `flow-debug-${session}.json`);
@@ -433,14 +466,14 @@ async function playWithNativeEngine(name, debugStart = null) {
       fs.rm(stateFile, { force: true }).catch(() => {});
       fs.rm(`${stateFile}.tmp`, { force: true }).catch(() => {});
     }
-    console.error('Could not start native player:', error);
+    console.error('Native Playerを起動できませんでした:', error);
   });
   child.unref();
   return { ok: true, package: '.novel/build/' + packageName, engine: 'native', ...(session ? { session } : {}) };
 }
 
 function stopNativeDebugPlayer(session) {
-  if (typeof session !== 'string' || !/^[0-9a-f-]{36}$/i.test(session)) throw Error('チE��ト�E生セチE��ョンが正しくありません');
+  if (typeof session !== 'string' || !/^[0-9a-f-]{36}$/i.test(session)) throw Error('デバッグ再生セッションが正しくありません');
   const active = nativeDebugPlayers.get(session);
   if (!active) return { ok: true, stopped: false };
   nativeDebugPlayers.delete(session);
@@ -450,7 +483,7 @@ function stopNativeDebugPlayer(session) {
 }
 
 async function nativeDebugPlayerState(session) {
-  if (typeof session !== 'string' || !/^[0-9a-f-]{36}$/i.test(session)) throw Error('チE��ト�E生セチE��ョンが正しくありません');
+  if (typeof session !== 'string' || !/^[0-9a-f-]{36}$/i.test(session)) throw Error('デバッグ再生セッションが正しくありません');
   const active = nativeDebugPlayers.get(session);
   if (!active) return { ok: true, active: false };
   try {
@@ -567,6 +600,76 @@ function sceneRevision(source) {
   return crypto.createHash('sha256').update(String(source), 'utf8').digest('hex');
 }
 
+const projectWriteQueues = new Map();
+const projectLockRoot = path.join(os.tmpdir(), 'novel-editor-write-locks');
+const projectLockOwnerToken = crypto.randomUUID();
+const projectFileLockFs = createProjectLockFs(fsSync, projectLockOwnerToken);
+const projectContextQueue = [];
+let projectContextReaders = 0;
+let projectContextWriter = false;
+function drainProjectContextQueue() {
+  if (projectContextWriter || !projectContextQueue.length) return;
+  const run = (entry, exclusive) => {
+    if (exclusive) projectContextWriter = true;
+    else projectContextReaders++;
+    Promise.resolve().then(entry.operation).then(entry.resolve, entry.reject).finally(() => {
+      if (exclusive) projectContextWriter = false;
+      else projectContextReaders--;
+      drainProjectContextQueue();
+    });
+  };
+  if (projectContextReaders) {
+    while (projectContextQueue[0]?.mode === 'shared') run(projectContextQueue.shift(), false);
+    return;
+  }
+  if (projectContextQueue[0].mode === 'exclusive') run(projectContextQueue.shift(), true);
+  else while (projectContextQueue[0]?.mode === 'shared') run(projectContextQueue.shift(), false);
+}
+function withProjectContext(mode, operation) {
+  return new Promise((resolve, reject) => {
+    projectContextQueue.push({mode, operation, resolve, reject});
+    drainProjectContextQueue();
+  });
+}
+async function withProjectWriteLock(key, operation) {
+  const resolved = await fs.realpath(path.resolve(key));
+  const lockKey = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  const previous = projectWriteQueues.get(lockKey) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => { release = resolve; });
+  projectWriteQueues.set(lockKey, current);
+  await previous;
+  let releaseFileLock;
+  try {
+    await fs.mkdir(projectLockRoot, { recursive: true });
+    const lockId = crypto.createHash('sha256').update(lockKey, 'utf8').digest('hex');
+    try {
+      releaseFileLock = await projectFileLock.lock(resolved, {
+        realpath: false,
+        lockfilePath: path.join(projectLockRoot, `${lockId}.lock`),
+        fs: projectFileLockFs,
+        stale: 120_000,
+        update: 30_000,
+        retries: { retries: 120, factor: 1.15, minTimeout: 50, maxTimeout: 500 },
+      });
+    } catch (error) {
+      if (error?.code === 'ELOCKED') {
+        error.statusCode = 503;
+        error.message = 'project write lockを取得できませんでした。少し待って再試行してください。';
+      }
+      throw error;
+    }
+    return await operation();
+  }
+  finally {
+    try { if (releaseFileLock) await releaseFileLock(); }
+    finally {
+      release();
+      if (projectWriteQueues.get(lockKey) === current) projectWriteQueues.delete(lockKey);
+    }
+  }
+}
+
 function text(response, status, value) {
   response.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' });
   response.end(value);
@@ -576,13 +679,21 @@ function sceneName(value) {
   if (typeof value !== 'string') return null;
   let name = value.trim().replaceAll('\\', '/');
   const parts = name.split('/');
-  const safeDirectory = (part) => part.length <= 120 && part !== '.' && part !== '..' && !/[<>:"|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part);
+  const safeDirectory = (part) => isSafeProjectPathComponent(part, 120);
   if (name.startsWith('/') || name.length > 240 || parts.some((part) => !part)) return null;
   const file = parts.pop();
   if (parts.some((part) => !safeDirectory(part)) || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/.test(file)) return null;
   if (/\.txt$/i.test(file)) return null;
   name = [...parts, file].join('/');
   return ALLOWED_EXTENSIONS.has(path.extname(name).toLowerCase()) ? name : `${name}.tds`;
+}
+
+function isSafeProjectPathComponent(part, maxLength = 255) {
+  return typeof part === 'string' && part.length > 0 && part.length <= maxLength
+    && part !== '.' && part !== '..'
+    && !/[<>:"|?*\x00-\x1f]/.test(part)
+    && !/[. ]$/.test(part)
+    && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part);
 }
 
 function nativePackageName(value) {
@@ -593,16 +704,39 @@ function nativePackageName(value) {
 async function readJson(request) {
   const chunks = [];
   let size = 0;
+  let tooLarge = false;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw new Error('ファイルは 2 MB 以下にしてください。');
-    chunks.push(chunk);
+    if (size > MAX_BODY_BYTES) {
+      tooLarge = true;
+      chunks.length = 0;
+      continue;
+    }
+    if (!tooLarge) chunks.push(chunk);
   }
+  if (tooLarge) {
+    const error = new Error('リクエスト本文は2MB以下にしてください。');
+    error.statusCode = 413;
+    throw error;
+  }
+  let value;
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
   } catch {
-    throw new Error('JSON の形式が正しくありません。');
+    const error = new Error('JSONの形式が正しくありません。');
+    error.statusCode = 400;
+    throw error;
   }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    const error = new Error('JSON本文はオブジェクトで指定してください。');
+    error.statusCode = 400;
+    throw error;
+  }
+  return value;
+}
+
+function requestErrorStatus(error, fallback = 400) {
+  return Number.isInteger(error?.statusCode) ? error.statusCode : fallback;
 }
 
 async function listScenes() {
@@ -696,7 +830,7 @@ async function globalCharacterTable(excludeName = '', analysis = null) {
     if (error) throw error;
     const script = ast;
     for (const character of script.characters) {
-      if (characters.has(character.name)) throw new Error(`キャラクター '${character.name}' が複数ファイルで宣言されています`);
+      if (characters.has(character.name)) throw new Error(`Character '${character.name}' が複数ファイルで宣言されています`);
       const fields = Object.fromEntries(character.properties.map((property) => [property.name, property.value.kind === 'literal' && typeof property.value.value === 'string' ? 'str' : 'int']));
       characters.set(character.name, { poses: new Set(character.poses.map((pose) => pose.name)), fields, definition: character });
     }
@@ -706,22 +840,33 @@ async function globalCharacterTable(excludeName = '', analysis = null) {
 
 async function listProjectFiles() {
   const result = [];
+  const projectRoot = await fs.realpath(PROJECT_ROOT);
   const settingDirectoryExists = async () => {
     try { const info = await fs.lstat(path.join(PROJECT_ROOT, 'setting')); return info.isDirectory() && !info.isSymbolicLink(); }
     catch { return false; }
   };
-  async function visit(directory, prefix = '') {
+  async function visit(directory, prefix = '', label = 'project path') {
+    const directoryInfo = await fs.lstat(directory);
+    const resolvedDirectory = await fs.realpath(directory);
+    if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink() || !isPathInside(projectRoot, resolvedDirectory)) throw outsideProjectPath(label);
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) { result.push({ path: relative, directory: true }); await visit(path.join(directory, entry.name), relative); }
-      else result.push({ path: relative, directory: false });
+      if (entry.isSymbolicLink()) continue;
+      const target = path.join(directory, entry.name);
+      if (entry.isDirectory()) { result.push({ path: relative, directory: true }); await visit(target, relative, label); }
+      else if (entry.isFile()) {
+        const info = await fs.lstat(target);
+        assertRegularProjectFile(info, label);
+        result.push({ path: relative, directory: false });
+      }
     }
   }
-  const directories = [layout.settings.asset_dir, layout.settings.scenario_dir];
-  if (!layout.legacySettings || await settingDirectoryExists()) directories.push('setting');
-  for (const directory of directories) {
-    result.push({ path: directory, directory: true });
-    await visit(path.join(PROJECT_ROOT, directory), directory);
+  const directories = [[layout.settings.asset_dir, 'asset_dir'], [layout.settings.scenario_dir, 'scenario_dir']];
+  if (!layout.legacySettings || await settingDirectoryExists()) directories.push(['setting', 'setting']);
+  for (const [name, label] of directories) {
+    const root = path.join(PROJECT_ROOT, name);
+    result.push({ path: name, directory: true });
+    await visit(root, name, label);
   }
   if (layout.legacySettings) result.push({ path: 'setting.txt', directory: false });
   return result.sort((a, b) => a.path.localeCompare(b.path, 'ja'));
@@ -729,14 +874,21 @@ async function listProjectFiles() {
 
 async function scanProjectFileSignatures(root) {
   const project = projectLayout(root);
+  const realRoot = await fs.realpath(root);
   const signatures = new Map();
   async function visit(directory, prefix) {
+    const info = await fs.lstat(directory);
+    const resolvedDirectory = await fs.realpath(directory);
+    if (!info.isDirectory() || info.isSymbolicLink() || !isPathInside(realRoot, resolvedDirectory)) {
+      throw outsideProjectPath('project change path');
+    }
     const entries = await fs.readdir(directory, { withFileTypes: true });
     const files = entries.filter((entry) => entry.isFile());
     for (let index = 0; index < files.length; index += 32) {
       await Promise.all(files.slice(index, index + 32).map(async (entry) => {
         const relative = `${prefix}/${entry.name}`;
         const stat = await fs.lstat(path.join(directory, entry.name), { bigint: true });
+        assertRegularProjectFile(stat, 'project change path');
         if (stat.isFile()) signatures.set(relative, `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`);
       }));
     }
@@ -772,6 +924,11 @@ async function sceneGraph() {
   const { sceneReachability } = require('../dist/checker/analyzer');
   const analysis = await createProjectAnalysisContext();
   const firstProjectSceneByFile = new Map();
+  const projectFileNames = new Map(analysis.scripts.map((script) => [String(script.name).replaceAll('\\', '/').toLocaleLowerCase('en-US'), String(script.name).replaceAll('\\', '/')]));
+  const canonicalProjectFile = (value) => {
+    const normalized = String(value || '').replaceAll('\\', '/');
+    return projectFileNames.get(normalized.toLocaleLowerCase('en-US')) || normalized;
+  };
   const { parse } = require('../dist');
   for (const script of analysis.scripts) {
     try {
@@ -825,7 +982,7 @@ async function sceneGraph() {
           const normalizedTarget = String(statement.scene || '').replaceAll('\\', '/');
           const targetPath = sceneName(normalizedTarget);
           const targetIsFile = Boolean(targetPath && /\.(?:tds|txt)$/i.test(normalizedTarget));
-          const resolvedTargetFile = targetIsFile ? targetPath : targetFile;
+          const resolvedTargetFile = targetIsFile ? canonicalProjectFile(targetPath) : targetFile;
           const resolvedTargetScene = target?.name || (targetIsFile ? firstSceneByFile.get(targetPath.toLocaleLowerCase('en-US')) || firstProjectSceneByFile.get(targetPath.toLocaleLowerCase('en-US')) : undefined) || '';
           const transition = {
             fromScene: sourceScene || '',
@@ -858,7 +1015,8 @@ async function sceneGraph() {
     for (const fn of ast.functions) if ((fn.file || name) === name) visitGotos(fn.body, `function ${fn.name}`);
     for (const include of ast.includes) {
       if (isStandardLibraryInclude(include.path)) continue;
-      const target = sceneName(include.path);
+      const includePath = sceneName(include.path);
+      const target = includePath && canonicalProjectFile(includePath);
       if (target) addEdge(name, target, 'include');
     }
     let diagnostics = [];
@@ -924,20 +1082,36 @@ async function sceneGraph() {
         reachable: reachability.reachableScenes.size,
       },
     });
-    for (const target of reachability.externalGotos) addEdge(name, sceneName(target) || target, 'goto');
+    for (const target of reachability.externalGotos) addEdge(name, canonicalProjectFile(sceneName(target) || target), 'goto');
   }
   const config = await readSceneConfig();
-  let titleScene = null;
-  try { titleScene = (await gameScreens()).screens.titleScene || null; }
-  catch { /* The screen endpoint reports malformed front-end settings. */ }
-  const start = sceneName(titleScene?.file || config.start_file || '');
-  if (titleScene) {
-    const titleNode = nodes.find(node => node.id.toLocaleLowerCase('en-US') === start?.toLocaleLowerCase('en-US'));
-    if (!titleNode || !titleNode.sceneLocations?.some(scene => scene.name === titleScene.scene)) {
-      const diagnostic = { code: 'invalid-title-scene', severity: 'error', message: `Configured title scene '${titleScene.scene}' was not found in '${start}'.`, file: start || titleScene.file, line: 1, column: 1 };
-      if (titleNode) { titleNode.error = true; titleNode.diagnostics.push(diagnostic); }
-      else nodes.push({ id: start || titleScene.file, label: start || titleScene.file, variables: [], diagnostics: [diagnostic], error: true, reachable: false });
+  const start = canonicalProjectFile(sceneName(config.start_file || '') || '');
+  let initialScreen = 'title';
+  try { initialScreen = (await gameScreens()).screens.initial; } catch { /* Screen endpoint reports malformed settings. */ }
+  const startupFile = canonicalProjectFile(sceneName(config.start_file || '') || '');
+  const entryScript = analysis.scripts.find(script => String(script.name).replaceAll('\\', '/').toLocaleLowerCase('en-US') === startupFile?.toLocaleLowerCase('en-US'));
+  let usesStartCall = false;
+  try {
+    if (entryScript) {
+      const sources = new Map(analysis.scripts.map(script => [script.name, script.source]));
+      const resolvedFunctionsByFile = new Map();
+      for (const script of analysis.scripts) {
+        try {
+          const resolved = await resolveProjectScript(script.source, SCENES_ROOT, new Set(), script.name);
+          resolvedFunctionsByFile.set(script.name, resolved.functions);
+        } catch { /* Keep analyzing other files when one include graph is invalid. */ }
+      }
+      const metadata = {};
+      require('./start-screen-build-check')(sources, startupFile, resolvedFunctionsByFile, metadata);
+      usesStartCall = metadata.usesStart;
     }
+  } catch { /* Syntax and include diagnostics are attached to their source nodes. */ }
+  let screenNode = null;
+  if (usesStartCall) {
+    screenNode = '@screen:' + initialScreen;
+    nodes.push({ id: screenNode, label: 'Screen: ' + initialScreen, type: 'screen', screen: initialScreen, reachable: true, diagnostics: [], error: false });
+    addEdge(startupFile, screenNode, 'screen');
+    addEdge(screenNode, startupFile, 'resume');
   }
   const nodeIds = new Set(nodes.map((node) => node.id));
   const adjacency = new Map();
@@ -946,7 +1120,7 @@ async function sceneGraph() {
     if (!adjacency.has(edge.from)) adjacency.set(edge.from, []);
     adjacency.get(edge.from).push(edge.to);
   }
-  const reachableFiles = new Set(), pending = start ? [start] : [];
+  const reachableFiles = new Set(), pending = usesStartCall ? [startupFile] : start ? [start] : [];
   while (pending.length) {
     const id = pending.pop();
     if (reachableFiles.has(id)) continue;
@@ -957,7 +1131,8 @@ async function sceneGraph() {
   return {
     version: 2,
     start,
-    startScene: titleScene?.scene || null,
+    startScene: null,
+    ...(screenNode ? { screenNode, usesStartCall: true } : {}),
     nodes,
     edges,
     summary: {
@@ -981,7 +1156,7 @@ function validateGraph(graph, start, end) {
     return { ok: false, errors: [{ file: start || end || 'unknown', message: '開始・終了ファイルの範囲が不正です。' }] };
   }
 
-  // start から end への到達経路�E�EFS�E�E
+  // startからendへの到達経路を幅優先で探索する。
   const queue = [[start]];
   const visited = new Set([start]);
   let pathFound = null;
@@ -1002,7 +1177,7 @@ function validateGraph(graph, start, end) {
     }
   }
 
-  // 経路が見つからなければ node.id 頁E��フォールバックとしつつ通知
+  // 経路が見つからない場合もnode.idをフォールバックとして通知する。
   if (!pathFound) return { ok: false, errors: [{ file: end, message: '\u958b\u59cb\u30d5\u30a1\u30a4\u30eb\u304b\u3089\u7d42\u4e86\u30d5\u30a1\u30a4\u30eb\u3078\u306e\u7d4c\u8def\u304c\u3042\u308a\u307e\u305b\u3093\u3002' }] };
   // Validate every branch in the selected range, but do not continue beyond end.
   const reachable = new Set(), pending = [start];
@@ -1019,7 +1194,7 @@ function validateGraph(graph, start, end) {
     const node = nodeMap.get(fileId);
     if (!node) { errors.push({ file: fileId, message: '遷移先ファイルが存在しません。' }); continue; }
     if (node.error) {
-      errors.push({ file: node.id, message: 'シナリオに解析または型検査エラーが存在します。' });
+      errors.push({ file: node.id, message: 'シナリオに解析または type-checking error が存在します。' });
       continue;
     }
     // Each file is type checked in sceneGraph; local bindings must not be
@@ -1178,7 +1353,7 @@ async function ensureProjectDirectory(directory, label) {
 
 async function safeScenePath(value, { createParents = false } = {}) {
   const target = scenePath(value);
-  if (!target) throw new Error('Invalid scene filename.');
+  if (!target) throw new Error('シナリオのファイル名が正しくありません');
   const root = await realProjectDirectory(SCENES_ROOT, 'scenario_dir');
 
   // Check existing ancestors before mkdir so a symlink cannot redirect even
@@ -1215,7 +1390,9 @@ async function safeScenePath(value, { createParents = false } = {}) {
 }
 
 async function safeAssetPath(relative, { createParents = false } = {}) {
-  const requested = path.resolve(ASSETS_ROOT, relative);
+  const parts = String(relative || '').replaceAll('\\', '/').split('/');
+  if (parts.some((part) => !isSafeProjectPathComponent(part))) throw outsideProjectPath('素材パス');
+  const requested = path.resolve(ASSETS_ROOT, ...parts);
   const lexicalRoot = path.resolve(ASSETS_ROOT);
   if (requested === lexicalRoot || !isPathInside(lexicalRoot, requested)) throw outsideProjectPath('素材パス');
   if (createParents) await ensureProjectDirectory(path.dirname(requested), 'asset_dir');
@@ -1232,9 +1409,9 @@ async function safeAssetPath(relative, { createParents = false } = {}) {
   }
 }
 
-async function safeSettingPath(relative, { createParents = false } = {}) {
+async function safeSettingPath(relative, { createParents = false, allowMissing = false } = {}) {
   const normalized = String(relative || '').replaceAll('\\', '/');
-  if (!normalized || normalized.split('/').some((part) => !part || part === '.' || part === '..') || !['.txt', '.md', '.json', '.html', '.css'].includes(path.posix.extname(normalized).toLowerCase())) {
+  if (!normalized || normalized.split('/').some((part) => !isSafeProjectPathComponent(part)) || !['.txt', '.md', '.json', '.html', '.css'].includes(path.posix.extname(normalized).toLowerCase())) {
     throw outsideProjectPath('setting path');
   }
   const requested = path.resolve(SETTINGS_ROOT, normalized);
@@ -1249,16 +1426,16 @@ async function safeSettingPath(relative, { createParents = false } = {}) {
     if (!isPathInside(root, resolved)) throw outsideProjectPath('setting path');
     return resolved;
   } catch (error) {
-    if (error.code !== 'ENOENT' || !createParents) throw error;
+    if (error.code !== 'ENOENT' || (!createParents && !allowMissing)) throw error;
     return requested;
   }
 }
 
-async function safeSettingDocumentPath(relative, { createParents = false } = {}) {
-  if (!layout.legacySettings) return safeSettingPath(relative, { createParents });
+async function safeSettingDocumentPath(relative, { createParents = false, allowMissing = false } = {}) {
+  if (!layout.legacySettings) return safeSettingPath(relative, { createParents, allowMissing });
   const normalized = String(relative || '').replaceAll('\\', '/');
-  if (normalized === 'setting.txt') return safeSettingPath(normalized, { createParents });
-  if (!normalized || normalized.split('/').some((part) => !part || part === '.' || part === '..') || !['.txt', '.md', '.json', '.html', '.css'].includes(path.posix.extname(normalized).toLowerCase())) throw outsideProjectPath('setting document');
+  if (normalized === 'setting.txt') return safeSettingPath(normalized, { createParents, allowMissing });
+  if (!normalized || normalized.split('/').some((part) => !isSafeProjectPathComponent(part)) || !['.txt', '.md', '.json', '.html', '.css'].includes(path.posix.extname(normalized).toLowerCase())) throw outsideProjectPath('setting document');
   const root = path.resolve(PROJECT_ROOT, 'setting');
   const requested = path.resolve(root, normalized);
   if (!isPathInside(root, requested)) throw outsideProjectPath('setting document');
@@ -1271,7 +1448,7 @@ async function safeSettingDocumentPath(relative, { createParents = false } = {})
     if (!isPathInside(realRoot, resolved)) throw outsideProjectPath('setting document');
     return resolved;
   } catch (error) {
-    if (error.code !== 'ENOENT' || !createParents) throw error;
+    if (error.code !== 'ENOENT' || (!createParents && !allowMissing)) throw error;
     return requested;
   }
 }
@@ -1344,20 +1521,34 @@ function collectSyntaxDiagnostics(source, file = 'current') {
   const diagnostics = [];
   const lines = splitSourceLines(source);
   const maskedLines = [...lines];
-  const removed = new Set();
-  for (let attempt = 0; attempt < Math.min(lines.length, 100); attempt++) {
+  for (let attempt = 0; attempt <= 100; attempt++) {
     try { parse(maskedLines.join('\n')); break; }
     catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const line = Number(error?.token?.line || message.match(/line\s+(\d+)/i)?.[1] || 1);
-      const column = Number(error?.token?.column || message.match(/column\s+(\d+)/i)?.[1] || 1);
+      const line = Number(error?.token?.line || message.match(/行\s*(\d+)/)?.[1] || message.match(/line\s+(\d+)/i)?.[1] || 1);
+      const column = Number(error?.startColumn || error?.token?.column || message.match(/列\s*(\d+)/)?.[1] || message.match(/column\s+(\d+)/i)?.[1] || 1);
       const index = line - 1;
-      if (index < 0 || index >= maskedLines.length || removed.has(index)) break;
-      const tokenLength = String(error?.token?.value || '').length;
-      const endColumn = error?.token ? column + Math.max(1, tokenLength) : Math.max(column, lines[index].length + 1);
+      if (index < 0 || index >= maskedLines.length) break;
+      if (attempt === 100) {
+        diagnostics.push({
+          code: 'syntax-diagnostics-truncated', severity: 'warning',
+          message: 'syntax errors が100件を超えたため、残りのdiagnosticsを省略しました。',
+          file, line, column, endColumn: column,
+        });
+        break;
+      }
+      const endColumn = Math.max(column + 1, Number(error?.endColumn || error?.token?.sourceEndColumn || (error?.token ? column + Math.max(1, String(error.token.value || '').length) : Math.max(column, lines[index].length + 1))));
       diagnostics.push({ code: 'syntax-error', severity: 'error', message, file, line, column, endColumn });
-      removed.add(index);
-      maskedLines[index] = ' '.repeat(maskedLines[index].length);
+      const currentLine = maskedLines[index];
+      const start = column - 1;
+      const token = String(error?.token?.value || '');
+      const tokenMatchesSource = error?.name === 'SyntaxError' && error?.token?.type === 'symbol'
+        && token.length > 0 && start >= 0 && currentLine.slice(start, start + token.length) === token;
+      const nextLine = tokenMatchesSource
+        ? `${currentLine.slice(0, start)}${' '.repeat(token.length)}${currentLine.slice(start + token.length)}`
+        : ' '.repeat(currentLine.length);
+      if (nextLine === currentLine) break;
+      maskedLines[index] = nextLine;
     }
   }
   return diagnostics;
@@ -1365,8 +1556,8 @@ function collectSyntaxDiagnostics(source, file = 'current') {
 
 async function validateSourceAssets(script, file) {
   const entries = [
-    ...(script.assets || []).map((asset) => ({ path: asset.path, line: asset.line, column: asset.column })),
-    ...(script.characters || []).filter((character) => !character.external).flatMap((character) => character.poses.map((pose) => ({ path: pose.path, line: pose.line || character.line, column: pose.column || character.column }))),
+    ...(script.assets || []).map((asset) => ({ path: asset.path, file: asset.file || file, line: asset.line, column: asset.column })),
+    ...(script.characters || []).filter((character) => !character.external).flatMap((character) => character.poses.map((pose) => ({ path: pose.path, file: pose.file || character.file || file, line: pose.line || character.line, column: pose.column || character.column }))),
   ];
   const diagnostics = [];
   for (const entry of entries) {
@@ -1376,8 +1567,8 @@ async function validateSourceAssets(script, file) {
       const reason = error instanceof Error ? error.message : String(error);
       diagnostics.push({
         code: 'project-error', severity: 'error',
-        message: `アセット '${entry.path}' を読み込めません: ${reason}`,
-        file, line: Number(entry.line) || 1, column: Number(entry.column) || 1,
+        message: `asset '${entry.path}' を読み込めません: ${reason}`,
+        file: entry.file, line: Number(entry.line) || 1, column: Number(entry.column) || 1,
         endColumn: (Number(entry.column) || 1) + String(entry.path || '').length,
       });
     }
@@ -1403,7 +1594,7 @@ async function validate(source, name = '', analysis = null, includeProgram = fal
       ? { ...ast, globals: [...staticDeclarations, ...ast.globals], body: [...staticDeclarations, ...ast.body] }
       : ast;
     const diagnostics = analyzeScript(analysisScript, sourceFile, context.globals, context.characters);
-    if (diagnostics.some((item) => item.severity === 'error')) {
+    if (diagnostics.some((item) => item.severity === 'error') || sourceAssetDiagnostics.some((item) => item.severity === 'error')) {
       const combinedDiagnostics = [...diagnostics, ...sourceAssetDiagnostics].sort((left, right) => (left.line - right.line) || (left.column - right.column));
       return { ok: false, diagnostics: combinedDiagnostics, error: combinedDiagnostics.find((item) => item.severity === 'error').message };
     }
@@ -1442,13 +1633,21 @@ async function validate(source, name = '', analysis = null, includeProgram = fal
     const sourceLines = splitSourceLines(source);
     const includeLineIndex = sourceLines.findIndex((lineText) => /^\s*include\b/i.test(lineText));
     const includeTarget = includeLineIndex >= 0 ? sourceLines[includeLineIndex].match(/^\s*include\s+["']?([^\s"']+)/i)?.[1] : '';
-    const line = Number(message.match(/line\s+(\d+)/i)?.[1] || (includeLineIndex >= 0 ? includeLineIndex + 1 : 1));
+    const located = error && typeof error === 'object' ? error : {};
+    const token = located.token || {};
+    const diagnosticFile = typeof located.file === 'string' && located.file ? located.file : sourceFile;
+    const line = Number(token.line || located.line || message.match(/(?:at )?line\s+(\d+)/i)?.[1] || message.match(/(\d+)行/)?.[1] || (diagnosticFile === sourceFile && includeLineIndex >= 0 ? includeLineIndex + 1 : 1));
     const lineText = sourceLines[line - 1] || '';
-    const column = includeTarget && lineText.includes(includeTarget)
-      ? lineText.indexOf(includeTarget) + 1
-      : Number(message.match(/column\s+(\d+)/i)?.[1] || (includeLineIndex >= 0 ? lineText.indexOf('include') + 1 : 1));
-    const endColumn = includeTarget ? column + includeTarget.length : column;
-    return { ok: false, diagnostics: [{ code: projectResolutionError ? 'project-error' : 'syntax-error', severity: 'error', message, file: name || 'current', line, column, endColumn }], error: message };
+    let column = located.startColumn || token.column || located.column;
+    if (!column) {
+      const messageColumn = Number(message.match(/column\s+(\d+)/i)?.[1] || message.match(/(\d+)列/)?.[1] || 0);
+      column = diagnosticFile === sourceFile && includeTarget && lineText.includes(includeTarget)
+        ? lineText.indexOf(includeTarget) + 1
+        : messageColumn || (diagnosticFile === sourceFile && includeLineIndex >= 0 ? lineText.indexOf('include') + 1 : 1);
+    }
+    column = Number(column);
+    const endColumn = Number(located.endColumn || token.sourceEndColumn || (diagnosticFile === sourceFile && includeTarget ? column + includeTarget.length : column));
+    return { ok: false, diagnostics: [{ code: projectResolutionError ? 'project-error' : 'syntax-error', severity: 'error', message, file: diagnosticFile, line, column, endColumn }], error: message };
   }
 }
 
@@ -1544,12 +1743,26 @@ async function editorSymbols(source, name = '') {
 
 async function configuredEntry(name) {
   const requested = sceneName(name);
-  const screens = await gameScreens();
-  return sceneName(screens.screens.titleScene?.file || requested || '');
+  return sceneName(requested || (await readSceneConfig()).start_file || '');
+}
+
+async function invalidateBuildState(entry) {
+  if (!entry) return;
+  const stateName = `${path.basename(entry, path.extname(entry))}.build-state.json`;
+  try {
+    const statePath = await safeBuildPath(stateName);
+    await fs.rm(statePath, { force: true });
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
 }
 
 async function buildWholeProject(name) {
   const entry = await configuredEntry(name);
+  // A failed rebuild must not leave the previous scenario snapshot marked as
+  // current. The last complete package remains available as a rollback, while
+  // Play sees that it needs a successful build before launching it.
+  await invalidateBuildState(entry);
   const sceneFiles = await listScenes();
   if (!entry || !sceneFiles.includes(entry)) return {
     ok: false,
@@ -1573,10 +1786,22 @@ async function buildWholeProject(name) {
     }
   }
 
+  if (!diagnostics.some((item) => item.severity === 'error')) {
+    const startScreenBuildDiagnostics = require('./start-screen-build-check');
+    const sources = new Map();
+    const resolvedFunctionsByFile = new Map();
+    for (const file of sceneFiles) {
+      const source = await readSceneSource(file);
+      sources.set(file, source);
+      const resolved = await resolveProjectScript(source, SCENES_ROOT, new Set(), file);
+      resolvedFunctionsByFile.set(file, resolved.functions);
+    }
+    diagnostics.push(...startScreenBuildDiagnostics(sources, entry, resolvedFunctionsByFile));
+  }
   const uniqueDiagnostics = [...new Map(diagnostics.map((item) => [
     JSON.stringify([item.code, item.severity, item.file, item.line, item.column, item.endLine, item.endColumn, item.message]), item,
   ])).values()];
-  const firstError = uniqueDiagnostics.find((item) => item.severity === 'error');
+  const firstError = uniqueDiagnostics.find((item) => item.severity === 'error' || item.buildBlocking);
   if (firstError) return { ok: false, build: true, fileCount: sceneFiles.length, diagnostics: uniqueDiagnostics, error: firstError.message };
 
   try {
@@ -1584,10 +1809,15 @@ async function buildWholeProject(name) {
     await ensureProjectDirectory(NATIVE_PACKAGES_ROOT, '.novel/build');
     const packageName = `${path.basename(entry, path.extname(entry))}.nsp.json`;
     const packagePath = await safeBuildPath(packageName, { createParents: true });
-    const data = await pack(scenePath(entry), packagePath, { projectRoot: PROJECT_ROOT, scenesRoot: SCENES_ROOT, assetsRoot: ASSETS_ROOT });
+    const data = await pack(scenePath(entry), packagePath, {
+      projectRoot: PROJECT_ROOT, scenesRoot: SCENES_ROOT, assetsRoot: ASSETS_ROOT,
+      // Re-run the startup-flow guard against pack's own source snapshot. The
+      // earlier pass supplies IDE diagnostics, but files may change before pack reads them.
+      requireStartScreenFlow: true,
+    });
     const verifiedSnapshot = await readScenarioBuildSnapshot(entry);
     if (JSON.stringify(buildSnapshot.files) !== JSON.stringify(verifiedSnapshot.files)) {
-      throw new Error('ビルド中にシナリオが変更されました。もう一度ビルドしてください');
+      throw new Error('Build 中にシナリオが変更されました。もう一度 Build を実行してください');
     }
     const statePath = await safeBuildPath(`${path.basename(entry, path.extname(entry))}.build-state.json`, { createParents: true });
     await fs.writeFile(statePath, `${JSON.stringify(buildSnapshot, null, 2)}\n`, 'utf8');
@@ -1637,29 +1867,31 @@ async function projectBuildStatus(name) {
 
 async function serveStatic(response, pathname) {
   if (pathname === '/asset' || pathname.startsWith('/asset/')) {
-    const relative = decodeURIComponent(pathname.slice('/asset/'.length));
+    let relative;
+    try { relative = decodeURIComponent(pathname.slice('/asset/'.length)); }
+    catch { text(response, 400, 'asset pathのpercent-encodingが正しくありません。'); return; }
     try {
       const requested = await safeAssetPath(relative);
       const stat = await fs.stat(requested);
       if (!stat.isFile()) {
-        text(response, 404, 'Not found');
+        text(response, 404, '要求されたファイルが見つかりません');
         return;
       }
       const extension = path.extname(requested).toLowerCase();
       const contentType = CONTENT_TYPES[extension];
       if (!contentType) {
-        text(response, 415, 'Unsupported media type');
+        text(response, 415, '対応していないメディア形式です');
         return;
       }
       response.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'no-store' });
       response.end(await fs.readFile(requested));
     } catch (error) {
       if (error?.code === 'EPATHOUTSIDE') {
-        text(response, 403, 'Forbidden');
+        text(response, 403, '作品のassetフォルダー外は参照できません');
         return;
       }
       if (error?.code === 'ENOENT') {
-        text(response, 404, 'Not found');
+        text(response, 404, '要求されたファイルが見つかりません');
         return;
       }
       throw error;
@@ -1667,8 +1899,8 @@ async function serveStatic(response, pathname) {
     return;
   }
   const relative = pathname === '/' ? 'index.html' : pathname.slice(1);
-  if (!['index.html', 'editor.js', 'ui-settings.js', 'styles.css', 'scrollbars.css', 'player.html', 'player.js', 'runtime.js', 'screen-document.js', 'save-store.js', 'player.css', 'flow.html', 'flow.js', 'flow-layout.js', 'flow.css', 'engine.html', 'assets/desktop-icon.png', 'shared/formatter.js', 'docs/tds-language-and-editor-guide.md'].includes(relative)) {
-    text(response, 404, 'Not found');
+  if (!['index.html', 'editor.js', 'ui-settings.js', 'styles.css', 'scrollbars.css', 'player.html', 'player.js', 'runtime.js', 'screen-document.js', 'save-store.js', 'player.css', 'flow.html', 'flow.js', 'flow-layout.js', 'flow.css', 'engine.html', 'assets/desktop-icon.png', 'shared/formatter.js', 'docs/tds-language-and-editor-guide.md', 'vendor/prism/prism-core.min.js', 'vendor/prism/prism-markup.min.js', 'vendor/prism/prism-css.min.js'].includes(relative)) {
+    text(response, 404, '要求されたファイルが見つかりません');
     return;
   }
   const extension = path.extname(relative);
@@ -1679,10 +1911,10 @@ async function serveStatic(response, pathname) {
 
 async function serveNativePackage(response, url) {
   const name = nativePackageName(url.searchParams.get('name'));
-  if (!name) return json(response, 400, { error: 'Invalid native package name' });
+  if (!name) return json(response, 400, { error: 'Native package 名が正しくありません' });
   try {
     const file = await safeBuildPath(name);
-    if (!file) return json(response, 403, { error: 'Invalid native package path' });
+    if (!file) return json(response, 403, { error: 'Native package の path が正しくありません' });
     const data = await fs.readFile(file);
     response.writeHead(200, {
       'Content-Type': 'application/json; charset=utf-8',
@@ -1691,13 +1923,18 @@ async function serveNativePackage(response, url) {
     });
     response.end(data);
   } catch (error) {
-    if (error?.code === 'EPATHOUTSIDE') return json(response, 403, { error: 'Native package path is outside the project.' });
-    if (error?.code === 'ENOENT') return json(response, 404, { error: 'Native package was not found.' });
+    if (error?.code === 'EPATHOUTSIDE') return json(response, 403, { error: 'Native package の path が作品フォルダーの外を指しています。' });
+    if (error?.code === 'ENOENT') return json(response, 404, { error: 'Native package が見つかりません。' });
     throw error;
   }
 }
 
-async function handleApi(request, response, url) {
+function handleApi(request, response, url) {
+  const mode = request.method === 'POST' && url.pathname === '/api/project/open' ? 'exclusive' : 'shared';
+  return withProjectContext(mode, () => handleApiInProjectContext(request, response, url));
+}
+
+async function handleApiInProjectContext(request, response, url) {
   if (request.method === 'GET' && url.pathname === '/api/standard-library') {
     try { return json(response, 200, { modules: await listStandardLibrary() }); }
     catch (error) { return json(response, 500, { error: error instanceof Error ? error.message : String(error) }); }
@@ -1721,52 +1958,69 @@ async function handleApi(request, response, url) {
   if (request.method === 'PUT' && url.pathname === '/api/setting-file') {
     const body = await readJson(request);
     const name = String(body.name || '').replaceAll('\\', '/').replace(/^setting\//, '');
-    if (Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'Scene file exceeds 2 MB.' });
+    if (typeof body.source !== 'string') return json(response, 400, { error: '設定ファイルの本文が正しくありません。' });
+    if (body.expectedRevision !== undefined && typeof body.expectedRevision !== 'string') return json(response, 400, { error: '設定ファイルのリビジョン値が正しくありません。' });
+    if (Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'シナリオファイルは2MBを超えています。' });
     let settings = null;
+      let jsonValue = null;
     try {
       if (name === 'setting.txt') {
         settings = parseSettings(body.source);
-        await ensureProjectDirectory(path.resolve(PROJECT_ROOT, settings.scenario_dir), 'scenario_dir');
-        await ensureProjectDirectory(path.resolve(PROJECT_ROOT, settings.asset_dir), 'asset_dir');
       } else if (path.posix.extname(name).toLowerCase() === '.json') {
-        const value = JSON.parse(body.source);
-        if (name === 'game-screens.json') validateGameScreens(value);
-        if (name === 'player-ui.json' && !(value?.version === 1 && value.screen && value.dialog?.message && value.dialog?.nameplate?.text && value.choices)) throw new Error('Invalid player UI settings.');
+          jsonValue = JSON.parse(body.source);
+          if (name === 'game-screens.json') validateGameScreens(jsonValue);
+          if (name === 'player-ui.json' && !(jsonValue?.version === 1 && jsonValue.screen && jsonValue.dialog?.message && jsonValue.dialog?.nameplate?.text && jsonValue.choices)) throw new Error('再生UIの設定が正しくありません');
       }
-      if (name === 'player-ui.json') validatePlayerUiTheme(value);
-      const file = await safeSettingDocumentPath(name, { createParents: true });
-      if (body.expectedRevision !== undefined) {
-        let current;
-        try { current = sceneRevision(await fs.readFile(file, 'utf8')); }
-        catch (error) { if (error?.code === 'ENOENT') return json(response, 409, { error: 'Setting file changed externally; reload before saving.', code: 'SETTING_CONFLICT' }); throw error; }
-        if (current !== body.expectedRevision) return json(response, 409, { error: 'Setting file changed externally; reload before saving.', code: 'SETTING_CONFLICT', revision: current });
-      }
-      await fs.writeFile(file, body.source, 'utf8');
-      if (settings) bindLayout(PROJECT_ROOT);
-      return json(response, 200, { ok: true, name: `setting/${name}`, revision: sceneRevision(body.source) });
-    } catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
+        if (name === 'player-ui.json') validatePlayerUiTheme(jsonValue);
+      return await withProjectWriteLock(PROJECT_ROOT, async () => {
+        const file = await safeSettingDocumentPath(name, { allowMissing: true });
+        if (body.expectedRevision !== undefined) {
+          let current;
+          try { current = sceneRevision(await fs.readFile(file, 'utf8')); }
+          catch (error) { if (error?.code === 'ENOENT') return json(response, 409, { error: '設定ファイルが外部で変更されました。再読み込みしてから保存してください。', code: 'SETTING_CONFLICT' }); throw error; }
+          if (current !== body.expectedRevision) return json(response, 409, { error: '設定ファイルが外部で変更されました。再読み込みしてから保存してください。', code: 'SETTING_CONFLICT', revision: current });
+        }
+        if (settings) {
+          await ensureProjectDirectory(path.resolve(PROJECT_ROOT, settings.scenario_dir), 'scenario_dir');
+          await ensureProjectDirectory(path.resolve(PROJECT_ROOT, settings.asset_dir), 'asset_dir');
+        }
+        await safeSettingDocumentPath(name, { createParents: true });
+        await fs.writeFile(file, body.source, 'utf8');
+        if (settings) bindLayout(PROJECT_ROOT);
+        return json(response, 200, { ok: true, name: `setting/${name}`, revision: sceneRevision(body.source) });
+      });
+    } catch (error) { return json(response, requestErrorStatus(error), { error: error instanceof Error ? error.message : String(error) }); }
   }
   if (request.method === 'GET' && url.pathname === '/api/project/changes') return json(response, 200, await projectChangeTracker.changes(PROJECT_ROOT, String(url.searchParams.get('since') || '').slice(0, 500)));
   if (request.method === 'GET' && url.pathname === '/api/project') return json(response, 200, await projectInfo());
   if (request.method === 'PUT' && url.pathname === '/api/project/settings') {
-    try { return json(response, 200, { ok: true, ...(await updateProjectSettings(await readJson(request))) }); }
-    catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
+    try {
+      const body = await readJson(request);
+      return json(response, 200, { ok: true, ...(await withProjectWriteLock(PROJECT_ROOT, () => updateProjectSettings(body))) });
+    }
+    catch (error) { return json(response, requestErrorStatus(error), { error: error instanceof Error ? error.message : String(error) }); }
   }
   if (request.method === 'GET' && url.pathname === '/api/player-ui') {
     try { return json(response, 200, await playerUiTheme()); }
     catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
   }
   if (request.method === 'PUT' && url.pathname === '/api/player-ui') {
-    try { return json(response, 200, await updatePlayerUiTheme((await readJson(request)).theme)); }
-    catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
+    try {
+      const body = await readJson(request);
+      return json(response, 200, await withProjectWriteLock(PROJECT_ROOT, () => updatePlayerUiTheme(body.theme)));
+    }
+    catch (error) { return json(response, requestErrorStatus(error), { error: error instanceof Error ? error.message : String(error) }); }
   }
   if (request.method === 'GET' && url.pathname === '/api/game-screens') {
     try { return json(response, 200, await gameScreens()); }
     catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
   }
   if (request.method === 'PUT' && url.pathname === '/api/game-screens') {
-    try { const body = await readJson(request); return json(response, 200, await updateGameScreens(body.screens, body.documents || {})); }
-    catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
+    try {
+      const body = await readJson(request);
+      return json(response, 200, await withProjectWriteLock(PROJECT_ROOT, () => updateGameScreens(body.screens, body.documents || {})));
+    }
+    catch (error) { return json(response, requestErrorStatus(error), { error: error instanceof Error ? error.message : String(error) }); }
   }
   if (request.method === 'GET' && url.pathname === '/api/browse') {
     try { return json(response, 200, await browseDirectories(url.searchParams.get('path') || '')); }
@@ -1774,7 +2028,8 @@ async function handleApi(request, response, url) {
   }
   if (request.method === 'POST' && url.pathname === '/api/project/open') {
     const body = await readJson(request);
-    try { return json(response, 200, { ok: true, ...(await openProjectFolder(body.path, Boolean(body.create))) }); }
+    if (body.create !== undefined && typeof body.create !== 'boolean') return json(response, 400, { error: 'create は boolean で指定してください。' });
+    try { return json(response, 200, { ok: true, ...(await openProjectFolder(body.path, body.create === true)) }); }
     catch (error) {
       const payload = { error: error instanceof Error ? error.message : String(error) };
       if (error?.needsCreate) { payload.needsCreate = true; payload.projectRoot = error.projectRoot; payload.isEmpty = error.isEmpty; return json(response, 409, payload); }
@@ -1783,23 +2038,27 @@ async function handleApi(request, response, url) {
   }
   if (request.method === 'DELETE' && url.pathname === '/api/file') {
     const body = await readJson(request); const name = String(body.path || '').replaceAll('\\', '/');
-    if (!/^[A-Za-z0-9_./-]+$/.test(name) || name.split('/').some((part) => !part || part === '.' || part === '..')) return json(response, 400, { error: 'Invalid or forbidden path.' });
-    const assetPrefix = `${layout.settings.asset_dir}/`;
-    const scenePrefix = `${layout.settings.scenario_dir}/`;
+    if (!/^[A-Za-z0-9_./-]+$/.test(name) || name.split('/').some((part) => !part || part === '.' || part === '..')) return json(response, 400, { error: 'パスが正しくないか、使用できません' });
     try {
-      const target = name.startsWith(assetPrefix)
-        ? await safeAssetPath(name.slice(assetPrefix.length))
-        : name.startsWith(scenePrefix)
-          ? await safeScenePath(name.slice(scenePrefix.length))
-          : null;
-      if (!target) return json(response, 400, { error: 'Invalid or forbidden path.' });
-      const info = await fs.lstat(target);
-      if (!info.isFile()) return json(response, 400, { error: 'Invalid or forbidden path.' });
-      await fs.unlink(target);
+      const result = await withProjectWriteLock(PROJECT_ROOT, async () => {
+        const assetPrefix = `${layout.settings.asset_dir}/`;
+        const scenePrefix = `${layout.settings.scenario_dir}/`;
+        const target = name.startsWith(assetPrefix)
+          ? await safeAssetPath(name.slice(assetPrefix.length))
+          : name.startsWith(scenePrefix)
+            ? await safeScenePath(name.slice(scenePrefix.length))
+            : null;
+        if (!target) return { status: 400, error: 'パスが正しくないか、使用できません' };
+        const info = await fs.lstat(target);
+        if (!info.isFile()) return { status: 400, error: 'パスが正しくないか、使用できません' };
+        await fs.unlink(target);
+        await rebuildProjectIndexes();
+        return { status: 200 };
+      });
+      if (result.status !== 200) return json(response, result.status, { error: result.error });
     } catch (error) {
       return json(response, error?.code === 'ENOENT' ? 404 : 400, { error: error instanceof Error ? error.message : String(error) });
     }
-    await rebuildProjectIndexes();
     return json(response, 200, { ok: true });
   }
   if (request.method === 'GET' && url.pathname === '/api/scene-graph') return json(response, 200, await sceneGraph());
@@ -1808,13 +2067,13 @@ async function handleApi(request, response, url) {
     const scene = url.searchParams.get('scene') || '';
     const line = Number(url.searchParams.get('line'));
     const names = (url.searchParams.get('names') || '').split(',').filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)).slice(0, 128);
-    if (!scene || !Number.isSafeInteger(line) || line < 1 || !names.length) return json(response, 400, { error: 'Invalid or forbidden path.' });
+    if (!scene || !Number.isSafeInteger(line) || line < 1 || !names.length) return json(response, 400, { error: 'パスが正しくないか、使用できません' });
     try {
       const { analyzeStartDomains } = require('./flow-domains');
       const source = await readSceneSource(file);
       const ast = await resolveProjectScript(source, SCENES_ROOT, new Set(), file);
       const target = ast.scenes.find((item) => item.name === scene && (item.file || file) === file);
-      if (!target || line < target.line || line > (target.endLine || target.line)) return json(response, 400, { error: 'Invalid or forbidden path.' });
+      if (!target || line < target.line || line > (target.endLine || target.line)) return json(response, 400, { error: 'パスが正しくないか、使用できません' });
       const configured = await readStaticVariables(DATA_ROOT);
       const analysis = await createProjectAnalysisContext();
       const [globalVariables, characters] = await Promise.all([
@@ -1848,28 +2107,28 @@ async function handleApi(request, response, url) {
     try { return json(response, 200, JSON.parse(await fs.readFile(await safeDataPath('variables.json', { createParents: true }), 'utf8'))); }
     catch (error) {
       if (error?.code === 'ENOENT') return json(response, 200, { variables: [] });
-      if (error?.code === 'EPATHOUTSIDE' || error instanceof SyntaxError) return json(response, 400, { error: 'Project variables metadata is invalid or outside the project.' });
-      return json(response, 500, { error: 'Could not read asset information.' });
+      if (error?.code === 'EPATHOUTSIDE' || error instanceof SyntaxError) return json(response, 400, { error: '作品の変数メタデータが正しくないか、作品フォルダーの外を指しています' });
+      return json(response, 500, { error: '素材情報を読み込めませんでした。' });
     }
   }
   if (request.method === 'GET' && url.pathname === '/api/assets') {
     try { return json(response, 200, JSON.parse(await fs.readFile(await safeDataPath('assets.json', { createParents: true }), 'utf8'))); }
     catch (error) {
       if (error?.code === 'ENOENT') return json(response, 200, { assets: [] });
-      if (error?.code === 'EPATHOUTSIDE' || error instanceof SyntaxError) return json(response, 400, { error: 'Project assets metadata is invalid or outside the project.' });
-      return json(response, 500, { error: 'Could not read asset information.' });
+      if (error?.code === 'EPATHOUTSIDE' || error instanceof SyntaxError) return json(response, 400, { error: '作品の素材メタデータが正しくないか、作品フォルダーの外を指しています' });
+      return json(response, 500, { error: '素材情報を読み込めませんでした。' });
     }
   }
   if (request.method === 'GET' && url.pathname === '/api/asset-info') {
     const name = String(url.searchParams.get('path') || '').replaceAll('\\', '/');
     const parts = name.split('/');
     if (!name.startsWith('asset/') || parts.some((part) => !part || part === '.' || part === '..')) {
-      return json(response, 400, { error: 'Invalid or forbidden path.' });
+      return json(response, 400, { error: 'パスが正しくないか、使用できません' });
     }
     try {
       const file = await safeAssetPath(name.slice('asset/'.length));
       const stat = await fs.stat(file);
-      if (!stat.isFile()) return json(response, 404, { error: 'Asset file was not found.' });
+      if (!stat.isFile()) return json(response, 404, { error: '素材ファイルが見つかりません。' });
       const extension = path.extname(file).toLowerCase();
       return json(response, 200, {
         path: name,
@@ -1879,9 +2138,9 @@ async function handleApi(request, response, url) {
         modifiedAt: stat.mtime.toISOString(),
       });
     } catch (error) {
-      if (error?.code === 'EPATHOUTSIDE') return json(response, 403, { error: 'Asset path is outside the project.' });
-      if (error?.code === 'ENOENT') return json(response, 404, { error: 'Asset file was not found.' });
-      return json(response, 500, { error: 'Could not read asset information.' });
+      if (error?.code === 'EPATHOUTSIDE') return json(response, 403, { error: '素材パスが作品フォルダーの外を指しています。' });
+      if (error?.code === 'ENOENT') return json(response, 404, { error: '素材ファイルが見つかりません。' });
+      return json(response, 500, { error: '素材情報を読み込めませんでした。' });
     }
   }
   if (request.method === 'GET' && url.pathname === '/api/ui-assets') {
@@ -1892,48 +2151,50 @@ async function handleApi(request, response, url) {
   }
   if (request.method === 'GET' && url.pathname === '/api/scene') {
     const name = sceneName(url.searchParams.get('name'));
-    if (!name) return json(response, 400, { error: 'Invalid or forbidden path.' });
+    if (!name) return json(response, 400, { error: 'パスが正しくないか、使用できません' });
     try {
       const target = await safeScenePath(name);
       const source = await fs.readFile(target, 'utf8');
       return json(response, 200, { name, source, revision: sceneRevision(source) });
     } catch (error) {
-      if (error && error.code === 'ENOENT') return json(response, 404, { error: 'Scene file was not found.' });
+      if (error && error.code === 'ENOENT') return json(response, 404, { error: 'シナリオファイルが見つかりません。' });
       return json(response, 400, { error: error instanceof Error ? error.message : String(error) });
     }
   }
   if (request.method === 'PUT' && url.pathname === '/api/scene') {
     const body = await readJson(request);
     const name = sceneName(String(body.name || '').replace(new RegExp(`^${layout.settings.scenario_dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`), ''));
-    if (!name) return json(response, 400, { error: 'Invalid or forbidden path.' });
-    if (typeof body.source !== 'string') return json(response, 400, { error: 'Invalid or forbidden path.' });
-    if (Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'Scene file exceeds 2 MB.' });
-    if (body.expectedRevision !== undefined && typeof body.expectedRevision !== 'string') return json(response, 400, { error: 'Invalid scene revision.' });
-    let target;
-    try { target = await safeScenePath(name, { createParents: true }); }
+    if (!name) return json(response, 400, { error: 'パスが正しくないか、使用できません' });
+    if (typeof body.source !== 'string') return json(response, 400, { error: 'パスが正しくないか、使用できません' });
+    if (Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'シナリオファイルは2MBを超えています。' });
+    if (body.expectedRevision !== undefined && typeof body.expectedRevision !== 'string') return json(response, 400, { error: 'シナリオのリビジョン値が正しくありません' });
+    try { await safeScenePath(name); }
     catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
-    if (body.expectedRevision !== undefined) {
-      try {
-        const currentSource = await fs.readFile(target, 'utf8');
-        const currentRevision = sceneRevision(currentSource);
-        if (currentRevision !== body.expectedRevision) return json(response, 409, { error: 'Scene changed externally; reload before saving.', code: 'SCENE_CONFLICT', revision: currentRevision });
-      } catch (error) {
-        if (error?.code !== 'ENOENT') return json(response, 400, { error: error instanceof Error ? error.message : String(error) });
-        return json(response, 409, { error: 'Scene was created or removed externally; reload before saving.', code: 'SCENE_CONFLICT' });
+    return await withProjectWriteLock(PROJECT_ROOT, async () => {
+      const target = await safeScenePath(name, { createParents: true });
+      if (body.expectedRevision !== undefined) {
+        try {
+          const currentSource = await fs.readFile(target, 'utf8');
+          const currentRevision = sceneRevision(currentSource);
+          if (currentRevision !== body.expectedRevision) return json(response, 409, { error: 'シナリオファイルが外部で変更されました。再読み込みしてから保存してください。', code: 'SCENE_CONFLICT', revision: currentRevision });
+        } catch (error) {
+          if (error?.code !== 'ENOENT') return json(response, 400, { error: error instanceof Error ? error.message : String(error) });
+          return json(response, 409, { error: 'シナリオファイルが外部で作成または削除されました。再読み込みしてから保存してください。', code: 'SCENE_CONFLICT' });
+        }
       }
-    }
-    try { await compileSource(body.source, name); }
-    catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // 編雁E��中の構文・型エラーは保存を妨げなぁE��、既存変数の再宣言だけ�E
-      // プロジェクト�E体�E変数契紁E��壊すため書き込み前に拒否する、E
-      if (/既に宣言|再宣言/.test(message)) return json(response, 400, { error: message });
-    }
-    await fs.writeFile(target, body.source, 'utf8');
-    await fs.mkdir(DATA_ROOT, { recursive: true });
-    // 保存しぁEファイルだけでなく�Eファイルの雁E��を実行して更新
-    await rebuildProjectIndexes();
-    return json(response, 200, { ok: true, name, revision: sceneRevision(body.source) });
+      try { await compileSource(body.source, name); }
+      catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // 編集中の構文・型エラーでは保存を妨げず、既存変数の再宣言だけを拒否する。
+        // プロジェクト全体の変数契約を壊さないよう、書き込み前に確認する。
+        if (/既に宣言|再宣言/.test(message)) return json(response, 400, { error: message });
+      }
+      await fs.writeFile(target, body.source, 'utf8');
+      await fs.mkdir(DATA_ROOT, { recursive: true });
+      // 保存したシーンだけでなく、関連シーンの解析も実行して更新する。
+      await rebuildProjectIndexes();
+      return json(response, 200, { ok: true, name, revision: sceneRevision(body.source) });
+    });
   }
   if (request.method === 'POST' && url.pathname === '/api/validate') {
     const body = await readJson(request);
@@ -1942,31 +2203,31 @@ async function handleApi(request, response, url) {
   }
   if (request.method === 'POST' && url.pathname === '/api/compile') {
     const body = await readJson(request);
-    if (typeof body.source !== 'string') return json(response, 400, { error: 'source is required' });
+    if (typeof body.source !== 'string') return json(response, 400, { error: 'sourceが必要です。' });
     try { return json(response, 200, { ok: true, program: await compileSource(body.source, sceneName(body.name || '') || '', null, { debug: body.debug === true }) }); }
     catch (error) { return json(response, 400, { ok: false, error: error instanceof Error ? error.message : String(error) }); }
   }
   if (request.method === 'POST' && url.pathname === '/api/editor-symbols') {
     const body = await readJson(request);
-    if (typeof body.source !== 'string') return json(response, 400, { error: 'source is required' });
-    if (Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'Scene file exceeds 2 MB.' });
+    if (typeof body.source !== 'string') return json(response, 400, { error: 'sourceが必要です。' });
+    if (Buffer.byteLength(body.source, 'utf8') > MAX_BODY_BYTES) return json(response, 413, { error: 'シナリオファイルは2MBを超えています。' });
     try { return json(response, 200, { symbols: await editorSymbols(body.source, body.name || '') }); }
     catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : String(error) }); }
   }
   if (request.method === 'POST' && url.pathname === '/api/native-build') {
     const body = await readJson(request);
     const name = sceneName(body.name);
-    if (!name) return json(response, 400, { error: 'Invalid scene name' });
+    if (!name) return json(response, 400, { error: 'シナリオ名が正しくありません' });
     try {
       const sourceFile = await safeScenePath(name);
       await fs.access(sourceFile);
       await ensureProjectDirectory(NATIVE_PACKAGES_ROOT, '.novel/build');
       const packageName = `${path.basename(name, path.extname(name))}.nsp.json`;
-      await pack(sourceFile, await safeBuildPath(packageName, { createParents: true }), {
+      await withProjectWriteLock(PROJECT_ROOT, async () => pack(sourceFile, await safeBuildPath(packageName, { createParents: true }), {
         projectRoot: PROJECT_ROOT,
         scenesRoot: SCENES_ROOT,
         assetsRoot: ASSETS_ROOT,
-      });
+      }));
       return json(response, 200, { ok: true, name: packageName, path: `.novel/build/${packageName}` });
     } catch (error) {
       return json(response, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
@@ -1977,7 +2238,7 @@ async function handleApi(request, response, url) {
       const body = await readJson(request);
       return json(response, 200, await playWithNativeEngine(body.name, body.debugStart ?? null));
     } catch (error) {
-      return json(response, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+      return json(response, requestErrorStatus(error), { ok: false, error: error instanceof Error ? error.message : String(error) });
     }
   }
   if (request.method === 'GET' && url.pathname === '/api/native-play/state') {
@@ -1992,7 +2253,7 @@ async function handleApi(request, response, url) {
       const body = await readJson(request);
       return json(response, 200, stopNativeDebugPlayer(body.session));
     } catch (error) {
-      return json(response, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+      return json(response, requestErrorStatus(error), { ok: false, error: error instanceof Error ? error.message : String(error) });
     }
   }
   if (request.method === 'POST' && url.pathname === '/api/native-tools/build') {
@@ -2009,13 +2270,30 @@ async function handleApi(request, response, url) {
   }
   if (request.method === 'POST' && url.pathname === '/api/project-build') {
     const body = await readJson(request);
-    return json(response, 200, await buildWholeProject(body.name));
+    return json(response, 200, await withProjectWriteLock(PROJECT_ROOT, () => buildWholeProject(body.name)));
   }
   if (request.method === 'POST' && url.pathname === '/api/project-build-status') {
     const body = await readJson(request);
     return json(response, 200, await projectBuildStatus(body.name));
   }
-  return json(response, 404, { error: 'API endpoint was not found.' });
+  return json(response, 404, { error: 'APIエンドポイントが見つかりません。' });
+}
+
+function requestOriginAllowed(request) {
+  const fetchSite = request.headers['sec-fetch-site'];
+  if (fetchSite !== undefined && !['same-origin', 'none'].includes(fetchSite)) return false;
+  let host;
+  try { host = new URL(`http://${request.headers.host || ''}`); }
+  catch { return false; }
+  if (!['127.0.0.1', 'localhost', '[::1]'].includes(host.hostname.toLowerCase())) return false;
+  const origin = request.headers.origin;
+  if (origin === undefined) return true;
+  if (origin === 'null') return false;
+  try {
+    const parsedOrigin = new URL(origin);
+    return (parsedOrigin.protocol === 'http:' || parsedOrigin.protocol === 'https:')
+      && parsedOrigin.origin === host.origin;
+  } catch { return false; }
 }
 
 async function main() {
@@ -2030,13 +2308,22 @@ async function main() {
   const server = http.createServer(async (request, response) => {
     try {
       const url = new URL(request.url || '/', `http://${request.headers.host || '127.0.0.1'}`);
-      if (request.method === 'GET' && url.pathname === '/api/native-package') await serveNativePackage(response, url);
-      else if (url.pathname.startsWith('/api/')) await handleApi(request, response, url);
-      else if (request.method === 'GET') await serveStatic(response, url.pathname);
-      else text(response, 405, 'Method not allowed');
+      if (!requestOriginAllowed(request)) {
+        json(response, 403, { error: 'このEditor serverへのcross-origin requestは許可されていません。' });
+        return;
+      }
+      const operation = async () => {
+        if (request.method === 'GET' && url.pathname === '/api/native-package') await serveNativePackage(response, url);
+        else if (url.pathname.startsWith('/api/')) await handleApi(request, response, url);
+        else if (request.method === 'GET') await serveStatic(response, url.pathname);
+        else text(response, 405, 'Method not allowed');
+      };
+      if (request.method === 'GET' && url.pathname === '/api/native-package') await withProjectContext('shared', operation);
+      else if (url.pathname.startsWith('/api/')) await operation();
+      else await withProjectContext('shared', operation);
     } catch (error) {
-      console.error(error);
-      json(response, error?.code === 'EPATHOUTSIDE' ? 403 : 500, { error: error instanceof Error ? error.message : 'Unexpected server error.' });
+      if (!Number.isInteger(error?.statusCode) || error.statusCode >= 500) console.error(error);
+      json(response, error?.code === 'EPATHOUTSIDE' ? 403 : Number.isInteger(error?.statusCode) ? error.statusCode : 500, { error: error instanceof Error ? error.message : '予期しないserver errorが発生しました。' });
     }
   });
   listenOnAvailablePort(server, INITIAL_PORT);
@@ -2051,7 +2338,7 @@ function listenOnAvailablePort(server, port, attempts = 0) {
     server.off('listening', onListening);
     if (error && error.code === 'EADDRINUSE' && attempts < MAX_PORT_ATTEMPTS) {
       const nextPort = port + 1;
-      console.warn(`Port ${port} は使用中です、E{nextPort} を試します。`);
+      console.warn(`ポート${port}は使用中です。ポート${nextPort}を試します。`);
       listenOnAvailablePort(server, nextPort, attempts + 1);
       return;
     }

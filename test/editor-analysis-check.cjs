@@ -11,8 +11,26 @@ const assert = require('node:assert/strict');
   const auditProjectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-editor-analysis-'));
   const previousProjectRoot = process.env.NOVEL_PROJECT_ROOT;
   const auditLayout = seedEmptyProject(auditProjectRoot);
+  await fs.mkdir(path.join(auditLayout.assetsRoot, 'bg'), { recursive: true });
+  await fs.copyFile(path.resolve(__dirname, '../Title/asset/bg/title.png'), path.join(auditLayout.assetsRoot, 'bg', 'preview-test.png'));
+  await fs.writeFile(path.join(auditLayout.assetsRoot, 'bg', 'invalid-preview.png'), 'not an image', 'utf8');
+  const previewWav = Buffer.alloc(44 + 32_000);
+  previewWav.write('RIFF', 0); previewWav.writeUInt32LE(previewWav.length - 8, 4); previewWav.write('WAVE', 8);
+  previewWav.write('fmt ', 12); previewWav.writeUInt32LE(16, 16); previewWav.writeUInt16LE(1, 20); previewWav.writeUInt16LE(1, 22);
+  previewWav.writeUInt32LE(8000, 24); previewWav.writeUInt32LE(8000, 28); previewWav.writeUInt16LE(1, 32); previewWav.writeUInt16LE(8, 34);
+  previewWav.write('data', 36); previewWav.writeUInt32LE(previewWav.length - 44, 40);
+  await fs.writeFile(path.join(auditLayout.assetsRoot, 'bg', 'preview-test.wav'), previewWav);
+  await fs.copyFile(path.resolve(__dirname, 'fixtures/asset-preview.webm'), path.join(auditLayout.assetsRoot, 'bg', 'preview-test.webm'));
   await fs.writeFile(path.join(auditLayout.scenesRoot, 'analysis-side.tds'), 'scene analysis_side { choice { "continue" { goto analysis_side_target } "open chapter" { goto "analysis-target.tds" } } }\nscene analysis_side_target { wait 1 }\n');
   await fs.writeFile(path.join(auditLayout.scenesRoot, 'analysis-target.tds'), 'scene analysis_target { wait 1 }\n');
+  await fs.writeFile(path.join(auditLayout.scenesRoot, 'navigation-slow.tds'), 'scene slow {\n  wait 11\n}\n');
+  await fs.writeFile(path.join(auditLayout.scenesRoot, 'navigation-fast.tds'), 'scene fast {\n  wait 22\n}\n');
+  await fs.writeFile(path.join(auditLayout.settingsRoot, 'navigation-slow.txt'), 'slow setting response\n');
+  await fs.writeFile(path.join(auditLayout.settingsRoot, 'navigation-fast.txt'), 'fast setting response\n');
+  await fs.writeFile(path.join(auditLayout.scenesRoot, 'diagnostic-module.tds'), 'asset image absent = "asset/__missing_from_included_module__.png"\n');
+  const validSyntaxDiagnosticModuleSource = 'fn healthy() -> none {\n}\n';
+  const syntaxDiagnosticModulePath = path.join(auditLayout.scenesRoot, 'syntax-diagnostic-module.tds');
+  await fs.writeFile(syntaxDiagnosticModulePath, validSyntaxDiagnosticModuleSource, 'utf8');
   await fs.writeFile(path.join(auditLayout.assetsRoot, 'char', 'aokami.png'), Buffer.alloc(0));
   await fs.writeFile(path.join(auditLayout.dataRoot, 'variables.json'), JSON.stringify({ staticVariables: [
     { name: 'route', type: 'str', value: 'summer', possibleValues: ['summer', 'winter'] },
@@ -38,7 +56,9 @@ const assert = require('node:assert/strict');
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
     page.setDefaultTimeout(10_000);
     const pageErrors = [];
+    const failedRequests = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
+    page.on('requestfailed', (request) => failedRequests.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText || 'unknown error'}`));
     const saveAllFromMenu = async () => {
       await page.locator('[data-menu="file"]').click();
       await page.locator('[data-menu-action="save"]').click();
@@ -76,6 +96,37 @@ const assert = require('node:assert/strict');
     await page.goto(`${base}/index.html`);
     const editor = page.locator('#editor');
     await editor.waitFor();
+    const fileMenuTrigger = page.locator('[data-menu="file"]');
+    await fileMenuTrigger.focus();
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await fileMenuTrigger.getAttribute('aria-expanded'), 'true');
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.menuAction), 'open-project', 'ArrowDown opens a menu at its first item');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.menuAction), 'project-settings', 'ArrowDown moves between menu items');
+    await page.keyboard.press('End');
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.menuAction), 'save', 'End moves to the last menu item');
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Escape');
+    assert.equal(await fileMenuTrigger.getAttribute('aria-expanded'), 'false');
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.menu), 'file', 'Escape closes the menu and restores focus to its trigger');
+    const preEscapeDiagnosticSource = await editor.inputValue();
+    const escapeSource = String.raw`str value = "a\nb\q"`;
+    await page.evaluate(async (source) => { editor.value = source; await validate(); }, escapeSource);
+    assert.match(await page.locator('#result').textContent(), /1:19.*\u4e0d\u660e\u306a escape sequence/, 'Browser IDE reports the source column and localized unknown-escape diagnostic');
+    await page.evaluate(async (source) => { editor.value = source; await validate(); }, preEscapeDiagnosticSource);
+    assert.equal(await page.locator('#result').getAttribute('aria-live'), null, 'the detailed diagnostic list is not repeatedly announced as a live region');
+    assert.equal(await page.locator('#status').getAttribute('role'), 'status', 'the concise validation summary remains available to screen readers');
+    await page.evaluate(() => { window.__quickAccessOpener = document.activeElement; openCommandPalette(); });
+    const commandPalette = page.locator('#quick-access .quick-access-panel');
+    await page.locator('#quick-access-input').waitFor({ state: 'visible' });
+    assert.equal(await commandPalette.getAttribute('aria-modal'), 'true');
+    await page.keyboard.press('Tab');
+    assert.equal(await commandPalette.evaluate((dialog) => dialog.contains(document.activeElement)), true, 'command palette focus remains in its modal dialog');
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await commandPalette.evaluate((dialog) => dialog.contains(document.activeElement)), true, 'command palette reverse tab remains in its modal dialog');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.querySelector('#quick-access')?.hidden);
+    assert.equal(await page.evaluate(() => document.activeElement === window.__quickAccessOpener || (window.__quickAccessOpener === document.body && document.activeElement === document.querySelector('#editor'))), true, 'closing command palette restores its opener, with the Editor as the fallback for body focus');
     const initialSceneGraph = await page.evaluate(async () => (await (await fetch('/api/scene-graph')).json()));
     assert.deepEqual(initialSceneGraph.nodes.find((node) => node.id === 'analysis-side.tds')?.localGotos?.map((item) => item.scene), ['analysis_side_target']);
     const apiExternalGoto = initialSceneGraph.edges.find((edge) => edge.from === 'analysis-side.tds' && edge.to === 'analysis-target.tds');
@@ -85,6 +136,84 @@ const assert = require('node:assert/strict');
     assert.equal(apiExternalGoto.transitions[0].choice, 'open chapter');
     assert.ok(apiExternalGoto.transitions[0].line > 0);
     const originalEditorSource = await editor.inputValue();
+    const originalSceneName = await page.locator('#scene-name').inputValue();
+    const originalOpenTabs = await page.evaluate(() => [...openTabs]);
+    await page.evaluate(() => updateDirtyState(false));
+    const originalRevision = await page.request.get(`${base}/api/scene?name=${encodeURIComponent(originalSceneName)}`).then((response) => response.json());
+    const externallySavedSource = 'scene external_version { wait 22 }\n';
+    const localConflictDraft = 'scene local_version { wait 11 }\n';
+    const formattedConflictDraft = 'scene local_version {\n  wait 11\n}\n';
+    const externalWrite = await page.request.put(`${base}/api/scene`, { data: { name: originalSceneName, source: externallySavedSource, expectedRevision: originalRevision.revision } });
+    assert.equal(externalWrite.status(), 200, 'external source update succeeds against the loaded revision');
+    await editor.fill(localConflictDraft);
+    assert.equal(await page.locator('.dirty-mark').evaluate((element) => element.classList.contains('visible')), true, 'local edits mark the active document dirty before save');
+    await page.locator('[data-menu="file"]').click();
+    const localSaveResponse = page.waitForResponse((response) => response.url().includes('/api/scene') && response.request().method() === 'PUT');
+    await page.locator('[data-menu-action="save"]').click();
+    assert.equal((await localSaveResponse).status(), 409, 'Editor save surfaces the server revision conflict');
+    await page.waitForFunction(() => document.querySelector('#status')?.textContent.includes('失敗しました'));
+    assert.equal(await editor.inputValue(), formattedConflictDraft, '409 conflict keeps the formatted local draft in the editor');
+    assert.equal(await page.locator('.dirty-mark').evaluate((element) => element.classList.contains('visible')), true, '409 conflict does not clear the dirty indicator');
+    assert.equal((await page.request.get(`${base}/api/scene?name=${encodeURIComponent(originalSceneName)}`).then((response) => response.json())).source, externallySavedSource, 'the failed local save does not overwrite the external version');
+    const restoreOriginal = await page.request.put(`${base}/api/scene`, { data: { name: originalSceneName, source: originalEditorSource } });
+    assert.equal(restoreOriginal.status(), 200);
+    await page.evaluate((name) => { updateDirtyState(false); return openScene(name); }, originalSceneName);
+    await page.waitForFunction((source) => document.querySelector('#editor')?.value === source, originalEditorSource);
+    await page.route('**/api/scene?name=navigation-slow.tds', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      await route.continue();
+    });
+    await page.evaluate(async () => {
+      const slow = jumpToLocation({ file: 'navigation-slow.tds', line: 2 });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const fast = jumpToLocation({ file: 'navigation-fast.tds', line: 2 });
+      await Promise.all([slow, fast]);
+    });
+    assert.equal(await page.locator('#scene-name').inputValue(), 'navigation-fast.tds', 'a slower earlier cross-file diagnostic jump cannot replace the later requested document');
+    assert.equal(await editor.inputValue(), 'scene fast {\n  wait 22\n}\n');
+    await page.unroute('**/api/scene?name=navigation-slow.tds');
+    await page.route('**/api/setting-file**', async (route) => {
+      if (route.request().url().includes('navigation-slow.txt')) await new Promise((resolve) => setTimeout(resolve, 350));
+      await route.continue();
+    });
+    await page.evaluate(async () => {
+      const slow = openSettingFile('setting/navigation-slow.txt');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const fast = openScene('navigation-fast.tds');
+      await Promise.all([slow, fast]);
+    });
+    assert.equal(await page.locator('#scene-name').inputValue(), 'navigation-fast.tds', 'a stale setting-file response cannot replace a later scene navigation');
+    assert.equal(await editor.inputValue(), 'scene fast {\n  wait 22\n}\n');
+    await page.unroute('**/api/setting-file**');
+    await page.route('**/api/scene?name=navigation-slow.tds', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      await route.continue();
+    });
+    await page.evaluate(async () => {
+      const slow = openScene('navigation-slow.tds');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const fast = openSettingFile('setting/navigation-fast.txt');
+      await Promise.all([slow, fast]);
+    });
+    assert.equal(await page.locator('#scene-name').inputValue(), 'setting/navigation-fast.txt', 'a later setting-file navigation invalidates a stale scene response');
+    assert.equal(await editor.inputValue(), 'fast setting response\n');
+    await page.unroute('**/api/scene?name=navigation-slow.tds');
+    await page.route('**/api/setting-file**', async (route) => {
+      if (route.request().url().includes('navigation-slow.txt')) await new Promise((resolve) => setTimeout(resolve, 350));
+      await route.continue();
+    });
+    await page.evaluate(async () => {
+      const slow = openSettingFile('setting/navigation-slow.txt');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const fast = openAssetDocument('asset/bg/preview-test.png');
+      await Promise.all([slow, fast]);
+    });
+    assert.equal(await page.locator('#asset-document-viewer').isVisible(), true, 'a stale setting-file response cannot replace a later asset preview');
+    assert.equal(await page.locator('#asset-document-path').textContent(), 'asset/bg/preview-test.png');
+    await page.unroute('**/api/setting-file**');
+    await page.evaluate((name) => openScene(name), originalSceneName);
+    await page.evaluate(({ tabs, active }) => { openTabs.splice(0, openTabs.length, ...tabs); renderEditorTabs(active); }, { tabs: originalOpenTabs, active: originalSceneName });
+    await editor.fill(originalEditorSource);
     await editor.evaluate((element) => { element.style.lineHeight = '100px'; });
     await editor.fill(Array(300).fill('wait 1').join('\n'));
     await page.waitForFunction(() => document.querySelector('#editor').scrollHeight > document.querySelector('#editor').clientHeight * 10);
@@ -116,10 +245,22 @@ const assert = require('node:assert/strict');
     await editor.evaluate((element) => { element.style.lineHeight = ''; });
     await editor.fill(originalEditorSource);
     await editor.fill('include "std/');
-    await page.waitForFunction(() => [...document.querySelectorAll('#suggestions .suggestion')].some((item) => item.textContent.includes('std/math.tds')));
+    await page.waitForFunction(() => [...document.querySelectorAll('#suggestions .suggestion')].some((item) => item.textContent.includes('std/math.tds'))).catch(async (error) => {
+      const state = await page.evaluate(() => ({
+        status: document.querySelector('#status')?.textContent,
+        suggestions: [...document.querySelectorAll('#suggestions .suggestion')].map((item) => item.textContent),
+        visible: !document.querySelector('#suggestions')?.hidden,
+      }));
+      throw Error(`standard-library include completion did not render: ${JSON.stringify(state)}; page errors=${pageErrors.join(' | ')}; failed requests=${failedRequests.join(' | ')}; ${error.message}`);
+    });
     await editor.fill('include "std/math.tds" as math\nfloat sample = math.si');
     await page.waitForFunction(() => [...document.querySelectorAll('#suggestions .suggestion')].some((item) => item.textContent.includes('sin')));
     await editor.fill(originalEditorSource);
+    await page.evaluate(() => openScene('std/math.tds'));
+    assert.equal(await editor.getAttribute('readonly'), '');
+    assert.match(await editor.inputValue(), /fn sin/);
+    await page.evaluate((name) => openScene(name), originalSceneName);
+    await page.waitForFunction(() => !document.querySelector('#editor')?.readOnly);
     await page.locator('[data-activity="presentation"]').click();
     const presentationCardStyle = await page.locator('.presentation-card').first().evaluate((element) => ({
       background: getComputedStyle(element).backgroundColor,
@@ -127,11 +268,95 @@ const assert = require('node:assert/strict');
     }));
     assert.deepEqual(presentationCardStyle, { background: 'rgba(0, 0, 0, 0)', borderLeft: '0px' }, 'presentation guidance uses flat workbench sections rather than cards');
     await page.locator('[data-presentation-action="player-ui"]').click();
-    const settingsGroupStyle = await page.locator('.player-ui-settings-group').first().evaluate((element) => ({
+    const settingsGroupStyle = await page.locator('#ui-settings-fields').evaluate((element) => ({
       background: getComputedStyle(element).backgroundColor,
       borderLeft: getComputedStyle(element).borderLeftWidth,
     }));
     assert.deepEqual(settingsGroupStyle, { background: 'rgba(0, 0, 0, 0)', borderLeft: '0px' }, 'player settings groups are separated by rules instead of boxed cards');
+    await page.locator('[data-ui-settings-section="message"]').click();
+    const messageSize = page.locator('#ui-settings-fields label.ui-settings-field').filter({ hasText: '文字サイズ' }).locator('input[type="number"]').first();
+    const originalMessageSize = Number(await messageSize.inputValue());
+    const previewFrame = page.frameLocator('#ui-settings-player-preview');
+    const liveMessage = previewFrame.locator('#text');
+    await page.waitForFunction((size) => {
+      const frame = document.querySelector('#ui-settings-player-preview');
+      return frame?.contentDocument?.querySelector('#text')?.style.fontSize === `${size}px`;
+    }, originalMessageSize);
+    const editedMessageSize = originalMessageSize + 3;
+    await messageSize.fill(String(editedMessageSize));
+    await page.waitForFunction((size) => document.querySelector('#ui-settings-player-preview')?.contentDocument?.querySelector('#text')?.style.fontSize === `${size}px`, editedMessageSize);
+    assert.equal(await page.locator('#ui-settings-dirty').isVisible(), true, 'field edits mark the theme draft dirty');
+    assert.equal(await page.locator('#ui-settings-save').isEnabled(), true);
+    await page.locator('#ui-settings-revert').click();
+    assert.equal(Number(await page.locator('#ui-settings-fields label.ui-settings-field').filter({ hasText: '文字サイズ' }).locator('input[type="number"]').first().inputValue()), originalMessageSize);
+    await page.waitForFunction((size) => document.querySelector('#ui-settings-player-preview')?.contentDocument?.querySelector('#text')?.style.fontSize === `${size}px`, originalMessageSize);
+    assert.equal(await page.locator('#ui-settings-dirty').isVisible(), false, 'revert restores both the form and live Player preview');
+    await page.locator('#ui-settings-fields label.ui-settings-field').filter({ hasText: '文字サイズ' }).locator('input[type="number"]').first().fill(String(editedMessageSize));
+    await page.locator('#ui-settings-save').click();
+    await page.waitForFunction(() => document.querySelector('#ui-settings-dirty')?.hidden === true);
+    const savedPlayerTheme = await (await page.request.get(`${base}/api/player-ui`)).json();
+    assert.equal(savedPlayerTheme.theme.dialog.message.size, editedMessageSize, 'Save persists the field-editor value through the real Player UI endpoint');
+    assert.equal(await liveMessage.evaluate((element) => getComputedStyle(element).fontSize), `${editedMessageSize}px`, 'saved value remains applied to the live Player preview');
+    await page.locator('[data-ui-settings-section="advanced"]').click();
+    const themeJsonEditor = page.locator('#ui-settings-json');
+    const invalidTheme = JSON.parse(await themeJsonEditor.inputValue());
+    invalidTheme.dialog.message.size = -1;
+    await themeJsonEditor.fill(JSON.stringify(invalidTheme, null, 2));
+    assert.equal(await page.locator('#ui-settings-save').isEnabled(), true, 'Advanced JSON permits a syntactically valid draft to reach server validation');
+    await page.locator('#ui-settings-save').click();
+    await page.locator('#ui-settings-error').waitFor({ state: 'visible' });
+    const afterRejectedTheme = await (await page.request.get(`${base}/api/player-ui`)).json();
+    assert.deepEqual(afterRejectedTheme.theme, savedPlayerTheme.theme, 'invalid negative font size is rejected without replacing the saved theme');
+    await page.locator('#ui-settings-revert').click();
+    assert.equal(await page.locator('#ui-settings-dirty').isVisible(), false, 'revert clears the rejected Advanced JSON draft');
+    for (const invalidFontSize of [13.5, 513]) {
+      const invalidControlTheme = JSON.parse(await themeJsonEditor.inputValue());
+      invalidControlTheme.controls = { enabled: true, anchor: 'stage', buttons: [{ action: 'save', fontSize: invalidFontSize }] };
+      await themeJsonEditor.fill(JSON.stringify(invalidControlTheme, null, 2));
+      if (invalidFontSize === 13.5) {
+        await page.waitForFunction(() => document.querySelector('#ui-settings-player-preview')?.contentDocument?.querySelector('#player-controls button')?.style.fontSize === '13.5px');
+      }
+      await page.locator('#ui-settings-save').click();
+      await page.locator('#ui-settings-error').waitFor({ state: 'visible' });
+      const afterRejectedControlTheme = await (await page.request.get(`${base}/api/player-ui`)).json();
+      assert.deepEqual(afterRejectedControlTheme.theme, savedPlayerTheme.theme, `control fontSize ${invalidFontSize} is rejected without replacing the saved theme`);
+      await page.locator('#ui-settings-revert').click();
+    }
+    await page.locator('#ui-settings-preview-target').selectOption('message');
+    const previewScale = await page.locator('#ui-settings-preview-stage').evaluate((element) => element.getBoundingClientRect().width / 1280);
+    const messageBox = await page.locator('#ui-preview-message').boundingBox();
+    const xField = page.locator('#ui-settings-fields label.ui-settings-field').filter({ hasText: /^X/ }).locator('input[type="number"]');
+    const yField = page.locator('#ui-settings-fields label.ui-settings-field').filter({ hasText: /^Y/ }).locator('input[type="number"]');
+    const widthField = page.locator('#ui-settings-fields label.ui-settings-field').filter({ hasText: /^幅/ }).locator('input[type="number"]');
+    const heightField = page.locator('#ui-settings-fields label.ui-settings-field').filter({ hasText: /^高さ/ }).locator('input[type="number"]');
+    const xBeforeDrag = Number(await xField.inputValue());
+    const yBeforeDrag = Number(await yField.inputValue());
+    await page.mouse.move(messageBox.x + messageBox.width / 2, messageBox.y + messageBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(messageBox.x + messageBox.width / 2 + 16 * previewScale, messageBox.y + messageBox.height / 2 + 8 * previewScale, { steps: 2 });
+    await page.mouse.up();
+    assert.equal(Number(await xField.inputValue()), xBeforeDrag + 16, 'dragging the message preview updates its logical X coordinate');
+    assert.equal(Number(await yField.inputValue()), yBeforeDrag + 8, 'dragging the message preview updates its logical Y coordinate');
+    await page.waitForFunction(({ x, y }) => {
+      const text = document.querySelector('#ui-settings-player-preview')?.contentDocument?.querySelector('#text');
+      return text?.style.left === `${x}px` && text?.style.top === `${y}px`;
+    }, { x: xBeforeDrag + 16, y: yBeforeDrag + 8 });
+    const widthBeforeResize = Number(await widthField.inputValue());
+    const heightBeforeResize = Number(await heightField.inputValue());
+    const resizeBox = await page.locator('#ui-preview-resize-handle').boundingBox();
+    await page.mouse.move(resizeBox.x + resizeBox.width / 2, resizeBox.y + resizeBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(resizeBox.x + resizeBox.width / 2 + 16 * previewScale, resizeBox.y + resizeBox.height / 2 + 8 * previewScale, { steps: 2 });
+    await page.mouse.up();
+    assert.equal(Number(await widthField.inputValue()), widthBeforeResize + 16, 'resizing the message preview updates its logical width');
+    assert.equal(Number(await heightField.inputValue()), heightBeforeResize + 8, 'resizing the message preview updates its logical height');
+    await page.waitForFunction(({ width, height }) => {
+      const text = document.querySelector('#ui-settings-player-preview')?.contentDocument?.querySelector('#text');
+      return text?.style.width === `${width}px` && text?.style.height === `${height}px`;
+    }, { width: widthBeforeResize + 16, height: heightBeforeResize + 8 });
+    await page.locator('#ui-settings-revert').click();
+    assert.equal(await page.locator('#ui-settings-dirty').isVisible(), false, 'revert restores the saved theme after move and resize');
+    await page.locator('[data-activity="presentation"]').click();
     await page.locator('[data-presentation-action="game-screens"]').click();
     const gameScreenDialogStyle = await page.locator('.game-screen-settings').evaluate((element) => {
       const style = getComputedStyle(element);
@@ -140,6 +365,65 @@ const assert = require('node:assert/strict');
       return { background: style.backgroundColor, border: style.borderColor, radius: style.borderRadius, width: Math.round(rect.width), closeWidth: Math.round(close.width), closeHeight: Math.round(close.height) };
     });
     assert.deepEqual(gameScreenDialogStyle, { background: 'rgb(37, 37, 38)', border: 'rgb(60, 60, 60)', radius: '3px', width: 1000, closeWidth: 26, closeHeight: 26 }, 'game-screen editor dialog uses a compact neutral workbench surface and compact close control');
+    assert.equal(await page.locator('.game-screen-settings').getAttribute('aria-labelledby')?.then(async (id) => page.locator(`#${id}`).count()), 1, 'modal dialog is named by its visible heading');
+    await page.locator('.game-screen-settings button:not(:disabled)').last().focus();
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('project-settings-close')), true, 'Tab wraps from the last game-screen dialog control to its close button');
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await page.locator('.game-screen-settings').evaluate((dialog) => dialog.contains(document.activeElement)), true, 'Shift+Tab remains inside the modal dialog');
+    assert.equal(await page.locator('body').evaluate((body) => getComputedStyle(body, '::before').position), 'fixed', 'modal backdrop blocks interaction with the editor behind the dialog');
+    await page.locator('.game-screen-settings .project-settings-close').click();
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-presentation-action')), 'game-screens', 'closing a modal restores focus to the control that opened it');
+    await page.locator('[data-menu="file"]').click();
+    await page.locator('[data-menu-action="project-settings"]').click();
+    const projectSettings = page.locator('.project-settings');
+    await projectSettings.waitFor();
+    assert.equal(await projectSettings.getByText('Start Scene', { exact: true }).count(), 1);
+    assert.equal(await projectSettings.getByText('Scenario Folder', { exact: true }).count(), 1);
+    assert.equal(await projectSettings.getByText('Asset Folder', { exact: true }).count(), 1);
+    assert.equal(await projectSettings.locator('h2').filter({ hasText: /^Assets$/ }).count(), 1);
+    assert.equal(await page.locator('#asset-document-viewer').getAttribute('aria-label'), 'Asset file preview');
+    assert.equal(await page.locator('#asset-document-metadata').getAttribute('aria-label'), 'Asset details');
+    await projectSettings.locator('.project-settings-close').click();
+    await page.locator('[data-activity="explorer"]').click();
+    const assetFolder = page.locator('.scene-folder[data-path="asset"]');
+    await assetFolder.click();
+    const assetSubfolder = page.locator('.scene-folder[data-path="asset/bg"]');
+    await assetSubfolder.click();
+    await page.locator('.scene-file[data-path="asset/bg/preview-test.png"] .scene-file-open').click();
+    await page.waitForFunction(() => document.querySelector('#asset-document-image')?.naturalWidth > 0);
+    assert.equal(await page.locator('#asset-document-viewer').isVisible(), true);
+    assert.equal(await page.locator('#editor').getAttribute('readonly'), '');
+    assert.deepEqual(await page.locator('#asset-document-metadata dt').allTextContents(), ['Width', 'Height', 'Aspect Ratio', 'Pixel Count', 'Orientation', 'Format', 'File Size', 'Modified', 'Duration']);
+    assert.ok(parseInt(await page.locator('[data-asset-meta="width"]').textContent(), 10) > 0);
+    assert.ok(parseInt(await page.locator('[data-asset-meta="height"]').textContent(), 10) > 0);
+    assert.equal(await page.locator('[data-asset-meta="orientation"]').textContent(), 'Landscape');
+    const loadedAssetSource = await editor.inputValue();
+    await editor.focus();
+    await page.keyboard.type('a');
+    assert.equal(await editor.inputValue(), loadedAssetSource, 'Asset Preview keeps the source editor read-only');
+    await page.locator('.scene-file[data-path="asset/bg/preview-test.wav"] .scene-file-open').click();
+    await page.waitForFunction(() => document.querySelector('[data-asset-meta="duration"]')?.textContent !== '—');
+    assert.equal(await page.locator('[data-asset-meta="duration"]').textContent(), '0:04');
+    assert.equal(await page.locator('[data-asset-label="orientation"]').textContent(), 'Type');
+    assert.equal(await page.locator('[data-asset-meta="orientation"]').textContent(), 'Audio');
+    await page.locator('.scene-file[data-path="asset/bg/preview-test.webm"] .scene-file-open').click();
+    await page.waitForFunction(() => document.querySelector('#asset-document-video')?.videoWidth === 32);
+    assert.equal(await page.locator('#asset-document-video').evaluate((video) => video.videoHeight), 24);
+    assert.equal(await page.locator('[data-asset-meta="duration"]').textContent(), '0:01');
+    await page.locator('.scene-file[data-path="asset/bg/invalid-preview.png"] .scene-file-open').click();
+    await page.waitForFunction(() => !document.querySelector('#asset-document-error')?.hidden);
+    assert.match(await page.locator('#asset-document-error').textContent(), /invalid-preview\.png/);
+    await page.evaluate((name) => openScene(name), originalSceneName);
+    await page.waitForFunction(() => document.querySelector('#asset-document-viewer')?.hidden);
+    await page.waitForFunction(() => !document.querySelector('#editor')?.readOnly);
+    for (const name of ['std/math.tds', 'asset/bg/preview-test.png', 'asset/bg/preview-test.wav', 'asset/bg/preview-test.webm', 'asset/bg/invalid-preview.png']) {
+      const tab = page.locator('#editor-tabs .editor-tab').filter({ has: page.locator(`.editor-tab-name[title="${name}"]`) });
+      if (await tab.count()) await tab.locator('.editor-tab-close').click();
+    }
+    await page.locator('[data-activity="presentation"]').click();
+    await page.locator('[data-presentation-action="game-screens"]').click();
+    await page.locator('.game-screen-settings').waitFor();
     await page.setViewportSize({ width: 800, height: 600 });
     const compactDialogBounds = await page.locator('.game-screen-settings').evaluate((element) => {
       const rect = element.getBoundingClientRect();
@@ -153,17 +437,20 @@ const assert = require('node:assert/strict');
       const color = getComputedStyle(sample).color; sample.remove(); return color;
     });
     assert.equal(builtinColor, 'rgb(117, 190, 255)', 'built-in syntax highlighting follows the editor blue accent, not purple');
-    await page.locator('.project-settings-close').click();
     await page.locator('[data-activity="explorer"]').click();
     await page.locator('[data-menu="help"]').click();
     await page.locator('[data-menu-action="syntax"]').click();
-    assert.equal(await page.locator('.language-guide strong').textContent(), '.tds 構文ヘルプ');
+    assert.equal(await page.locator('.language-guide strong').textContent(), '.tds Syntax Help');
     assert.ok(await page.locator('.language-guide .guide-section').count() >= 8);
     assert.equal(await page.locator('.language-guide .guide-section').first().getAttribute('open'), '');
-    const dialogueHelp = page.locator('.language-guide .guide-section').filter({ hasText: '台詞と変数' });
-    assert.match(await dialogueHelp.textContent(), /文字列リテラルから始まる/);
+    const dialogueHelp = page.locator('.language-guide .guide-section').filter({ hasText: 'Dialogue, Variables & Strings' });
+    const shortcutHelp = page.locator('.language-guide .guide-section').filter({ hasText: 'Editor shortcuts' });
+    assert.match(await shortcutHelp.textContent(), /Indent selection/);
+    assert.match(await dialogueHelp.textContent(), /String literal/);
+    assert.match(await dialogueHelp.textContent(), /dotted field.*引数なしfunction call/);
+    assert.doesNotMatch(await dialogueHelp.textContent(), /String interpolation expands \{expression\}/);
     assert.match(await dialogueHelp.locator('pre').textContent(), /say "点数: " \+ str\(score\)/);
-    const dslHelpExamples = await page.locator('.language-guide .guide-section:not(:has(summary:text-is("エディター操作"))) pre').evaluateAll((nodes) => nodes.map((node) => node.textContent));
+    const dslHelpExamples = await page.locator('.language-guide .guide-section:not(:has(summary:text-is("Editor shortcuts"))) pre').evaluateAll((nodes) => nodes.map((node) => node.textContent));
     for (const example of dslHelpExamples) assert.doesNotThrow(() => parse(example), `IDE help example is invalid TDS:\n${example}`);
     assert.equal((await page.request.get(`${base}/docs/tds-language-and-editor-guide.md`)).ok(), true);
     const detailedReference = page.locator('.language-guide .guide-reference');
@@ -177,12 +464,16 @@ const assert = require('node:assert/strict');
     await detailedReference.click();
     assert.ok(await page.locator('.guide-section').first().isVisible(), 'the in-place reader returns to compact help without navigating away');
     await page.locator('.language-guide .guide-close').click();
+    await editor.fill('character hero {\n  pose normal = "asset/hero.png"\n}');
+    await rightClickToken(2, 'pose');
+    await page.locator('.syntax-tooltip-signature').waitFor();
+    assert.equal(await page.locator('.syntax-tooltip-signature').textContent(), 'pose <Pose Name> = "<Image Path>"');
     const validFunctionTooltipExample = 'fn greet() -> none {\n}';
     assert.doesNotThrow(() => parse(validFunctionTooltipExample));
     await editor.fill(validFunctionTooltipExample);
     await rightClickToken(1, 'fn');
     await page.locator('.syntax-tooltip-signature').waitFor();
-    assert.match(await page.locator('.syntax-tooltip-signature').textContent(), /-> <戻り値>/);
+    assert.match(await page.locator('.syntax-tooltip-signature').textContent(), /-> <return type>/);
     assert.match(await page.locator('.syntax-tooltip-description').textContent(), /戻り値の型を -> で必ず指定/);
     const declarationHelpSource = 'struct Vec2 {\n  x: float\n  y: float\n}\nfn scale(point: Vec2, factor: float) -> float {\n  return factor\n}\nscene main {\n  wait 1\n}\n';
     await editor.fill(declarationHelpSource);
@@ -204,23 +495,33 @@ const assert = require('node:assert/strict');
     await rightClickToken(2, 'route');
     const variableTooltip = page.locator('.variable-tooltip');
     await variableTooltip.waitFor({ state: 'visible' });
-    assert.match(await variableTooltip.textContent(), /スコープ: function \(render_route\)/);
-    assert.match(await variableTooltip.textContent(), /定義 \(1\)/);
-    assert.match(await variableTooltip.textContent(), /参照・埋め込み \(1\)/);
+    assert.match(await variableTooltip.textContent(), /Scope: function \(render_route\)/);
+    assert.match(await variableTooltip.textContent(), /定義/);
+    assert.match(await variableTooltip.textContent(), /analysis-side\.tds:1/);
     assert.doesNotMatch(await variableTooltip.textContent(), /許容値:/, 'same-name local parameter must not inherit a global threshold');
     await variableTooltip.locator('.variable-tooltip-location').first().click();
     assert.equal(await editor.evaluate((element) => element.value.slice(element.selectionStart, element.selectionEnd)), 'route', 'definition navigation selects the exact symbol');
+    await page.evaluate((name) => openScene(name), originalSceneName);
+    await page.waitForFunction((name) => document.querySelector('#scene-name')?.value === name, originalSceneName);
     await editor.fill(wrappedReferenceSource);
     await page.waitForTimeout(1100);
     await rightClickToken(2, 'route');
     await variableTooltip.waitFor({ state: 'visible' });
+    const wrappedRouteFacts = await page.evaluate(async () => {
+      try { return { variables: (await compiledVariablesForCurrentSource(sceneName.value, editor.value)).filter(variable => variable.name === 'route') }; }
+      catch (error) {
+        const response = await fetch('/api/compile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: sceneName.value, source: editor.value }) });
+        return { scene: sceneName.value, source: editor.value, error: error.message, apiStatus: response.status, api: await response.json() };
+      }
+    });
+    assert.ok(await variableTooltip.locator('.variable-tooltip-location').count() > 1, `wrapped reference has no second navigable location: ${JSON.stringify({ text: await variableTooltip.textContent(), facts: wrappedRouteFacts })}`);
     await variableTooltip.locator('.variable-tooltip-location').nth(1).click();
     assert.equal(await editor.evaluate((element) => element.selectionStart), wrappedReferenceSource.indexOf('{route}') + 1, 'reference navigation selects the variable even on a wrapped Japanese line');
     await editor.fill(referenceSource);
     await page.waitForTimeout(1100);
     await rightClickToken(5, 'route');
     await variableTooltip.waitFor({ state: 'visible' });
-    assert.match(await variableTooltip.textContent(), /スコープ: global/);
+    assert.match(await variableTooltip.textContent(), /Scope: global/);
     assert.match(await variableTooltip.textContent(), /設定された値: summer, winter/);
     await rightClickToken(6, 'score');
     await variableTooltip.waitFor({ state: 'visible' });
@@ -249,8 +550,26 @@ const assert = require('node:assert/strict');
     const localTargetScene = activeSource.match(/^\s*scene\s+([A-Za-z_][A-Za-z0-9_]*)/m)?.[1];
     assert.ok(localTargetScene, `the active scenario has a scene declaration: ${currentScene}`);
     let injectExplorerGraph = null;
+    let explorerGraphRaceCount = 0;
+    let releaseOldExplorerGraph;
+    let oldExplorerGraphFinishedResolve;
+    const oldExplorerGraphFinished = new Promise((resolve) => { oldExplorerGraphFinishedResolve = resolve; });
+    let firstExplorerGraphSeenResolve;
+    const firstExplorerGraphSeen = new Promise((resolve) => { firstExplorerGraphSeenResolve = resolve; });
     await page.route('**/api/scene-graph', async (route) => {
       if (!injectExplorerGraph) return route.continue();
+      if (injectExplorerGraph === 'race') {
+        explorerGraphRaceCount += 1;
+        if (explorerGraphRaceCount === 1) {
+          firstExplorerGraphSeenResolve();
+          await new Promise((resolve) => { releaseOldExplorerGraph = resolve; });
+          await route.fulfill({ json: { version: 2, nodes: [{ id: currentScene, localGotos: [{ scene: 'stale-target', file: currentScene }], variables: [] }], edges: [] } });
+          oldExplorerGraphFinishedResolve();
+          return;
+        }
+        await route.fulfill({ json: { version: 2, nodes: [{ id: currentScene, localGotos: [{ scene: 'latest-one', file: currentScene }, { scene: 'latest-two', file: currentScene }], variables: [] }], edges: [] } });
+        return;
+      }
       const emptyTargets = injectExplorerGraph === 'empty';
       injectExplorerGraph = false;
       const variables = [
@@ -271,11 +590,14 @@ const assert = require('node:assert/strict');
     await currentFile.click({ button: 'right' });
     await page.locator('.file-context-menu [role="menuitem"]').nth(2).click();
     const fileInfo = page.locator('#file-info');
-    await page.waitForFunction(() => document.querySelector('#file-info .file-info-stat-local')?.textContent === '遷移先 4').catch(async (error) => {
+    await page.waitForFunction(() => document.querySelector('#file-info .file-info-stat-local')?.textContent === 'Destinations 4').catch(async (error) => {
       const rendered = await fileInfo.textContent();
       throw Error(`explorer metadata did not render; injected=${injectExplorerGraph}; scene=${await page.locator('#scene-name').inputValue()}; info=${rendered}; ${error.message}`);
     });
-    assert.equal(await fileInfo.locator('.file-info-stat-local').textContent(), '遷移先 4');
+    assert.equal(await fileInfo.locator('.file-info-stat-local').textContent(), 'Destinations 4');
+    assert.equal(await fileInfo.locator('[data-kind="local-targets"] summary .file-info-section-label').textContent(), 'Scenes in this file');
+    assert.equal(await fileInfo.locator('[data-kind="targets"] summary .file-info-section-label').textContent(), 'Destinations');
+    assert.equal(await fileInfo.locator('[data-kind="variables"] summary .file-info-section-label').textContent(), 'Variables');
     assert.equal(await fileInfo.locator('.file-info-section').count(), 3);
     const inspectorStyle = await fileInfo.evaluate((element) => ({
       background: getComputedStyle(element).backgroundColor,
@@ -337,15 +659,26 @@ const assert = require('node:assert/strict');
     assert.match(await fileInfo.locator('[data-kind="targets"]').textContent(), /chapters\/chapter01\.tds/);
     assert.equal(await fileInfo.locator('[data-kind="variables"] .file-info-list li').count(), 3, 'a large reference count is summarized per binding, not expanded into hundreds of rows');
     assert.match(await fileInfo.locator('[data-kind="variables"]').textContent(), /route_summer/);
-    assert.match(await fileInfo.locator('[data-kind="variables"]').textContent(), /このファイルの定義 1 · 参照 690/);
+    assert.match(await fileInfo.locator('[data-kind="variables"]').textContent(), /1 definitions · 690 references/);
     assert.equal(await fileInfo.locator('[data-kind="variables"] .file-info-variable-jump').count(), 3);
     assert.equal(await fileInfo.locator('.file-info-stat-warning').count(), 1, 'unreachable files show a warning badge in the summary');
     injectExplorerGraph = 'empty';
     await currentFile.click({ button: 'right' });
     await page.locator('.file-context-menu [role="menuitem"]').nth(2).click();
-    await page.waitForFunction(() => document.querySelector('#file-info .file-info-stat-local')?.textContent === '遷移先 0');
+    await page.waitForFunction(() => document.querySelector('#file-info .file-info-stat-local')?.textContent === 'Destinations 0');
     assert.equal(await fileInfo.locator('[data-kind="local-targets"]').count(), 0);
     assert.equal(await fileInfo.locator('[data-kind="targets"]').count(), 0, 'an empty transition section is omitted instead of showing a dead disclosure bar');
+    injectExplorerGraph = 'race';
+    await currentFile.click({ button: 'right' });
+    await page.locator('.file-context-menu [role="menuitem"]').nth(2).click();
+    await firstExplorerGraphSeen;
+    await currentFile.click({ button: 'right' });
+    await page.locator('.file-context-menu [role="menuitem"]').nth(2).click();
+    await page.waitForFunction(() => document.querySelector('#file-info [data-kind="local-targets"] .file-info-section-count')?.textContent === '2');
+    releaseOldExplorerGraph();
+    await oldExplorerGraphFinished;
+    await page.waitForTimeout(50);
+    assert.equal(await fileInfo.locator('[data-kind="local-targets"] .file-info-section-count').textContent(), '2', 'a delayed older Explorer metadata response cannot replace a later refresh for the same active file');
     await page.unroute('**/api/scene-graph');
     const deleteButton = currentFile.locator('.tree-action.delete');
     assert.equal(await deleteButton.locator('xpath=..').evaluate((element) => element.tagName), 'DIV');
@@ -435,23 +768,57 @@ const assert = require('node:assert/strict');
     assert.equal(await page.locator('#split-group').isVisible(), false);
     await editor.fill(originalEditorSource);
     let projectBuildRequest;
+    let failNextBuild = false;
+    let delayProjectBuild = true;
+    let releaseProjectBuild;
+    let markProjectBuildStarted;
+    const projectBuildStarted = new Promise((resolve) => { markProjectBuildStarted = resolve; });
     await page.route('**/api/project-build', async (route) => {
       projectBuildRequest = route.request().postDataJSON();
+      if (failNextBuild) {
+        failNextBuild = false;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+          ok: false, build: true, fileCount: 1,
+          diagnostics: [{ severity: 'error', code: 'type-error', message: 'invalid value', file: projectBuildRequest.name, line: 1, column: 1 }],
+          error: 'invalid value',
+        }) });
+      }
+      if (delayProjectBuild) {
+        delayProjectBuild = false;
+        markProjectBuildStarted();
+        await new Promise((resolve) => { releaseProjectBuild = resolve; });
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+          ok: true, build: true, fileCount: 2,
+          diagnostics: [{ severity: 'warning', code: 'stale-build-warning', message: 'belongs to build snapshot', file: projectBuildRequest.name, line: 1, column: 1 }],
+          name: 'test.nsp.json', path: 'build/native-packages/test.nsp.json', instructions: 4,
+        }) });
+      }
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, build: true, fileCount: 2, diagnostics: [], name: 'test.nsp.json', path: 'build/native-packages/test.nsp.json', instructions: 4 }) });
     });
     await page.locator('[data-menu="run"]').click();
-    assert.deepEqual(await page.locator('[data-menu-popup="run"] [role="menuitem"]').allTextContents(), ['ビルド Ctrl+Enter', '再生']);
+    assert.deepEqual(await page.locator('[data-menu-popup="run"] [role="menuitem"]').allTextContents(), ['Build Ctrl+Enter', '再生']);
     await page.locator('[data-menu-action="build"]').click();
-    await page.waitForFunction(() => document.querySelector('#status')?.textContent.includes('ファイル精査完了'));
+    await projectBuildStarted;
+    await editor.fill('scene main { wait 2 }');
+    releaseProjectBuild();
+    await page.waitForFunction(() => document.querySelector('#status')?.textContent.includes('現在の編集内容を検証しています'));
+    assert.doesNotMatch(await page.locator('#result').textContent(), /stale-build-warning/, 'a project-build response must not attach diagnostics to a buffer changed during the request');
+    await page.waitForFunction(() => document.querySelector('#status')?.textContent.includes('Validation complete: Error 0 / Warning 0 / Info 0'));
     assert.equal(projectBuildRequest.name, await page.locator('#scene-name').inputValue());
-    assert.match(await page.locator('#result').textContent(), /コンパイル完了: 全 2 ファイル/);
+    assert.doesNotMatch(await page.locator('#result').textContent(), /stale-build-warning/);
+    failNextBuild = true;
+    await page.locator('[data-menu="run"]').click();
+    await page.locator('[data-menu-action="build"]').click();
+    await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('Build failed: Error 1 / 1 file'));
+    assert.equal(await page.locator('#status').textContent(), 'Build failed: Error 1 / 1 file', 'Build failure status uses standard English technical wording and matches the diagnostic heading');
     let playRequest = false;
     await page.route('**/api/project-build-status', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ built: false, changedFiles: ['main.tds'], reason: 'scenario-changed' }) }));
     await page.route('**/api/native-play', async (route) => { playRequest = true; return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }); });
+    const nativePlayResponse = page.waitForResponse((response) => response.url().includes('/api/native-play'));
     await page.locator('[data-menu="run"]').click();
     await page.locator('[data-menu-action="play"]').click();
     await page.locator('.editor-dialog button').first().click();
-    await page.waitForFunction(() => document.querySelector('#status')?.textContent.includes('起動しました'));
+    await nativePlayResponse;
     assert.equal(playRequest, true, 'accepting the build prompt should build and then start playback');
     await editor.fill('ch');
     await page.waitForFunction(() => ['character', 'choice'].every((word) => [...document.querySelectorAll('#suggestions .suggestion')].some((button) => button.textContent.includes(word))));
@@ -536,17 +903,13 @@ const assert = require('node:assert/strict');
     await editor.fill('if(score==1)');
     await editor.press('Enter');
     assert.equal(await editor.inputValue(), 'if (score == 1) {\n  \n}\n');
-    await editor.fill(`str editor_title = "文字列"
-scene analysis {
-  if 1 == 2 {
-    say narrator "到達しない"
-  }
-  say narrator editor_title
-}`);
+    await editor.fill(`str editor_title = "文字列"\nscene analysis {\n  if 1 == 2 {\n    say narrator "到達しない"\n  }\n  say narrator editor_title\n}`);
     await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('constant-condition'), null, { timeout: 10000 });
     const resultText = await page.locator('#result').textContent();
     if (!resultText.includes('constant-condition')) throw new Error(`Live diagnostics were not rendered: ${resultText}`);
-    assert.match(await page.locator('#result').textContent(), /警告 [1-9]/);
+    assert.match(await page.locator('#result').textContent(), /Warning [1-9]/);
+    await page.waitForFunction(() => document.querySelector('#status')?.textContent.includes('Validation complete: Error 0 / Warning'));
+    assert.match(await page.locator('#status').textContent(), /Validation complete: Error 0 \/ Warning [1-9]/);
     assert.ok(await page.locator('#highlight .hl-warning').count() >= 1);
     assert.ok((await page.locator('#highlight .hl-line').nth(3).getAttribute('class')).includes('hl-unreachable'));
     assert.equal((await page.locator('#highlight .hl-line').nth(5).getAttribute('class')).includes('hl-unreachable'), false);
@@ -567,7 +930,7 @@ scene analysis {
     assert.match(await page.locator('#file-info').textContent(), /3-8 line/);
     assert.doesNotMatch(await page.locator('#file-info').textContent(), /3 line - 8 line/);
     assert.match(await page.locator('#result').textContent(), /unreachable-code\s+3-8 line/);
-    assert.doesNotMatch(await page.locator('#result').textContent(), /unreachable-code\s+line 3:/);
+    assert.doesNotMatch(await page.locator('#result').textContent(), /unreachable-code\s+line 3, column/);
     await editor.fill('scene start {\n  goto live\n  wait 1\n\n  say narrator "never"\n}\nscene live { wait 1 }\nscene dead {\n  wait 2\n\n  say narrator "still never"\n}');
     await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('3-5 line') && document.querySelector('#result')?.textContent.includes('8-12 line'));
     const collapsedDiagnostics = await page.locator('#result').textContent();
@@ -577,27 +940,50 @@ scene analysis {
     await editor.fill('scene start {\n  bg missing_one\n  wait "bad"\n  say missing_two "hello"\n}');
     await page.waitForFunction(() => document.querySelectorAll('#result .diagnostic-error').length >= 3);
     const continuedTypeDiagnostics = await page.locator('#result').textContent();
-    for (const line of [2, 3, 4]) assert.match(continuedTypeDiagnostics, new RegExp(`line ${line}:`));
+    for (const line of [2, 3, 4]) assert.match(continuedTypeDiagnostics, new RegExp(`line ${line}, column`));
     const unicodeTypeError = 'str result = "😀" + missing';
     const expectedColumn = unicodeTypeError.indexOf('missing') + 1;
     await editor.fill(unicodeTypeError);
-    await page.waitForFunction((column) => document.querySelector('#result')?.textContent.includes(`line 1:${column}`), expectedColumn);
+    await page.waitForFunction((column) => document.querySelector('#result')?.textContent.includes(`line 1, column ${column}`), expectedColumn);
     const unicodeTypeDiagnostic = page.locator('#result .diagnostic-link').filter({ hasText: 'type-error' }).first();
     await unicodeTypeDiagnostic.click();
     assert.equal(await editor.evaluate((element) => element.selectionStart), expectedColumn - 1);
+    await editor.fill('scene unicode {\u2028  wait "bad"\u2029}');
+    await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('line 2, column'));
+    assert.equal(await page.locator('#line-numbers').innerText(), '1\n2\n3', 'editor line numbers follow every line separator accepted by the DSL lexer');
+    assert.ok(await page.locator('#highlight .hl-line').nth(1).evaluate(node => node.classList.contains('hl-error')), 'diagnostic underlines use the lexer line after a Unicode separator');
     await editor.fill('say narrator "unterminated\nwait (\nsay narrator "valid"');
     await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('syntax-error') && document.querySelectorAll('#result .diagnostic-error').length >= 2);
     const continuedSyntaxDiagnostics = await page.locator('#result').textContent();
-    assert.match(continuedSyntaxDiagnostics, /line 1:/);
-    assert.match(continuedSyntaxDiagnostics, /line 2:/);
+    assert.match(continuedSyntaxDiagnostics, /行 1:14/);
+    assert.match(continuedSyntaxDiagnostics, /行 2:7/);
     await editor.fill('asset bg missing = "asset/__missing_diagnostic_jump__.png"\nscene start { bg missing }');
     await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('project-error'));
     const projectErrorLink = page.locator('#result .diagnostic-link').filter({ hasText: 'project-error' }).first();
-    assert.equal(await projectErrorLink.getAttribute('title'), 'クリックして該当行へ移動');
+    assert.equal(await projectErrorLink.getAttribute('title'), 'Click to jump to this line');
     await projectErrorLink.click();
     assert.equal(await editor.evaluate((element) => document.activeElement === element), true);
     const missingAssetSource = 'asset bg missing = "asset/__missing_diagnostic_jump__.png"\nscene start { bg missing }';
     assert.equal(await editor.evaluate((element) => element.selectionStart), missingAssetSource.indexOf('asset/__missing_diagnostic_jump__.png'));
+    const includedModuleSource = 'asset image absent = "asset/__missing_from_included_module__.png"\n';
+    await editor.fill('include diagnostic-module.tds as diagnostics\nscene start { wait 1 }');
+    await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('diagnostic-module.tds'));
+    const includedAssetDiagnostic = page.locator('#result .diagnostic-link').filter({ hasText: 'project-error' }).first();
+    await includedAssetDiagnostic.click();
+    await page.waitForFunction(() => document.querySelector('#scene-name')?.value === 'diagnostic-module.tds');
+    assert.equal(await editor.inputValue(), includedModuleSource);
+    assert.equal(await editor.evaluate((element) => element.selectionStart), includedModuleSource.indexOf('asset/__missing_from_included_module__.png'));
+    await fs.writeFile(syntaxDiagnosticModulePath, 'fn broken() -> none {\n  wait (\n}\n', 'utf8');
+    await editor.fill('include syntax-diagnostic-module.tds as syntax_diagnostic\nscene start { wait 1 }');
+    await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('syntax-diagnostic-module.tds'));
+    const includedSyntaxDiagnostic = page.locator('#result .diagnostic-link').filter({ hasText: 'syntax-error' }).first();
+    assert.match(await includedSyntaxDiagnostic.textContent(), /syntax-diagnostic-module\.tds.*行 2:9/);
+    await includedSyntaxDiagnostic.click();
+    await page.waitForFunction(() => document.querySelector('#scene-name')?.value === 'syntax-diagnostic-module.tds');
+    const includedSyntaxSource = 'fn broken() -> none {\n  wait (\n}\n';
+    assert.equal(await editor.evaluate((element) => element.selectionStart), includedSyntaxSource.indexOf('\n') + 1 + 8,
+      'cross-file syntax diagnostics navigate to the included file and original token column');
+    await fs.writeFile(syntaxDiagnosticModulePath, validSyntaxDiagnosticModuleSource, 'utf8');
     const linkedUnreachableSource = 'scene start {\ngoto ending\nsay narrator "dead"\n}\nscene ending { wait 1 }';
     await editor.fill(linkedUnreachableSource);
     await page.waitForFunction(() => document.querySelector('#result')?.textContent.includes('unreachable-code'));
@@ -781,6 +1167,7 @@ scene analysis {
       ['global dict[str] labels={"first":{"next":"go"}}\nscene main{choice labels["first"]["next"]{"ok"{say narrator "selected"}}}', 'global dict[str] labels = { "first": { "next": "go" } }\nscene main {\n  choice labels["first"]["next"] {\n    "ok" {\n      say narrator "selected"\n    }\n  }\n}'],
       ['fn calculate(a:int,b:dict[str])->dict[int]{if a>=0 and not(b["ready"]=="no"){return {"ok":1}}else{return {"ok":0}}}', 'fn calculate(a: int, b: dict[str]) -> dict[int] {\n  if a >= 0 and not (b["ready"] == "no") {\n    return { "ok": 1 }\n  } else {\n    return { "ok": 0 }\n  }\n}'],
       ['scene incomplete {\nset value = fn(\n{"key":1}\n)\n}', 'scene incomplete {\n  set value = fn(\n  { "key": 1 }\n  )\n}'],
+      ['}\nelse ] include if else "unterminated ] "unterminated { parallel', '}\nelse] include if else "unterminated ] " unterminated {\n  parallel'],
       ['\uFEFFscene bom{say narrator "normalized"}', 'scene bom {\n  say narrator "normalized"\n}'],
       ['scene unicode {\u2028say narrator "line"\u2029}', 'scene unicode {\n  say narrator "line"\n}'],
     ];
@@ -940,25 +1327,12 @@ scene analysis {
     await editor.fill('scene virtual_close {\n  say narrator "line"\n  ');
     await editor.evaluate((element) => element.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: '}' })));
     assert.equal(await editor.inputValue(), 'scene virtual_close {\n  say narrator "line"\n}');
-    await editor.fill(`asset bg school = "asset/bg/school.jpg"
-fn greet(name: str) -> none {
-  # greeting
-  say narrator "Hello {name}"
-}
-scene start { greet("range") }`);
+    await editor.fill(`asset bg school = "asset/bg/school.jpg"\nfn greet(name: str) -> none {\n  # greeting\n  say narrator "Hello {name}"\n}\nscene start { greet("range") }`);
     await page.waitForTimeout(100);
     for (const selector of ['.hl-keyword', '.hl-type', '.hl-function', '.hl-declaration', '.hl-scene', '.hl-asset', '.hl-string', '.hl-interpolation', '.hl-comment', '.hl-punctuation']) {
       assert.ok(await page.locator(`#highlight ${selector}`).count() >= 1, `Missing syntax scope ${selector}`);
     }
-    await editor.fill(`asset bg school = "asset/bg/school.jpg"
-fn greet(name: str) -> none {
-  # greeting
-  say narrator "Hello {name}"
-}
-scene start {
-  greet("range")
-  show hero.normal far_left
-}`);
+    await editor.fill(`asset bg school = "asset/bg/school.jpg"\nfn greet(name: str) -> none {\n  # greeting\n  say narrator "Hello {name}"\n}\nscene start {\n  greet("range")\n  show hero.normal far_left\n}`);
     await page.waitForTimeout(100);
     assert.ok(await page.locator('#highlight .hl-builtin').filter({ hasText: 'far_left' }).count() >= 1);
     assert.equal(await page.locator('#highlight .hl-string').first().evaluate((element) => getComputedStyle(element).color), 'rgb(156, 220, 254)');

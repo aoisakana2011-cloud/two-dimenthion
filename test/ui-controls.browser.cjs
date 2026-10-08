@@ -40,10 +40,11 @@ const { seedEmptyProject } = require('../tools/project-layout');
     '.slider{position:absolute;left:30px;top:100px;width:300px;height:24px;accent-color:#94b5e8}',
     '.mute{position:absolute;left:30px;top:150px;width:24px;height:24px}',
     '.opacity{position:absolute;left:30px;top:200px;width:300px;height:24px}',
+    '.precision{position:absolute;left:30px;top:240px;width:300px;height:24px}',
     '.vertical{position:absolute;left:360px;top:20px;width:32px;height:180px}',
   ].join('\n'));
   await fs.writeFile(path.join(screens, 'title.html'), '<main><button class="open" data-action="open-screen" data-target="sound">Sound settings</button><button data-action="start">Start</button></main>');
-  await fs.writeFile(path.join(screens, 'sound.html'), '<main><input class="master" type="range" min="0" max="1" step="0.01" data-setting="audio.master" aria-label="Master volume"><input class="slider" type="range" min="0" max="1" step="0.01" data-setting="audio.bgm" data-skin="romanceVolume" aria-label="BGM volume"><input class="vertical" type="range" min="0" max="1" step="0.01" data-setting="audio.voice" data-skin="romanceVolumeVertical" aria-label="Vertical voice volume"><input class="mute" type="checkbox" data-setting="audio.bgmMuted" data-skin="romanceToggle" aria-label="Mute BGM"><input class="opacity" type="range" min="0" max="1" step="0.01" data-setting="ui.dialogOpacity" aria-label="Message opacity"></main>');
+  await fs.writeFile(path.join(screens, 'sound.html'), '<main><input class="master" type="range" min="0" max="1" step="0.01" data-setting="audio.master" aria-label="Master volume"><input class="slider" type="range" min="0" max="1" step="0.01" data-setting="audio.bgm" data-skin="romanceVolume" aria-label="BGM volume"><input class="vertical" type="range" min="0" max="1" step="0.01" data-setting="audio.voice" data-skin="romanceVolumeVertical" aria-label="Vertical voice volume"><input class="mute" type="checkbox" data-setting="audio.bgmMuted" data-skin="romanceToggle" aria-label="Mute BGM"><input class="opacity" type="range" min="0" max="1" step="0.01" data-setting="ui.dialogOpacity" aria-label="Message opacity"><input class="precision" type="range" min="0" max="1" step="0.00000001" data-setting="audio.se" aria-label="Precision volume"></main>');
   const child = spawn(process.execPath, [path.resolve(__dirname, '../Edit/server.js'), '--project', project.projectRoot], {
     cwd: path.resolve(__dirname, '..'), env: { ...process.env, PORT: '0' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -71,6 +72,11 @@ const { seedEmptyProject } = require('../tools/project-layout');
     await page.locator('#screen-overlay .novel-skinned-control[data-skin="romanceVolume"]').click({ position: { x: 150, y: 12 } });
     assert.ok(Math.abs(Number(await slider.inputValue()) - 0.5) < 0.03, 'skinned slider click geometry maps to its value range');
     await slider.fill('0.37');
+    const precision = page.locator('#screen-overlay input[data-setting="audio.se"]');
+    await precision.fill('0.5');
+    await precision.focus();
+    await page.keyboard.press('ArrowRight');
+    assert.equal(Number(await precision.inputValue()), 0.50000001, 'range keyboard increments preserve steps below single-precision resolution');
     const vertical = page.locator('#screen-overlay .novel-skinned-control[data-skin="romanceVolumeVertical"]');
     await vertical.click({ position: { x: 16, y: 18 } });
     assert.ok(Number(await page.locator('#screen-overlay input[data-setting="audio.voice"]').inputValue()) > 0.85, 'vertical slider top maps to maximum');
@@ -80,6 +86,12 @@ const { seedEmptyProject } = require('../tools/project-layout');
     await page.locator('#screen-overlay .novel-skinned-control[data-skin="romanceToggle"]').click();
     assert.equal(await page.locator('#screen-overlay input[data-setting="audio.bgmMuted"]').isChecked(), true, 'skinned checkbox keeps native keyboard/form state');
     assert.equal(await page.locator('#screen-overlay .novel-skinned-control[data-skin="romanceToggle"] img').count(), 1);
+    const muteInput = page.locator('#screen-overlay input[data-setting="audio.bgmMuted"]');
+    await muteInput.focus();
+    await page.keyboard.press('Space');
+    assert.equal(await muteInput.isChecked(), false, 'focused skinned checkbox responds to Space like a native checkbox');
+    await page.keyboard.press('Space');
+    assert.equal(await muteInput.isChecked(), true, 'Space restores the checked state before persistence');
     await page.locator('#screen-overlay input[data-setting="ui.dialogOpacity"]').fill('0.62');
     await page.waitForTimeout(80);
     const liveMix = await page.evaluate(() => ({ master: audioBuses.master.gain.value, bgm: audioBuses.bgm.gain.value }));
@@ -87,12 +99,14 @@ const { seedEmptyProject } = require('../tools/project-layout');
     assert.ok(liveMix.bgm < 0.02, `muting BGM should silence the live channel bus: ${JSON.stringify(liveMix)}`);
     const saved = await page.evaluate(() => saveStore.readPreference('ui-settings'));
     assert.equal(saved['audio.bgm'], 0.37);
+    assert.equal(saved['audio.se'], 0.50000001);
     assert.equal(saved['audio.bgmMuted'], true);
     assert.equal(saved['audio.master'], 0.5);
     assert.equal(saved['ui.dialogOpacity'], 0.62);
     await page.reload();
     await page.locator('#screen-overlay button[data-target="sound"]').click();
     assert.equal(await page.locator('#screen-overlay input[data-setting="audio.bgm"]').inputValue(), '0.37');
+    assert.equal(Number(await page.locator('#screen-overlay input[data-setting="audio.se"]').inputValue()), 0.50000001);
     assert.equal(await page.locator('#screen-overlay input[data-setting="audio.master"]').inputValue(), '0.5');
     assert.equal(await page.locator('#screen-overlay input[data-setting="audio.bgmMuted"]').isChecked(), true);
     assert.equal(await page.locator('#screen-overlay input[data-setting="ui.dialogOpacity"]').inputValue(), '0.62');

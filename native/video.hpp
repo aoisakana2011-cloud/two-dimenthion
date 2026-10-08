@@ -27,7 +27,7 @@ class Video {
         auto* codec = avcodec_find_decoder(input->streams[index]->codecpar->codec_id);
         auto* ctx = avcodec_alloc_context3(codec);
         if (!ctx || avcodec_parameters_to_context(ctx, input->streams[index]->codecpar) < 0 || avcodec_open2(ctx, codec, nullptr) < 0) {
-            avcodec_free_context(&ctx); throw std::runtime_error("Cannot open media decoder");
+            avcodec_free_context(&ctx); throw std::runtime_error("media decoderを開けません");
         }
         return ctx;
     }
@@ -37,7 +37,7 @@ class Video {
             std::vector<float> samples(capacity * 2);
             uint8_t* out = reinterpret_cast<uint8_t*>(samples.data());
             int count = swr_convert(resampler, &out, capacity, const_cast<const uint8_t**>(audioFrame->extended_data), audioFrame->nb_samples);
-            if (count < 0 || !SDL_PutAudioStreamData(sound, samples.data(), count * 2 * sizeof(float))) throw std::runtime_error("Video audio conversion failed");
+            if (count < 0 || !SDL_PutAudioStreamData(sound, samples.data(), count * 2 * sizeof(float))) throw std::runtime_error("Video audio conversionに失敗しました");
         }
     }
     bool next() {
@@ -48,7 +48,7 @@ class Video {
                 pending = true; return true;
             }
             if (status == AVERROR_EOF) return false;
-            if (status != AVERROR(EAGAIN)) throw std::runtime_error("Video decode failed");
+            if (status != AVERROR(EAGAIN)) throw std::runtime_error("Video decodeに失敗しました");
             if (eof) return false;
             if (av_read_frame(input, packet) < 0) {
                 eof = true; avcodec_send_packet(video, nullptr);
@@ -56,9 +56,9 @@ class Video {
                 continue;
             }
             if (packet->stream_index == videoIndex) {
-                if (avcodec_send_packet(video, packet) < 0) throw std::runtime_error("Video packet failed");
+                if (avcodec_send_packet(video, packet) < 0) throw std::runtime_error("Video packetの処理に失敗しました");
             } else if (audio && packet->stream_index == audioIndex) {
-                if (avcodec_send_packet(audio, packet) < 0) throw std::runtime_error("Audio packet failed");
+                if (avcodec_send_packet(audio, packet) < 0) throw std::runtime_error("Audio packetの処理に失敗しました");
                 drainAudio();
             }
             av_packet_unref(packet);
@@ -69,10 +69,10 @@ public:
     bool finished = false;
     Video(SDL_Renderer* renderer, const std::string& path) {
         try {
-            if (avformat_open_input(&input, path.c_str(), nullptr, nullptr) < 0 || avformat_find_stream_info(input, nullptr) < 0) throw std::runtime_error("Cannot open video: " + path);
+            if (avformat_open_input(&input, path.c_str(), nullptr, nullptr) < 0 || avformat_find_stream_info(input, nullptr) < 0) throw std::runtime_error("videoを開けません: " + path);
             videoIndex = av_find_best_stream(input, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
             audioIndex = av_find_best_stream(input, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
-            if (videoIndex < 0) throw std::runtime_error("No video stream");
+            if (videoIndex < 0) throw std::runtime_error("video streamが見つかりません");
             video = decoder(videoIndex); frame = av_frame_alloc(); audioFrame = av_frame_alloc(); packet = av_packet_alloc();
             auto* stream = input->streams[videoIndex];
             origin = stream->start_time == AV_NOPTS_VALUE ? 0 : stream->start_time * av_q2d(stream->time_base);
@@ -80,11 +80,11 @@ public:
             if (!texture) throw std::runtime_error(SDL_GetError());
             if (!SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND)) throw std::runtime_error(SDL_GetError());
             scaler = sws_getContext(video->width, video->height, video->pix_fmt, video->width, video->height, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
-            if (!scaler) throw std::runtime_error("Cannot create video scaler");
+            if (!scaler) throw std::runtime_error("video scalerを作成できません");
             pixels.resize(static_cast<size_t>(video->width) * video->height * 4);
             if (audioIndex >= 0) {
                 audio = decoder(audioIndex); AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
-                if (swr_alloc_set_opts2(&resampler, &stereo, AV_SAMPLE_FMT_FLT, 48000, &audio->ch_layout, audio->sample_fmt, audio->sample_rate, 0, nullptr) < 0 || swr_init(resampler) < 0) throw std::runtime_error("Cannot create audio resampler");
+                if (swr_alloc_set_opts2(&resampler, &stereo, AV_SAMPLE_FMT_FLT, 48000, &audio->ch_layout, audio->sample_fmt, audio->sample_rate, 0, nullptr) < 0 || swr_init(resampler) < 0) throw std::runtime_error("audio resamplerを作成できません");
                 SDL_AudioSpec spec{SDL_AUDIO_F32, 2, 48000};
                 sound = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
                 if (!sound) throw std::runtime_error(SDL_GetError());

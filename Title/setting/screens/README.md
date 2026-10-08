@@ -1,6 +1,6 @@
 # 画面UIの作り方
 
-タイトル、ポーズ、セーブ／ロード、システムなどは `setting/game-screens.json` から画面ごとのHTMLと共通CSSを参照します。サンプル作品では音量・ミュート・会話欄不透明度を独立ページへ遷移させず、環境設定画面内にまとめています。シナリオ本文や会話欄は `player-ui.json` とTDSの担当です。
+タイトル、ポーズ、セーブ／ロード、システム、サウンドなどは `setting/game-screens.json` から画面ごとのHTMLと共通CSSを参照します。サンプル作品では操作・表示設定を `system` 画面、音量・ミュート・会話欄不透明度を `sound` 画面に分け、タイトル画面からそれぞれへ遷移します。シナリオ本文や会話欄の見た目は `player-ui.json` とTDSの担当です。
 
 ```json
 {
@@ -66,6 +66,6 @@ HTMLは画面の内容と操作、CSSは位置・色・画像・hoverなどの�
 
 Browserでは画像をBlobとして保存し、セーブ本体・一覧metadata・サムネイルを同一IndexedDBトランザクションで更新します（IndexedDBが使えない場合のlocalStorage fallbackには画像保存がありません）。Nativeではセーブ先ディレクトリの `slot-N.json` と `thumb-slot-N.png` に分けて保存します。通常のWindows版ではSDLのユーザーデータ領域が使われ、`NOVEL_SAVE_ROOT` が指定されていればその保存先が優先されます。Nativeも対応するサムネイルが欠損・破損していてもセーブ本体をロードできます。
 
-設定操作は `ui-controls.txt` に初期値と許可キーを宣言し、HTMLで `input type="range"` または `type="checkbox"` と `data-setting` を使います。SYSTEM画面では `ui.shortcut.F1`〜`ui.shortcut.F12` の割り当てもボタンで変更できます。音量・ミュート・会話欄透明度・ショートカットの対応値は [CONTROLS.md](CONTROLS.md) を参照してください。画面用画像の用途別フォルダーと、音量バー用素材の現状は [UI画像素材](../../asset/ui/README.md) を参照してください。
+設定操作は `ui-controls.txt` に初期値と許可キーを宣言し、HTMLで `input type="range"` または `type="checkbox"` と `data-setting` を使います。SYSTEM画面では `ui.shortcut.F1`〜`ui.shortcut.F12` の割り当てもボタンで変更できます。音量・ミュート・会話欄透明度はSOUND画面、ショートカットはSYSTEM画面で編集します。対応値は [CONTROLS.md](CONTROLS.md) を参照してください。画面用画像の用途別フォルダーと、音量バー用素材の現状は [UI画像素材](../../asset/ui/README.md) を参照してください。
 
 共通CSSでは固定キャンバス上の配置、限定的なflex/grid、色・透過、素材画像、基本的な枠線、文字揃え、単純なタグ/class/idセレクターとhover/focusを使えます。グラデーション、角丸、影、transform、transition、複雑なセレクターなど、BrowserとNativeで一致しない指定は保存・パッケージ前のコンパイルでエラーになります。`@media`、外部URL、JavaScript、インラインイベント属性も許可しません。画面の基準寸法と比率適応は共通UI設定および`game-screens.json`で管理します。素材URLは `asset/` から始まる相対パスにしてください。対応範囲は[描画互換性](RENDERING-COMPATIBILITY.md)を参照してください。

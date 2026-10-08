@@ -10,6 +10,7 @@ const PRECEDENCE: Record<string, number> = {
   '+': 50, '-': 50,
   '*': 60, '/': 60, '%': 60,
 };
+const MAX_EXPRESSION_NESTING = 256;
 
 const KEYWORDS = new Set([
   'scene', 'asset', 'character', 'struct', 'pose', 'include', 'int', 'float', 'str', 'bool', 'list', 'dict', 'none', 'global', 'const', 'let', 'true', 'false',
@@ -19,8 +20,8 @@ const KEYWORDS = new Set([
 ]);
 
 export class ParseError extends Error {
-  constructor(message: string, readonly token: Token) {
-    super(`${message} at line ${token.line}, column ${token.column}`);
+  constructor(message: string, readonly token: Token, readonly startColumn = token.column, readonly endColumn = token.sourceEndColumn ?? token.column + Math.max(token.value.length, 1)) {
+    super(`${message}（${token.line}行、${startColumn}列）`);
     this.name = 'ParseError';
   }
 }
@@ -32,8 +33,11 @@ export class Parser {
   private lastBlockEndLine = 1;
   private lastBlockEndColumn = 1;
   private readonly declaredStructs = new Set<string>();
+  private readonly allowCharacterMethodDeclaration: boolean;
+  private expressionNesting = 0;
 
-  constructor(source: string, knownStructs: Iterable<string> = []) {
+  constructor(source: string, knownStructs: Iterable<string> = [], options: { allowCharacterMethodDeclaration?: boolean } = {}) {
+    this.allowCharacterMethodDeclaration = options.allowCharacterMethodDeclaration === true;
     for (const name of knownStructs) this.declaredStructs.add(name);
     this.discoverStructNames(source);
     this.lexer = new Lexer(source);
@@ -87,7 +91,7 @@ export class Parser {
         this.skipLines();
       } else if (this.atWord('include')) {
         const include = this.parseInclude();
-        if (includeAliases.has(include.alias)) throw new ParseError(`Include alias '${include.alias}' is already used`, this.current);
+        if (includeAliases.has(include.alias)) throw new ParseError(`include alias '${include.alias}' はすでに使用されています`, this.current);
         includeAliases.add(include.alias);
         includes.push(include);
         this.endLine();
@@ -111,45 +115,46 @@ export class Parser {
     } else {
       const parts: string[] = [];
       let previous: Token | undefined;
-      while (!this.at('newline') && !this.at('eof') && !(this.atWord('as') && parts.length)) {
+      while (!this.at('newline') && !this.at('eof')
+        && !(this.atWord('as') && parts.length && previous && this.current.offset > previous.offset + previous.value.length)) {
         const token = this.current;
-        if (previous && token.offset > previous.offset + previous.value.length) throw this.error('Include path cannot contain spaces');
+        if (previous && token.offset > previous.offset + previous.value.length) throw this.error('include path に空白は使用できません');
         previous = this.take();
         parts.push(previous.value);
       }
       path = parts.join('');
-      if (!path) throw this.error('Expected include path');
+      if (!path) throw this.error('include path を指定してください');
     }
     this.expectWordValue('as');
-    const alias = this.expectIdentifier('Expected include alias after as');
+    const alias = this.expectIdentifier('as の後に include の別名を指定してください');
     return { path, alias, line: start.line, column: start.column };
   }
 
   private parseAsset(): Asset {
     const start = this.take();
-    const type = this.expectWord('Expected asset type') as AssetKind;
-    if (!ASSET_TYPES.has(type)) throw this.error(`Unknown asset type '${type}'`);
-    const name = this.expectIdentifier('Expected asset name');
+    const type = this.expectWord('asset の種類を指定してください') as AssetKind;
+    if (!ASSET_TYPES.has(type)) throw this.error(`不明な asset type '${type}' です`);
+    const name = this.expectIdentifier('asset 名を指定してください');
     this.expect('=');
-    const pathToken = this.expect('string', 'Asset path must be a string');
+    const pathToken = this.expect('string', 'asset path は文字列で指定してください');
     this.rejectUnknownEscapes(pathToken);
     const path = pathToken.value;
     let volume: number | undefined;
     if (!this.atLineEnd()) {
       if (!['bgm', 'se', 'voice'].includes(type)) throw this.error(`asset ${type} は volume を指定できません`);
       this.expectWordValue('volume');
-      if (this.current.type !== 'number' || !/[.eE]/.test(this.current.value)) throw this.error('asset volume は float リテラルで指定してください（例: 0.5）');
+      if (this.current.type !== 'number' || !/[.eE]/.test(this.current.value)) throw this.error('asset の volume は float literal で指定してください（例: 0.5）');
       const value = Number(this.take().value);
-      if (!Number.isFinite(value) || value < 0 || value > 1) throw this.error('asset volume は 0.0 から 1.0 の範囲で指定してください');
+      if (!Number.isFinite(value) || value < 0 || value > 1) throw this.error('asset の volume は 0.0 から 1.0 の範囲で指定してください');
       volume = value;
-      if (!this.atLineEnd()) throw this.error('asset 宣言の volume オプションが重複しているか不正です');
+      if (!this.atLineEnd()) throw this.error('asset 宣言の volume option が重複しているか不正です');
     }
-    return { kind: 'asset', type, name, path, ...(volume === undefined ? {} : { volume }), line: start.line, column: start.column };
+    return { kind: 'asset', type, name, path, ...(volume === undefined ? {} : { volume }), line: pathToken.line, column: pathToken.column + 1 };
   }
 
   private parseCharacter(): Character {
     const start = this.take();
-    const name = this.expectIdentifier('Expected character name');
+    const name = this.expectIdentifier('character 名を指定してください');
     this.skipLines();
     this.expect('{');
     const properties: Character['properties'] = [];
@@ -159,9 +164,9 @@ export class Parser {
       const propertyToken = this.current;
       if (this.atWord('pose')) {
         this.take();
-        const pose = this.expectIdentifier('Expected pose name');
+        const pose = this.expectIdentifier('pose name を指定してください');
         this.expect('=');
-        const pathToken = this.expect('string', 'Character pose path must be a string');
+        const pathToken = this.expect('string', 'character pose の image path は string literal で指定してください');
         this.rejectUnknownEscapes(pathToken);
         const path = pathToken.value;
         let yOffset: number | undefined;
@@ -173,15 +178,15 @@ export class Parser {
             if (this.current.value === '-') sign = -1;
             this.take();
           }
-          const offsetToken = this.expect('number', 'Pose y_offset must be an integer');
-          if (!/^\d+$/.test(offsetToken.value)) throw this.error('Pose y_offset must be an integer');
+          const offsetToken = this.expect('number', 'pose y_offset は整数で指定してください');
+          if (!/^\d+$/.test(offsetToken.value)) throw this.error('pose y_offset は整数で指定してください');
           const magnitude = BigInt(offsetToken.value);
-          if (magnitude > 1_000_000n) throw this.error('Pose y_offset must be between -1000000 and 1000000 px');
+          if (magnitude > 1_000_000n) throw this.error('pose y_offset は -1000000 px から 1000000 px の範囲で指定してください');
           yOffset = Number(magnitude) * sign;
         }
-        poses.push({ name: pose, path, ...(yOffset === undefined ? {} : { yOffset }), line: propertyToken.line, column: propertyToken.column });
+        poses.push({ name: pose, path, ...(yOffset === undefined ? {} : { yOffset }), line: pathToken.line, column: pathToken.column + 1 });
       } else {
-        const property = this.expectIdentifier('Expected character property or pose declaration');
+        const property = this.expectIdentifier('character の property または pose declaration を指定してください');
         this.expect('=');
         properties.push({ name: property, value: this.parseExpression(), line: propertyToken.line, column: propertyToken.column });
       }
@@ -193,16 +198,26 @@ export class Parser {
   }
 
   private parseStruct(): StructDef {
-    const start = this.take(); const name = this.expectIdentifier('Expected struct name');
+    const start = this.take(); const name = this.expectIdentifier('struct 名を指定してください');
     this.skipLines();
     this.expect('{'); this.skipLines(); const fields: Record<string, PrimitiveType> = {}; const fieldLocations: Record<string, NodeLocation> = {};
     while (!this.atValue('}')) {
       const fieldToken = this.current;
-      const field = this.expectIdentifier('Expected field name'); this.expect(':');
-      const type = this.expectWord('Expected field type') as PrimitiveType;
-      if (type !== 'int' && type !== 'float' && type !== 'str' && type !== 'bool') throw this.error('Struct fields must be int, float, str or bool');
-      if (fields[field]) throw this.error(`Duplicate struct field '${field}'`);
-      fields[field] = type; fieldLocations[field] = { line: fieldToken.line, column: fieldToken.column }; this.endLine(); this.skipLines();
+      const field = this.expectIdentifier('field nameを指定してください'); this.expect(':');
+      const type = this.expectWord('field typeを指定してください') as PrimitiveType;
+      if (type !== 'int' && type !== 'float' && type !== 'str' && type !== 'bool') throw this.error('struct field の type は int、float、str、bool のいずれかにしてください');
+      if (Object.hasOwn(fields, field)) throw this.error(`struct field '${field}' が重複しています`);
+      // Struct fields are user-controlled identifiers. Define them as own
+      // data properties so names such as `__proto__` do not invoke Object's
+      // legacy prototype setter.
+      Object.defineProperty(fields, field, { value: type, enumerable: true, configurable: true, writable: true });
+      Object.defineProperty(fieldLocations, field, {
+        value: { line: fieldToken.line, column: fieldToken.column },
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      this.endLine(); this.skipLines();
     }
     this.take(); this.declaredStructs.add(name); return { kind: 'struct', name, fields, fieldLocations, line: start.line, column: start.column };
   }
@@ -210,11 +225,11 @@ export class Parser {
 
   private parseFunction(): FunctionDef {
     const start = this.take();
-    const nameToken = this.expect('word', 'Expected function name');
+    const nameToken = this.expect('word', '関数名を指定してください');
     // `character` is reserved as a declaration keyword, but is also the
     // intentional method name in qualified APIs such as walk.character().
-    if (KEYWORDS.has(nameToken.value) && nameToken.value !== 'character') {
-      throw new ParseError(`莠育ｴ・ｪ・'${nameToken.value}' 縺ｯ隴伜挨蟄舌→縺励※菴ｿ逕ｨ縺ｧ縺阪∪縺帙ｓ`, nameToken);
+    if (KEYWORDS.has(nameToken.value) && !(nameToken.value === 'character' && this.allowCharacterMethodDeclaration)) {
+      throw new ParseError(`予約語 '${nameToken.value}' は関数名として使用できません`, nameToken);
     }
     const name = nameToken.value;
     this.expect('(');
@@ -222,7 +237,7 @@ export class Parser {
     if (!this.atValue(')')) {
       while (true) {
         const paramToken = this.current;
-        const paramName = this.expectIdentifier('Expected parameter name');
+        const paramName = this.expectIdentifier('引数名を指定してください');
         this.expect(':');
         const type = this.parseType(false);
         params.push({ name: paramName, type, line: paramToken.line, column: paramToken.column });
@@ -238,23 +253,23 @@ export class Parser {
 
   private parseScene(): Scene {
     const start = this.take();
-    const name = this.expectIdentifier('Expected scene name');
+    const name = this.expectIdentifier('scene name を指定してください');
     const body = this.parseBraced();
     return { kind: 'scene', name, body, line: start.line, column: start.column, endLine: this.lastBlockEndLine, endColumn: this.lastBlockEndColumn };
   }
 
   private parseType(allowNone: boolean): ValueType {
-    const word = this.expectWord('Expected type');
+    const word = this.expectWord('型を指定してください');
     if (word === 'dict' || word === 'list') {
       this.expect('[');
-      const value = this.expectWord(`Expected ${word} element type`) as PrimitiveType;
-      if (!['int', 'float', 'str', 'bool'].includes(value)) throw this.error(`${word} element type must be int, float, str or bool`);
+      const value = this.expectWord(`${word} の要素型を指定してください`) as PrimitiveType;
+      if (!['int', 'float', 'str', 'bool'].includes(value)) throw this.error(`${word} の要素型は int、float、str、bool のいずれかにしてください`);
       this.expect(']');
       return { kind: word, value };
     }
     if (TYPES.has(word) && (allowNone || word !== 'none')) return word as ValueType;
     if (this.declaredStructs.has(word)) return { kind: 'struct', name: word };
-    throw this.error(`Invalid type '${word}'`);
+    throw this.error(`不明な型 '${word}' です`);
   }
 
   private peekToken(offset = 0): Token {
@@ -272,16 +287,16 @@ export class Parser {
     return hasQualifier && this.peekToken(offset).value === '(';
   }
   private parseQualifiedCallName(): string {
-    const first = this.expect('word', 'Expected function name');
+    const first = this.expect('word', '関数名を指定してください');
     if (KEYWORDS.has(first.value) && first.value !== 'list') throw new ParseError(`予約語 '${first.value}' は関数名として使用できません`, first);
     const parts = [first.value];
     while (this.optional('.')) {
-      const part = this.expect('word', 'Expected qualified function name');
+      const part = this.expect('word', '修飾関数名を指定してください');
       // `list` is a type keyword but also a natural method name in namespaces
       // such as runtime.state.characters.list(). Keep the exception scoped to
       // qualified call segments; declarations and bare identifiers stay reserved.
       if (KEYWORDS.has(part.value) && part.value !== 'list' && part.value !== 'character') {
-        throw new ParseError(`Reserved keyword '${part.value}' cannot be used as a function name`, part);
+        throw new ParseError(`予約語 '${part.value}' は関数名として使用できません`, part);
       }
       parts.push(part.value);
     }
@@ -289,15 +304,15 @@ export class Parser {
   }
   private parseStatement(): Statement {
     const token = this.current;
-    if (token.type !== 'word') throw this.error('Expected command');
+    if (token.type !== 'word') throw this.error('命令を指定してください');
     const command = token.value;
     const topLevelOnly: Record<string, string> = {
-      asset: 'asset 宣言はファイルのトップレベルでのみ使用できます',
-      character: 'character 宣言はファイルのトップレベルでのみ使用できます',
-      fn: '関数宣言はファイルのトップレベルでのみ使用できます',
-      include: 'include 宣言はファイルのトップレベルでのみ使用できます',
-      scene: 'scene 宣言はファイルのトップレベルでのみ使用できます',
-      struct: 'struct 宣言はファイルのトップレベルでのみ使用できます',
+      asset: 'asset 宣言はファイルの top-level でのみ使用できます',
+      character: 'character 宣言はファイルの top-level でのみ使用できます',
+      fn: '関数宣言はファイルの top-level でのみ使用できます',
+      include: 'include 宣言はファイルの top-level でのみ使用できます',
+      scene: 'scene 宣言はファイルの top-level でのみ使用できます',
+      struct: 'struct 宣言はファイルの top-level でのみ使用できます',
     };
     if (topLevelOnly[command]) throw this.error(topLevelOnly[command]);
     if (this.isQualifiedCallAhead()) {
@@ -324,7 +339,7 @@ export class Parser {
           type = command as PrimitiveType;
         }
         const nameToken = this.current;
-        const name = this.expectIdentifier('Expected variable name');
+        const name = this.expectIdentifier('変数名を指定してください');
         this.expect('=');
         return { kind: 'declare', name, nameLine: nameToken.line, nameColumn: nameToken.column, type, constant: command === 'const', initial: this.parseExpression(), line: token.line, column: token.column };
       }
@@ -366,7 +381,7 @@ export class Parser {
       case 'for': {
         this.take();
         const nameToken = this.current;
-        const name = this.expectIdentifier('Expected loop variable');
+        const name = this.expectIdentifier('loop 変数名を指定してください');
         if (this.atWord('in')) {
           this.take();
           const iterable = this.parseExpression();
@@ -422,8 +437,8 @@ export class Parser {
           this.rejectUnknownEscapes(path);
           scene = path.value;
         } else {
-          scene = this.expectIdentifier('Expected a scene name or quoted external scene path');
-          if (!this.atLineEnd()) throw this.error('External scene paths must be quoted');
+      scene = this.expectIdentifier('scene name または引用符で囲んだ external scene path を指定してください');
+          if (!this.atLineEnd()) throw this.error('external scene path は引用符で囲んでください');
         }
         // Source may use Windows separators, but compiled programs and package
         // keys always use '/'.  Normalize at the language boundary so local
@@ -433,7 +448,7 @@ export class Parser {
         const safeDirectory = (part: string) => part.length > 0 && part.length <= 120 && part !== '.' && part !== '..' && !/[<>:"|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part);
         const file = parts.pop() || '';
         const safeFile = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$/.test(file) && !/[. ]$/.test(file) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(file);
-        if (scene.startsWith('/') || parts.some((part) => !safeDirectory(part)) || !safeFile) throw this.error('Invalid scene path');
+    if (scene.startsWith('/') || parts.some((part) => !safeDirectory(part)) || !safeFile) throw this.error('scene path が不正です');
         scene = [...parts, file].join('/');
         return { kind: 'goto', scene, line: start.line, column: start.column, endLine: this.current.line, endColumn: this.current.column };
       }
@@ -447,7 +462,7 @@ export class Parser {
         } else if (this.current.type === 'word') {
           const spkToken = this.current;
           this.take();
-          if (this.atLineEnd()) throw this.error('say requires quoted text');
+          if (this.atLineEnd()) throw this.error('say body は引用符で囲んでください');
           speaker = spkToken.value;
           textExpr = this.parseExpression();
         } else {
@@ -476,7 +491,7 @@ export class Parser {
       default: {
         this.take();
         if (this.declaredStructs.has(command)) {
-          const name = this.expectIdentifier('Expected variable name');
+          const name = this.expectIdentifier('変数名を指定してください');
           this.expect('=');
           return { kind: 'declare', name, type: { kind: 'struct', name: command }, initial: this.parseExpression(), line: token.line, column: token.column };
         }
@@ -492,7 +507,7 @@ export class Parser {
 
   private parseAssignable(): { kind: 'variable'; name: string; line?: number; column?: number } | { kind: 'index'; target: Expr; key: Expr; line?: number; column?: number } {
     const token = this.current;
-    const name = this.expectIdentifier('Expected assignment target');
+    const name = this.expectIdentifier('代入先を指定してください');
     let target: any = { kind: 'variable', name, line: token.line, column: token.column };
     if (this.optional('[')) {
       const key = this.parseExpression();
@@ -500,7 +515,7 @@ export class Parser {
       target = { kind: 'index', target, key, line: token.line, column: token.column };
     }
     while (this.optional('.')) {
-      const field = this.expectIdentifier('Expected struct field');
+      const field = this.expectIdentifier('struct の field nameを指定してください');
       target = { kind: 'index', target, key: { kind: 'literal', value: field }, line: token.line, column: token.column } as any;
     }
     return target;
@@ -539,12 +554,12 @@ export class Parser {
       } else if (['bg', 'show', 'play'].includes(command) && token.value === '--layer') {
         this.take();
         args.push({ kind: 'literal', value: '--layer', line: token.line, column: token.column });
-        if (this.atLineEnd() || this.atValue('}')) throw this.error('--layer の後に層番号を指定してください');
+        if (this.atLineEnd() || this.atValue('}')) throw this.error('--layer の後に layer number を指定してください');
         args.push(this.parseExpression());
       } else if (command === 'show' && args.length === 0 && token.type === 'word' && this.peekToken().value === '.') {
         this.take();
         this.expect('.');
-        const pose = this.expectIdentifier('Expected character pose');
+        const pose = this.expectIdentifier('character の pose name を指定してください');
         args.push({ kind: 'literal', value: `${token.value}.${pose}`, line: token.line, column: token.column });
       } else if (['show', 'move'].includes(command) && args.length >= (command === 'show' ? 2 : args[0]?.kind === 'literal' && args[0].value === 'bg' ? 2 : 3) && token.type === 'word' && ['x', 'y'].includes(token.value) && ['+', '-'].includes(this.peekToken().value)) {
         const axis = this.take();
@@ -564,8 +579,8 @@ export class Parser {
       } else if (command === 'bg' && args.length === 1 && token.type === 'word' && token.value === 'wipe') {
         this.take();
         this.expect('-');
-        const direction = this.expectIdentifier('Expected wipe direction');
-        if (!['left', 'right', 'up', 'down'].includes(direction)) throw this.error('Background wipe direction must be left, right, up, or down');
+        const direction = this.expectIdentifier('wipe directionを指定してください');
+    if (!['left', 'right', 'up', 'down'].includes(direction)) throw this.error('background wipe の direction は left、right、up、down のいずれかにしてください');
         args.push({ kind: 'literal', value: `wipe-${direction}`, line: token.line, column: token.column });
       } else if (command === 'move' && args.length === 1 && args[0]?.kind === 'literal' && args[0].value === 'character') {
         if (token.type === 'word' && this.peekToken().value === 'by') {
@@ -596,6 +611,18 @@ export class Parser {
   }
 
   private parseExpression(min = 0): Expr {
+    if (this.expressionNesting >= MAX_EXPRESSION_NESTING) {
+      throw this.error(`expression nesting depth exceeds ${MAX_EXPRESSION_NESTING}`);
+    }
+    this.expressionNesting += 1;
+    try {
+      return this.parseExpressionBody(min);
+    } finally {
+      this.expressionNesting -= 1;
+    }
+  }
+
+  private parseExpressionBody(min: number): Expr {
     let left = this.parsePrefix();
     while (true) {
       const op = this.current.value;
@@ -640,7 +667,7 @@ export class Parser {
     } else if (token.type === 'number') {
       this.take();
       if (/[.eE]/.test(token.value)) {
-        if (!Number.isFinite(Number(token.value))) throw new ParseError('float literal must be finite', token);
+        if (!Number.isFinite(Number(token.value))) throw new ParseError('float literal は有限値で指定してください', token);
         expr = { kind: 'float', value: token.value, line: token.line, column: token.column };
       } else {
       let val: number | bigint;
@@ -674,7 +701,7 @@ export class Parser {
       this.skipLines();
       const entries: Array<{ key: string; value: Expr }> = [];
       if (!this.atValue('}')) {
-        const keyToken = this.expect('string', 'Dictionary keys must be strings');
+        const keyToken = this.expect('string', 'dict の key には string literal を指定してください');
         this.rejectUnknownEscapes(keyToken);
         this.skipLines();
         this.expect(':');
@@ -684,7 +711,7 @@ export class Parser {
         while (this.optional(',')) {
           this.skipLines();
           if (this.atValue('}')) break;
-          const next = this.expect('string', 'Dictionary keys must be strings');
+          const next = this.expect('string', 'dict の key には string literal を指定してください');
           this.rejectUnknownEscapes(next);
           this.skipLines();
           this.expect(':');
@@ -697,17 +724,20 @@ export class Parser {
       this.expect('}');
       expr = { kind: 'dict', entries, line: token.line, column: token.column };
     } else {
-      throw this.error('Expected expression');
+      throw this.error('式を指定してください');
     }
 
-    while (this.optional('[')) {
-      const key = this.parseExpression();
-      this.expect(']');
-      expr = { kind: 'index', target: expr, key, line: expr.line, column: expr.column };
-    }
-    while (this.optional('.')) {
-      const field = this.expectIdentifier('Expected struct field');
-      expr = { kind: 'index', target: expr, key: { kind: 'literal', value: field }, line: expr.line, column: expr.column };
+    while (true) {
+      if (this.optional('[')) {
+        const key = this.parseExpression();
+        this.expect(']');
+        expr = { kind: 'index', target: expr, key, line: expr.line, column: expr.column };
+      } else if (this.optional('.')) {
+        const field = this.expectIdentifier('struct の field nameを指定してください');
+        expr = { kind: 'index', target: expr, key: { kind: 'literal', value: field }, line: expr.line, column: expr.column };
+      } else {
+        break;
+      }
     }
     return expr;
   }
@@ -734,12 +764,16 @@ export class Parser {
 
   private rejectUnknownEscapes(token: Token): void {
     const escaped = token.unknownEscapes?.[0];
-    if (escaped) throw new ParseError(`Unknown escape sequence '\\${escaped}'`, token);
+    if (escaped) {
+      const column = token.unknownEscapeColumns?.[0] ?? token.column;
+      const endColumn = token.unknownEscapeEndColumns?.[0] ?? column + 1;
+      throw new ParseError(`不明な escape sequence '\\${escaped}' です`, token, column, endColumn);
+    }
   }
 
   private expectWordValue(value: string): void {
-    const token = this.expect('word', `Expected '${value}'`);
-    if (token.value !== value) throw new ParseError(`Expected '${value}'`, token);
+    const token = this.expect('word', `'${value}' が必要です`);
+    if (token.value !== value) throw new ParseError(`'${value}' が必要です`, token);
   }
 
   private isBlockStatement(stmt: Statement): boolean {
@@ -756,7 +790,7 @@ export class Parser {
 
   private endLine(): void {
     if (this.at('newline')) this.take();
-    else if (!this.at('eof') && !this.atValue('}')) throw this.error('Expected end of line');
+    else if (!this.at('eof') && !this.atValue('}')) throw this.error('行末が必要です');
   }
 
   private skipLines(): void {
@@ -791,7 +825,7 @@ export class Parser {
     return token;
   }
 
-  private expect(typeOrValue: string, message = `Expected ${typeOrValue}`): Token {
+  private expect(typeOrValue: string, message = `${typeOrValue} が必要です`): Token {
     if (this.current.type !== typeOrValue && this.current.value !== typeOrValue) throw this.error(message);
     return this.take();
   }
@@ -812,7 +846,7 @@ export class Parser {
     const body: Statement[] = [];
     this.skipLines();
     while (!this.atValue('}')) {
-      if (this.at('eof')) throw this.error("Expected '}'");
+      if (this.at('eof')) throw this.error("'}' が必要です");
       const stmt = this.parseStatement();
       body.push(stmt);
       this.endStatement(stmt);
@@ -826,6 +860,6 @@ export class Parser {
 }
 
 const literal = (value: number | string | bigint | boolean): Expr => ({ kind: 'literal', value });
-export function parse(source: string, knownStructs: Iterable<string> = []): Script {
-  return new Parser(source, knownStructs).parse();
+export function parse(source: string, knownStructs: Iterable<string> = [], options: { allowCharacterMethodDeclaration?: boolean } = {}): Script {
+  return new Parser(source, knownStructs, options).parse();
 }

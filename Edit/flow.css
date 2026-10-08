@@ -129,3 +129,4 @@
 #flow-test-location { margin-top:7px; padding:5px 6px; border-left:2px solid #4d8ab3; color:#c4ddeb; background:#202a30; font:10px/1.4 Consolas,monospace; overflow-wrap:anywhere; }
 #flow-test-message[data-state="error"] { color:#f48771; }
 .flow-test-panel [hidden] { display:none!important; }
+.flow-open-scene{margin:0 0 8px;padding:4px 7px;border:1px solid #3c3c3c;border-radius:2px;color:#ccc;background:#252526;font-size:10px;cursor:pointer}.flow-open-scene:hover,.flow-open-scene:focus-visible{border-color:#75beff;color:#fff;outline:1px solid #75beff}

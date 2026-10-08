@@ -75,7 +75,7 @@ function validateGameScreens(value) {
     throw new Error('画面設定の形式が不正です。');
   }
   if (value.scaleMode !== undefined && !['contain', 'cover', 'stretch'].includes(value.scaleMode)) throw new Error('scaleMode は contain、cover、stretch のいずれかで指定してください');
-  if (value.defaultBackground !== undefined && typeof value.defaultBackground !== 'string') throw new Error('defaultBackground must be an asset path string.');
+  if (value.defaultBackground !== undefined && typeof value.defaultBackground !== 'string') throw new Error('defaultBackgroundは素材パスの文字列で指定してください');
   validateControlSkins(value.controlSkins || {});
   if (value.saveId !== undefined && (typeof value.saveId !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(value.saveId))) throw new Error('saveIdは英数字・_・-で64文字以内にしてください。');
   const screenIds = Object.keys(value.screens);
@@ -88,7 +88,7 @@ function validateGameScreens(value) {
       || typeof titleScene.file !== 'string' || !titleScene.file.trim() || titleScene.file.length > 240
       || titleScene.file.replaceAll('\\', '/').split('/').some(part => !part || part === '.' || part === '..')
       || !/\.tds$/i.test(titleScene.file) || typeof titleScene.scene !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(titleScene.scene)) {
-      throw new Error('TDSタイトルシーンのファイルまたはscene名が不正です。');
+      throw new Error('Invalid TDS Title Scene file or Scene name.');
     }
   }
   const screenDocument = (reference, extension) => {
@@ -102,7 +102,7 @@ function validateGameScreens(value) {
   const roles = new Set();
   const validateImagePath = (image, screenId) => {
     const relative = String(image || '').replaceAll('\\', '/').replace(/^asset\//i, '');
-    if (relative && (relative.startsWith('/') || /^[A-Za-z]:/.test(relative) || relative.split('/').some(part => !part || part === '.' || part === '..'))) throw new Error(`Screen '${screenId}' has an invalid asset path.`);
+    if (relative && (relative.startsWith('/') || /^[A-Za-z]:/.test(relative) || relative.split('/').some(part => !part || part === '.' || part === '..'))) throw new Error(`画面「${screenId}」の素材パスが正しくありません`);
   };
   if (value.defaultBackground) validateImagePath(value.defaultBackground, 'default');
   for (const [screenId, screen] of Object.entries(value.screens)) {
@@ -119,15 +119,15 @@ function validateGameScreens(value) {
           || (key === 'count' && layout[key] > 100)) throw new Error(`画面 '${screenId}' のslotLayout.${key}が不正です。`);
       }
       const pages = screen.slotPages ?? 1;
-      if (!Number.isInteger(pages) || pages < 1 || pages > 10 || layout.count * pages > 120) throw new Error(`Screen '${screenId}' slotPages must keep the total capacity between 1 and 120.`);
+      if (!Number.isInteger(pages) || pages < 1 || pages > 10 || layout.count * pages > 120) throw new Error(`画面「${screenId}」のslotPagesは、合計枠数が1〜120になるように指定してください`);
     }
     if (screen.music !== undefined && (typeof screen.music !== 'string' || screen.music.length > 120)) throw new Error(`画面 '${screenId}' のmusic指定が不正です。`);
-    if (screen.music !== undefined && (typeof screen.music !== 'string' || screen.music.length > 240 || screen.music && screen.music.replaceAll('\\', '/').split('/').some(part => !part || part === '.' || part === '..'))) throw new Error('Invalid screen music asset path');
-    if (screen.slotStyle !== undefined && (!screen.slotStyle || typeof screen.slotStyle !== 'object' || Array.isArray(screen.slotStyle))) throw new Error('Invalid slotStyle');
+    if (screen.music !== undefined && (typeof screen.music !== 'string' || screen.music.length > 240 || screen.music && screen.music.replaceAll('\\', '/').split('/').some(part => !part || part === '.' || part === '..'))) throw new Error('画面BGMの素材パスが正しくありません');
+    if (screen.slotStyle !== undefined && (!screen.slotStyle || typeof screen.slotStyle !== 'object' || Array.isArray(screen.slotStyle))) throw new Error('slotStyleにはオブジェクトを指定してください');
     for (const key of ['image', 'hoverImage', 'color', 'hoverColor', 'backgroundColor', 'hoverBackgroundColor', 'borderColor', 'hoverBorderColor']) {
-      if (screen.slotStyle?.[key] !== undefined && (typeof screen.slotStyle[key] !== 'string' || screen.slotStyle[key].length > 240)) throw new Error(`Invalid slotStyle.${key}`);
+      if (screen.slotStyle?.[key] !== undefined && (typeof screen.slotStyle[key] !== 'string' || screen.slotStyle[key].length > 240)) throw new Error(`slotStyle.${key}は240文字以内の文字列で指定してください`);
     }
-    if (screen.slotStyle?.fontSize !== undefined && (!Number.isInteger(screen.slotStyle.fontSize) || screen.slotStyle.fontSize < 8 || screen.slotStyle.fontSize > 48)) throw new Error('Invalid slotStyle.fontSize');
+    if (screen.slotStyle?.fontSize !== undefined && (!Number.isInteger(screen.slotStyle.fontSize) || screen.slotStyle.fontSize < 8 || screen.slotStyle.fontSize > 48)) throw new Error('slotStyle.fontSizeは8〜48の整数で指定してください');
     const imageNames = [screen.background === undefined ? value.defaultBackground : screen.background, screen.slotStyle?.image, screen.slotStyle?.hoverImage, ...screen.items.flatMap(item => [item?.image || '', item?.hoverImage || ''])];
     for (const image of imageNames) validateImagePath(image, screenId);
     const itemIds = new Set();
@@ -142,12 +142,12 @@ function validateGameScreens(value) {
       for (const key of ['x', 'y', 'width', 'height']) {
         if (!Number.isInteger(item[key]) || item[key] < 0 || item[key] > 4096 || ((key === 'width' || key === 'height') && item[key] === 0)) throw new Error(`ボタン '${item.id}' の${key}が不正です。`);
       }
-      if (item.display !== undefined && !['text', 'image', 'both'].includes(item.display)) throw new Error(`Invalid button display mode: ${item.id}`);
+      if (item.display !== undefined && !['text', 'image', 'both'].includes(item.display)) throw new Error(`ボタン「${item.id}」の表示形式が正しくありません`);
       if (item.action === 'open-screen' && (typeof item.target !== 'string' || !Object.hasOwn(value.screens, item.target))) throw new Error(`ボタン '${item.id}' の遷移先画面がありません。`);
-      if (item.action === 'slot-page' && !/^[0-9]$/.test(String(item.target ?? ''))) throw new Error(`Button '${item.id}' slot page must be an integer from 0 to 9.`);
+      if (item.action === 'slot-page' && !/^[0-9]$/.test(String(item.target ?? ''))) throw new Error(`ボタン「${item.id}」のセーブ枠ページは0〜9の整数で指定してください`);
     }
   }
-  if (!value.titleScene && !value.screens[value.initial].template && !value.screens[value.initial].items.some(item => item.action === 'start')) throw new Error('開始画面には「ゲーム開始」ボタンまたはTDSタイトルシーンが必要です。');
+  if (!value.screens[value.initial].template && !value.screens[value.initial].items.some(item => item.action === 'start')) throw new Error('開始画面には「ゲーム開始」ボタンが必要です。');
   return value;
 }
 

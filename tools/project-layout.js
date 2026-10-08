@@ -8,7 +8,11 @@ const LEGACY_SETTING_FILE = 'setting.txt';
 const DEFAULT_SETTINGS = Object.freeze({ scenario_dir: 'senario', asset_dir: 'asset', start_file: 'main.tds', native_ui_theme: '' });
 function safeRelative(value, key) {
   const text = String(value || '').trim().replaceAll('\\', '/');
-  if (!text || path.posix.isAbsolute(text) || path.win32.isAbsolute(text) || /^[A-Za-z]:/.test(text) || text.split('/').some((part) => !part || part === '.' || part === '..')) throw Error(`${key} は作品フォルダー内の相対パスを指定してください`);
+  const parts = text.split('/');
+  const invalidPart = part => !part || part === '.' || part === '..'
+    || /[<>:\"|?*\x00-\x1f]/.test(part) || /[. ]$/.test(part)
+    || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part);
+  if (!text || path.posix.isAbsolute(text) || path.win32.isAbsolute(text) || /^[A-Za-z]:/.test(text) || parts.some(invalidPart)) throw Error(`${key}には安全な作品相対パスを指定してください`);
   return text;
 }
 function isInside(root, target) {
@@ -71,16 +75,18 @@ function parseSettings(source) {
   const settings = {};
   const seen = new Set();
   for (const raw of source.split(/\r?\n/)) {
-    const line = raw.replace(/#.*/, '').trim();
+    const commentStart = raw.search(/(?<!\\)#/);
+    const line = (commentStart < 0 ? raw : raw.slice(0, commentStart)).replaceAll('\\#', '#').trim();
     if (!line) continue;
     const match = /^([a-z][a-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
     if (!match) throw Error(`setting.txt の記法が不正です: ${raw}`);
     const [, key, value] = match;
     if (!Object.hasOwn(DEFAULT_SETTINGS, key) && key !== 'title') throw Error(`setting.txt の設定項目 '${key}' は未対応です`);
+    if (seen.has(key)) throw Error(`setting.txt の設定項目 '${key}' が重複しています`);
     settings[key] = value;
     seen.add(key);
   }
-  if (['scenario_dir', 'asset_dir', 'start_file'].some((key) => !seen.has(key))) throw Error('setting.txt requires scenario_dir, asset_dir, and start_file');
+  if (['scenario_dir', 'asset_dir', 'start_file'].some((key) => !seen.has(key))) throw Error('setting.txtにはscenario_dir、asset_dir、start_fileが必要です');
   settings.scenario_dir = safeRelative(settings.scenario_dir, 'scenario_dir');
   settings.asset_dir = safeRelative(settings.asset_dir, 'asset_dir');
   settings.start_file = safeRelative(settings.start_file, 'start_file');
@@ -93,7 +99,8 @@ function readSettings(projectRoot) {
   return parseSettings(fs.readFileSync(settingFile, 'utf8'));
 }
 function settingTemplate(title) {
-  return `# Novel Script project settings\n# Paths are relative to the project root; use /.\nscenario_dir = senario\nasset_dir = asset\nstart_file = main.tds\ntitle = ${title}\n`;
+  const escapedTitle = String(title).replaceAll('#', '\\#');
+  return `# Novel Scriptのプロジェクト設定\n# パスは作品フォルダーからの相対パスで、区切りには / を使います。\nscenario_dir = senario\nasset_dir = asset\nstart_file = main.tds\ntitle = ${escapedTitle}\n`;
 }
 function projectOption(args = []) {
   const index = args.indexOf('--project');
@@ -156,9 +163,10 @@ function seedEmptyProject(root) {
     'Paths in `setting.txt` are project-root relative. Paths to images in screen/UI JSON are relative to the project asset folder.',
     'The display canvas size is owned by `player-ui.json`; `game-screens.json` reuses it and does not store another width/height pair.',
     '`player-ui.json` may define `controls` (`enabled`, `anchor`, `buttons`) for Save/Load buttons above the dialogue. Each button supports pixel geometry, text/image/both display, normal/hover labels, images, and colors.',
-    '`game-screens.json` screens may use `role: "save-slots"` or `"load-slots"`; `slotLayout` and `slotStyle` control the slot list. Missing slot screens and Pause-menu actions are supplied as defaults for older projects.',
-    'An optional top-level `titleScene: { "file": "title.tds", "scene": "title" }` starts playback in a TDS scene instead of the JSON title overlay. It is the Scene Flow root and native package entry; put title choices and BGM in that scene.',
-    'Browser Save/Load slots use browser local storage scoped to the project; Test-play has its own namespace. Native Save/Load writes `saves/slot-N.json` beside the package, so keep that folder with the packaged game when moving it.',
+    '`game-screens.json` uses the initial screen when main.tds calls start(). New projects include a Start screen; put startup video or demo commands before start() in main.tds and story commands after it or in a later scene.',
+    '`game-screens.json` screens may use `role: \"save-slots\"` or `\"load-slots\"`;  `slotLayout` and `slotStyle` control the slot list. Missing slot screens and Pause-menu actions are supplied as defaults for older projects.',
+    'The entry scene is selected by `start_file`. Put title sequencing in main.tds and call start() to display the configured initial screen.',
+    'Browser Save/Load slots use browser storage scoped to the project; Test-play has its own namespace. Native Save/Load uses the operating system user-data folder (or `NOVEL_SAVE_ROOT` when configured), so moving the package does not move its saves.',
     'The editor exposes text, Markdown, and JSON files in this folder under Explorer → `setting/`.', '',
   ].join('\n'), 'setting README');
   ensureProjectFile(projectRoot, path.join(settingsRoot, 'asset-folders.txt'), [
@@ -176,7 +184,8 @@ function seedEmptyProject(root) {
     'Supported formats: PNG, JPG, JPEG, WebP, GIF.', '',
   ].join('\n'), 'background asset guide');
   const main = path.join(layout.scenesRoot, 'main.tds');
-  ensureProjectFile(layout.projectRoot, main, 'scene main {\n  say narrator "新しい作品を始めます。"\n}\n', 'main.tds');
+  ensureProjectFile(layout.projectRoot, main, 'scene main {\n  # Play an intro video or demo before opening the title screen.\n  start()\n  goto story\n}\n\nscene story {\n  say narrator "Write your story here."\n  goto main\n}\n', 'main.tds');
+  ensureProjectFile(layout.projectRoot, path.join(layout.settingsRoot, 'game-screens.json'), JSON.stringify({ version: 1, initial: 'title', screens: { title: { title: '', background: '', items: [{ id: 'start', type: 'button', label: 'Start', action: 'start', x: 64, y: 150, width: 300, height: 56 }] } } }, null, 2) + '\n', 'game-screens.json');
   return layout;
 }
 module.exports = { projectLayout, projectOption, layoutForInput, entryFile, positionalArguments, looksLikeProject, seedEmptyProject, parseSettings, settingTemplate, assertProjectSettingFile, assertProjectDirectory, ensureProjectDirectory };

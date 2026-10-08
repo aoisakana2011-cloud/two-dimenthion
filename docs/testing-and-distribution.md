@@ -26,6 +26,7 @@ PowerShellでは `npm.ps1` 実行ポリシーの影響を避けるため `npm.cm
 |---|---|---|
 | Unit/contract | `test/*.test.js` | pure helper、parser/compiler、schema、static validation、storage adapter |
 | Browser interaction | `test/*.browser.cjs` | DOM、keyboard/pointer、player overlay、保存画面、見た目state、実HTTP接続のUI経路 |
+| API origin boundary | `test/api-origin.browser.cjs` | 別originのsimple POST、same-site別port request、spoofed Hostを拒否し、Originなしのloopback clientを許可 |
 | Native integration | `test/*native*.cjs`, `test/native-*.cjs` | C++ executable起動、SDL input/render経路、Native save/screen動作 |
 | workflow/E2E | `test/full-workflow-e2e.cjs`, project-specific browser tests | Editor save/build/browser/native integrationを繋ぐ限定シナリオ |
 | C++ unit | `native/*_test.cpp` | isolated geometry/audio helper。Player全体の代替ではない |
@@ -60,7 +61,7 @@ PowerShellでは `npm.ps1` 実行ポリシーの影響を避けるため `npm.cm
 
 ### 作品package
 
-`npm.cmd run pack -- --project Title` はTypeScript build後、作品projectをNSP runtime packageにします。通常の出力先はprojectの`.novel/build/`です。Native playerはこの作品packageとassetsを読み込んで再生します。作品packageはEditorのインストーラーではありません。
+`npm.cmd run pack -- --project Title` はTypeScript build後、作品projectをNSP runtime packageにします。通常の出力先はprojectの`.novel/build/`です。Native playerはこの作品packageとassetsを読み込んで再生します。packはNSP JSONと参照assetをstageしてから出力先へ移し、通常の例外時には更新対象をrollbackします。失敗時は前回成功したpackageが保持されます。Editor Buildは開始時に以前のbuild-stateを無効化し、成功後にだけ更新するため、失敗後のPlayでは再buildが必要です。作品packageはEditorのインストーラーではありません。
 
 ### Native player build
 
@@ -68,7 +69,7 @@ PowerShellでは `npm.ps1` 実行ポリシーの影響を避けるため `npm.cm
 
 ### Desktop Editor package
 
-`tools/package-electron.js`は先にNative executableがあることを要求します。Electron Packagerをwin32/x64に固定し、Windows icon/metadataを設定します。既定outputはrepository `release/`で、`NOVEL_EDITOR_PACKAGE_OUT`で変更できます。asarはfalse。依存をpruneし、Native executable、DLL群、image checker、`engine_data`を配布rootへ保つignore ruleを持ちます。
+`tools/package-electron.js`は先にNative executableがあることを要求します。Electron Packagerをwin32/x64に固定し、Windows icon/metadataを設定します。既定outputはrepository `release/`で、`NOVEL_EDITOR_PACKAGE_OUT`で変更できます。asarはfalse。依存をpruneし、Native executable、DLL群、image checker、`engine_data`をElectron package内の`resources/app/native/build/Release/`に含めます。`Edit/server.js`は`resources/app`をrepository rootとして扱い、同じ相対パスからNative executableとimage checkerを起動します。
 
 packagerは`.git`, `node_modules`, `release`, `build`, `test`, `src`, `llama.cpp`, `Title`などを除外し、projectデータをDesktop Editor binaryへ同梱しません。起動後の作品選択・project data保存はEditor runtimeの仕事です。
 
@@ -76,11 +77,12 @@ packagerは`.git`, `node_modules`, `release`, `build`, `test`, `src`, `llama.cpp
 
 Windows packageを成立と判断するには、ビルド成功以外に実際に生成されたfolderを調べます。
 
-1. `NovelScriptEditor.exe`、Electron runtime files、`native/build/Release`由来のplayerとDLLが配置されている。
-2. `engine_data`、SDL image/font/mixer、FFmpeg等のruntime dependencyを実行ファイルの期待位置に含む。
-3. fresh launchでfolder pickerが起動し、作品を開く・作成する・編集することができる。
-4. EditorからBrowser Player、Native Playerを別々に起動できる。
-5. 保存/build outputが選択したproject rootへ書かれ、package folderや別projectを不用意に変更しない。
+1. `NovelScriptEditor.exe`とElectron runtime filesが配布フォルダー直下にあり、Native playerとDLLは`resources/app/native/build/Release/`にある。
+2. `engine_data`、SDL image/font/mixer、FFmpeg等のruntime dependencyをNative playerと同じディレクトリに含む。
+3. fresh launchで最新の有効なrecent projectを開く。有効なrecent projectがない場合はtemporary workspaceで通常のEditorを開き、作品を開く・作成する・編集することができる。
+4. duplicate launchは既存のEditor windowにfocusし、2つ目のwindowやproject serverを作らない。
+5. EditorからBrowser Player、Native Playerを別々に起動できる。
+6. 保存/build outputが選択したproject rootへ書かれ、package folderや別projectを不用意に変更しない。
 
 これらは配布物を実際に起動して確かめる必要があります。`npm run desktop:package:win`が終了コード0でも、別環境での初回導入、権限、GPU/codec全組合せは証明されません。
 

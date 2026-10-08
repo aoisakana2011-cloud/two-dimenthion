@@ -1,6 +1,6 @@
 # Novel Script DSL リファレンス
 
-この文書は、現在のパーサー、型検査器、コンパイラ、ブラウザーランタイム、ネイティブランタイム、プロジェクトビルドを突き合わせた、実装準拠の構文リファレンスである。ここにない構文を受理すること、または旧形式の互換性を保証することはない。
+この文書は過去に作成したDSLの構文例・解説です。現行の受理構文と型契約は [`docs/syntax-reference.md`](docs/syntax-reference.md)、実行時の命令意味は [`docs/runtime-semantics.md`](docs/runtime-semantics.md) を参照してください。記述に差がある場合は、現行Parser/Checkerと対応テストが根拠になります。この文書だけを現行契約の根拠として使用しないでください。
 
 ## はじめに：最小の作品
 
@@ -24,6 +24,8 @@ character hero {
 }
 
 scene main {
+  # 初期画面を開き、「開始」後にこのsceneの続きへ進む。
+  start()
   bg room
   show hero.normal center
   say hero "こんにちは。"
@@ -32,6 +34,8 @@ scene main {
     "あいさつを返す" { say narrator "会話が始まった。" }
     "立ち去る" { hide hero }
   }
+  # この例では物語の区切りで初期画面へ戻る。
+  start()
 }
 ```
 

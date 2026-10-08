@@ -32,23 +32,46 @@ show image logo center
 clear image logo
 ```
 
-ソース構文・型・プロジェクト構成は [../syntax-draft.md](../syntax-draft.md) を参照してください。
+現行のソース構文・型は [docs/syntax-reference.md](../docs/syntax-reference.md)、実行時の命令意味は [docs/runtime-semantics.md](../docs/runtime-semantics.md)、プロジェクト構成とpackage形式は [docs/project-format-and-packaging.md](../docs/project-format-and-packaging.md) を参照してください。旧構文解説の [syntax-draft.md](../syntax-draft.md) は現行契約の根拠ではありません。
 
 ## ビルド
 
 ```powershell
 # プロジェクトのルートで実行
-$toolchain = (Resolve-Path native/.vcpkg/scripts/buildsystems/vcpkg.cmake).Path
-cmake -S native -B native/build-local "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DVCPKG_TARGET_TRIPLET=x64-windows
-cmake --build native/build-local --config Release
+npm.cmd run native:build
 npm.cmd run native
 ```
+
+`native:build` は `native/build/Release/novel_player.exe` を生成します。別のbuild directoryを使って手動buildした場合、その実行ファイルは `tools/native.js` の標準検索先ではないため、直接起動してください。
 
 別のパッケージを起動する場合は、パスを指定します。
 
 ```powershell
 npm.cmd run native -- build/other.nsp.json
 ```
+
+`tools/native.js` accepts a package path as the first positional argument and forwards Player options. When no package path is supplied, it uses the configured entry package under `.novel/build/`, so options can be used without being mistaken for a package name.
+
+The wrapper resolves a relative package argument from the caller's current working directory, then starts the Player with the resolved package path and the repository as its process working directory. Package assets and legacy `saves/` migration are resolved beside the package, independent of that working directory. Directly launching `novel_player.exe` uses the Player process working directory for a relative package argument. On Windows, the Player accepts UTF-8 package paths through `wmain`; paths containing spaces or Japanese characters are supported. A missing-package startup error reports that path in UTF-8.
+
+`NOVEL_SAVE_ROOT` must be an absolute path. On Windows it can contain non-ASCII characters; the Player reads it as a wide environment value. If unset, the normal Native runtime uses `SDL_GetPrefPath("NovelScript", saveId)`. `--debug-state` accepts only a filename and writes it beside the package.
+
+```powershell
+npm.cmd run native -- --project Title --headless
+npm.cmd run native -- --project Title --debug-start main.tds main 12 '{}'
+```
+
+The Player accepts `--headless`, `--smoke`, `--load-slot <1-120>`,
+`--debug-start <file> <scene> <line-or-0> <variables-json>`, and
+`--debug-state <filename>`. `--debug-state` writes the current source cursor to
+a file beside the package; it accepts only a filename, not a directory path.
+
+The Player requires the complete package envelope (`source`, `program`,
+`files`, and `native_ui`; `debug` is optional). Each compiled program must
+contain `assets`, `characters`, `globals`, `functions`, `scenes`, and
+`variables` arrays. The `source` entry must exist in `files`, and every file
+entry must be a compiled program. The pack command emits this complete shape
+for distributable packages.
 
 画像のPNG・JPEG・WebP、音声のFLAC・Vorbis・MP3対応は
 `vcpkg.json` の明示的なfeaturesで有効にしています。

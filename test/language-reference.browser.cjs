@@ -37,6 +37,11 @@ const { seedEmptyProject } = require('../tools/project-layout');
     await page.locator('[data-menu="help"]').click();
     await page.locator('[data-menu-action="syntax"]').click();
     await page.locator('.language-guide').waitFor();
+    const dataHelp = page.locator('.language-guide .guide-section').filter({ hasText: 'dict · list · struct' });
+    assert.equal(await dataHelp.count(), 1, 'data type help uses the DSL names instead of translated Katakana/Japanese labels');
+    assert.match(await dataHelp.textContent(), /dictのkeyは文字列.*listには同じtype.*struct初期化.*field.*index/);
+    assert.equal(await page.locator('.language-guide .guide-section summary').filter({ hasText: 'Loops' }).count(), 1,
+      'loop help uses the English DSL term');
     const originalUrl = page.url();
     await page.locator('.guide-reference').click();
     await page.locator('.guide-book-entry').first().waitFor();

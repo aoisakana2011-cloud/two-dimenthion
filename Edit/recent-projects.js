@@ -46,7 +46,7 @@ async function readRecentProjects(file = recentProjectsFile()) {
 
 async function rememberProject(folder, file = recentProjectsFile()) {
   const resolved = path.resolve(folder);
-  if (!isValidProjectFolder(resolved)) throw new Error('Cannot remember a folder that is not a valid project.');
+  if (!isValidProjectFolder(resolved)) throw new Error('有効な作品フォルダーではないため、最近使った作品に登録できません。');
   const paths = [resolved, ...(await readRecentProjects(file)).filter((entry) => !sameFolder(entry, resolved))].slice(0, 12);
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, JSON.stringify({ paths }, null, 2) + '\n', 'utf8');

@@ -88,9 +88,17 @@ effect fade white 10
 bg room wipe-left 10
 play video clip async opacity 0.5
 camera zoom 1.25 at 640 360 over 10
+parallel {
+camera reset over 0
+}
 dialog visible false
 camera reset over 10
 dialog visible true
+parallel {
+bg room crossfade 800
+show hero.normal center fade 60
+camera zoom 1.4 at 640 360 over 800
+}
 play video clip blocking
 play video "clip.mp4" async --only
 effect fade black 10
@@ -120,12 +128,33 @@ say hero "speaker label parity"
   const child = spawnSync(exe, [output, '--smoke'], { encoding: 'utf8', timeout: 15000, env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' } });
   assert.equal(child.status, 0, child.stderr || child.error?.message);
   const smokeResult = JSON.parse(child.stdout.trim());
+  const parallelGotoSource = path.join(scenesRoot, 'native-parallel-goto.tds');
+  await fs.writeFile(parallelGotoSource, `scene before_parallel {
+  parallel {
+    camera zoom 1.25 at 640 360 over 40
+  }
+  goto after_parallel
+}
+scene after_parallel {
+  say narrator "Reached after parallel"
+}`, 'utf8');
+  const parallelGotoPackagePath = path.join(root, 'native-parallel-goto.nsp.json');
+  await pack(parallelGotoSource, parallelGotoPackagePath, { scenesRoot, assetsRoot });
+  const nativeParallelGoto = spawnSync(exe, [parallelGotoPackagePath, '--smoke'], {
+    encoding: 'utf8', timeout: 15000,
+    env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' },
+  });
+  assert.equal(nativeParallelGoto.status, 0, nativeParallelGoto.stderr || nativeParallelGoto.error?.message);
+  const parallelGotoResult = JSON.parse(nativeParallelGoto.stdout.trim());
+  assert.equal(parallelGotoResult.currentScene, 'after_parallel', 'Native continues to the target scene after a completed parallel animation group');
+  assert.equal(parallelGotoResult.dialogue.text, 'Reached after parallel');
   assert.deepEqual(smokeResult.dialogue, { speaker: '五位殿', text: 'speaker label parity' },
     'Native dialogue must render the Japanese character display name while preserving the dialogue text');
   assert.equal(smokeResult.failedCrossfadeRetained, true, 'a rejected Native BGM crossfade must not stop the playing track');
   assert.equal(smokeResult.failedInstantBgmRetained, true, 'a rejected Native instant BGM replacement must retain the playing track');
   assert.equal(smokeResult.failedVideoReplacementRetained, true, 'a rejected Native video replacement must retain the currently playing decoder');
   assert.equal(smokeResult.failedSpriteReplacementRetained, true, 'a rejected Native sprite replacement must retain the previous character in that slot');
+  assert.equal(smokeResult.parallelFailureRollbackChecked, true, 'a later Native parallel preparation error must restore an earlier character mutation');
   assert.equal(smokeResult.repeatedImageRaised, true, 'redisplaying an image must raise it above previously shown Native images');
   assert.equal(smokeResult.completedBgmCrossfadeAfterBlockingWait, true, 'a Native BGM fade must reach full gain after its declared duration while remaining non-blocking');
   assert.equal(smokeResult.bgmCrossfadeCompletedDuringBlockingVoice, true, 'Native BGM fade must keep progressing while blocking Voice holds the script');
@@ -133,6 +162,22 @@ say hero "speaker label parity"
   assert.equal(smokeResult.relativeBackgroundMoveMatched, true, 'Native background move must preserve fractional pixel offsets');
   assert.equal(smokeResult.characterSlotReplacementMatched, true, 'a selected story branch must replace the character already occupying the target slot');
   assert.ok(smokeResult.animationMidpoints.some(item => item.durationMs === 120 && item.state.background?.asset === 'room'), 'Native animates and waits for a first background fade even when no previous background exists');
+  const parallelMidpoint = smokeResult.animationMidpoints.find(item => item.durationMs === 800 && item.state.background?.asset === 'room'
+    && item.state.camera?.zoom > 1.1 && item.state.camera?.zoom < 1.4);
+  assert.ok(parallelMidpoint, `Native parallel background and camera animations must be simultaneously in flight at the same midpoint: ${JSON.stringify(smokeResult.animationMidpoints.filter(item => item.durationMs === 800))}`);
+  assert.ok(parallelMidpoint.progress >= 0.5 && parallelMidpoint.progress < 1, 'parallel midpoint capture must record the actual sample that crossed 50% before completion');
+  assert.ok(Math.abs(parallelMidpoint.sampleElapsedMs - parallelMidpoint.progress * parallelMidpoint.durationMs) < 0.01,
+    'parallel progress and sample timestamp must describe the same SDL tick');
+  assert.ok(Math.abs(parallelMidpoint.backgroundProgress - parallelMidpoint.progress) < 0.001,
+    'background and camera progress must be sampled from the same parallel update tick');
+  assert.ok(Math.abs(parallelMidpoint.state.camera.zoom - (1 + 0.4 * parallelMidpoint.progress)) < 0.001,
+    'captured camera value must correspond to the recorded progress from that SDL tick');
+  const parallelTraceIndex = smokeResult.presentationTrace.findIndex(item => item.command === 'parallel'
+    && Math.abs((item.state.camera?.zoom ?? 0) - 1.4) < 0.001);
+  assert.ok(parallelTraceIndex > 0, 'Native smoke trace must record the completed parallel instruction');
+  assert.equal(smokeResult.presentationTrace[parallelTraceIndex].state.logicalTimeMs
+    - smokeResult.presentationTrace[parallelTraceIndex - 1].state.logicalTimeMs, 800,
+  'Native parallel execution advances logical time by the group maximum, not by the sum of its track durations');
   const isolatedModes = smokeResult.presentationTrace.filter(item => item.visualOnlyKind);
   assert.ok(isolatedModes.some(item => item.visualOnlyKind === 'background' && item.visualOnlyId === 'room'), 'Native isolates the selected background without deleting scene state');
   assert.ok(isolatedModes.some(item => item.visualOnlyKind === 'character' && item.visualOnlyId === 'hero'), 'Native isolates the selected character');
@@ -511,8 +556,8 @@ scene main {
   const videoFailureSource = `asset video clip = "asset/clip.mp4"
 asset video broken_video = "asset/broken.mp4"
 scene main {
-  play video clip async
-  play video broken_video async
+  play video clip async --only
+  play video broken_video async --only
 }`;
   const videoFailureScenesRoot = path.join(root, 'video-failure-scenes');
   await fs.mkdir(videoFailureScenesRoot, { recursive: true });
@@ -530,6 +575,8 @@ scene main {
   assert.equal(videoFailureResult.failedVideoReplacementRetained, true);
   assert.deepEqual(videoFailureResult.presentationTrace[1].state, toPresentationSnapshot(videoFailureBrowser.sceneState),
     'failed Browser and Native video replacement must preserve the same active visual at the command boundary');
+  assert.equal(videoFailureResult.presentationTrace[1].visualOnlyKind, 'video',
+    'a failed Native --only video replacement keeps the previous video-only presentation mode');
   const backgroundFailureScenesRoot = path.join(root, 'background-failure-scenes');
   await fs.mkdir(backgroundFailureScenesRoot, { recursive: true });
   const backgroundFailureSource = `asset bg room = "asset/pixel.png"

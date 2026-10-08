@@ -1,8 +1,9 @@
 /** Pure intrinsics implemented with identical value semantics by both runtimes. */
 export const PURE_BUILTIN_NAMES = new Set([
   'str', 'int', 'float',
-  'list.length', 'list.append', 'list.contains',
-  'text.trim', 'text.normalize_space', 'text.split', 'text.replace',
+  '__intrinsic_sin', '__intrinsic_cos',
+  'list.length', 'list.append', 'list.contains', 'list.remove_all',
+  'text.trim', 'text.normalize_space', 'text.split', 'text.replace', 'text.join',
 ]);
 
 /**
@@ -84,7 +85,7 @@ export const IDE_ANALYSIS_RULES = {
   runtimeStateBranchUnreachable: {
     code: 'unreachable-runtime-state-branch',
     severity: 'info' as const,
-    message: 'This branch cannot run because the queried runtime state is already known here',
+    message: '参照した runtime state はこの場所ですでに確定しているため、この分岐には到達しません',
   },
   characterMoveRequiresPresence: {
     code: 'move-unshown-character',
@@ -92,14 +93,14 @@ export const IDE_ANALYSIS_RULES = {
     domain: 'characters' as const,
     requiredFact: 'present' as const,
     guardApi: 'runtime.state.characters.exists',
-    dynamicMessage: "dynamic character '{target}' is moved without proof that it is currently visible; guard it with {guard}(...)",
-    missingMessage: "character '{target}' is moved before it is statically shown",
+    dynamicMessage: "character '{target}' が現在表示されていると確認できないため、移動できません。{guard}(...) で条件分岐してください",
+    missingMessage: "character '{target}' は表示される前に移動されます",
   },
   characterPresenceCallRequiresProof: {
     code: 'unproven-character-presence-at-call',
     severity: 'warning' as const,
     guardApi: 'runtime.state.characters.exists',
-    message: "function '{function}' may move character '{target}', but its presence is not proven here; guard the call with {guard}(...) or show the character first",
+    message: "関数 '{function}' は character '{target}' を移動する可能性がありますが、ここでは表示済みと確認できません。{guard}(...) で呼び出しを条件分岐するか、先に character を表示してください",
   },
 };
 
@@ -113,12 +114,12 @@ export function isRuntimeStateApi(name: string): boolean {
 
 /** Any built-in call name which an imported module must not namespace again. */
 export function isBuiltinFunction(name: string): boolean {
-  return isPureBuiltin(name) || isRuntimeStateApi(name);
+  return name === 'start' || isPureBuiltin(name) || isRuntimeStateApi(name);
 }
 
 /** Built-ins which cannot write scenario variables; runtime reads stay dynamic. */
 export function isNonMutatingBuiltin(name: string): boolean {
-  return isBuiltinFunction(name);
+  return name !== 'start' && isBuiltinFunction(name);
 }
 
 export function isPureBuiltin(name: string): boolean {

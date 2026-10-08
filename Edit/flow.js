@@ -8,7 +8,7 @@ flowCountLabel.className = 'flow-count-label';
 flowCountLabel.append(flowCount);
 const flowActions = document.createElement('div');
 flowActions.className = 'flow-canvas-actions';
-[['fit', '全体表示'], ['auto-layout', '自動配置']].forEach(([action, label]) => {
+[['fit', '全体を表示'], ['auto-layout', '自動配置']].forEach(([action, label]) => {
   const button = document.createElement('button');
   button.type = 'button'; button.dataset.flowAction = action; button.className = 'flow-layout-action'; button.textContent = label;
   flowActions.append(button);
@@ -20,6 +20,7 @@ if (canvasHeader && flowInstructions) {
   flowInstructions.className = 'flow-instructions';
 }
 let data = null;
+let flowGraphRequest = 0;
 let selected = '';
 let layoutStorageKey = '';
 let flowProjectRoot = '';
@@ -59,7 +60,10 @@ function detailGroup(title, items) {
   const box = document.createElement('div'); box.className = 'detail-group';
   const heading = document.createElement('div'); heading.className = 'group-label'; heading.textContent = title;
   box.append(heading);
-  [...new Set(items)].forEach((item) => box.append(editorLink(item)));
+  [...new Set(items)].forEach((item) => {
+    if (String(item).startsWith('@screen:')) { const label = document.createElement('span'); label.className = 'detail-meta'; label.textContent = `Screen: ${String(item).slice('@screen:'.length)}`; box.append(label); }
+    else box.append(editorLink(item));
+  });
   details.append(box);
 }
 function transitionGroup(title, transitions, fallbackFile) {
@@ -70,7 +74,7 @@ function transitionGroup(title, transitions, fallbackFile) {
   transitions.forEach((transition) => {
     const row = document.createElement('div'); row.className = 'transition-row';
     const context = document.createElement('span'); context.className = 'transition-context';
-    context.textContent = `${transition.fromScene || 'scene'} → ${transition.toScene || fileLabel(fallbackFile)}${transition.choice ? ` · ${transition.choice}` : ''}`;
+    context.textContent = `${transition.fromScene || 'Scene'} → ${transition.toScene || fileLabel(fallbackFile)}${transition.choice ? ` · ${transition.choice}` : ''}`;
     row.append(context);
     const targetFile = transition.toFile || fallbackFile;
     const target = editorLink(targetFile); target.classList.add('transition-target');
@@ -87,7 +91,7 @@ function diagnosticGroup(node) {
   box.append(heading);
   diagnostics.forEach((diagnostic) => {
     const row = document.createElement('div'); row.className = `flow-diagnostic ${diagnostic.severity || 'warning'}`;
-    row.textContent = `${diagnostic.severity || 'warning'} ${diagnostic.code || 'diagnostic'}: ${diagnostic.message || ''}`;
+    row.textContent = `${({ error: 'Error', warning: 'Warning', info: 'Info' }[diagnostic.severity] || diagnostic.severity || 'Warning')} ${diagnostic.code || 'Diagnostic'}: ${diagnostic.message || ''}`;
     if (diagnostic.line) row.title = `${diagnostic.file || node.id}:${diagnostic.line}:${diagnostic.column || 1}`;
     row.addEventListener('click', () => {
       if (sendToEditor({ type: 'scene-flow:open-scene', scene: diagnostic.file || node.id, line: diagnostic.line, column: diagnostic.column })) return;
@@ -121,7 +125,11 @@ function variableTypeLabel(type) {
 function selectNode(file) {
   selected = file;
   updateFlowTestPanel();
-  document.querySelectorAll('.flow-node').forEach((node) => node.classList.toggle('selected', node.dataset.file === file));
+  document.querySelectorAll('.flow-node').forEach((node) => {
+    const isSelected = node.dataset.file === file;
+    node.classList.toggle('selected', isSelected);
+    node.setAttribute('aria-pressed', String(isSelected));
+  });
   const flowSvg = graph.querySelector('.flow-svg');
   if (flowSvg) flowSvg.dataset.hasSelection = 'true';
   const outgoingNeighbors = new Map();
@@ -173,12 +181,29 @@ function selectNode(file) {
   details.scrollTop = 0;
   const heading = document.createElement('div'); heading.className = 'detail-title'; heading.textContent = file;
   details.append(heading);
-  detailGroup('転移元', data.edges.filter((edge) => edge.to === file).map((edge) => edge.from));
-  detailGroup('転移先', data.edges.filter((edge) => edge.from === file).map((edge) => edge.to));
   const node = data.nodes.find((item) => item.id === file);
+  if (node?.type !== 'screen') {
+    const openButton = document.createElement('button');
+    openButton.type = 'button';
+    openButton.className = 'flow-open-scene';
+    openButton.textContent = 'Open in Editor';
+    openButton.setAttribute('aria-label', `Open ${file} in Editor`);
+    openButton.addEventListener('click', () => {
+      if (!sendToEditor({ type: 'scene-flow:open-scene', scene: file })) location.href = '/?scene=' + encodeURIComponent(file);
+    });
+    details.append(openButton);
+  }
+  detailGroup('Sources', data.edges.filter((edge) => edge.to === file).map((edge) => edge.from));
+  detailGroup('Destinations', data.edges.filter((edge) => edge.from === file).map((edge) => edge.to));
+  if (node?.type === 'screen') {
+    const meta = document.createElement('div'); meta.className = 'detail-meta';
+    meta.textContent = `Frontend Screen「${node.screen}」は開始シナリオの後に開きます。開始操作後、start()の呼び出し位置から実行を再開します。`;
+    details.append(meta);
+    return;
+  }
   if (node?.sceneNames?.length) {
     const scenes = document.createElement('div'); scenes.className = 'detail-meta';
-    scenes.textContent = `${node.sceneNames.length} scenes: ${node.sceneNames.join(', ')}`;
+    scenes.textContent = `Scenes (${node.sceneNames.length}): ${node.sceneNames.join(', ')}`;
     details.append(scenes);
   }
   const outgoing = data.edges.filter((edge) => edge.from === file && edge.kind === 'goto')
@@ -186,27 +211,27 @@ function selectNode(file) {
   const local = (node?.localGotos || []).map((item) => ({
     fromScene: item.fromScene, toScene: item.scene, choice: item.choice, line: item.gotoLine, toFile: item.file,
   }));
-  transitionGroup('Goto destinations', [...local, ...outgoing], file);
+  transitionGroup('goto destinations', [...local, ...outgoing], file);
   if (node?.reachable === false) {
-    const warning = document.createElement('div'); warning.className = 'flow-error'; warning.textContent = '開始ファイルから到達できません'; details.append(warning);
+    const warning = document.createElement('div'); warning.className = 'flow-error'; warning.textContent = 'Unreachable from entry file'; details.append(warning);
   }
   if (node?.error) {
-    const warning = document.createElement('div'); warning.className = 'flow-error'; warning.textContent = 'このファイルは解析できません'; details.append(warning);
+    const warning = document.createElement('div'); warning.className = 'flow-error'; warning.textContent = `Parse error: unable to parse ${fileLabel(node.id)}`; details.append(warning);
   }
   if (node?.scenes) {
     const sceneSummary = document.createElement('div'); sceneSummary.className = 'detail-meta';
-    sceneSummary.textContent = `scenes: ${node.scenes.reachable}/${node.scenes.total} reachable`;
+    sceneSummary.textContent = `Reachable scenes: ${node.scenes.reachable}/${node.scenes.total}`;
     details.append(sceneSummary);
   }
   diagnosticGroup(node);
   if (node?.variables?.length) {
     const box = document.createElement('div'); box.className = 'detail-group';
-    const title = document.createElement('div'); title.className = 'group-label'; title.textContent = '変数'; box.append(title);
+    const title = document.createElement('div'); title.className = 'group-label'; title.textContent = 'Variables'; box.append(title);
     const groups = new Map();
     node.variables.forEach((variable) => { const type = variableTypeLabel(variable.type); if (!groups.has(type)) groups.set(type, []); groups.get(type).push(variable.name); });
     groups.forEach((names, type) => {
       const heading = document.createElement('div'); heading.className = 'variable-type'; heading.textContent = `${type}:`; box.append(heading);
-      names.forEach((name) => { const row = document.createElement('div'); row.className = 'variable'; row.textContent = name; row.title = 'Ctrl+クリックで定義を開く'; row.addEventListener('click', (event) => { if (!event.ctrlKey && !event.metaKey) return; event.preventDefault(); if (!sendToEditor({ type: 'scene-flow:open-scene', scene: file, symbol: name })) window.location.href = '/?scene=' + encodeURIComponent(file) + '&symbol=' + encodeURIComponent(name); }); box.append(row); });
+      names.forEach((name) => { const row = document.createElement('div'); row.className = 'variable'; row.textContent = name; row.title = 'Ctrl+Click to open definition'; row.addEventListener('click', (event) => { if (!event.ctrlKey && !event.metaKey) return; event.preventDefault(); if (!sendToEditor({ type: 'scene-flow:open-scene', scene: file, symbol: name })) window.location.href = '/?scene=' + encodeURIComponent(file) + '&symbol=' + encodeURIComponent(name); }); box.append(row); });
     });
     details.append(box);
   }
@@ -424,7 +449,7 @@ function render(flow) {
       path.dataset.from = edge.from; path.dataset.to = edge.to; path.dataset.kind = edge.kind || 'goto'; edgeLayer.append(path);
       if (edge.kind === 'goto' && edge.transitions?.length) {
         const title = svg('title');
-        title.textContent = edge.transitions.map((item) => `${item.fromScene || 'scene'} → ${item.toScene || fileLabel(edge.to)}${item.choice ? ` · ${item.choice}` : ''} (line ${item.line})`).join('\n');
+        title.textContent = edge.transitions.map((item) => `${item.fromScene || 'Scene'} → ${item.toScene || fileLabel(edge.to)}${item.choice ? ` · ${item.choice}` : ''} (line ${item.line})`).join('\n');
         path.append(title);
       }
     });
@@ -434,17 +459,26 @@ function render(flow) {
   view.nodes.forEach((node) => {
     const position = nodePositions.get(node.id);
     const warning = (node.diagnostics || []).some((diagnostic) => diagnostic.severity !== 'error');
-    const item = svg('g', { class: `flow-node${node.reachable === false ? ' unreachable' : ''}${node.error ? ' error' : ''}${warning ? ' warning' : ''}`, transform: `translate(${position.x} ${position.y})`, tabindex: 0, role: 'button' });
+    const item = svg('g', { class: `flow-node${node.reachable === false ? ' unreachable' : ''}${node.error ? ' error' : ''}${warning ? ' warning' : ''}`, transform: `translate(${position.x} ${position.y})`, tabindex: 0, role: 'button', 'aria-pressed': 'false', ...(node.type === 'screen' ? {} : { 'aria-keyshortcuts': 'F2' }) });
     item.dataset.file = node.id;
     item.append(svg('rect', { width: position.width, height: nodeHeight, rx: 3 }));
     const name = svg('text', { x: 11, y: 22 });
     const sceneCount = node.sceneNames?.length || node.scenes?.total || 0;
-    name.textContent = sceneCount > 1 ? `${fileLabel(node.id)} · ${sceneCount} scenes` : fileLabel(node.id);
+    name.textContent = node.type === 'screen' ? '\u25a3 ' + node.label : sceneCount > 1 ? fileLabel(node.id) + ' · ' + sceneCount + ' scenes' : fileLabel(node.id);
     item.append(name);
     if (node.diagnostics?.length) { const title = svg('title'); title.textContent = node.diagnostics.map((diagnostic) => diagnostic.message).join('\n'); item.append(title); }
     item.addEventListener('click', () => selectNode(node.id));
-    item.addEventListener('dblclick', () => { if (!sendToEditor({ type: 'scene-flow:open-scene', scene: node.id })) location.href = '/?scene=' + encodeURIComponent(node.id); });
-    item.addEventListener('keydown', (event) => { if (event.key === 'Enter') selectNode(node.id); });
+    item.addEventListener('dblclick', () => { if (node.type === 'screen') return; if (!sendToEditor({ type: 'scene-flow:open-scene', scene: node.id })) location.href = '/?scene=' + encodeURIComponent(node.id); });
+    item.addEventListener('keydown', (event) => {
+      if (event.key === 'F2' && node.type !== 'screen') {
+        event.preventDefault();
+        if (!sendToEditor({ type: 'scene-flow:open-scene', scene: node.id })) location.href = '/?scene=' + encodeURIComponent(node.id);
+        return;
+      }
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      selectNode(node.id);
+    });
     root.append(item);
     nodeElements.set(node.id, item);
   });
@@ -479,16 +513,24 @@ function render(flow) {
   graph.replaceChildren(root);
   if (initialFlowFit) fitFlowGraph();
   status.textContent = '準備完了';
-  const count = (value, singular) => `${value} ${singular}${value === 1 ? '' : 's'}`;
-  flowCount.textContent = [count(folderPositions.size, 'folder'), count(view.nodes.length, 'scene'), count(view.edges.length, 'relation')].join(' / ');
+  const count = (value, unit) => `${value} ${unit}${value === 1 ? '' : 's'}`;
+  flowCount.textContent = [count(folderPositions.size, 'folder'), count(view.nodes.filter(node => node.type !== 'screen').length, 'scene'), count(view.nodes.filter(node => node.type === 'screen').length, 'screen'), count(view.edges.length, 'transition')].join(' / ');
   if (view.nodes.length) selectNode(selected && nodePositions.has(selected) ? selected : view.nodes[0].id);
   else { selected = ''; details.textContent = 'No matching scenes'; }
 }
 
 async function refreshFlowGraph() {
-  const response = await fetch('/api/scene-graph', { cache: 'no-store' });
-  if (!response.ok) throw Error('Scene Flow API error: ' + response.status);
-  render(await response.json());
+  const requestId = ++flowGraphRequest;
+  try {
+    const response = await fetch('/api/scene-graph', { cache: 'no-store' });
+    if (!response.ok) throw Error('Scene Flowへのリクエストに失敗しました (HTTP ' + response.status + ')');
+    const result = await response.json();
+    if (requestId !== flowGraphRequest) return;
+    render(result);
+  } catch (error) {
+    if (requestId !== flowGraphRequest) return;
+    throw error;
+  }
 }
 function showFlowLoadError(error) {
   status.textContent = 'Error'; status.title = error.message; details.textContent = error.message; flowCount.textContent = '';
@@ -531,7 +573,7 @@ window.addEventListener('message', (event) => {
     const location = document.querySelector('#flow-test-location');
     const current = event.data.location;
     if (location && current && typeof current.file === 'string' && typeof current.scene === 'string' && Number.isSafeInteger(current.line)) {
-      location.textContent = `実行中: ${current.file}:${current.line}  (scene ${current.scene})`;
+      location.textContent = `実行中: ${current.file}:${current.line}（Scene ${current.scene}）`;
       location.hidden = false;
     }
   }
@@ -591,11 +633,11 @@ document.querySelectorAll('[data-flow-action]').forEach((button) => button.addEv
 
 const filterPanel = document.createElement('div');
 filterPanel.className = 'flow-filters';
-filterPanel.innerHTML = '<label>Filter <input id="flow-search" type="search" placeholder="scene or diagnostic" autocomplete="off"></label><label class="flow-check"><input id="show-includes" type="checkbox"> show include relations</label>';
+filterPanel.innerHTML = '<label>Filter <input id="flow-search" type="search" placeholder="Scene name or diagnostic text" autocomplete="off"></label><label class="flow-check"><input id="show-includes" type="checkbox"> Show include transitions</label>';
 document.querySelector('.controls h1')?.after(filterPanel);
 const flowTestPanel = document.createElement('section');
 flowTestPanel.className = 'flow-test-panel';
-flowTestPanel.innerHTML = '<h2>ここからテスト</h2><div class="flow-test-engine">ネイティブプレイヤーを使用</div><div id="flow-test-file" class="flow-test-file">ノードを選択</div><label class="flow-test-field">開始scene<select id="flow-test-scene"></select></label><label class="flow-test-field">開始行<span class="flow-test-line-controls"><input id="flow-test-line" type="text" inputmode="numeric" autocomplete="off"><button id="flow-test-pick-line" type="button" aria-label="編集画面で開始行を選ぶ" title="編集画面で開始行を選ぶ">&gt;</button></span></label><div class="flow-test-subtitle">実行時点の変数 <span>確定値は自動適用</span></div><div id="flow-test-vars"></div><div class="flow-test-actions"><button id="flow-test-run" type="button">ここから再生</button><button id="flow-test-stop" type="button" disabled>停止</button></div><div id="flow-test-location" hidden></div><div id="flow-test-message" role="status"></div>';
+flowTestPanel.innerHTML = '<h2>ここからテスト</h2><div class="flow-test-engine">Native Player</div><div id="flow-test-file" class="flow-test-file">Select a node</div><label class="flow-test-field">Start Scene<select id="flow-test-scene"></select></label><label class="flow-test-field">Start Line<span class="flow-test-line-controls"><input id="flow-test-line" type="text" inputmode="numeric" autocomplete="off"><button id="flow-test-pick-line" type="button" aria-label="Select start line in Editor" title="Select start line in Editor">&gt;</button></span></label><div class="flow-test-subtitle">実行時点の変数 <span>確定値は自動適用</span></div><div id="flow-test-vars"></div><div class="flow-test-actions"><button id="flow-test-run" type="button">ここから再生</button><button id="flow-test-stop" type="button" disabled>停止</button></div><div id="flow-test-location" hidden></div><div id="flow-test-message" role="status"></div>';
 filterPanel.after(flowTestPanel);
 const flowTestScene = document.querySelector('#flow-test-scene');
 const flowTestLine = document.querySelector('#flow-test-line');
@@ -702,8 +744,8 @@ function renderFlowTestVariables() {
       const name = document.createElement('span'); name.textContent = `${variable.name} : ${variable.type}`;
       const info = document.createElement('small'); info.className = 'flow-test-domain';
       const values = found.values.map((value) => displayFlowDomainValue(variable, value));
-      info.textContent = found.kind === 'finite' ? `候補 ${values.length}: ${values.slice(0, 4).join(' / ')}${values.length > 4 ? ' …' : ''}` : '不明';
-      info.title = found.kind === 'finite' ? values.join(' / ') : '値を特定できないため、開始値を指定できます';
+      info.textContent = found.kind === 'finite' ? `候補 ${values.length}: ${values.slice(0, 4).join(' / ')}${values.length > 4 ? ' …' : ''}` : 'Unknown';
+      info.title = found.kind === 'finite' ? values.join(' / ') : '\u5024\u3092\u7279\u5b9a\u3067\u304d\u306a\u3044\u305f\u3081\u3001\u958b\u59cb\u5024\u3092\u6307\u5b9a\u3067\u304d\u307e\u3059';
       const input = document.createElement('input'); input.type = 'text'; input.autocomplete = 'off'; input.dataset.name = variable.name; input.dataset.type = variable.type; input.dataset.selectionKey = flowTestSelectionKey; input.dataset.domainKind = found.kind; input.dataset.domainValues = JSON.stringify(found.values); input.placeholder = '変更しない場合は空欄';
       if (variable.fields) input.dataset.fields = JSON.stringify(variable.fields);
       input.value = drafts.get(variable.name) || '';
@@ -777,7 +819,7 @@ function updateFlowTestPanel() {
     return;
   }
   flowTestPanelUpdatePendingKey = '';
-  document.querySelector('#flow-test-file').textContent = node?.id || 'ノードを選択';
+  document.querySelector('#flow-test-file').textContent = node?.id || 'Select a node';
   const previousScene = flowTestScene.value;
   const previousLine = flowTestLine.value;
   const previousValues = new Map([...flowTestVars.querySelectorAll('input[data-name]')].map((input) => [input.dataset.name, input.value]));
@@ -864,8 +906,8 @@ document.querySelector('#flow-test-run').addEventListener('click', () => {
   const { node, scene } = selection || {};
   const line = flowTestLine.value === '' ? null : Number(flowTestLine.value);
   const message = document.querySelector('#flow-test-message');
-  if (!node || !scene) { message.textContent = '開始ノードとsceneを選択してください'; return; }
-  if (line !== null && (!Number.isSafeInteger(line) || !scene || line < scene.line || line > scene.endLine)) { message.textContent = '選択したscene内の行を指定してください'; return; }
+  if (!node || !scene) { message.textContent = '開始位置のnodeとSceneを選択してください'; return; }
+  if (line !== null && (!Number.isSafeInteger(line) || !scene || line < scene.line || line > scene.endLine)) { message.textContent = '選択したScene内の行を指定してください'; return; }
   const variables = {};
   for (const definition of flowTestVariableDefinitions.values()) {
     const exact = confirmedFlowDomain(definition.name);
@@ -875,9 +917,9 @@ document.querySelector('#flow-test-run').addEventListener('click', () => {
     const valueText = exact ? exact.values[0] : input?.value ? input.value : null;
     if (valueText === null) continue;
     if (!debugValueMatches(definition.type, valueText, definition.fields)) {
-      const messageByType = definition.fields ? 'JSON構造体のフィールドが型と一致しません'
-        : definition.type.startsWith('list<') ? 'JSON配列の要素が型と一致しません'
-          : definition.type.startsWith('dict<') ? 'JSON辞書の値が型と一致しません'
+      const messageByType = definition.fields ? 'JSON structのfieldが型と一致しません'
+        : definition.type.startsWith('list<') ? 'JSON listの要素が型と一致しません'
+          : definition.type.startsWith('dict<') ? 'JSON dictの値が型と一致しません'
             : definition.type === 'bool' ? 'true または false を入力してください'
               : definition.type === 'int' ? '整数で入力してください'
                 : definition.type === 'float' ? '有限の小数で入力してください' : '値の型が正しくありません';
@@ -885,13 +927,13 @@ document.querySelector('#flow-test-run').addEventListener('click', () => {
     }
     variables[definition.name] = { type: definition.fields ? 'struct' : definition.type, value: valueText, ...(definition.fields ? { fields: definition.fields } : {}) };
   }
-  if (!sendToEditor({ type: 'scene-flow:debug-play', file: node.id, scene: scene?.name, line, variables })) { message.textContent = '編集画面内のシーンフローから実行してください'; return; }
+  if (!sendToEditor({ type: 'scene-flow:debug-play', file: node.id, scene: scene?.name, line, variables })) { message.textContent = '編集画面内のScene Flowから実行してください'; return; }
   message.textContent = '再生を準備しています…';
   message.dataset.state = '';
 });
 document.querySelector('#flow-test-stop').addEventListener('click', () => {
   const message = document.querySelector('#flow-test-message');
-  if (!sendToEditor({ type: 'scene-flow:debug-stop' })) { message.textContent = '編集画面内のシーンフローから停止してください'; return; }
+  if (!sendToEditor({ type: 'scene-flow:debug-stop' })) { message.textContent = '編集画面内のScene Flowから停止してください'; return; }
   message.textContent = '停止しています…';
   message.dataset.state = '';
   document.querySelector('#flow-test-stop').disabled = true;

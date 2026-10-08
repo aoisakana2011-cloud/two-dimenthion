@@ -11,7 +11,7 @@ const { seedEmptyProject } = require('../tools/project-layout');
 (async () => {
   const root = path.resolve(__dirname, '..');
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-slot-card-'));
-  let server, browser;
+  let server, browser, fallbackContext;
   try {
     const project = seedEmptyProject(path.join(temporary, 'project'));
     const screensRoot = path.join(root, 'Title', 'setting');
@@ -43,7 +43,7 @@ const { seedEmptyProject } = require('../tools/project-layout');
     await page.goto(`${base}/player.html`);
     assert.equal(await page.locator('#screen-overlay [data-action="continue"]').isDisabled(), true);
     await page.locator('#screen-overlay [data-action="start"]').click();
-    await page.locator('#text').filter({ hasText: '新しい作品を始めます。' }).waitFor();
+    await page.locator('#text').filter({ hasText: 'Write your story here.' }).waitFor();
     await page.keyboard.press('Escape');
     await page.locator('#screen-overlay [data-action="save"]').first().click();
     const slot = page.locator('#screen-overlay [data-slot-index="0"]');
@@ -55,8 +55,12 @@ const { seedEmptyProject } = require('../tools/project-layout');
     await slot.click();
     await page.locator('#screen-overlay [data-action="slot-commit"]').click();
     await page.locator('#screen-overlay .game-screen-notice').waitFor();
+    const savedPosition = await page.evaluate(async () => {
+      const saved = JSON.parse(await saveStore.readSlot(0));
+      return { file: saved.file, scene: saved.scene, line: saved.line };
+    });
     assert.equal(await slot.locator('[data-slot-field="status"]').textContent(), '記録あり');
-    assert.match(await slot.locator('[data-slot-field="text"]').textContent(), /新しい作品を始めます/);
+    assert.match(await slot.locator('[data-slot-field="text"]').textContent(), /Write your story here/);
     assert.ok((await slot.locator('[data-slot-field="saved-at"]').textContent()).length > 0);
     assert.equal(await page.evaluate(async () => (await saveStore.readThumbnail(0))?.type), 'image/png');
     assert.ok(await slot.locator('[data-slot-field="thumbnail"]').evaluate(image => image.complete && image.naturalWidth > 0), 'save card displays the captured game frame');
@@ -74,7 +78,7 @@ const { seedEmptyProject } = require('../tools/project-layout');
     assert.equal(thumbnailDiff.width, 320);
     assert.equal(thumbnailDiff.height, 180);
     assert.ok(thumbnailDiff.changed > 100, 'save preview must composite dialogue text on the underlying scene: ' + JSON.stringify(thumbnailDiff));
-    assert.match(await page.evaluate(async () => (await saveStore.readMetadata(0))?.text), /新しい作品/);
+    assert.match(await page.evaluate(async () => (await saveStore.readMetadata(0))?.text), /Write your story/);
     if (process.env.NOVEL_SCREEN_CAPTURE_DIR) {
       await fs.mkdir(process.env.NOVEL_SCREEN_CAPTURE_DIR, { recursive: true });
       await page.screenshot({ path: path.join(process.env.NOVEL_SCREEN_CAPTURE_DIR, 'save-card.png') });
@@ -128,14 +132,87 @@ const { seedEmptyProject } = require('../tools/project-layout');
     await movedSlot.click();
     await page.locator('#screen-overlay [data-action="slot-commit"]').click();
     await page.locator('#screen-overlay', { hasText: '' }).waitFor({ state: 'hidden' });
-    await page.locator('#text').filter({ hasText: '新しい作品を始めます。' }).waitFor();
+    await page.locator('#text').filter({ hasText: 'Write your story here.' }).waitFor();
     await page.goto(`${base}/player.html`);
     assert.equal(await page.locator('#screen-overlay [data-action="continue"]').isDisabled(), false);
     await page.locator('#screen-overlay [data-action="continue"]').click();
-    await page.locator('#text').filter({ hasText: '新しい作品を始めます。' }).waitFor();
+    await page.locator('#text').filter({ hasText: 'Write your story here.' }).waitFor();
+    await page.waitForFunction(expected => {
+      const execution = currentExecution;
+      return execution && execution.file === expected.file && execution.scene === expected.scene && execution.line === expected.line;
+    }, savedPosition);
     assert.deepEqual(errors, []);
+
+    fallbackContext = await browser.newContext();
+    await fallbackContext.addInitScript(() => {
+      Object.defineProperty(window, 'indexedDB', {
+        configurable: true,
+        value: { open() { throw new DOMException('IndexedDB disabled for fallback coverage', 'SecurityError'); } },
+      });
+    });
+    let fallbackPage = await fallbackContext.newPage();
+    fallbackPage.setDefaultTimeout(10000);
+    const fallbackErrors = [];
+    fallbackPage.on('pageerror', error => fallbackErrors.push(error.message));
+    await fallbackPage.goto(`${base}/player.html`);
+    await fallbackPage.locator('#screen-overlay [data-action="start"]').waitFor();
+    assert.equal(await fallbackPage.evaluate(() => saveStore.backend), 'localStorage', 'a rejected IndexedDB open selects the localStorage backend');
+    await fallbackPage.locator('#screen-overlay [data-action="start"]').click();
+    await fallbackPage.locator('#text').filter({ hasText: 'Write your story here.' }).waitFor();
+    await fallbackPage.keyboard.press('Escape');
+    await fallbackPage.locator('#screen-overlay [data-action="save"]').first().click();
+    const fallbackSlot = fallbackPage.locator('#screen-overlay [data-slot-index="0"]');
+    await fallbackSlot.waitFor();
+    await fallbackSlot.click();
+    await fallbackPage.locator('#screen-overlay [data-action="slot-commit"]').click();
+    await fallbackPage.locator('#screen-overlay .game-screen-notice').waitFor();
+    assert.match(await fallbackPage.locator('#screen-overlay .data-hint').textContent(), /Browser storage fallbackを使用中のため、再読み込み後はthumbnail preview/,
+      'the save screen explains why the fallback backend cannot keep thumbnail previews');
+    const fallbackSavedPosition = await fallbackPage.evaluate(async () => ({
+      execution: { file: currentExecution.file, scene: currentExecution.scene, line: currentExecution.line },
+      encoded: await saveStore.readSlot(0),
+      thumbnail: await saveStore.readThumbnail(0),
+      metadata: await saveStore.readMetadata(0),
+    }));
+    assert.ok(fallbackSavedPosition.encoded, 'localStorage fallback persists the snapshot');
+    assert.equal(fallbackSavedPosition.thumbnail, null, 'localStorage fallback has no persistent thumbnail store');
+    assert.equal(fallbackSavedPosition.metadata, null, 'localStorage fallback has no separate metadata store');
+    assert.match(await fallbackSlot.locator('[data-slot-field="thumbnail"]').getAttribute('src'), /^blob:/,
+      'the freshly saved thumbnail is shown from the current page memory');
+    const fallbackStorageState = await fallbackContext.storageState();
+    await fallbackContext.close();
+    fallbackContext = await browser.newContext({ storageState: fallbackStorageState });
+    await fallbackContext.addInitScript(() => {
+      Object.defineProperty(window, 'indexedDB', {
+        configurable: true,
+        value: { open() { throw new DOMException('IndexedDB disabled for fallback coverage', 'SecurityError'); } },
+      });
+    });
+    fallbackPage = await fallbackContext.newPage();
+    fallbackPage.setDefaultTimeout(10000);
+    fallbackPage.on('pageerror', error => fallbackErrors.push(error.message));
+    await fallbackPage.goto(`${base}/player.html`);
+    await fallbackPage.locator('#screen-overlay [data-action="start"]').waitFor();
+    assert.equal(await fallbackPage.evaluate(() => saveStore.backend), 'localStorage');
+    await fallbackPage.locator('#screen-overlay [data-action="load"]').click();
+    const reloadedFallbackSlot = fallbackPage.locator('#screen-overlay [data-slot-index="0"]');
+    await reloadedFallbackSlot.waitFor();
+    assert.match(await fallbackPage.locator('#screen-overlay .data-hint').textContent(), /Browser storage fallbackを使用中のため、再読み込み後はthumbnail preview/,
+      'the load screen explains that thumbnails do not survive reload in this backend');
+    assert.equal(await reloadedFallbackSlot.isDisabled(), false, 'the fallback snapshot remains loadable after reload');
+    assert.equal(await reloadedFallbackSlot.locator('[data-slot-field="thumbnail"]').getAttribute('src'), null,
+      'the fallback UI does not claim a thumbnail persisted across reload');
+    await reloadedFallbackSlot.click();
+    await fallbackPage.locator('#screen-overlay [data-action="slot-commit"]').click();
+    await fallbackPage.locator('#screen-overlay').waitFor({ state: 'hidden' });
+    await fallbackPage.waitForFunction(expected => {
+      const execution = currentExecution;
+      return execution && execution.file === expected.file && execution.scene === expected.scene && execution.line === expected.line;
+    }, fallbackSavedPosition.execution);
+    assert.deepEqual(fallbackErrors, [], `localStorage fallback emitted Browser errors: ${fallbackErrors.join('\n')}`);
     console.log('PASS Browser save-card template, bound fields, save and load');
   } finally {
+    await fallbackContext?.close();
     await browser?.close();
     if (server) { server.kill(); await new Promise(resolve => { if (server.exitCode !== null) resolve(); else { server.once('exit', resolve); setTimeout(resolve, 2000); } }); }
     await fs.rm(temporary, { recursive: true, force: true });

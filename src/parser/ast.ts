@@ -55,10 +55,10 @@ export interface Character extends NodeLocation {
 }
 export interface ExternalCharacter { poses: Set<string>; fields: Record<string, PrimitiveType>; definition?: Character; }
 export interface StructDef extends NodeLocation { kind: 'struct'; name: string; fields: Record<string, PrimitiveType>; fieldLocations?: Record<string, NodeLocation>; }
-export interface FunctionDef extends NodeLocation { kind: 'function'; name: string; returnType: ValueType; params: Array<{ type: ValueType; name: string; line?: number; column?: number }>; body: Statement[]; }
+export interface FunctionDef extends NodeLocation { kind: 'function'; name: string; returnType: ValueType; params: Array<{ type: ValueType; name: string; line?: number; column?: number; file?: string }>; body: Statement[]; }
 export interface Scene extends NodeLocation { kind: 'scene'; name: string; body: Statement[]; }
 export interface Include extends NodeLocation { path: string; alias: string; }
 export interface Script extends NodeLocation { kind: 'script'; assets: Asset[]; characters: Character[]; structs: StructDef[]; globals: Statement[]; functions: FunctionDef[]; scenes: Scene[]; includes: Include[]; body: Statement[]; }
 
 export type TokenType = 'word' | 'string' | 'number' | 'symbol' | 'newline' | 'eof';
-export type Token = { type: TokenType; value: string; line: number; column: number; offset: number; unknownEscapes?: string[]; sourceColumns?: number[] };
+export type Token = { type: TokenType; value: string; line: number; column: number; offset: number; sourceEndColumn?: number; unknownEscapes?: string[]; unknownEscapeColumns?: number[]; unknownEscapeEndColumns?: number[]; sourceColumns?: number[] };

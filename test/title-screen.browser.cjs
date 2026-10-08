@@ -29,6 +29,9 @@ const root = path.resolve(__dirname, '..');
     page.setDefaultTimeout(15000);
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
+    const projectInfo = await (await page.request.get(`${base}/api/project`)).json();
+    const resumeKey = `novel-script:${encodeURIComponent(projectInfo.projectRoot || new URL(base).origin)}:game:resume`;
+    await page.addInitScript(({ key }) => sessionStorage.setItem(key, '{malformed resume'), { key: resumeKey });
     const capture = async name => {
       if (!process.env.NOVEL_TITLE_SCREEN_CAPTURE_DIR) return;
       await fs.mkdir(process.env.NOVEL_TITLE_SCREEN_CAPTURE_DIR, { recursive: true });
@@ -40,6 +43,10 @@ const root = path.resolve(__dirname, '..');
       const config = await (await page.request.get(`${base}/api/game-screens`)).text();
       throw Error(`Title screen did not open: ${error.message}; player text=${await page.locator('#text').textContent()}; config=${config.slice(0, 1000)}`);
     });
+    assert.equal(await page.evaluate(key => sessionStorage.getItem(key), resumeKey), null,
+      'Browser consumes a malformed one-shot resume marker and falls back to the configured initial screen');
+    assert.equal(await page.locator('#speaker-text').textContent(), '',
+      'malformed resume fallback currently opens the initial screen without a user-facing recovery notice');
     await page.waitForFunction(() => { const image = document.querySelector('#screen-overlay .title-logo'); return image?.complete && image.naturalWidth > 0; });
     assert.equal(await page.locator('#screen-overlay .title-menu .title-item').count(), 6, 'the actual Title project renders its six semantic menu actions');
     assert.equal(await page.locator('#screen-overlay #title-continue').isDisabled(), true, 'Continue is unavailable without a save');
@@ -52,6 +59,13 @@ const root = path.resolve(__dirname, '..');
     await page.locator('#screen-overlay #title-system').click();
     await page.locator('#screen-overlay .system-options').waitFor();
     assert.equal(await page.locator('#screen-overlay [data-action="shortcut-cycle"]').count(), 12, 'SYSTEM exposes all configured function-key actions');
+    for (const label of ['Display Mode', 'Effects', 'Skip Mode', 'Font', 'Text Speed', 'Auto Speed']) {
+      assert.equal(await page.locator('#screen-overlay .setting-label').filter({ hasText: label }).count(), 1, `SYSTEM uses the English label ${label}`);
+    }
+    assert.match(await page.locator('#screen-overlay .setting-row').filter({ has: page.locator('[data-target="ui.fontFamily"]') }).locator('.setting-help').innerText(), /Player/,
+      'SYSTEM uses the English product term Player in Japanese help text');
+    assert.equal(await page.locator('#screen-overlay .setting-section-title').innerText(), 'Shortcuts');
+    assert.match(await page.locator('#screen-overlay [data-target="F2"]').innerText(), /^Save/);
     await capture('system');
     await page.locator('#screen-overlay [data-action="setting-value"][data-target="ui.effects"][data-value="false"]').click();
     await page.waitForFunction(async () => (await saveStore.readPreference('ui-settings'))?.['ui.effects'] === false);
@@ -60,6 +74,16 @@ const root = path.resolve(__dirname, '..');
     await page.waitForFunction(async () => (await saveStore.readPreference('ui-settings'))?.['ui.effects'] === true);
     await page.locator('#screen-overlay [data-action="shortcut-cycle"][data-target="F12"]').click();
     await page.waitForFunction(async () => (await saveStore.readPreference('ui-settings'))?.['ui.shortcut.F12'] === 'system');
+    await page.locator('#screen-overlay [data-action="setting-value"][data-target="ui.effects"][data-value="false"]').click();
+    await page.locator('#screen-overlay [data-action="setting-value"][data-target="ui.fontFamily"][data-value="mincho"]').click();
+    await page.locator('#screen-overlay [data-action="reset-settings"]').click();
+    await page.waitForFunction(async () => {
+      const preferences = await saveStore.readPreference('ui-settings');
+      return preferences?.['ui.effects'] === true && preferences?.['ui.fontFamily'] === 'default' && preferences?.['ui.shortcut.F12'] === gameScreenConfig.controlDefaults['ui.shortcut.F12'];
+    });
+    assert.equal(await page.evaluate(() => activeGameScreen), 'system', 'reset keeps the current settings screen open');
+    assert.equal(await page.locator('#screen-overlay [data-action="setting-value"][data-target="ui.effects"][data-value="true"]').getAttribute('aria-pressed'), 'true', 'reset refreshes the visible selected effect option');
+    assert.equal(await page.locator('#stage').evaluate(node => node.style.fontFamily), '', 'reset restores the project font stack');
     await page.locator('#screen-overlay [data-action="open-screen"][data-target="sound"]').click();
     await page.locator('#screen-overlay .sound-screen').waitFor();
     assert.ok(await page.locator('#screen-overlay input[data-setting="audio.master"]').count(), 'SOUND controls the actual master audio preference');
@@ -87,8 +111,11 @@ const root = path.resolve(__dirname, '..');
     await capture('load');
     await page.locator('#screen-overlay [data-action="back"]').click();
     await page.locator('#screen-overlay .title-menu').waitFor();
-    await page.locator('#screen-overlay #title-start').click();
-    await page.waitForFunction(() => document.querySelector('#text')?.textContent.includes('目覚まし時計'), null, { timeout: 15000 });
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('#text')?.textContent.includes('演出チェックを始めます。'), null, { timeout: 15000 }).catch(async error => {
+      const state = await page.evaluate(() => ({ text: document.querySelector('#text')?.textContent, speaker: document.querySelector('#speaker-text')?.textContent, overlayHidden: document.querySelector('#screen-overlay')?.hidden, activeScreen: document.querySelector('#screen-overlay')?.dataset?.screen }));
+      throw Error(`Start action did not resume the entry scenario: ${error.message}; state=${JSON.stringify(state)}; errors=${JSON.stringify(errors)}`);
+    });
     await page.keyboard.press('Escape');
     await page.locator('#screen-overlay .pause-grid').waitFor();
     assert.equal(await page.locator('#screen-overlay .pause-grid .pause-button').count(), 14, 'the in-game menu opens from the actual story player');
@@ -114,7 +141,7 @@ const root = path.resolve(__dirname, '..');
     await capture('load-saved');
     await page.locator('#screen-overlay [data-slot-index="0"]').click();
     await page.locator('#screen-overlay [data-action="slot-commit"]').click();
-    await page.waitForFunction(() => document.querySelector('#screen-overlay')?.hidden && document.querySelector('#text')?.textContent.includes('目覚まし時計'));
+    await page.waitForFunction(() => document.querySelector('#screen-overlay')?.hidden && document.querySelector('#text')?.textContent.includes('演出チェックを始めます。'));
     assert.deepEqual(errors, [], `actual Title project emitted Browser errors: ${errors.join('\n')}`);
     console.log('PASS actual Title project Browser flow: title, keyboard focus, SYSTEM, SOUND persistence, save thumbnail, LOAD round-trip and story MENU');
   } finally {

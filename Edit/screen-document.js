@@ -29,7 +29,7 @@
     'box-sizing', 'outline', 'outline-offset', 'border-top', 'border-bottom', 'border-left', 'border-right',
     'border-top-left-radius', 'border-top-right-radius', 'border-bottom-left-radius', 'border-bottom-right-radius',
     'user-select', 'appearance', 'list-style', 'vertical-align', 'visibility', 'overflow', 'overflow-x', 'overflow-y',
-    'white-space', 'line-height', 'font-family', 'font-weight', 'font-style', 'letter-spacing',
+    'white-space', 'font-family', 'font-weight', 'font-style', 'letter-spacing',
     'background-position', 'background-repeat', 'background-blend-mode', 'filter', 'backdrop-filter',
     'min-width', 'min-height', 'max-width', 'max-height', 'margin', 'margin-left', 'margin-right', 'margin-top', 'margin-bottom',
     'grid-template-rows', 'grid-column', 'grid-row', 'align-self', 'justify-self', 'flex-wrap', 'flex-shrink',
@@ -39,10 +39,13 @@
     'padding', 'padding-left', 'padding-right', 'padding-top', 'padding-bottom',
     'font-size', 'border-width', 'grid-auto-rows',
   ]);
-  const INHERITED = new Set(['color', 'font-size', 'text-align']);
+  const NON_NEGATIVE_LENGTH_PROPERTIES = new Set([
+    'width', 'height', 'gap', 'row-gap', 'column-gap', 'font-size', 'border-width', 'grid-auto-rows',
+  ]);
+  const INHERITED = new Set(['color', 'font-size', 'line-height', 'text-align']);
   const CONTROL_TYPES = new Set(['range', 'checkbox']);
   const SHORTCUT_ACTIONS = ['none', 'system', 'save', 'load', 'replay-voice', 'auto', 'clear-text', 'fullscreen', 'skip', 'quick-save', 'history', 'quick-load'];
-  const SHORTCUT_ACTION_LABELS = { none: '無効', system: 'システム', save: 'セーブ', load: 'ロード', 'replay-voice': '最後のボイス再生', auto: 'オートプレイ', 'clear-text': 'テキスト消去', fullscreen: 'フルスクリーン切替', skip: 'スキップ', 'quick-save': 'クイックセーブ', history: 'テキスト履歴', 'quick-load': 'クイックロード' };
+  const SHORTCUT_ACTION_LABELS = { none: 'Disabled', system: 'System', save: 'Save', load: 'Load', 'replay-voice': 'Replay Last Voice', auto: 'Auto Play', 'clear-text': 'Clear Text', fullscreen: 'Toggle Fullscreen', skip: 'Skip', 'quick-save': 'Quick Save', history: 'Text History', 'quick-load': 'Quick Load' };
   const ENUM_CONTROL_VALUES = { 'ui.fontFamily': ['default', 'gothic', 'mincho'] };
   const CONTROL_KEYS = new Set(['audio.master', 'audio.bgm', 'audio.se', 'audio.voice', 'audio.bgmMuted', 'audio.seMuted', 'audio.voiceMuted', 'ui.dialogOpacity', 'ui.skipUnseen', 'ui.autoAfterChoice', 'ui.skipAfterChoice', 'ui.autoSpeed', 'ui.textSpeed', 'ui.fullscreen', 'ui.effects', 'ui.cursorHideDelay']);
   const BOOLEAN_CONTROL_KEYS = new Set(['audio.bgmMuted', 'audio.seMuted', 'audio.voiceMuted', 'ui.skipUnseen', 'ui.autoAfterChoice', 'ui.skipAfterChoice', 'ui.fullscreen', 'ui.effects']);
@@ -54,7 +57,7 @@
     if (isShortcutSettingKey(key)) return { type: 'enum', values: [...SHORTCUT_ACTIONS] };
     if (Object.hasOwn(ENUM_CONTROL_VALUES, key)) return { type: 'enum', values: [...ENUM_CONTROL_VALUES[key]] };
     if (isControlSettingKey(key) && typeof value === 'number') return { type: 'number', minimum: 0, maximum: 1 };
-    throw Error(`Unsupported control setting: ${key}`);
+    throw Error(`未対応の画面コントロール設定です: ${key}`);
   }
   function compileControlSchema(settings) {
     return {
@@ -123,7 +126,7 @@
         if (!['true', 'false'].includes(sourceValue)) throw Error(`${key}はtrueまたはfalseで指定してください。`);
         settings[key] = sourceValue === 'true';
       } else if (isShortcutSettingKey(key)) {
-        if (!SHORTCUT_ACTIONS.includes(sourceValue)) throw Error(`${key} has an invalid shortcut action.`);
+        if (!SHORTCUT_ACTIONS.includes(sourceValue)) throw Error(`${key}のショートカット動作が正しくありません`);
         settings[key] = sourceValue;
       } else if (Object.hasOwn(ENUM_CONTROL_VALUES, key)) {
         if (!ENUM_CONTROL_VALUES[key].includes(sourceValue)) throw Error(`${key}は許可された選択肢から指定してください。`);
@@ -170,7 +173,10 @@
     for (const token of tokens) {
       if (!token.startsWith('<')) {
         const text = decodeEntities(token).replace(/\s+/g, ' ').trim();
-        if (text) stack.at(-1).text += (stack.at(-1).text ? ' ' : '') + text;
+        if (text) {
+          const parent = stack.at(-1);
+          parent.text += (parent.text && !parent.text.endsWith('\n') ? ' ' : '') + text;
+        }
         continue;
       }
       if (/^<!|^<\?/.test(token)) continue;
@@ -179,7 +185,8 @@
       if (!name || !TAGS.has(name)) throw Error(`画面HTMLに未対応の要素があります: ${name || token.slice(0, 24)}`);
       if (closing) {
         if (stack.length === 1 || stack.at(-1).tag !== name) throw Error(`画面HTMLの閉じタグが一致しません: ${name}`);
-        stack.pop();
+        const closed = stack.pop();
+        if (closed.text && closed.children.length) throw Error(`画面HTMLの混在コンテンツには対応していません: ${name}要素はテキストのみ、または子要素のみで記述してください。`);
         continue;
       }
       const rawAttrs = token.slice(name.length + token.indexOf(name) + 1, token.length - 1).replace(/\/\s*$/, '');
@@ -196,19 +203,21 @@
         attrs[key] = value;
       }
       if (rawAttrs.slice(consumedAttributes).trim()) throw Error('HTML属性は引用符付きの値で指定してください。');
+      if (attrs.tabindex !== undefined && (!/^[+-]?\d+$/.test(attrs.tabindex) || !Number.isSafeInteger(Number(attrs.tabindex)) || Number(attrs.tabindex) < -2147483648 || Number(attrs.tabindex) > 2147483647)) throw Error('tabindexには32-bit signed integerを指定してください。');
       if (name === 'img' && !attrs.src && attrs['data-slot-field'] !== 'thumbnail') throw Error('img要素にはsrcかサムネイルの指定が必要です。');
+      if (name === 'img' && !Object.hasOwn(attrs, 'alt')) throw Error('img要素にはalt属性を指定してください。装飾画像にはalt=""を指定してください。');
       if (name === 'input') {
         if (!CONTROL_TYPES.has(attrs.type) || !attrs['data-setting'] || !isControlSettingKey(attrs['data-setting'])) throw Error('inputには対応するtypeとdata-settingが必要です。');
         if (attrs.type === 'range') {
           const min = Number(attrs.min ?? 0), max = Number(attrs.max ?? 1), step = Number(attrs.step ?? 0.01);
-          if (![min, max, step].every(Number.isFinite) || min < 0 || max > 1 || max <= min || step <= 0 || step > max - min) throw Error('rangeのmin/max/stepは0〜1の有効範囲で指定してください。');
+          if (![min, max, step].every(Number.isFinite) || min < 0 || max > 1 || max <= min || step < Number.EPSILON || step > max - min) throw Error('rangeのmin/max/stepは0〜1の有効範囲で指定してください。stepはNumber.EPSILON以上にしてください。');
           if (isBooleanControlSettingKey(attrs['data-setting'])) throw Error('boolean設定はcheckboxを使ってください。');
         } else if (!isBooleanControlSettingKey(attrs['data-setting'])) throw Error('checkboxにはboolean設定を指定してください。');
         if (attrs['data-skin'] && !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(attrs['data-skin'])) throw Error('data-skinは有効なスキンIDで指定してください。');
       } else if (attrs['data-setting'] || attrs['data-skin']) throw Error('data-settingとdata-skinはinputでのみ使用できます。');
       if (attrs['data-action'] && !ACTIONS.has(attrs['data-action'])) throw Error(`未対応の画面動作です: ${attrs['data-action']}`);
       if (attrs['data-action'] === 'open-screen' && !attrs['data-target']) throw Error('open-screenにはdata-targetが必要です。');
-      if (attrs['data-action'] === 'shortcut-cycle' && !/^F(?:[1-9]|1[0-2])$/.test(attrs['data-target'] || '')) throw Error('shortcut-cycle needs a function-key data-target from F1 through F12.');
+      if (attrs['data-action'] === 'shortcut-cycle' && !/^F(?:[1-9]|1[0-2])$/.test(attrs['data-target'] || '')) throw Error('shortcut-cycleのdata-targetにはF1〜F12を指定してください');
       if (attrs['data-action'] === 'setting-value' && !((BOOLEAN_CONTROL_KEYS.has(attrs['data-target']) && ['true', 'false'].includes(attrs['data-value'])) || (Object.hasOwn(ENUM_CONTROL_VALUES, attrs['data-target']) && ENUM_CONTROL_VALUES[attrs['data-target']].includes(attrs['data-value'])))) throw Error('setting-valueには許可された設定値が必要です。');
       if (attrs['data-value'] && attrs['data-action'] !== 'setting-value') throw Error('data-valueはsetting-value動作でのみ使用できます。');
       if (attrs['data-action'] === 'slot-page' && !/^[0-9]$/.test(attrs['data-target'] || '')) throw Error('slot-pageには0〜9のページ番号が必要です。');
@@ -216,6 +225,12 @@
       if (attrs['data-role'] && !['save-slots', 'load-slots', 'dialogue-history', 'selected-slot-summary'].includes(attrs['data-role'])) throw Error(`未対応の画面roleです: ${attrs['data-role']}`);
       if (attrs['data-count'] && (!/^\d+$/.test(attrs['data-count']) || Number(attrs['data-count']) < 1 || Number(attrs['data-count']) > 100)) throw Error('data-countは1〜100の整数です。');
       if (attrs['data-slot-field'] && !SLOT_FIELDS.has(attrs['data-slot-field'])) throw Error(`未対応のセーブ枠フィールドです: ${attrs['data-slot-field']}`);
+      if (name === 'br') {
+        if (Object.keys(attrs).some(key => !['id', 'class', 'title', 'aria-label', 'aria-hidden'].includes(key))) throw Error('brには表示用属性だけ指定できます。');
+        if (++nodeCount > 2000) throw Error('画面HTMLの要素数は2000個以内にしてください。');
+        stack.at(-1).text += '\n';
+        continue;
+      }
       const node = { tag: name, attrs, text: '', children: [] };
       stack.at(-1).children.push(node);
       if (++nodeCount > 2000) throw Error('画面HTMLの要素数は2000個以内にしてください。');
@@ -228,64 +243,129 @@
     return root.children;
   }
 
-  function parseDeclarations(source) {
+  function parseDeclarations(source, baseOffset, sourcePosition) {
     const style = {};
     const sharedColor = value => value === 'transparent' || /^#[\da-f]{6}(?:[\da-f]{2})?$/i.test(value)
       || /^rgb\(\s*\d+(?:\.\d+)?\s*,\s*\d+(?:\.\d+)?\s*,\s*\d+(?:\.\d+)?\s*\)$/i.test(value)
       || /^rgba\(\s*\d+(?:\.\d+)?\s*,\s*\d+(?:\.\d+)?\s*,\s*\d+(?:\.\d+)?\s*,\s*(?:0(?:\.\d+)?|\.\d+|1(?:\.0+)?)\s*\)$/i.test(value);
+    let offset = 0;
     for (const declaration of source.split(';')) {
+      const declarationOffset = offset;
+      offset += declaration.length + 1;
       if (!declaration.trim()) continue;
+      const leadingWhitespace = declaration.search(/\S/);
+      const position = sourcePosition(baseOffset + declarationOffset + Math.max(leadingWhitespace, 0));
       const colon = declaration.indexOf(':');
-      if (colon < 1) throw Error('CSSの宣言は「property: value;」形式で指定してください。');
-      const key = declaration.slice(0, colon).trim().toLowerCase(), value = declaration.slice(colon + 1).trim();
-      if (!PROPERTIES.has(key) && !/^--[a-z][\w-]*$/.test(key)) throw Error(`未対応の画面CSSプロパティです: ${key}`);
-      if (!value || value.length > 1000 || /[{}<>;]/.test(value) || /expression\s*\(|javascript:|data:|@import/i.test(value)) throw Error(`CSS値が不正です: ${key}`);
-      if (NON_PORTABLE_PROPERTIES.has(key)) throw Error(`Browser／Native共通画面では未対応のCSSです: ${key}`);
-      if ((key === 'background' || key === 'background-image') && /(?:linear|radial)-gradient\s*\(/i.test(value)) throw Error(`Browser／Native共通画面では未対応の背景効果です: ${key}`);
-      if (['color', 'background-color', 'border-color', 'accent-color'].includes(key) && /var\s*\(/i.test(value)) throw Error(`Browser／Native共通画面ではCSS変数を色に使えません: ${key}`);
-      if (key === 'flex' && !/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value)) throw Error('Browser／Native共通画面のflexは数値のみ指定できます');
-      for (const reference of value.matchAll(/url\s*\(([^)]*)\)/gi)) {
-        const asset = reference[1].trim().replace(/^['"]|['"]$/g, '');
-        if (!/^(?:asset\/)?[A-Za-z0-9_./-]+$/.test(asset) || asset.split('/').includes('..') || asset.startsWith('/')) throw Error('CSSのurl()は作品素材だけを指定してください。');
+      if (colon < 1) {
+        const error = Error('CSSの宣言は「property: value;」形式で指定してください。');
+        error.cssPosition = position;
+        throw error;
       }
-      if (key === 'display' && !['block','flex','grid','none'].includes(value)) throw Error(`displayはblock、flex、grid、noneから指定してください: ${value}`);
-      if (key === 'position' && !['relative','absolute'].includes(value)) throw Error(`positionはrelativeまたはabsoluteから指定してください: ${value}`);
-      if (key === 'flex-direction' && !['row','column'].includes(value)) throw Error(`flex-directionはrowまたはcolumnから指定してください: ${value}`);
-      if (key === 'justify-content' && !['start','flex-start','end','flex-end','center','space-between','space-around','space-evenly'].includes(value)) throw Error(`未対応のjustify-contentです: ${value}`);
-      if (key === 'align-items' && !['stretch','start','flex-start','end','flex-end','center'].includes(value)) throw Error(`未対応のalign-itemsです: ${value}`);
-      if (key === 'text-align' && !['left','center','right'].includes(value)) throw Error(`text-alignはleft、center、rightから指定してください: ${value}`);
-      if (key === 'opacity' && (!/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(value))) throw Error('opacityは0〜1の数値で指定してください。');
-      if (key === 'z-index' && !/^-?\d+$/.test(value)) throw Error('z-indexは整数で指定してください。');
-      if (key === 'object-fit' && !['fill','contain','cover'].includes(value)) throw Error('object-fitはfill、contain、coverから指定してください。');
-      if (key === 'background-size' && !['cover','contain','100% 100%'].includes(value)) throw Error('background-sizeはcover、contain、100% 100%から指定してください。');
-      if ((key === 'background-image' || key === 'background') && /url\s*\(/i.test(value) && !/^url\(["']?(?:asset\/)?[A-Za-z0-9_./-]+["']?\)$/i.test(value)) throw Error('background画像は作品素材のassetパスだけ指定できます。');
-      if (['color','background-color','border-color','accent-color'].includes(key) && !sharedColor(value) && !/^var\(--[a-z][\w-]*\)$/.test(value)) throw Error(`${key}は色またはCSS変数で指定してください。`);
-      if (key === 'background' && !/url\s*\(/i.test(value) && !sharedColor(value) && !/^(?:linear|radial)-gradient\(.+\)$/i.test(value) && !/^var\(--[a-z][\w-]*\)$/i.test(value)) throw Error('backgroundの値が不正です。');
-      if (key === 'border' && !/^(?:\d+(?:\.\d+)?px\s+)?solid\s+(.+)$/.test(value)) throw Error('borderは「1px solid #RRGGBB」形式で指定してください。');
-      style[key] = value;
+      const key = declaration.slice(0, colon).trim().toLowerCase(), value = declaration.slice(colon + 1).trim();
+      try {
+        if (/^--/.test(key)) throw Error(`CSSカスタムプロパティには対応していません: ${key}`);
+        if (!PROPERTIES.has(key)) throw Error(`未対応の画面CSSプロパティです: ${key}`);
+        if (!value || value.length > 1000 || /[{}<>;]/.test(value) || /expression\s*\(|javascript:|data:|@import/i.test(value)) throw Error(`CSS値が不正です: ${key}`);
+        if (NON_PORTABLE_PROPERTIES.has(key)) throw Error(`Browser／Native共通画面では未対応のCSSです: ${key}`);
+        if ((key === 'background' || key === 'background-image') && /(?:linear|radial)-gradient\s*\(/i.test(value)) throw Error(`Browser／Native共通画面では未対応の背景効果です: ${key}`);
+        if (/var\s*\(/i.test(value)) throw Error(`Browser／Native共通画面ではCSS変数を使用できません: ${key}`);
+        if (key === 'flex' && !/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value)) throw Error('Browser／Native共通画面のflexは数値のみ指定できます');
+        if ((key === 'flex' || key === 'flex-grow') && (!Number.isFinite(Number(value)) || Number(value) > 1_000_000)) throw Error(`${key}には有限範囲の0〜1000000を指定してください`);
+        if (key !== 'gap' && NON_NEGATIVE_LENGTH_PROPERTIES.has(key) && length(value, 100) < 0) throw Error(`${key}に負の値は指定できません`);
+        if (key === 'font-size' || key === 'border-width') length(value, 100);
+        if (key === 'line-height' && (!/^(?:\d+(?:\.\d+)?|\.\d+)(?:px|%)?$/.test(value) || !Number.isFinite(Number.parseFloat(value)) || Number.parseFloat(value) > 1_000_000)) throw Error('line-heightには0〜1000000の数値、px、または%を指定してください');
+        if (key === 'flex-grow' && !/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value)) throw Error('flex-growには0以上の数値を指定してください');
+        if (key.startsWith('padding-') && length(value, 100) < 0) throw Error('paddingに負の値は指定できません');
+        for (const reference of value.matchAll(/url\s*\(([^)]*)\)/gi)) {
+          const asset = reference[1].trim().replace(/^['"]|['"]$/g, '');
+          if (!/^(?:asset\/)?[A-Za-z0-9_./-]+$/.test(asset) || asset.split('/').includes('..') || asset.startsWith('/')) throw Error('CSSのurl()は作品素材だけを指定してください。');
+        }
+        if (key === 'display' && !['block','flex','grid','none'].includes(value)) throw Error(`displayはblock、flex、grid、noneから指定してください: ${value}`);
+        if (key === 'position' && !['relative','absolute'].includes(value)) throw Error(`positionはrelativeまたはabsoluteから指定してください: ${value}`);
+        if (key === 'flex-direction' && !['row','column'].includes(value)) throw Error(`flex-directionはrowまたはcolumnから指定してください: ${value}`);
+        if (key === 'justify-content' && !['start','flex-start','end','flex-end','center','space-between','space-around','space-evenly'].includes(value)) throw Error(`未対応のjustify-contentです: ${value}`);
+        if (key === 'align-items' && !['stretch','start','flex-start','end','flex-end','center'].includes(value)) throw Error(`未対応のalign-itemsです: ${value}`);
+        if (key === 'text-align' && !['left','center','right'].includes(value)) throw Error(`text-alignはleft、center、rightから指定してください: ${value}`);
+        if (key === 'opacity' && (!/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(value))) throw Error('opacityは0〜1の数値で指定してください。');
+        if (key === 'z-index' && !/^-?\d+$/.test(value)) throw Error('z-indexは整数で指定してください。');
+        if (key === 'object-fit' && !['fill','contain','cover'].includes(value)) throw Error('object-fitはfill、contain、coverから指定してください。');
+        if (key === 'background-size' && !['cover','contain','100% 100%'].includes(value)) throw Error('background-sizeはcover、contain、100% 100%から指定してください。');
+        if ((key === 'background-image' || key === 'background') && /url\s*\(/i.test(value) && !/^url\(["']?(?:asset\/)?[A-Za-z0-9_./-]+["']?\)$/i.test(value)) throw Error('background画像は作品素材のassetパスだけ指定できます。');
+        if (['color','background-color','border-color','accent-color'].includes(key) && !sharedColor(value)) throw Error(`${key}には対応している色を指定してください`);
+        if (key === 'background' && !/url\s*\(/i.test(value) && !sharedColor(value) && !/^(?:linear|radial)-gradient\(.+\)$/i.test(value)) throw Error('backgroundの値が正しくありません');
+        if (key === 'border') {
+          const border = /^(\d+(?:\.\d+)?px)\s+solid\s+(.+)$/i.exec(value);
+          if (!border || !sharedColor(border[2])) throw Error('borderにはpx単位の幅、solid、対応している色を指定してください');
+          style['border-width'] = border[1];
+          style['border-style'] = 'solid';
+          style['border-color'] = border[2];
+        }
+        if (key === 'padding') {
+          const values = value.split(/\s+/);
+          if (values.length < 1 || values.length > 4) throw Error('paddingには1〜4個の対応している寸法を指定してください');
+          for (const item of values) {
+            const amount = length(item, 100);
+            if (amount < 0) throw Error('paddingに負の値は指定できません');
+          }
+          const [top, right = top, bottom = top, left = right] = values;
+          const sides = values.length === 3 ? { top, right, bottom, left: right } : { top, right, bottom, left };
+          for (const [side, amount] of Object.entries(sides)) style[`padding-${side}`] = amount;
+          continue;
+        }
+        if (key === 'gap') {
+          const values = value.split(/\s+/);
+          if (values.length < 1 || values.length > 2) throw Error('gapには1つまたは2つの非負長さを指定してください');
+          for (const item of values) if (length(item, 100) < 0) throw Error('gapに負の値は指定できません');
+          style['row-gap'] = values[0];
+          style['column-gap'] = values[1] || values[0];
+          continue;
+        }
+        style[key] = value;
+      } catch (error) {
+        error.cssPosition = position;
+        error.cssProperty = key;
+        throw error;
+      }
     }
     return style;
   }
 
   function parseStylesheet(css) {
     if (typeof css !== 'string' || css.length > 80_000) throw Error('画面CSSは80KB以内で指定してください。');
-    const source = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const source = css.replace(/\/\*[\s\S]*?\*\//g, comment => comment.replace(/[^\r\n\u2028\u2029]/g, ' '));
     if (/@|url\s*\([^)]*(?:https?:|\\|\.\.)/i.test(source)) throw Error('画面CSSの外部参照やat-ruleは使用できません。');
+    const sourcePosition = offset => {
+      const prefix = source.slice(0, offset);
+      const breaks = [...prefix.matchAll(/\r\n|\r|\n|\u2028|\u2029/g)];
+      const last = breaks.at(-1);
+      return { line: breaks.length + 1, column: last ? prefix.length - last.index - last[0].length + 1 : prefix.length + 1 };
+    };
     const rules = [];
     const pattern = /([^{}]+)\{([^{}]*)\}/g;
     let match, consumed = '';
     while ((match = pattern.exec(source))) {
       consumed += match[0];
-      const declarations = parseDeclarations(match[2]);
+      let selectorOffset = 0;
       for (const selector of match[1].split(',')) {
         const normalized = selector.trim();
+        const leadingWhitespace = selector.search(/\S/);
+        const position = sourcePosition(match.index + selectorOffset + Math.max(leadingWhitespace, 0));
+        selectorOffset += selector.length + 1;
+        let declarations;
+        const declarationOffset = match.index + match[0].indexOf('{') + 1;
+        try { declarations = parseDeclarations(match[2], declarationOffset, sourcePosition); }
+        catch (error) {
+          const errorPosition = error.cssPosition || position;
+          const property = error.cssProperty ? `, property '${error.cssProperty}'` : '';
+          throw Error(`CSS ${errorPosition.line}行${errorPosition.column}列、セレクター「${normalized}」${property}: ${error.message}`);
+        }
         const stateSelector = /\[data-state=(?:"(empty|ready|corrupt|incompatible)"|'(empty|ready|corrupt|incompatible)'|(empty|ready|corrupt|incompatible))\]/.exec(normalized);
         const dataState = stateSelector ? stateSelector[1] || stateSelector[2] || stateSelector[3] : '';
         const selectorBase = stateSelector ? normalized.replace(stateSelector[0], '') : normalized;
         const matchSelector = /^([A-Za-z][\w-]*)?(?:#([A-Za-z][\w-]*))?((?:\.[A-Za-z_][\w-]*)*)(?::(hover|focus|focus-visible))?$/.exec(selectorBase);
-        if (!normalized || normalized.length > 200 || !/^[A-Za-z0-9_#.\s>+~:\[\]="'()\-*]+$/.test(normalized)) throw Error(`画面CSSのセレクターが不正です: ${normalized}`);
-        if (!matchSelector) throw Error(`Browser／Native共通画面では未対応のCSSセレクターです: ${normalized}`);
-        if (dataState && (!matchSelector[3] || matchSelector[2] || matchSelector[4])) throw Error('data-state selectors must target a save-slot template root using classes only.');
+        if (!normalized || normalized.length > 200 || !/^[A-Za-z0-9_#.\s>+~:\[\]="'()\-*]+$/.test(normalized)) throw Error(`CSS ${position.line}行${position.column}列: 画面CSSのセレクターが不正です: ${normalized}`);
+        if (!matchSelector) throw Error(`CSS ${position.line}行${position.column}列、セレクター「${normalized}」: Browser／Native共通画面では未対応です`);
+        if (dataState && (!matchSelector[3] || matchSelector[2] || matchSelector[4])) throw Error(`CSS ${position.line}行${position.column}列、セレクター「${normalized}」: data-stateはクラスだけを使い、セーブ枠テンプレートのルートを指定してください`);
         rules.push({ selector: normalized, tag: matchSelector[1]?.toLowerCase() || '', id: matchSelector[2] || '', classes: matchSelector[3].split('.').filter(Boolean) || [], dataState, state: matchSelector[4] || '', webOnly: false, declarations });
       }
     }
@@ -298,7 +378,8 @@
       && rule.classes.every(name => (node.attrs.class || '').split(/\s+/).includes(name));
   }
   function mergeStyles(node, rules, inherited, validateSlotStates = true) {
-    const base = {}, hover = {}, focus = {}, slotStateStyles = {};
+    const base = {}, specified = {}, hover = {}, focus = {}, focusVisible = {}, slotStateStyles = {};
+    let lineHeightSpecified = false;
     // The browser UA stylesheet gives heading elements large default margins;
     // Native has no UA stylesheet. Normalize them into the shared tree so the
     // same authored rect starts at the same pixel in both renderers.
@@ -307,17 +388,28 @@
     for (const rule of rules) if (matches(node, rule)) {
       if (rule.dataState) {
         if (node.attrs['data-slot-index'] === undefined) {
-          if (validateSlotStates) throw Error('data-state selectors can only style the save-slot template root.');
+          if (validateSlotStates) throw Error('data-stateセレクターはセーブ枠テンプレートのルートにだけ指定できます');
           continue;
         }
         slotStateStyles[rule.dataState] ||= {};
         Object.assign(slotStateStyles[rule.dataState], rule.declarations);
-      } else Object.assign(rule.state === 'hover' ? hover : rule.state ? focus : base, rule.declarations);
+      } else if (rule.state === 'hover') Object.assign(hover, rule.declarations);
+      else if (rule.state === 'focus') {
+        Object.assign(focus, rule.declarations);
+        Object.assign(focusVisible, rule.declarations);
+      } else if (rule.state === 'focus-visible') Object.assign(focusVisible, rule.declarations);
+      else {
+        Object.assign(base, rule.declarations);
+        Object.assign(specified, rule.declarations);
+        if (Object.hasOwn(rule.declarations, 'line-height')) lineHeightSpecified = true;
+      }
     }
     Object.assign(base, node.attrs.style || {});
+    Object.assign(specified, node.attrs.style || {});
+    if (Object.hasOwn(node.attrs.style || {}, 'line-height')) lineHeightSpecified = true;
     const nextInherited = { ...inherited };
     for (const key of INHERITED) if (base[key] !== undefined) nextInherited[key] = base[key];
-    node.style = base; node.hoverStyle = hover; node.focusStyle = focus; node.slotStateStyles = slotStateStyles; node.inherited = nextInherited;
+    node.style = base; node.specifiedStyle = specified; node.hoverStyle = hover; node.focusStyle = focus; node.focusVisibleStyle = focusVisible; node.slotStateStyles = slotStateStyles; node.inherited = nextInherited; node.lineHeightSpecified = lineHeightSpecified;
     node.children.forEach(child => mergeStyles(child, rules, nextInherited, validateSlotStates));
   }
 
@@ -352,95 +444,211 @@
   }
   function edge(style, key, available) { return length(style[key], available, 0); }
   function boxEdges(style, prefix, available) {
-    const all = (style[prefix] === undefined ? 0 : length(style[prefix], available));
     return {
-      left: edge(style, `${prefix}-left`, available) || all,
-      right: edge(style, `${prefix}-right`, available) || all,
-      top: edge(style, `${prefix}-top`, available) || all,
-      bottom: edge(style, `${prefix}-bottom`, available) || all,
+      left: edge(style, `${prefix}-left`, available),
+      right: edge(style, `${prefix}-right`, available),
+      top: edge(style, `${prefix}-top`, available),
+      bottom: edge(style, `${prefix}-bottom`, available),
     };
   }
   function intrinsicSize(node, availableWidth, availableHeight) {
     const style = node.style || {};
-    const children = node.children || [];
+    // Intrinsic dimensions must follow the same flow participation rules as
+    // layoutNodes. Hidden and absolutely positioned descendants cannot size an
+    // auto-sized parent in Browser and Native.
+    const children = (node.children || []).filter(child =>
+      child.style?.display !== 'none' && child.style?.position !== 'absolute');
+    const grid = style.display === 'grid';
     const vertical = style.display === 'flex' && (style['flex-direction'] || 'row') === 'column';
-    const gap = length(style.gap || (vertical ? style['row-gap'] : style['column-gap']), vertical ? availableHeight : availableWidth, 0);
+    const gap = length(vertical ? style['row-gap'] : style['column-gap'], vertical ? availableHeight : availableWidth, 0);
     const padding = boxEdges(style, 'padding', availableWidth);
+    const border = length(style['border-width'], availableWidth, 0);
     const measured = children.map(child => intrinsicSize(child, availableWidth, availableHeight));
-    const contentWidth = vertical ? Math.max(0, ...measured.map(size => size.width)) : measured.reduce((sum, size) => sum + size.width, 0) + gap * Math.max(0, children.length - 1);
-    const contentHeight = vertical ? measured.reduce((sum, size) => sum + size.height, 0) + gap * Math.max(0, children.length - 1) : Math.max(0, ...measured.map(size => size.height));
-    const fallbackHeight = node.text ? Math.max(24, length(style['font-size'], availableHeight, 16) * 1.5) : 0;
+    let contentWidth = vertical ? Math.max(0, ...measured.map(size => size.width)) : measured.reduce((sum, size) => sum + size.width, 0) + gap * Math.max(0, children.length - 1);
+    let contentHeight = vertical ? measured.reduce((sum, size) => sum + size.height, 0) + gap * Math.max(0, children.length - 1) : Math.max(0, ...measured.map(size => size.height));
+    if (grid && children.length) {
+      const expression = style['grid-template-columns'] || '1fr';
+      const repeated = /^repeat\(\s*(\d+)\s*,\s*((?:\d+(?:\.\d+)?|\.\d+))?\s*(px|fr|%)\s*\)$/.exec(expression);
+      const repeatedCount = repeated ? Number(repeated[1]) : null;
+      if (repeated && (!Number.isSafeInteger(repeatedCount) || repeatedCount < 1 || repeatedCount > 2000)) throw Error(`grid-template-columnsのrepeat列数は1〜2000で指定してください: ${expression}`);
+      const columns = Math.max(1, repeated ? repeatedCount : expression.trim().split(/\s+/).length);
+      const definitions = repeated
+        ? Array.from({ length: columns }, () => `${repeated[2] || '1'}${repeated[3]}`)
+        : expression.trim().split(/\s+/);
+      const columnGap = length(style['column-gap'], availableWidth, 0);
+      const trackAvailable = Math.max(0, availableWidth - columnGap * Math.max(0, columns - 1));
+      const intrinsicColumns = Array.from({ length: columns }, (_, column) =>
+        Math.max(0, ...measured.filter((_, index) => index % columns === column).map(size => size.width)));
+      const trackWidths = definitions.map((definition, column) => {
+        const track = /^(\d+(?:\.\d+)?|\.\d+)(px|fr|%)$/.exec(definition);
+        if (!track) return intrinsicColumns[column] || 0;
+        if (track[2] === 'px') return Number(track[1]);
+        if (track[2] === '%') return trackAvailable * Number(track[1]) / 100;
+        // Fractional tracks in an intrinsically sized grid retain the
+        // minimum content contribution of their column.
+        return intrinsicColumns[column] || 0;
+      });
+      const rows = Math.ceil(children.length / columns), rowGap = length(style['row-gap'], availableHeight, 0);
+      let gridHeight = 0;
+      for (let row = 0; row < rows; row++) {
+        const rowStart = row * columns;
+        const rowHeight = length(style['grid-auto-rows'], availableHeight,
+          Math.max(0, ...measured.slice(rowStart, rowStart + columns).map(size => size.height)));
+        gridHeight += rowHeight;
+      }
+      contentHeight = gridHeight + rowGap * Math.max(0, rows - 1);
+      contentWidth = trackWidths.reduce((sum, width) => sum + width, 0) + columnGap * Math.max(0, columns - 1);
+    }
+    const textLines = node.text ? (node.text.match(/\n/g) || []).length + 1 : 0;
+    const fontSize = length(style['font-size'], availableHeight, 16);
+    const authoredLineHeight = String(style['line-height'] || '').trim();
+    const lineHeight = !authoredLineHeight ? fontSize * 1.5
+      : authoredLineHeight.endsWith('px') ? length(authoredLineHeight, availableHeight)
+        : authoredLineHeight.endsWith('%') ? fontSize * Number.parseFloat(authoredLineHeight) / 100
+          : fontSize * Number(authoredLineHeight);
+    const fallbackHeight = node.text ? Math.max(24, fontSize, lineHeight * textLines) : 0;
     return {
-      width: length(style.width, availableWidth, contentWidth + padding.left + padding.right),
-      height: length(style.height, availableHeight, (contentHeight || fallbackHeight) + padding.top + padding.bottom),
+      width: length(style.width, availableWidth, contentWidth + padding.left + padding.right + border * 2),
+      height: length(style.height, availableHeight, (contentHeight || fallbackHeight) + padding.top + padding.bottom + border * 2),
     };
   }
 
   function layoutNodes(nodes, rect, rules) {
     const laid = nodes.map(node => ({ ...node, children: node.children.map(child => ({ ...child })) }));
+    const inFlowChildren = node => node.children
+      .map((child, index) => ({ child, index }))
+      .filter(({ child }) => child.style.display !== 'none' && child.style.position !== 'absolute');
+    const mapFlowRects = (node, participants, rects, box) => {
+      const result = node.children.map(() => ({ x: box.x, y: box.y, width: 0, height: 0, _availableWidth: box.width, _availableHeight: box.height }));
+      participants.forEach(({ index }, participantIndex) => { result[index] = rects[participantIndex]; });
+      return result;
+    };
     const flexChildren = (node, box) => {
+      const participants = inFlowChildren(node);
+      const flowNodes = participants.map(({ child }) => child);
       const direction = node.style['flex-direction'] || 'row';
       const vertical = direction === 'column';
-      const gap = length(node.style.gap || (vertical ? node.style['row-gap'] : node.style['column-gap']), vertical ? box.height : box.width, 0);
+      const gap = length(vertical ? node.style['row-gap'] : node.style['column-gap'], vertical ? box.height : box.width, 0);
       const content = box;
       const basis = vertical ? content.height : content.width;
-      const fixed = node.children.reduce((sum, child) => {
-        if (child.style.flex || child.style['flex-grow']) return sum;
+      const flexBasis = child => {
+        const mainKey = vertical ? 'height' : 'width';
         const measured = intrinsicSize(child, content.width, content.height);
-        return sum + length(child.style[vertical ? 'height' : 'width'], basis, vertical ? measured.height : measured.width);
+        return length(child.style[mainKey], basis, vertical ? measured.height : measured.width);
+      };
+      const growFactor = child => Number(child.style.flex !== undefined ? child.style.flex : child.style['flex-grow'] || 0);
+      const fixed = flowNodes.reduce((sum, child) => {
+        // `flex: N` uses a zero basis in this subset. `flex-grow: N` keeps
+        // the authored/intrinsic basis and only distributes remaining space.
+        if (child.style.flex !== undefined) return sum;
+        return sum + flexBasis(child);
       }, 0);
-      const grow = node.children.reduce((sum, child) => sum + Number(child.style.flex || child.style['flex-grow'] || 0), 0);
-      const free = Math.max(0, basis - fixed - gap * Math.max(0, node.children.length - 1));
+      const grow = flowNodes.reduce((sum, child) => sum + growFactor(child), 0);
+      const free = basis - fixed - gap * Math.max(0, flowNodes.length - 1);
+      const growFree = Math.max(0, free);
+      // Growing children consume the available main-axis space, leaving no
+      // additional free space for justify-content to distribute.
+      // Flexbox keeps negative free space for positional alignment: center and
+      // flex-end may overflow equally or toward the start edge. Edge's flex
+      // layout falls back to start for all space-* values on negative space.
+      const justifyFree = grow > 0 ? 0 : free;
       let itemGap = gap, offset = 0;
-      if (node.style['justify-content'] === 'space-between' && node.children.length > 1) itemGap += free / (node.children.length - 1);
-      else if (node.style['justify-content'] === 'space-around' && node.children.length) { itemGap += free / node.children.length; offset = free / node.children.length / 2; }
-      else if (node.style['justify-content'] === 'space-evenly') { itemGap += free / (node.children.length + 1); offset = free / (node.children.length + 1); }
+      if (justifyFree > 0 && node.style['justify-content'] === 'space-between' && flowNodes.length > 1) itemGap += justifyFree / (flowNodes.length - 1);
+      else if (justifyFree > 0 && node.style['justify-content'] === 'space-around' && flowNodes.length) { itemGap += justifyFree / flowNodes.length; offset = justifyFree / flowNodes.length / 2; }
+      else if (justifyFree > 0 && node.style['justify-content'] === 'space-evenly' && flowNodes.length) { itemGap += justifyFree / (flowNodes.length + 1); offset = justifyFree / (flowNodes.length + 1); }
       let cursor = vertical ? content.y : content.x;
       cursor += offset;
-      if (node.style['justify-content'] === 'center') cursor += Math.max(0, free) / 2;
-      if (node.style['justify-content'] === 'end' || node.style['justify-content'] === 'flex-end') cursor += free;
-      const placed = node.children.map(child => {
-        const flex = Number(child.style.flex || child.style['flex-grow'] || 0);
+      const justify = node.style['justify-content'];
+      if (justify === 'center') cursor += justifyFree / 2;
+      if (justify === 'end' || justify === 'flex-end') cursor += justifyFree;
+      const placed = flowNodes.map(child => {
+        const flex = growFactor(child);
         const measured = intrinsicSize(child, content.width, content.height);
-        const main = flex ? (grow ? free * flex / grow : 0) : length(child.style[vertical ? 'height' : 'width'], basis, vertical ? measured.height : measured.width);
+        const main = child.style.flex !== undefined
+          ? (grow ? growFree * flex / grow : 0)
+          : flexBasis(child) + (grow ? growFree * flex / grow : 0);
         const crossAvailable = vertical ? content.width : content.height;
         const cross = length(child.style[vertical ? 'width' : 'height'], crossAvailable, node.style['align-items'] === 'stretch' || !node.style['align-items'] ? crossAvailable : vertical ? measured.width : measured.height);
         const crossAlign = node.style['align-items'] || 'stretch';
         const crossOffset = crossAlign === 'center' ? ((vertical ? content.width : content.height) - cross) / 2 : crossAlign === 'end' || crossAlign === 'flex-end' ? (vertical ? content.width : content.height) - cross : 0;
         const childRect = vertical
-          ? { x: content.x + crossOffset, y: cursor, width: Math.min(content.width, cross), height: main }
-          : { x: cursor, y: content.y + crossOffset, width: main, height: Math.min(content.height, cross) };
+          ? { x: content.x + crossOffset, y: cursor, width: cross, height: main, _flowMainAxis: 'height', _availableWidth: content.width, _availableHeight: content.height }
+          : { x: cursor, y: content.y + crossOffset, width: main, height: cross, _flowMainAxis: 'width', _availableWidth: content.width, _availableHeight: content.height };
         cursor += main + itemGap;
         return childRect;
       });
-      return placed;
+      return mapFlowRects(node, participants, placed, box);
     };
     const gridChildren = (node, box) => {
+      const participants = inFlowChildren(node);
       const expression = node.style['grid-template-columns'] || '1fr';
-      const repeated = /^repeat\(\s*(\d+)\s*,\s*([\d.]+)?\s*(px|fr|%)\s*\)$/.exec(expression);
+      const repeated = /^repeat\(\s*(\d+)\s*,\s*((?:\d+(?:\.\d+)?|\.\d+))?\s*(px|fr|%)\s*\)$/.exec(expression);
       let definitions = ['1fr'];
-      if (repeated) definitions = Array.from({ length: Number(repeated[1]) }, () => `${repeated[2] || '1'}${repeated[3]}`);
+      if (repeated) {
+        const count = Number(repeated[1]);
+        if (!Number.isSafeInteger(count) || count < 1 || count > 2000) throw Error(`grid-template-columnsのrepeat列数は1〜2000で指定してください: ${expression}`);
+        definitions = Array.from({ length: count }, () => `${repeated[2] || '1'}${repeated[3]}`);
+      }
       else definitions = expression.trim().split(/\s+/);
-      if (!definitions.length || definitions.some(value => !/^[\d.]+(?:px|fr|%)$/.test(value))) throw Error(`grid-template-columnsはpx、%、frの列幅を指定してください: ${expression}`);
+      if (definitions.length > 2000) throw Error(`grid-template-columnsの列数は2000以内で指定してください: ${expression}`);
+      const tracks = definitions.map(value => /^(\d+(?:\.\d+)?|\.\d+)(px|fr|%)$/.exec(value));
+      if (!definitions.length || tracks.some(track => !track || !Number.isFinite(Number(track[1])))) throw Error(`grid-template-columnsは有限な数値のpx、%、fr列幅を指定してください: ${expression}`);
       const columns = definitions.length;
-      const gap = length(node.style.gap || node.style['column-gap'], box.width, 0), rowGap = length(node.style.gap || node.style['row-gap'], box.height, 0);
+      const gap = length(node.style['column-gap'], box.width, 0), rowGap = length(node.style['row-gap'], box.height, 0);
       const available = Math.max(0, box.width - gap * (columns - 1));
-      const parsed = definitions.map(value => /^([\d.]+)(px|fr|%)$/.exec(value));
+      const parsed = tracks;
       const fixed = parsed.reduce((sum, part) => sum + (part[2] === 'px' ? Number(part[1]) : part[2] === '%' ? available * Number(part[1]) / 100 : 0), 0);
-      const fractions = parsed.reduce((sum, part) => sum + (part[2] === 'fr' ? Number(part[1]) : 0), 0);
+      if (!Number.isFinite(fixed)) throw Error(`grid-template-columnsの固定幅合計が有限範囲を超えています: ${expression}`);
+      const maxFraction = parsed.reduce((maximum, part) => part[2] === 'fr' ? Math.max(maximum, Number(part[1])) : maximum, 0);
+      const fractionWeights = parsed.map(part => part[2] === 'fr' && maxFraction > 0 ? Number(part[1]) / maxFraction : 0);
+      const fractions = fractionWeights.reduce((sum, weight) => sum + weight, 0);
       const remaining = Math.max(0, available - fixed);
-      const widths = parsed.map(part => part[2] === 'px' ? Number(part[1]) : part[2] === '%' ? available * Number(part[1]) / 100 : fractions ? remaining * Number(part[1]) / fractions : 0);
-      return node.children.map((_, index) => {
-        const col = index % columns, row = Math.floor(index / columns);
-        const rowHeight = length(node.style['grid-auto-rows'] || node.style.height, box.height, 0);
-        const x = box.x + widths.slice(0,col).reduce((sum,width) => sum + width + gap,0);
-        return { x, y: box.y + row * (rowHeight + rowGap), width: widths[col], height: rowHeight };
+      const widths = parsed.map((part, index) => part[2] === 'px' ? Number(part[1]) : part[2] === '%' ? available * Number(part[1]) / 100 : fractions ? remaining * fractionWeights[index] / fractions : 0);
+      const rowCount = Math.ceil(participants.length / columns);
+      const autoRows = node.style['grid-auto-rows'] === undefined;
+      const rowHeights = Array.from({ length: rowCount }, (_, row) => {
+        if (!autoRows) return length(node.style['grid-auto-rows'], box.height, 0);
+        const start = row * columns;
+        return Math.max(0, ...participants.slice(start, start + columns).map(({ child }) => intrinsicSize(child, box.width, box.height).height));
       });
+      if (autoRows && rowCount) {
+        const trackTotal = rowHeights.reduce((sum, height) => sum + height, 0) + rowGap * Math.max(0, rowCount - 1);
+        const stretch = Math.max(0, box.height - trackTotal) / rowCount;
+        for (let row = 0; row < rowCount; row++) rowHeights[row] += stretch;
+      }
+      const rowOffsets = [];
+      let rowOffset = 0;
+      for (let row = 0; row < rowCount; row++) { rowOffsets[row] = rowOffset; rowOffset += rowHeights[row] + rowGap; }
+      const placed = participants.map((_, index) => {
+        const col = index % columns, row = Math.floor(index / columns);
+        const rowHeight = rowHeights[row];
+        const x = box.x + widths.slice(0,col).reduce((sum,width) => sum + width + gap,0);
+        return { x, y: box.y + rowOffsets[row], width: widths[col], height: rowHeight, _availableWidth: widths[col], _availableHeight: rowHeight || box.height };
+      });
+      return mapFlowRects(node, participants, placed, box);
     };
-    const place = (node, box, root = false) => {
+    const place = (node, box, root = false, availableWidth = box.width, availableHeight = box.height) => {
       if (node.style.display === 'none') { node.rect = { ...box, width: 0, height: 0 }; return; }
-      const padding = boxEdges(node.style, 'padding', box.width);
-      const content = { x: box.x + padding.left, y: box.y + padding.top, width: Math.max(0, box.width - padding.left - padding.right), height: Math.max(0, box.height - padding.top - padding.bottom) };
+      const padding = boxEdges(node.style, 'padding', availableWidth);
+      for (const side of ['left', 'right', 'top', 'bottom']) {
+        const property = `padding-${side}`;
+        if (String(node.style[property] || '').trim().endsWith('%')) node.style[property] = `${padding[side]}px`;
+      }
+      for (const [property, basis] of [['font-size', availableHeight], ['border-width', availableWidth]]) {
+        const value = String(node.style[property] || '').trim();
+        if (value && (/^-?(?:\d+\.?\d*|\.\d+)$/.test(value) || value.endsWith('%'))) node.style[property] = `${length(value, basis)}px`;
+      }
+      if (String(node.style['line-height'] || '').endsWith('%')) {
+        const authoredFontSize = String(node.style['font-size'] || '').trim();
+        const fontSize = authoredFontSize ? length(authoredFontSize, availableHeight, 16) : 16;
+        if (!authoredFontSize) node.style['font-size'] = '16px';
+        node.style['line-height'] = `${fontSize * Number.parseFloat(node.style['line-height']) / 100}px`;
+      }
+      for (const child of node.children) if (!child.lineHeightSpecified && node.style['line-height'] !== undefined) child.style['line-height'] = node.style['line-height'];
+      const border = length(node.style['border-width'], availableWidth, 0);
+      const content = { x: box.x + border + padding.left, y: box.y + border + padding.top,
+        width: Math.max(0, box.width - border * 2 - padding.left - padding.right),
+        height: Math.max(0, box.height - border * 2 - padding.top - padding.bottom) };
       node.rect = box;
       const display = node.style.display || (root ? 'block' : 'block');
       let flowRects = [];
@@ -448,17 +656,23 @@
       else if (display === 'grid') flowRects = gridChildren(node, content);
       else {
         let nextY = content.y;
-        flowRects = node.children.map(child => {
+        const participants = inFlowChildren(node);
+        const placed = participants.map(({ child }) => {
           const measured = intrinsicSize(child, content.width, content.height);
           const h = length(child.style.height, content.height, measured.height);
-          const r = { x: content.x, y: nextY, width: length(child.style.width, content.width, content.width), height: h };
+          const r = { x: content.x, y: nextY, width: length(child.style.width, content.width, content.width), height: h, _availableWidth: content.width, _availableHeight: content.height };
           nextY += h;
           return r;
         });
+        flowRects = mapFlowRects(node, participants, placed, content);
       }
       node.children.forEach((child, index) => {
         const style = child.style;
         let childRect = flowRects[index] || { x: content.x, y: content.y, width: 0, height: 0 };
+        const flowMainAxis = childRect._flowMainAxis;
+        const childAvailableWidth = childRect._availableWidth ?? content.width;
+        const childAvailableHeight = childRect._availableHeight ?? content.height;
+        childRect = { x: childRect.x, y: childRect.y, width: childRect.width, height: childRect.height };
         if (style.position === 'absolute') {
           const w = length(style.width, content.width, childRect.width || content.width);
           const measured = intrinsicSize(child, content.width, content.height);
@@ -467,14 +681,24 @@
           const y = style.top !== undefined ? content.y + length(style.top, content.height) : style.bottom !== undefined ? content.y + content.height - length(style.bottom, content.height) - h : childRect.y;
           childRect = { x, y, width: w, height: h };
         } else {
-          childRect.width = length(style.width, childRect.width || content.width, childRect.width);
-          childRect.height = length(style.height, childRect.height || content.height, childRect.height);
+          if (flowMainAxis !== 'width') childRect.width = length(style.width, childAvailableWidth, childRect.width);
+          if (flowMainAxis !== 'height') childRect.height = length(style.height, childAvailableHeight, childRect.height);
+          if (style.position === 'relative') {
+            const offsetX = style.left !== undefined ? length(style.left, content.width) : style.right !== undefined ? -length(style.right, content.width) : 0;
+            const offsetY = style.top !== undefined ? length(style.top, content.height) : style.bottom !== undefined ? -length(style.bottom, content.height) : 0;
+            childRect.x += offsetX;
+            childRect.y += offsetY;
+          }
         }
-        place(child, childRect);
+        place(child, childRect, false,
+          style.position === 'absolute' ? content.width : childAvailableWidth,
+          style.position === 'absolute' ? content.height : childAvailableHeight);
       });
     };
     laid.forEach(node => mergeStyles(node, rules, {}));
-    laid.forEach(node => place(node, rect, true));
+    laid.forEach(node => place(node, rect, true, rect.width, rect.height));
+    const clearLineHeightMetadata = nodes => nodes.forEach(node => { delete node.lineHeightSpecified; clearLineHeightMetadata(node.children || []); });
+    clearLineHeightMetadata(laid);
     const sortByStacking = node => {
       node.children.sort((a,b) => Number(a.style?.['z-index'] || 0) - Number(b.style?.['z-index'] || 0));
       node.children.forEach(sortByStacking);
@@ -511,6 +735,12 @@
       } else node.children.forEach(child => expandRoles(child, insideSlot));
     };
     nodes.forEach(expandRoles);
+    let sourceOrder = 0;
+    const recordSourceOrder = node => {
+      node.sourceOrder = sourceOrder++;
+      node.children.forEach(recordSourceOrder);
+    };
+    nodes.forEach(recordSourceOrder);
     nodes.forEach(node => mergeStyles(node, rules, {}));
     const actions = [];
     const collect = node => {
@@ -550,10 +780,18 @@
       const stylesheet = result.stylesheet ? documents?.[result.stylesheet] : '';
       if (typeof markup !== 'string') throw Error(`画面HTMLがありません: ${screen.template}`);
       if (result.stylesheet && typeof stylesheet !== 'string') throw Error(`画面CSSがありません: ${result.stylesheet}`);
-      const compiled = compileScreenDocument(markup, stylesheet || '', canvas || result.canvas || DEFAULT_CANVAS, Object.keys(result.screens), controlSettings, result.controlSkins);
+      let compiled;
+      try {
+        compiled = compileScreenDocument(markup, stylesheet || '', canvas || result.canvas || DEFAULT_CANVAS, Object.keys(result.screens), controlSettings, result.controlSkins);
+      } catch (error) {
+        const sources = [`HTML: ${screen.template}`];
+        if (result.stylesheet) sources.push(`CSS: ${result.stylesheet}`);
+        throw Error(`画面「${screenId}」（${sources.join('、')}）: ${error.message}`);
+      }
       screen.uiTree = compiled.tree;
       const items = [];
-      const visit = node => {
+      const visit = (node, path = []) => {
+        node.focusKey = `${screenId}:${path.join('.')}`;
         if (node.style?.display === 'none') return;
         const action = node.attrs?.['data-action'];
         if (action) {
@@ -572,30 +810,52 @@
           const rect = node.rect;
           screen.slotLayout = { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.max(1, Math.round(rect.width)), height: Math.max(1, Math.round(rect.height)), rowHeight: Math.max(1, Math.round(node.children[0]?.rect.height || 48)), gap: 0, count: node.children.length };
         }
-        (node.children || []).forEach(visit);
+        const sourceChildren = (node.children || []).slice().sort((a, b) => (a.sourceOrder ?? 0) - (b.sourceOrder ?? 0));
+        sourceChildren.forEach((child, index) => visit(child, [...path, index]));
       };
-      screen.uiTree.forEach(visit);
+      screen.uiTree.forEach((node, index) => visit(node, [index]));
       screen.items = items;
     }
-    if (!result.titleScene && !result.screens?.[result.initial]?.items?.some(item => item.action === 'start')) {
-      throw Error('開始画面には「ゲーム開始」ボタンまたはTDSタイトルシーンが必要です。');
+    if (!result.screens?.[result.initial]?.items?.some(item => item.action === 'start')) {
+      throw Error('開始画面には「ゲーム開始」ボタンが必要です。');
     }
     return result;
   }
 
   function buildScreenDom(tree, documentRef, options = {}) {
     const scaleX = options.scaleX ?? 1, scaleY = options.scaleY ?? 1;
-    const setStyle = (element, style = {}, rect = {}) => {
+    const setStyle = (element, style = {}, rect = {}, applyCanvasOffset = false) => {
       element.style.position = 'absolute';
-      element.style.left = `${(rect.x * scaleX) + (options.offsetX || 0)}px`; element.style.top = `${(rect.y * scaleY) + (options.offsetY || 0)}px`;
+      // Native has no browser user-agent stylesheet. Remove defaults that
+      // shift authored geometry or add list markers before applying CSS.
+      element.style.margin = '0';
+      if (element.tagName === 'UL' || element.tagName === 'OL') {
+        element.style.padding = '0';
+        element.style.listStyle = 'none';
+      }
+      // Shared rects describe the painted outer box, including authored
+      // padding. Native draws backgrounds and borders from that rect, so the
+      // Browser DOM must not add padding to the width/height a second time.
+      element.style.boxSizing = 'border-box';
+      // Native paints each shared node's children in local z-index order, so
+      // even an unstyled parent forms a stacking boundary. Give every DOM
+      // node the same default layer to prevent a high-z descendant from
+      // escaping an ancestor in Browser rendering.
+      element.style.zIndex = String(style['z-index'] ?? 0);
+      const offsetX = applyCanvasOffset ? options.offsetX || 0 : 0;
+      const offsetY = applyCanvasOffset ? options.offsetY || 0 : 0;
+      element.style.left = `${rect.x * scaleX + offsetX}px`; element.style.top = `${rect.y * scaleY + offsetY}px`;
       element.style.width = `${rect.width * scaleX}px`; element.style.height = `${rect.height * scaleY}px`;
       for (const [key, value] of Object.entries(style)) {
+        if (key === 'border') continue; // Shorthand is expanded by parseDeclarations for both renderers.
         const property = key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`);
         if (['position','left','right','top','bottom','width','height','flex','flex-grow','flex-direction','justify-content','align-items','gap','row-gap','column-gap','grid-template-columns','grid-template-rows','grid-auto-rows'].includes(property)) continue;
         let resolved = value;
         if (['font-size', 'line-height', 'gap', 'row-gap', 'column-gap', 'padding', 'padding-left', 'padding-right', 'padding-top', 'padding-bottom', 'border-radius', 'border-width'].includes(property)) {
           const number = /^(-?(?:\d+\.?\d*|\.\d+))px$/.exec(value);
-          if (number) resolved = `${Number(number[1]) * scaleY}px`;
+          const scale = property === 'padding-left' || property === 'padding-right' ? scaleX
+            : property === 'border-width' ? Math.min(scaleX, scaleY) : scaleY;
+          if (number) resolved = `${Number(number[1]) * scale}px`;
         }
         if (property === 'background-image' || property === 'background') resolved = value.replace(/url\((["']?)([^"')]+)\1\)/g, (_all, _quote, path) => `url("${options.assetUrl ? options.assetUrl(path.replace(/^asset\//, '')) : path}")`);
         element.style.setProperty(property, resolved);
@@ -607,16 +867,26 @@
         element.style.backgroundSize = style['background-size'] || '100% 100%';
       }
     };
+    const rendererStyle = (node, style = {}, slotStateStyle = {}) => {
+      const result = { ...style };
+      const own = node.specifiedStyle;
+      if (!own) return result;
+      for (const key of INHERITED) {
+        if (own[key] === undefined && node.hoverStyle?.[key] === undefined && node.focusStyle?.[key] === undefined
+          && node.focusVisibleStyle?.[key] === undefined && slotStateStyle[key] === undefined) delete result[key];
+      }
+      return result;
+    };
     const assetUrl = image => options.assetUrl ? options.assetUrl(String(image).replace(/^asset\//, '')) : image;
-    const mountSkinnedInput = (node, localRect) => {
+    const mountSkinnedInput = (node, localRect, applyCanvasOffset) => {
       const skin = node.controlSkin, attrs = node.attrs || {}, setting = attrs['data-setting'];
       const wrapper = documentRef.createElement('div');
       wrapper.className = `${attrs.class || ''} novel-skinned-control`.trim();
-      if (attrs.id) wrapper.id = attrs.id;
       wrapper.dataset.skin = attrs['data-skin'];
-      setStyle(wrapper, node.style, localRect);
+      setStyle(wrapper, rendererStyle(node, node.style), localRect, applyCanvasOffset);
       const input = documentRef.createElement('input');
       input.type = attrs.type;
+      if (attrs.id) input.id = attrs.id;
       input.dataset.setting = setting;
       input.setAttribute('aria-hidden', 'false');
       if (attrs['aria-label']) input.setAttribute('aria-label', attrs['aria-label']);
@@ -716,9 +986,11 @@
         });
       }
       let hovered = false, focused = false;
+      const focusVisibleStyle = node.focusVisibleStyle || {};
       const updateState = () => {
-        const stateStyle = { ...node.style, ...(hovered ? node.hoverStyle || {} : {}), ...(focused ? node.focusStyle || {} : {}) };
-        setStyle(wrapper, stateStyle, localRect);
+        const visible = focused && input.matches(':focus-visible');
+        const stateStyle = { ...node.style, ...(hovered ? node.hoverStyle || {} : {}), ...(focused ? node.focusStyle || {} : {}), ...(visible ? focusVisibleStyle : {}) };
+        setStyle(wrapper, rendererStyle(node, stateStyle), localRect, applyCanvasOffset);
         updateVisual();
       };
       input.addEventListener(type === 'checkbox' ? 'change' : 'input', event => {
@@ -729,11 +1001,12 @@
       wrapper.addEventListener('pointerleave', () => { hovered = false; updateState(); });
       input.addEventListener('focus', () => { focused = true; updateState(); });
       input.addEventListener('blur', () => { focused = false; updateState(); });
+      input.addEventListener('keydown', updateState);
       wrapper.append(input);
       updateVisual();
       return wrapper;
     };
-    const mount = (node, parentRect = { x: 0, y: 0 }, slotContext = null) => {
+    const mount = (node, parentRect = { x: 0, y: 0 }, slotContext = null, applyCanvasOffset = false) => {
       const localRect = { ...node.rect, x: node.rect.x - parentRect.x, y: node.rect.y - parentRect.y };
       const hasLocalSlot = node.attrs?.['data-slot-index'] !== undefined;
       const localSlot = hasLocalSlot ? Number(node.attrs['data-slot-index']) : slotContext;
@@ -745,21 +1018,26 @@
         if (node.attrs.class) host.className = node.attrs.class;
         if (node.attrs['aria-label']) host.setAttribute('aria-label', node.attrs['aria-label']);
         if (node.attrs['data-count']) host.dataset.count = node.attrs['data-count'];
-        setStyle(host, node.style, localRect);
+        setStyle(host, rendererStyle(node, node.style), localRect, applyCanvasOffset);
         options.roleContent(host, node);
         return host;
       }
-      if (node.tag === 'input' && node.controlSkin) return mountSkinnedInput(node, localRect);
+      if (node.tag === 'input' && node.controlSkin) return mountSkinnedInput(node, localRect, applyCanvasOffset);
       const element = documentRef.createElement(node.tag === 'screen-root' ? 'div' : node.tag);
+      let actionDisabled = false;
       if (node.attrs?.id) element.id = node.attrs.id;
       if (node.attrs?.class) element.className = node.attrs.class;
+      if (node.tag === 'label' && node.attrs?.for) element.htmlFor = node.attrs.for;
+      if (node.attrs?.tabindex !== undefined) element.setAttribute('tabindex', node.attrs.tabindex);
       if (node.attrs?.['data-slot-index'] !== undefined) element.dataset.slotIndex = String(currentSlot);
       const slotState = hasLocalSlot ? options.slotState?.(currentSlot) || 'empty' : '';
       if (hasLocalSlot) element.dataset.state = slotState;
       const slotStateStyle = slotState ? node.slotStateStyles?.[slotState] || {} : {};
       if (node.attrs?.['data-slot-field']) element.dataset.slotField = node.attrs['data-slot-field'];
       if (node.tag === 'button') element.type = 'button';
-      if (node.attrs?.alt) element.setAttribute('alt', node.attrs.alt);
+      // An empty alt is meaningful: it marks a decorative image. Preserve the
+      // attribute itself instead of dropping it through a truthiness check.
+      if (Object.hasOwn(node.attrs || {}, 'alt')) element.setAttribute('alt', node.attrs.alt);
       if (node.attrs?.['aria-label']) element.setAttribute('aria-label', node.attrs['aria-label']);
       if (node.tag === 'input') {
         const setting = node.attrs['data-setting'];
@@ -772,11 +1050,11 @@
         element.addEventListener(node.attrs.type === 'checkbox' ? 'change' : 'input', event => options.onSettingChange?.(setting, node.attrs.type === 'checkbox' ? event.currentTarget.checked : Number(event.currentTarget.value), event, node));
       }
       const applyElementStyle = style => {
-        setStyle(element, style, localRect);
+        setStyle(element, rendererStyle(node, style, slotStateStyle), localRect, applyCanvasOffset);
         // Native dims unavailable screen actions as a whole; mirror that on
         // the Browser DOM while leaving disabled save-slot information cards
         // legible (their state styling owns their appearance).
-        if (element.disabled && node.attrs?.['data-action'] && !hasLocalSlot) {
+        if (actionDisabled && node.attrs?.['data-action'] && !hasLocalSlot) {
           const authoredOpacity = Number(style.opacity ?? 1);
           element.style.opacity = String((Number.isFinite(authoredOpacity) ? authoredOpacity : 1) * 0.45);
         }
@@ -790,42 +1068,58 @@
         else element.textContent = value;
       }
       else if (node.text) element.textContent = node.text;
+      if (node.text?.includes('\n')) element.style.whiteSpace = 'pre-line';
       if (node.tag === 'img' && node.attrs.src && !node.attrs['data-slot-field']) element.src = options.assetUrl ? options.assetUrl(node.attrs.src) : node.attrs.src;
       if (node.attrs?.['data-action']) {
         element.dataset.action = node.attrs['data-action'];
         if (node.attrs['data-target']) element.dataset.target = node.attrs['data-target'];
         if (node.attrs['data-value']) element.dataset.value = node.attrs['data-value'];
-        if (node.attrs['data-action'] === 'load' && options.disableLoad) element.disabled = true;
-        if (node.attrs['data-action'] === 'save' && options.disableSave) element.disabled = true;
-        if (node.attrs['data-action'] === 'continue' && options.disableContinue) element.disabled = true;
+        actionDisabled = (node.attrs['data-action'] === 'load' && options.disableLoad)
+          || (node.attrs['data-action'] === 'save' && options.disableSave)
+          || (node.attrs['data-action'] === 'continue' && options.disableContinue);
+        if (actionDisabled) {
+          if ('disabled' in element) element.disabled = true;
+          else {
+            element.setAttribute('aria-disabled', 'true');
+            element.tabIndex = -1;
+            element.style.pointerEvents = 'none';
+          }
+        }
         element.addEventListener('click', event => {
           event.stopPropagation();
+          if (actionDisabled) { event.preventDefault(); return; }
           const actionNode = currentSlot === null ? node : { ...node, attrs: { ...node.attrs, 'data-slot-index': String(currentSlot) } };
           options.onAction?.(node.attrs['data-action'], node.attrs['data-target'], event, actionNode);
         });
       }
       applyElementStyle({ ...node.style, ...slotStateStyle });
-      const hover = node.hoverStyle || {}, focus = node.focusStyle || {};
-      if (Object.keys(hover).length || Object.keys(focus).length) {
+      const hover = node.hoverStyle || {}, focus = node.focusStyle || {}, focusVisible = node.focusVisibleStyle || {};
+      if (Object.keys(hover).length || Object.keys(focus).length || Object.keys(focusVisible).length) {
         let pointerActive = false, focusActive = false;
         const update = () => {
-          const stateStyle = { ...node.style, ...slotStateStyle, ...(pointerActive ? hover : {}), ...(focusActive ? focus : {}) };
-          for (const key of new Set([...Object.keys(hover), ...Object.keys(focus)])) {
+          const visible = focusActive && element.matches(':focus-visible');
+          const stateStyle = { ...node.style, ...slotStateStyle, ...(pointerActive ? hover : {}), ...(focusActive ? focus : {}), ...(visible ? focusVisible : {}) };
+          for (const key of new Set([...Object.keys(hover), ...Object.keys(focus), ...Object.keys(focusVisible)])) {
             if (stateStyle[key] === undefined) element.style.removeProperty(key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`));
           }
           applyElementStyle(stateStyle);
         };
         element.addEventListener('pointerenter', () => { pointerActive = true; update(); });
         element.addEventListener('pointerleave', () => { pointerActive = false; update(); });
+        element.addEventListener('pointerdown', update);
         element.addEventListener('focus', () => { focusActive = true; update(); });
         element.addEventListener('blur', () => { focusActive = false; update(); });
+        element.addEventListener('keydown', update);
       }
-      for (const child of node.children || []) element.append(mount(child, node.rect, currentSlot));
+      const sourceChildren = (node.children || []).slice().sort((a, b) => (a.sourceOrder ?? 0) - (b.sourceOrder ?? 0));
+      const border = length(node.style?.['border-width'], 0, 0);
+      const childOrigin = { x: node.rect.x + border, y: node.rect.y + border };
+      for (const child of sourceChildren) element.append(mount(child, childOrigin, currentSlot, false));
       if (node.attrs?.['data-slot-index'] !== undefined) options.roleSlot?.(element, currentSlot, node);
       return element;
     };
     const fragment = documentRef.createDocumentFragment();
-    for (const node of tree || []) fragment.append(mount(node));
+    for (const node of tree || []) fragment.append(mount(node, { x: 0, y: 0 }, null, true));
     return fragment;
   }
 

@@ -33,7 +33,7 @@ function ignorePath(filePath) {
 
 async function main() {
   if (!fs.existsSync(nativePlayer)) {
-    throw new Error('Native player not found. Run npm.cmd run native:build first.');
+    throw new Error('Native Player が見つかりません。先に npm.cmd run native:build を実行してください。');
   }
 
   const appPaths = await packager({
@@ -57,7 +57,7 @@ async function main() {
     },
   });
 
-  console.log(`Windows editor package created: ${path.join(appPaths[0], 'NovelScriptEditor.exe')}`);
+  console.log(`Windows版エディターを作成しました: ${path.join(appPaths[0], 'NovelScriptEditor.exe')}`);
 }
 
 main().catch((error) => {

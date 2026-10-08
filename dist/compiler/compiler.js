@@ -713,10 +713,17 @@ function definitelyTerminates(instruction, constants = new Map()) {
         return instruction.options.length > 0 && instruction.options.every((option) => option.body.length > 0 && definitelyTerminates(option.body[option.body.length - 1], constants));
     }
     if (instruction.op === 'for') {
-        // A valid for-loop executes its body at least once.  Invalid bounds or a
-        // zero step throw before normal fall-through, so a terminating body also
-        // makes the loop terminating for dead-code purposes.
-        return instruction.body.length > 0 && definitelyTerminates(instruction.body[instruction.body.length - 1], constants);
+        // Dynamic or direction-mismatched ranges may execute zero iterations.
+        // Only use the body as a termination proof when constants prove the first
+        // iteration is reached; otherwise following instructions must be retained.
+        const start = constantValue(instruction.start, constants);
+        const stop = constantValue(instruction.stop, constants);
+        const step = constantValue(instruction.step, constants);
+        if (typeof start !== 'bigint' || typeof stop !== 'bigint' || typeof step !== 'bigint' || step === 0n)
+            return false;
+        const entersBody = step > 0n ? start <= stop : start >= stop;
+        return entersBody && instruction.body.length > 0
+            && definitelyTerminates(instruction.body[instruction.body.length - 1], constants);
     }
     if (instruction.op === 'while') {
         return constantValue(instruction.condition, constants) === true
@@ -1281,6 +1288,14 @@ function optimizeInstructions(instructions, effects, constants = new Map(), opti
             }
             continue;
         }
+        if (instruction.op === 'parallel') {
+            // The runtime evaluates each child command's argument expressions while
+            // preparing the batch. Those expressions may call functions that write
+            // globals, so facts established before the batch cannot flow past it.
+            invalidateAssigned(instruction.body);
+            output.push(instruction);
+            continue;
+        }
         const simple = instruction.op === 'command' || instruction.op === 'return'
             ? { ...instruction, ...(instruction.op === 'command' ? { args: foldArguments(instruction.args, constants) } : { value: foldExpression(instruction.value, constants) }) }
             : instruction;
@@ -1313,6 +1328,7 @@ function compile(script, externalGlobals = new Map(), externalCharacters = new M
     const externalCharacterGlobals = characterDeclarations(externalCharacterSources);
     const runtimeScript = { ...script, globals: [...implicitCharacterGlobals, ...script.globals] };
     const metadataGlobals = new Map(externalGlobals);
+    metadataGlobals.readonlyNames = externalGlobals.readonlyNames;
     for (const name of externalCharacters.keys())
         metadataGlobals.set(name, { kind: 'struct', name: characterTypeName(name) });
     const variables = compiler.variables(runtimeScript, metadataGlobals);
@@ -1353,6 +1369,8 @@ function compile(script, externalGlobals = new Map(), externalCharacters = new M
 class Compiler {
     variables(script, externalGlobals = new Map()) {
         const result = [];
+        const sourceFile = (file) => file === undefined ? {} : { file };
+        const readonlyExternalGlobals = externalGlobals.readonlyNames;
         const declare = (name, type, bindings, loc) => {
             const existing = bindings.get(name);
             if (existing && existing.scope === loc.scope && existing.definedIn === loc.container && JSON.stringify(existing.type) === JSON.stringify(type)) {
@@ -1365,12 +1383,12 @@ class Compiler {
         };
         const ref = (e, bindings, loc) => {
             if (e.kind === 'variable')
-                bindings.get(e.name)?.references.push({ ...loc, line: e.line, column: e.column, kind: loc.kind || 'expression' });
+                bindings.get(e.name)?.references.push({ ...loc, ...sourceFile(e.file ?? loc.file), line: e.line, column: e.column, kind: loc.kind || 'expression' });
             if (e.kind === 'literal' && typeof e.value === 'string')
                 for (const m of e.value.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(\(\))?\}/g))
                     if (!m[2]) {
                         const sourceColumn = e.sourceColumns?.[m.index + 1];
-                        bindings.get(m[1].split('.')[0])?.references.push({ ...loc, line: e.line, column: sourceColumn ?? (e.column === undefined ? undefined : e.column + m.index + 1), kind: 'interpolation' });
+                        bindings.get(m[1].split('.')[0])?.references.push({ ...loc, ...sourceFile(e.file ?? loc.file), line: e.line, column: sourceColumn ?? (e.column === undefined ? undefined : e.column + m.index + 1), kind: 'interpolation' });
                     }
             if (e.kind === 'binary') {
                 ref(e.left, bindings, loc);
@@ -1419,29 +1437,30 @@ class Compiler {
         let scopeId = 0;
         const walk = (list, bindings, loc, declarations = bindings, declarationLoc = loc) => {
             for (const s of list) {
+                const statementLoc = { ...loc, ...sourceFile(s.file ?? loc.file) };
                 if (s.kind === 'declare') {
                     if (s.initial)
-                        ref(s.initial, bindings, loc);
+                        ref(s.initial, bindings, statementLoc);
                     if (s.type === 'infer')
-                        throw new CompileError(`変数 '${s.name}' の型推論が完了していません`);
-                    declare(s.name, s.type, declarations, { ...declarationLoc, line: s.nameLine ?? s.line, column: s.nameColumn ?? s.column, kind: 'definition' });
+                        throw new CompileError(`変数 '${s.name}' の型を推論できません`);
+                    declare(s.name, s.type, declarations, { ...declarationLoc, ...sourceFile(s.file ?? declarationLoc.file), line: s.nameLine ?? s.line, column: s.nameColumn ?? s.column, kind: 'definition' });
                     const entry = declarations.get(s.name);
                     entry.mutable = !s.constant;
                     bindings.set(s.name, entry);
                 }
                 if (s.kind === 'set') {
                     if (s.target.kind === 'variable')
-                        ref(s.target, bindings, { ...loc, kind: 'assignment' });
+                        ref(s.target, bindings, { ...statementLoc, kind: 'assignment' });
                     else {
-                        ref(s.target.target, bindings, loc);
-                        ref(s.target.key, bindings, loc);
+                        ref(s.target.target, bindings, statementLoc);
+                        ref(s.target.key, bindings, statementLoc);
                     }
-                    ref(s.value, bindings, loc);
+                    ref(s.value, bindings, statementLoc);
                 }
                 if (s.kind === 'unset')
-                    ref(s.target, bindings, loc);
+                    ref(s.target, bindings, statementLoc);
                 if (s.kind === 'command' || s.kind === 'call')
-                    s.args.forEach(e => ref(e, bindings, loc));
+                    s.args.forEach(e => ref(e, bindings, statementLoc));
                 if (s.kind === 'command' && s.args[0]?.kind === 'literal' && typeof s.args[0].value === 'string') {
                     const commandName = s.name;
                     const speaker = commandName === 'say' && s.args[0].value !== 'narrator' && s.args[0].value !== 'none'
@@ -1450,13 +1469,13 @@ class Compiler {
                     const hiddenCharacter = commandName === 'hide' ? s.args[0].value : '';
                     const characterName = speaker || shownCharacter || hiddenCharacter;
                     if (characterName && bindings.has(characterName)) {
-                        ref({ kind: 'variable', name: characterName, line: s.args[0].line, column: s.args[0].column }, bindings, loc);
+                        ref({ kind: 'variable', name: characterName, ...sourceFile(s.args[0].file ?? s.file), line: s.args[0].line, column: s.args[0].column }, bindings, statementLoc);
                     }
                 }
                 if (s.kind === 'return' && s.value)
-                    ref(s.value, bindings, loc);
+                    ref(s.value, bindings, statementLoc);
                 if (s.kind === 'if') {
-                    ref(s.condition.expression, bindings, loc);
+                    ref(s.condition.expression, bindings, statementLoc);
                     const branches = [{ condition: s.condition.expression, body: s.body }, ...s.elseIf.map((branch) => ({ condition: branch.condition.expression, body: branch.body }))];
                     let selected;
                     let staticallySelected = true;
@@ -1475,14 +1494,14 @@ class Compiler {
                         if (selected === undefined)
                             selected = s.otherwise;
                         const selectedBindings = new Map(bindings);
-                        walk(selected, selectedBindings, loc, selectedBindings, declarationLoc);
+                        walk(selected, selectedBindings, statementLoc, selectedBindings, declarationLoc);
                         for (const [name, entry] of selectedBindings)
                             bindings.set(name, entry);
                         continue;
                     }
                     const branchBindings = [s.body, ...s.elseIf.map(branch => branch.body), s.otherwise].map((body) => {
                         const branch = new Map(bindings);
-                        walk(body, branch, loc, branch, declarationLoc);
+                        walk(body, branch, statementLoc, branch, declarationLoc);
                         return branch;
                     });
                     if (!s.otherwise.length)
@@ -1490,15 +1509,15 @@ class Compiler {
                     mergeBranchBindings(bindings, branchBindings);
                 }
                 if (s.kind === 'while') {
-                    ref(s.condition.expression, bindings, loc);
+                    ref(s.condition.expression, bindings, statementLoc);
                     if (metadataConstant(s.condition.expression) === false)
                         continue;
                     const loopBindings = new Map(bindings);
-                    walk(s.body, loopBindings, loc, loopBindings, declarationLoc);
+                    walk(s.body, loopBindings, statementLoc, loopBindings, declarationLoc);
                 }
                 if (s.kind === 'for') {
-                    [s.start, s.stop, s.step].forEach(e => ref(e, bindings, loc));
-                    const child = new Map(bindings), at = { scope: 'local', container: `${loc.container}:for${++scopeId}`, line: s.nameLine, column: s.nameColumn, kind: 'definition' };
+                    [s.start, s.stop, s.step].forEach(e => ref(e, bindings, statementLoc));
+                    const child = new Map(bindings), at = { ...sourceFile(s.file ?? loc.file), scope: 'local', container: `${loc.container}:for${++scopeId}`, line: s.nameLine, column: s.nameColumn, kind: 'definition' };
                     declare(s.name, 'int', child, at);
                     walk(s.body, child, at, child, declarationLoc);
                     if (metadataForRuns(s) && !sourceBlockExits(s.body)) {
@@ -1508,35 +1527,35 @@ class Compiler {
                     }
                 }
                 if (s.kind === 'forEach') {
-                    ref(s.iterable, bindings, loc);
-                    const child = new Map(bindings), at = { scope: 'local', container: `${loc.container}:forEach${++scopeId}`, line: s.nameLine, column: s.nameColumn, kind: 'definition' };
+                    ref(s.iterable, bindings, statementLoc);
+                    const child = new Map(bindings), at = { ...sourceFile(s.file ?? loc.file), scope: 'local', container: `${loc.container}:forEach${++scopeId}`, line: s.nameLine, column: s.nameColumn, kind: 'definition' };
                     const visibleTypes = new Map([...bindings].map(([name, entry]) => [name, entry.type]));
                     const iterableType = (0, type_checker_1.inferValueType)(s.iterable, visibleTypes, script.functions);
                     if (typeof iterableType === 'string' || iterableType.kind !== 'list')
-                        throw new CompileError('for-in iterable lost its checked list type');
+                        throw new CompileError('for-in では list 型の値を指定してください');
                     declare(s.name, iterableType.value, child, at);
                     walk(s.body, child, at, child, declarationLoc);
                 }
                 if (s.kind === 'choice') {
                     if (s.prompt)
-                        ref(s.prompt, bindings, loc);
-                    s.options.forEach(o => { ref(o.label, bindings, loc); walk(o.body, new Map(bindings), { scope: 'local', container: `${loc.container}:choice${++scopeId}` }); });
+                        ref(s.prompt, bindings, statementLoc);
+                    s.options.forEach(o => { ref(o.label, bindings, statementLoc); walk(o.body, new Map(bindings), { ...sourceFile(s.file ?? loc.file), scope: 'local', container: `${loc.container}:choice${++scopeId}` }); });
                 }
             }
         };
         const globals = new Map();
         for (const [name, type] of externalGlobals) {
-            const entry = { name, type, scope: 'global', definedIn: 'global', definitions: [], references: [], mutable: true };
+            const entry = { name, type, scope: 'global', definedIn: 'global', definitions: [], references: [], mutable: !readonlyExternalGlobals?.has(name) };
             globals.set(name, entry);
             result.push(entry);
         }
         walk(script.globals, globals, { scope: 'global', container: 'global' });
         for (const fn of script.functions) {
-            const bindings = new Map(globals), loc = { scope: 'function', container: fn.name };
-            fn.params.forEach(p => declare(p.name, p.type, bindings, { ...loc, line: p.line, column: p.column, kind: 'definition' }));
+            const bindings = new Map(globals), loc = { ...sourceFile(fn.file), scope: 'function', container: fn.name };
+            fn.params.forEach(p => declare(p.name, p.type, bindings, { ...loc, ...sourceFile(p.file ?? fn.file), line: p.line, column: p.column, kind: 'definition' }));
             walk(fn.body, bindings, loc);
         }
-        script.scenes.forEach(s => walk(s.body, new Map(globals), { scope: 'scene', container: s.name }));
+        script.scenes.forEach(s => walk(s.body, new Map(globals), { ...sourceFile(s.file), scope: 'scene', container: s.name }));
         return result;
     }
     statements(statements) {
@@ -1550,7 +1569,7 @@ class Compiler {
         switch (statement.kind) {
             case 'declare': {
                 if (statement.type === 'infer')
-                    throw new CompileError(`変数 '${statement.name}' の型推論が完了していません`);
+                    throw new CompileError(`変数 '${statement.name}' の型を推論できません`);
                 return { op: 'declare', type: statement.type, name: statement.name, constant: statement.constant, initial: statement.initial && this.expr(statement.initial) };
             }
             case 'set': return { op: 'set', target: this.assignable(statement.target), value: this.expr(statement.value) };

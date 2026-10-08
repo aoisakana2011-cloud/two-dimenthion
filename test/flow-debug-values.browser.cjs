@@ -70,7 +70,7 @@ async function main() {
     await frame.locator('input[data-name="routes"]').fill('{"common":true}');
     await frame.locator('input[data-name="status"]').fill('{"active":true,"label":"debug"}');
     await frame.locator('#flow-test-run').click();
-    await frame.getByRole('status').filter({ hasText: 'JSON配列' }).waitFor();
+    await frame.getByRole('status').filter({ hasText: 'JSON list' }).waitFor();
     assert.equal(await page.evaluate(() => window.flowMessages.some(message => message.type === 'scene-flow:debug-play')), false,
       'a collection with elements of the wrong JSON type must not start debug playback');
 

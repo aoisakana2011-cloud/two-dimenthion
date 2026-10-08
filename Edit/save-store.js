@@ -9,12 +9,12 @@
   const STORES = ['snapshots', 'metadata', 'thumbnails', 'preferences'];
   const requestResult = request => new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || Error('IndexedDB request failed'));
+    request.onerror = () => reject(request.error || Error('保存データの読み込みに失敗しました'));
   });
   const transactionDone = transaction => new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve();
     transaction.onabort = () => reject(transaction.error || Error('Save transaction was aborted'));
-    transaction.onerror = () => reject(transaction.error || Error('Save transaction failed'));
+    transaction.onerror = () => reject(transaction.error || Error('保存データの書き込みに失敗しました'));
   });
   async function openDatabase(indexedDb) {
     const request = indexedDb.open(DATABASE, 1);
@@ -25,7 +25,7 @@
     return requestResult(request);
   }
   async function open({ namespace, legacyPrefix, indexedDb = globalThis.indexedDB, storage = globalThis.localStorage }) {
-    if (typeof namespace !== 'string' || !namespace || namespace.length > 512) throw Error('Invalid save namespace');
+    if (typeof namespace !== 'string' || !namespace || namespace.length > 512) throw Error('セーブデータの識別名が正しくありません');
     let database = null;
     if (indexedDb) {
       try { database = await openDatabase(indexedDb); }
@@ -33,7 +33,7 @@
     }
     const prefix = `${namespace}:`;
     const slotKey = index => {
-      if (!Number.isInteger(index) || index < 0 || index >= 120) throw Error('Save slot must be between 0 and 119');
+      if (!Number.isInteger(index) || index < 0 || index >= 120) throw Error('セーブ枠は0〜119の範囲で指定してください');
       return `${prefix}slot:${index}`;
     };
     const preferenceKey = name => `${prefix}pref:${name}`;
@@ -41,7 +41,7 @@
       ? requestResult(database.transaction(store, 'readonly').objectStore(store).get(key))
       : storage.getItem(key);
     const writeSlot = async (index, encoded, metadata = {}, thumbnail = null) => {
-      if (typeof encoded !== 'string' || encoded.length > 8_000_000) throw Error('Invalid save snapshot size');
+      if (typeof encoded !== 'string' || encoded.length > 8_000_000) throw Error('セーブデータのサイズが正しくありません');
       const key = slotKey(index);
       if (!database) { storage.setItem(key, encoded); return; }
       const tx = database.transaction(['snapshots', 'metadata', 'thumbnails'], 'readwrite');
@@ -52,7 +52,10 @@
       else tx.objectStore('thumbnails').delete(key);
       await done;
     };
-    const readSlot = async index => (await get('snapshots', slotKey(index))) || null;
+    const readSlot = async index => {
+      const value = await get('snapshots', slotKey(index));
+      return value === undefined || value === null ? null : value;
+    };
     const readThumbnail = async index => database ? (await get('thumbnails', slotKey(index))) || null : null;
     const readMetadata = async index => database ? (await get('metadata', slotKey(index))) || null : null;
     const deleteSlot = async index => {
@@ -64,7 +67,7 @@
       await done;
     };
     const transferSlot = async (source, destination, { move = false } = {}) => {
-      if (source === destination) throw Error('Source and destination save slots must differ');
+      if (source === destination) throw Error('移動元と移動先には別のセーブ枠を指定してください');
       const sourceKey = slotKey(source), destinationKey = slotKey(destination);
       if (!database) {
         const encoded = storage.getItem(sourceKey);
@@ -122,17 +125,27 @@
         if (Number.isInteger(index) && index >= 0 && index < 120) candidates.push(index);
       }
       for (const index of candidates) {
-        if (await readSlot(index)) continue;
+        if (await readSlot(index) !== null) continue;
         const encoded = storage.getItem(`${legacyPrefix}:slot:${index}`);
         if (!encoded) continue;
         try {
           const value = JSON.parse(encoded);
-          if (value?.version !== 1 || !value.file || !value.scene || !Number.isInteger(value.line) || !value.variables || typeof value.variables !== 'object') continue;
+          if (value?.version !== 1
+            || typeof value.file !== 'string' || value.file.length === 0
+            || typeof value.scene !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value.scene)
+            || !Number.isSafeInteger(value.line) || value.line < 1
+            || value.variables === null || typeof value.variables !== 'object' || Array.isArray(value.variables)
+            || value.locals !== undefined && (!Array.isArray(value.locals) || value.locals.some(frame => frame === null || typeof frame !== 'object' || Array.isArray(frame)))
+            || value.readonlyLocals !== undefined && (!Array.isArray(value.readonlyLocals)
+              || value.readonlyLocals.some(frame => !Array.isArray(frame) || frame.some(name => typeof name !== 'string'))
+              || value.readonlyLocals.length !== (value.locals === undefined ? 0 : value.locals.length))
+            || value.saveId !== undefined && typeof value.saveId !== 'string') continue;
           await writeSlot(index, encoded, { scene: value.scene, speaker: value.speaker || '', text: value.text || '', savedAt: value.savedAt || 0 });
         } catch { /* Preserve damaged legacy data for manual recovery. */ }
       }
       const oldPreferences = storage.getItem(`${legacyPrefix}:ui-settings`);
-      if (oldPreferences && !await readPreference('ui-settings')) {
+      const currentPreferences = await get('preferences', preferenceKey('ui-settings'));
+      if (oldPreferences && (database ? currentPreferences == null : currentPreferences === null)) {
         try { await writePreference('ui-settings', JSON.parse(oldPreferences)); } catch { /* Keep the old preference untouched. */ }
       }
     }

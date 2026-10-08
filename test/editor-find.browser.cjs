@@ -69,7 +69,7 @@ async function main() {
 
     await page.locator('[data-editor-find-option="regex"]').click();
     await page.locator('#editor-find-input').fill('[');
-    assert.match(await page.locator('#editor-find-count').textContent(), /正規表現エラー/);
+    assert.match(await page.locator('#editor-find-count').textContent(), /Regex Error/);
     await page.locator('#editor-find-input').fill('sora');
     await page.locator('[data-editor-find-option="regex"]').click();
 

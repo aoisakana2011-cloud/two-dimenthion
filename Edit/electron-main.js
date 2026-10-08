@@ -14,6 +14,16 @@ let quitting = false;
 let closeSavePending = false;
 let startupWorkspace = '';
 let temporaryStartupWorkspace = false;
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) app.quit();
+
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
 
 async function startEditorServer() {
   const selectedProject = await findStartupProject(process.env.NOVEL_PROJECT_ROOT);
@@ -84,8 +94,8 @@ function createWindow(url) {
         if (!mainWindow.isDestroyed()) mainWindow.setEnabled(true);
         await dialog.showMessageBox(mainWindow, {
           type: 'error',
-          title: 'Save failed',
-          message: 'The editor could not save your changes. The window will stay open.',
+          title: '保存に失敗しました',
+          message: '変更を保存できなかったため、ウィンドウを閉じずに残します。',
           detail: error instanceof Error ? error.message : String(error),
         });
       });
@@ -105,6 +115,7 @@ ipcMain.handle('novel-editor:select-folder', async (event) => {
 });
 
 app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return;
   try {
     createWindow(await startEditorServer());
   } catch (error) {

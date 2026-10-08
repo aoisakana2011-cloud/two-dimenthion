@@ -16,7 +16,7 @@ const names = ['track', 'fill', 'thumb', 'thumb-hover', 'mute-off', 'mute-off-ho
     for (const name of names) {
       const source = await fs.readFile(path.join(directory, `${name}.svg`), 'utf8');
       const dimensions = source.match(/<svg\b[^>]*\bwidth="(\d+)"[^>]*\bheight="(\d+)"/);
-      if (!dimensions) throw new Error(`Missing fixed SVG dimensions: ${name}`);
+      if (!dimensions) throw new Error(`SVGに固定幅・高さがありません: ${name}`);
       const width = Number(dimensions[1]), height = Number(dimensions[2]);
       await page.setViewportSize({ width, height });
       const image = page.locator('#sprite');
@@ -25,7 +25,7 @@ const names = ['track', 'fill', 'thumb', 'thumb-hover', 'mute-off', 'mute-off-ho
       await image.evaluate(element => { element.width = element.naturalWidth; element.height = element.naturalHeight; });
       const bounds = await image.boundingBox();
       await page.screenshot({ path: path.join(directory, `${name}.png`), omitBackground: true, clip: bounds });
-      console.log(`Rendered ${name}.png (${width}x${height}, transparent)`);
+      console.log(`${name}.pngを作成しました (${width}x${height}, 透明背景)`);
     }
   } finally {
     await browser.close();

@@ -24,27 +24,27 @@
   const gridSize = page.querySelector('#ui-settings-grid-size');
   const snapToggle = page.querySelector('#ui-settings-snap');
   const fieldLabels = {
-    background: 'Background', video: 'Video', character: 'Character', image: 'Image', fog: 'Bottom fog', dialogue: 'Dialogue and choices', controls: 'Player controls', menu: 'Menu overlay',
+    background: '背景', video: '動画', character: '立ち絵', image: '画像', fog: 'Bottom Fog', dialogue: '会話と選択肢', controls: '再生コントロール', menu: 'Menu Overlay',
     width: '幅', height: '高さ', x: 'X', y: 'Y', size: '文字サイズ',
     itemHeight: '項目の高さ', gap: '項目間隔', image: '画像パス', activeImage: '選択中の画像',
     opacity: '不透明度', enabled: '有効', color: '色 (RGBA)', fontSize: '文字サイズ',
-    label: '表示名', hoverLabel: 'ホバー時の表示名', hoverImage: 'ホバー時の画像',
+    label: '表示名', hoverLabel: 'Hover Label', hoverImage: 'Hover Image',
     display: '表示形式', anchor: '基準位置', action: '操作', backgroundColor: '背景色',
-    hoverBackgroundColor: 'ホバー時の背景色', borderColor: '枠線色', hoverBorderColor: 'ホバー時の枠線色',
-    hoverColor: 'ホバー時の文字色', borderRadius: '角丸', bottomFog: '下部フォグ',
-    message: '本文', nameplate: '話者名プレート', text: '文字', screen: '画面', dialog: '会話パネル', choices: '選択肢',
+    hoverBackgroundColor: 'Hover Background Color', borderColor: '枠線色', hoverBorderColor: 'Hover Border Color',
+    hoverColor: 'Hover Text Color', borderRadius: '角丸', bottomFog: 'Bottom Fog',
+    message: '本文', nameplate: 'Speaker Nameplate', text: '文字', screen: '画面', dialog: 'Dialog Panel', choices: '選択肢',
   };
   const sectionSpecs = {
     screen: { title: '画面', description: 'Browser と Native が共有する論理キャンバスのサイズです。', paths: [['screen', 'width'], ['screen', 'height']] },
-    backdrop: { title: '背景・フォグ', description: '画面下部のフォグを含む、キャンバスの背景効果を調整します。', paths: [['screen', 'backdrop']] },
-    dialog: { title: '会話パネル', description: '会話枠の画像、位置、サイズ、不透明度を設定します。', paths: [['dialog', 'image'], ['dialog', 'opacity'], ['dialog', 'x'], ['dialog', 'y'], ['dialog', 'width'], ['dialog', 'height']] },
+    backdrop: { title: 'Background / Fog', description: '画面下部の Fog を含む、キャンバスの背景効果を調整します。', paths: [['screen', 'backdrop']] },
+    dialog: { title: 'Dialog Panel', description: '会話枠の画像、位置、サイズ、不透明度を設定します。', paths: [['dialog', 'image'], ['dialog', 'opacity'], ['dialog', 'x'], ['dialog', 'y'], ['dialog', 'width'], ['dialog', 'height']] },
     message: { title: '本文', description: '会話枠の中で本文を表示する領域と文字スタイルを設定します。', paths: [['dialog', 'message']] },
     nameplate: { title: '話者名', description: '話者名プレートと、その内部に表示する文字の位置・色を設定します。', paths: [['dialog', 'nameplate']] },
     choices: { title: '選択肢', description: '選択肢一覧と各項目の文字、通常時・選択時の画像を設定します。', paths: [['choices']] },
-    controls: { title: 'セーブ／ロード', description: '会話画面上の Save / Load ボタンを個別に設定します。', paths: [['controls']] },
-    audio: { title: '基準音量', description: '作品の BGM・SE・ボイスの基準音量です。プレイヤー設定の音量とは別に適用されます。', paths: [['audio']] },
-    layers: { title: 'Layers', description: 'Set default draw order for the eight render categories. Values range from 0 to 7.999 in 0.001 steps.', paths: [['layers']] },
-    advanced: { title: 'JSON 詳細', description: 'テーマ全体を直接編集します。v1 の全プロパティを確認できます。', paths: [] },
+    controls: { title: 'Save / Load', description: '会話画面上のボタンを個別に設定します。', paths: [['controls']] },
+    audio: { title: '基準音量', description: '作品の BGM・SE・voice の基準音量です。Player settings の音量とは別に適用されます。', paths: [['audio']] },
+    layers: { title: 'Layers', description: '8種類の描画要素の既定の重なり順を設定します。値は0〜7.999の範囲で、0.001刻みです。', paths: [['layers']] },
+    advanced: { title: 'Advanced JSON', description: 'テーマ全体を直接編集します。v1 の全プロパティを確認できます。', paths: [] },
   };
   const defaultControls = {
     enabled: true,
@@ -55,15 +55,15 @@
     ],
   };
   const previewParts = {
-    fog: { label: '下部フォグ', section: 'backdrop', path: ['screen', 'backdrop', 'bottomFog'], basis: '画面下端基準', sizeKeys: ['height'], movable: false },
-    dialog: { label: '会話パネル', section: 'dialog', path: ['dialog'], basis: '画面基準' },
-    message: { label: '本文領域', section: 'message', path: ['dialog', 'message'], basis: '会話パネル内' },
-    nameplate: { label: '話者名プレート', section: 'nameplate', path: ['dialog', 'nameplate'], basis: '会話パネル内' },
-    speakerText: { label: '話者名テキスト', section: 'nameplate', path: ['dialog', 'nameplate', 'text'], basis: '話者名プレート内' },
+    fog: { label: 'Bottom Fog', section: 'backdrop', path: ['screen', 'backdrop', 'bottomFog'], basis: '画面下端基準', sizeKeys: ['height'], movable: false },
+    dialog: { label: 'Dialog Panel', section: 'dialog', path: ['dialog'], basis: '画面基準' },
+    message: { label: '本文領域', section: 'message', path: ['dialog', 'message'], basis: 'Dialog Panel 内' },
+    nameplate: { label: 'Speaker Nameplate', section: 'nameplate', path: ['dialog', 'nameplate'], basis: 'Dialog Panel 内' },
+    speakerText: { label: 'Speaker Name Text', section: 'nameplate', path: ['dialog', 'nameplate', 'text'], basis: 'Speaker Nameplate 内' },
     choices: { label: '選択肢一覧', section: 'choices', path: ['choices'], basis: '画面基準' },
     choiceText: { label: '選択肢テキスト', section: 'choices', path: ['choices', 'text'], basis: '選択肢項目内' },
-    'control-save': { label: 'セーブボタン', section: 'controls', action: 'save', basis: '設定した配置基準' },
-    'control-load': { label: 'ロードボタン', section: 'controls', action: 'load', basis: '設定した配置基準' },
+    'control-save': { label: 'Save Button', section: 'controls', action: 'save', basis: '設定した配置基準' },
+    'control-load': { label: 'Load Button', section: 'controls', action: 'load', basis: '設定した配置基準' },
   };
   let originalTheme = null;
   let draftTheme = null;
@@ -129,7 +129,7 @@
     app?.classList.add('ui-settings-mode');
     panel?.classList.add('ui-settings-mode');
     document.querySelector('.sidebar')?.classList.remove('search-mode', 'presentation-mode');
-    document.querySelectorAll('.activity-button').forEach(button => button.classList.toggle('active', button === activity));
+    document.querySelectorAll('.activity-button').forEach(button => button.classList.toggle('active', button === activity || (!activity && button.dataset.activity === 'presentation')));
   }
   function hidePage() {
     page.hidden = true;
@@ -164,7 +164,7 @@
       renderFields();
       renderPreview();
       changed();
-      setStatus('編集中のテーマをプレビューしています');
+      setStatus('Previewing theme changes');
     } catch (error) {
       loading = false;
       changed();
@@ -265,7 +265,7 @@
       if (['image', 'activeImage', 'hoverImage'].includes(key)) {
         input.setAttribute('list', 'ui-settings-image-paths');
         input.placeholder = 'ui/panel.png';
-        input.title = 'assetフォルダー内の相対パス';
+        input.title = 'Relative path within Asset Folder';
       }
     }
     const commit = () => {
@@ -335,7 +335,7 @@
     const element = spec && partElement(selectedPart);
     if (!spec || !element || element.getClientRects().length === 0) {
       selectionOverlay.hidden = true;
-      targetBasis.textContent = spec ? `${spec.basis}（プレビューに表示されていません）` : '';
+      targetBasis.textContent = spec ? `${spec.basis} (Not shown in Preview)` : '';
       return;
     }
     const rect = element.getBoundingClientRect();

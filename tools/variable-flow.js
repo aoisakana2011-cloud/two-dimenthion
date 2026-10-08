@@ -227,11 +227,11 @@ function validateVariableFlow(files, entry) {
     if (visited.has(key)) continue;
     visited.add(key);
     const program = files[current.file];
-    if (!program) throw Error(`遷移先 '${current.file}' がパッケージに含まれていません`);
+    if (!program) throw Error(`遷移先 '${current.file}' が package に含まれていません`);
     const functions = new Map(program.functions.map(fn => [fn.name, fn]));
     const scenes = new Map(program.scenes.map(scene => [scene.name, scene.instructions]));
     const requireName = (name, state) => {
-      if (!state.locals.has(name) && !state.defined.has(name)) throw Error(`シーン '${current.file}' で初期化前のグローバル変数を参照しています: ${name}`);
+      if (!state.locals.has(name) && !state.defined.has(name)) throw Error(`Scene '${current.file}' で初期化前のグローバル変数を参照しています: ${name}`);
     };
     const calls = new Set();
     function invoke(name, state, argumentFacts = []) {
@@ -389,7 +389,7 @@ function validateVariableFlow(files, entry) {
         if (checkIndexedRead && expr.target.kind === 'load') {
           const key = knownDictionaryKey(expr.key, state), facts = state.dictionaryKeys.get(expr.target.name);
           const closed = state.dictionaryClosed.get(expr.target.name);
-          if (key !== undefined && (facts?.get(key) === false || (closed === true && !facts?.has(key)))) throw Error(`繧ｷ繝ｼ繝ｳ '${current.file}' 縺ｧ蟄伜惠縺励↑縺・せ樊嶌繧ｭ繝ｼ '${key}' 繧貞・譁ｰ縺励※縺・∪縺吶・`);
+          if (key !== undefined && (facts?.get(key) === false || (closed === true && !facts?.has(key)))) throw Error(`Scene '${current.file}' の辞書 '${expr.target.name}' に存在しないキー '${key}' を参照しています`);
         }
       }
       if (expr.kind === 'dict') expr.entries.forEach(item => append(expression(item.value, state, callResults, dictionaryResults, aliasResults, true, keyResults, closedResults)));

@@ -6,6 +6,15 @@ const { chromium } = require('../build/audit-tools/node_modules/playwright');
 const root = path.resolve(__dirname, '..');
 const project = path.join(root, 'Title');
 const serverScript = path.join(root, 'Edit', 'server.js');
+const FIRST_LINE = '演出チェックを始めます。各項目のあとで画面を確認してください。';
+const LAST_LINE = '演出チェックを終了します。';
+const REQUIRED_LINES = [
+  FIRST_LINE,
+  'ここから画面とキャラクターのモーションです。',
+  '背景遷移: fade',
+  '会話欄の不透明度と一時的なsay不透明度を確認します。',
+  LAST_LINE,
+];
 
 async function startServer() {
   const child = spawn(process.execPath, [serverScript, '--project', project], {
@@ -33,81 +42,75 @@ async function stopServer(child) {
   await new Promise(resolve => { child.once('exit', resolve); child.kill(); });
 }
 
-async function playRoute(browser, base, { route, firstChoice, routeChoice, plan, ending, endingFile = `endings/${route}_together.tds` }) {
+async function playCurrentTitle(browser, base) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   page.setDefaultTimeout(8_000);
   const errors = [];
-  const loadedFiles = [];
-  const backgroundRequests = new Set();
+  const loadedScenes = [];
+  const backgrounds = new Set();
   page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => {
     const url = new URL(request.url());
-    if (url.pathname === '/api/scene') loadedFiles.push(url.searchParams.get('name'));
-    if (url.pathname.startsWith('/asset/bg/')) backgroundRequests.add(url.pathname);
+    if (url.pathname === '/api/scene') loadedScenes.push(url.searchParams.get('name'));
+    if (url.pathname.startsWith('/asset/bg/')) backgrounds.add(url.pathname);
   });
-  await page.goto(`${base}/player.html?source=main.tds`);
 
+  await page.goto(`${base}/player.html?source=main.tds`);
+  const start = page.locator('#screen-overlay #title-start');
+  await start.waitFor({ state: 'visible' });
+  await start.click();
+  await page.waitForFunction((line) => document.querySelector('#screen-overlay')?.hidden
+    && document.querySelector('#text')?.textContent.includes(line), FIRST_LINE, { timeout: 15_000 });
+
+  const observed = new Set();
+  const deadline = Date.now() + 120_000;
   let previousText = '';
   let dialogueAdvances = 0;
-  let choiceNumber = 0;
-  let finished = false;
-  const deadline = Date.now() + 45_000;
+  let skippedOptionalVideo = false;
   while (Date.now() < deadline) {
     const state = await page.evaluate(() => ({
       text: document.querySelector('#text')?.textContent?.trim() || '',
       choices: [...document.querySelectorAll('#choices .choice')].map(button => button.textContent.trim()),
-      speaker: document.querySelector('#speaker-text')?.textContent?.trim() || '',
-      playerError: document.querySelector('#speaker-text')?.textContent === 'PLAYER ERROR'
+      playerError: document.querySelector('#speaker-text')?.textContent === 'Runtime Error'
         ? document.querySelector('#text')?.textContent : '',
     }));
-    if (state.playerError) throw Error(`player error on ${route} route: ${state.playerError}`);
+    if (state.playerError) throw Error(`current Title playback failed: ${state.playerError}`);
+
+    if (state.text.includes('約108秒') && !state.choices.length && !skippedOptionalVideo) {
+      await page.waitForFunction(() => [...document.querySelectorAll('#choices .choice')]
+        .some(button => button.textContent.includes('動画はスキップする')), null, { timeout: 5_000 });
+      continue;
+    }
 
     if (state.choices.length) {
-      const wanted = plan[choiceNumber];
-      assert.notEqual(wanted, undefined, `unexpected extra choice ${JSON.stringify(state.choices)} on ${route}`);
-      assert.ok(wanted < state.choices.length, `choice ${wanted} outside ${JSON.stringify(state.choices)}`);
-      await page.locator('#choices .choice').nth(wanted).click();
-      choiceNumber++;
-      previousText = '';
+      const skipIndex = state.choices.findIndex(label => label.includes('動画はスキップする'));
+      assert.notEqual(skipIndex, -1, `unexpected Title choice: ${JSON.stringify(state.choices)}`);
+      await page.locator('#choices .choice').nth(skipIndex).click();
+      skippedOptionalVideo = true;
+      previousText = state.text;
       continue;
     }
 
     if (state.text && state.text !== previousText) {
-      if (state.text.includes(ending)) { finished = true; break; }
+      observed.add(state.text);
+      if (state.text.includes(LAST_LINE)) break;
       previousText = state.text;
       dialogueAdvances++;
-      if (state.speaker && state.speaker !== 'narrator') {
-        assert.notEqual(state.speaker, 'toshihito', 'obsolete Imogayu cast leaked into the new project');
-      }
       await page.locator('#next').click();
       continue;
     }
-    await page.waitForTimeout(5);
+    await page.waitForTimeout(20);
   }
 
-  assert.ok(finished, `${route} route did not reach ${ending}; files=${loadedFiles.join(', ')}`);
-  assert.ok(dialogueAdvances >= 18, `${route} route too short: ${dialogueAdvances} advances`);
-  assert.equal(choiceNumber, plan.length, `${route} route choice count`);
-  assert.ok(loadedFiles.includes(firstChoice), `initial investigation branch ${firstChoice} not loaded`);
-  assert.ok(loadedFiles.includes(routeChoice), `${routeChoice} not loaded`);
-  assert.ok(loadedFiles.includes(endingFile), `${endingFile} not loaded`);
-  assert.deepEqual(errors, []);
-  assert.ok(backgroundRequests.size >= 2, `expected multiple backgrounds, got ${[...backgroundRequests]}`);
-
-  const sprite = await page.evaluate(async () => {
-    const image = document.querySelector('#characters .actor');
-    if (!image) return null;
-    await image.decode();
-    const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = 1;
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    context.drawImage(image, 0, 0);
-    return { width: image.naturalWidth, height: image.naturalHeight, cornerAlpha: context.getImageData(0, 0, 1, 1).data[3] };
-  });
-  assert.ok(sprite && sprite.width > 0 && sprite.height > 0, 'waist-up sprite failed to load');
-  assert.equal(sprite.cornerAlpha, 0, `sprite should preserve transparent framing: ${JSON.stringify(sprite)}`);
+  assert.ok(observed.has(LAST_LINE), `current Title did not reach its ending line; observed=${JSON.stringify([...observed])}`);
+  assert.ok(dialogueAdvances >= 25, `expected the full four-scene demo, got ${dialogueAdvances} dialogue advances`);
+  for (const line of REQUIRED_LINES) assert.ok([...observed].some(text => text.includes(line)), `missing scene marker: ${line}`);
+  assert.equal(skippedOptionalVideo, true, 'the optional 108-second video path was explicitly skipped');
+  assert.ok(loadedScenes.includes('main.tds'), `entry scenario was not loaded: ${loadedScenes}`);
+  assert.ok(backgrounds.size >= 5, `expected the current scenario backgrounds, got ${[...backgrounds]}`);
+  assert.deepEqual(errors, [], `current Title emitted Browser errors: ${errors.join('\n')}`);
   await page.close();
-  return { dialogueAdvances, choices: choiceNumber, files: loadedFiles, sprite };
+  return { dialogueAdvances, loadedScenes, backgrounds: [...backgrounds], observedMarkers: REQUIRED_LINES.length };
 }
 
 (async () => {
@@ -116,25 +119,8 @@ async function playRoute(browser, base, { route, firstChoice, routeChoice, plan,
   try {
     server = await startServer();
     browser = await chromium.launch({ channel: 'msedge', headless: true });
-    const runs = await Promise.all([
-      playRoute(browser, server.base, {
-        route: 'mio', firstChoice: 'chapters/02_digital_trace.tds', routeChoice: 'routes/mio_01_trace.tds',
-        plan: [0, 0, 0, 0], ending: '澪と歩む',
-      }),
-      playRoute(browser, server.base, {
-        route: 'chihaya', firstChoice: 'chapters/02_provenance.tds', routeChoice: 'routes/chihaya_01_origin.tds',
-        plan: [1, 1, 0, 0], ending: '千早と紡ぐ',
-      }),
-      playRoute(browser, server.base, {
-        route: 'rei', firstChoice: 'chapters/02_digital_trace.tds', routeChoice: 'routes/rei_01_mask.tds',
-        plan: [0, 2, 0, 0, 0], ending: '怜と選ぶ',
-      }),
-      playRoute(browser, server.base, {
-        route: 'mio', firstChoice: 'chapters/02_digital_trace.tds', routeChoice: 'routes/mio_01_trace.tds',
-        plan: [0, 0, 1, 0], ending: '澪と始める', endingFile: 'endings/mio_unanswered.tds',
-      }),
-    ]);
-    console.log(`PASS modern visual-novel routes ${JSON.stringify(runs)}`);
+    const result = await playCurrentTitle(browser, server.base);
+    console.log(`PASS current Title start-to-ending playthrough ${JSON.stringify(result)}`);
   } finally {
     await browser?.close();
     await stopServer(server?.child);

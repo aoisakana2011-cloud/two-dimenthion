@@ -22,9 +22,9 @@ IDEとCLIが同じ `format()` を使うため、token spacingとblock整形規�
 - 複合記号は `== != >= <= -> => ..`、単記号はbrace/bracket/paren、comma、colon等。
 - `#`と`//`から後ろはcomment token。format時には本文を保持し、code直後なら2 spacesで区切る。
 - stringはquoteとescapeを走査し、閉じquoteがなくても残りをstringとして返す。
-- `--only` はmodifierを分割しないよう一つのword tokenとして特別扱いする。
+- `--only` と `--layer` はmodifierを分割しないよう一つのword tokenとして特別扱いする。
 - IDE selection/caret用 private-use marker (`NOVEL_EDITOR_CURSOR`等)はmarker tokenとなり、format後に位置を再構成できる。
-- Unicode/unknown characterは`plain`として保ち、formatter自身はParserの字句エラーを出さない。
+- Unicode/unknown characterは`plain`として保ち、formatter自身はParserの字句エラーを出さない。formatterが構文空白として読み飛ばすのはASCII spaceとtabだけで、全角空白・NBSP・form feed・vertical tabなどを消して有効なDSLへ変えてはならない。
 
 これはCompilerの `src/parser/lexer.ts` と同じLexerではありません。Formatter lexerは誤入力中でも構造を保ってレイアウトするための別契約です。
 
@@ -35,6 +35,7 @@ IDEとCLIが同じ `format()` を使うため、token spacingとblock整形規�
 - Binary operatorの前後にはspaceを入れる。
 - unary `+`, `-`, `!` は文頭や演算子/開括弧/comma/colon、`from`/`to`/`step`/`return`の後で判定し、不要な空白を避ける。
 - `foo(...)`、`object.field`、`list[index]`の連結を保持する。
+- unquoted `include` pathはParserが隣接token値を連結する形式のため、path内部のtoken間に空白を入れない。
 - `{`/`}`の空白とcomment境界はblock/dictの周辺文脈と併せて処理する。
 - 数字tokenは小数・指数の形を保つ。signは別operatorとして扱う。
 - string/comment token内部を書き換えず、literal本文の記号や空白を維持する。
@@ -45,7 +46,7 @@ Formatterは意味の知らないwordの並びもspacingするため、すべて
 
 `expandStructuralLine()` はparen/bracket depth、block stack、line中のprevious structural braceを持ち、braceを`block`か`literal`へ分類します。
 
-Block判定に使うkeyword familyは `scene`, `fn`, `if`, `elif`, `else`, `for`, `while`, `choice`, `character`, `struct`。Command prefix群は `return`, `set`, `unset`, `say`, `show`, `hide`, `clear`, `bg`, `bgm`, `play`, `wait`, `effect`, `goto`, `include`, `global`, `const`, `int`, `str`, `dict`。加えて引用label直後のchoice body、choice内のoption expression等を特殊判定します。
+Block判定に使うkeyword familyは `scene`, `fn`, `if`, `elif`, `else`, `for`, `while`, `parallel`, `choice`, `character`, `struct`。Command prefix群は `return`, `set`, `unset`, `say`, `show`, `hide`, `clear`, `bg`, `bgm`, `play`, `wait`, `effect`, `goto`, `include`, `global`, `const`, `int`, `str`, `dict`。加えて引用label直後のchoice body、choice内のoption expression等を特殊判定します。`parallel` は有効なstatement blockであり、本文を独立行に展開してindentします。
 
 braceがblockであれば `{`前、`}`後で一行ずつ分割し、literal dictionary/object bracesは内部を分割しません。文字列中のbraceとcomment中のbraceは構造とは扱いません。隣接closing braceだけの行は個数分に分割し、`else`/`elif`は直前の単独`}`行へ連結します。
 
@@ -62,7 +63,7 @@ braceがblockであれば `{`前、`}`後で一行ずつ分割し、literal dict
 5. indent幅は半角space 2個。
 6. 行末space/tabを除去し、結果行をLFでjoinする。
 
-blank lineは空のまま保ちます。EOFにnewlineを必ず追加する契約はありません。Unbalanced bracesの負depthは0にclampされます。
+blank lineは空のまま保ちます。ただしParserが同一の `if` statementとして読む `}` と `elif` / `else` の間に空行がある場合は、branchをcanonicalな `} elif` / `} else` に接続するため、その空行を除去します。EOFにnewlineを必ず追加する契約はありません。Unbalanced bracesの負depthは0にclampされます。
 
 ## 6. Caret・selection保持
 
@@ -83,20 +84,21 @@ npm.cmd run format -- "Title/senario"
 
 変更のあったfileだけUTF-8で書き戻します。CLI自体はproject config、include graph、syntax validityを検査しません。directory指定により再帰的に多数の`.txt`も対象となるため、実行前にpathと対象を指定します。
 
-引数なしはusage表示とexit code 2、format/read/write failureはexit code 1です。成功時は`formatted changed/total scene files`を表示します。
+引数なしは英語のusage表示とexit code 2、format/read/write failureはexit code 1です。成功時は`Formatted scene files: changed/total changed`を表示します。
 
 ## 8. 安定性・意味保存契約
 
-期待する性質は決定性とidempotenceです: `format(format(source)) === format(source)`。TDSとして有効なcontract corpusでは、整形前後にParserから見えるAST構造（source locationを除く）を同一に保つことも検査します。Formatterが一般に意味保存を証明するのではなく、対応 corpusに対して回帰契約を持つという位置づけです。
+期待する性質は決定性とidempotenceです: `format(format(source)) === format(source)`。未完・不正ソースでも、対応するblockを持たない単独`}`を`else`/`elif`へ結合しないため、行展開heuristicが再整形時に変化しません。TDSとして有効なcontract corpusでは、整形前後にParserから見えるAST構造（source locationを除く）を同一に保つことも検査します。Formatterが一般に意味保存を証明するのではなく、対応 corpusに対して回帰契約を持つという位置づけです。
 
 特別なregression対象にはsigned pixel offset (`x-10`, `y+40`)、expression offsets、float/exponent、`--only` modifier、comment/string brace、Unicode line separators、incomplete sourceがあります。
 
 | 性質 | テスト根拠 |
 |---|---|
 | deterministic / idempotent / line-ending | `test/formatter-contract.test.js` |
-| valid corpus AST preservation | 同 test の `shared formatter preserves compiler CST semantics` |
+| valid corpus AST preservation | 同 test の `shared formatter preserves compiler CST semantics`; `shared formatter preserves adjacent tokens in unquoted include paths`; `shared formatter expands parallel as a statement block` |
 | signed offsetと`--only`保持 | 同 test のpresentation command cases |
 | tolerant lexing | 同 test のstring/comment token case |
+| Editorの実format shortcutとUnicodeをまたぐselection保持 | `test/editor-typing.browser.cjs`。`Ctrl+Shift+F`でformatし、astral Unicode後の選択範囲が同じ文字列に戻ることをBrowserで確認 |
 | CLIとIDEの共通format API / file write | 同 test の `CLI formatter uses the same shared implementation as the IDE` |
 
 Benchmark用 `npm.cmd run benchmark:formatter` はperformance測定専用で、正しさテストの代わりではありません。

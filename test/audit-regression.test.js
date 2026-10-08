@@ -10,12 +10,12 @@ const { pack } = require('../tools/pack');
 const cases = require('./fixtures/audit-cases.json');
 
 const invalid = {
-  dictionary_mixed: /辞書.*型/, const_unset: /const/, const_branch: /const/,
+  dictionary_mixed: /dict.*型/, const_unset: /const/, const_branch: /const/,
   recursion_say: /再帰/, finite_while_return: /値を返/, struct_return: /struct.*初期値/,
 };
 const expected = {
   loop: {x:3,hits:1}, condition_effect:{x:1,result:1}, argument_effect:{x:1,result:1},
-  dictionary_alias:{a:{x:1},b:{x:2},result:1}, dictionary_parameter:{a:{x:1},result:1}, interpolation_side_effect:{state:1},
+  dictionary_alias:{alias_source:{x:1},alias_copy:{x:2},result:1}, dictionary_parameter:{a:{x:1},result:1}, interpolation_side_effect:{state:1},
   dictionary_empty:{a:{}}, dictionary_side_effect:{d:{x:1,y:9}}, dictionary_evaluation_order:{values:{'0':0,'1':7},order:12,result:7},
   const_alias:{a:{x:1},b:{x:2}}, reachable_return:{result:2},
   newline_character:{hero:{name:'Hero'}}, newline_struct:{}, say_expression:{message:'hello'},
@@ -47,12 +47,13 @@ for (const [id, item] of Object.entries(cases)) test(`audit: ${id}`,async t => {
     }
     data=await build();
   } else {
-    data={format:'novel-script-package',version:1,program:JSON.parse(JSON.stringify(compile(parse(item.source))))};
-    if(id==='goto_hyphen')data.files={'chapter-1.tds':JSON.parse(JSON.stringify(compile(parse('int result = 7'))))};
+    const program=JSON.parse(JSON.stringify(compile(parse(item.source))));
+    data={format:'novel-script-package',version:1,source:'main.tds',program,files:{'main.tds':JSON.parse(JSON.stringify(program))},native_ui:{}};
+    if(id==='goto_hyphen')data.files['chapter-1.tds']=JSON.parse(JSON.stringify(compile(parse('int result = 7'))));
   }
   const commands=[];
   const rt=new Runtime({command:async(name,args)=>commands.push({name,args}),choice:async()=>0,load:async name=>data.files[name]});
-  if(id==='conversion')await assert.rejects(rt.run(data.program),/変換/);
+  if(id==='conversion')await assert.rejects(rt.run(data.program),/conversion error|変換に失敗/);
   else {
     await rt.run(data.program);
     assert.deepEqual(normalized(rt.globals),id==='goto_hyphen'?{result:7}:expected[id]);
@@ -60,7 +61,7 @@ for (const [id, item] of Object.entries(cases)) test(`audit: ${id}`,async t => {
   }
   const child=await native(t,data);
   if(child) {
-    if(id==='conversion') { assert.equal(child.status,1);assert.match(child.stderr,/conversion/); }
+    if(id==='conversion') { assert.equal(child.status,1);assert.match(child.stderr,/整数に変換できません/); }
     else { assert.equal(child.status,0,child.stderr||child.error?.message);assert.deepEqual(JSON.parse(child.stdout).globals,normalized(rt.globals)); }
   }
 });
@@ -86,7 +87,7 @@ test('audit: recursion in unset keys is rejected',()=>{
 
 test('audit: empty and mixed dictionaries are checked in assignments, arguments and returns',()=>{
   assert.doesNotThrow(()=>compile(parse('dict[str] d = {}\nset d = {}\nfn f(x: dict[str]) -> dict[str] { return {} }\nset d = f({})')));
-  assert.throws(()=>compile(parse('fn f(x: dict[str]) -> none {}\nf({"x":1,"y":"s"})')),/辞書.*型/);
+  assert.throws(()=>compile(parse('fn f(x: dict[str]) -> none {}\nf({"x":1,"y":"s"})')),/dict.*型/);
 });
 
 test('audit: current syntax accepts ordinary brace placement',()=>{

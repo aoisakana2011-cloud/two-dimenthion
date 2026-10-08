@@ -18,12 +18,36 @@
     if (typeof value === 'bigint') return String(value);
     if (typeof value === 'string') return JSON.stringify(value);
     if (value === null) return 'null';
-    if (value && typeof value === 'object') return `{${Object.keys(value).map(key => `${JSON.stringify(key)}:${serialized(value[key])}`).join(',')}}`;
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value)) return 'null';
+      if (value === 0) return '0.0';
+      const magnitude = Math.abs(value);
+      if (magnitude >= 1e15 || magnitude < 1e-4) {
+        const [mantissa, exponentText] = value.toExponential().split('e');
+        const exponent = Number(exponentText);
+        const sign = exponent < 0 ? '-' : '+';
+        return `${mantissa}e${sign}${String(Math.abs(exponent)).padStart(2, '0')}`;
+      }
+      const text = String(value);
+      return Number.isInteger(value) ? `${value.toFixed(0)}.0` : text;
+    }
+    if (Array.isArray(value)) return `[${value.map(serialized).join(',')}]`;
+    if (value && typeof value === 'object') return `{${Object.keys(value).sort(compareUnicodeKeys).map(key => `${JSON.stringify(key)}:${serialized(value[key])}`).join(',')}}`;
     return String(value);
+  }
+  function compareUnicodeKeys(left, right) {
+    let a = 0, b = 0;
+    while (a < left.length && b < right.length) {
+      const leftPoint = left.codePointAt(a), rightPoint = right.codePointAt(b);
+      if (leftPoint !== rightPoint) return leftPoint - rightPoint;
+      a += leftPoint > 0xffff ? 2 : 1;
+      b += rightPoint > 0xffff ? 2 : 1;
+    }
+    return (left.length - a) - (right.length - b);
   }
   function integer(value) {
     if (typeof value === 'number') {
-      if (!Number.isFinite(value) || value < Number(MIN) || value >= Number(MAX) + 1) throw Error('Integer is outside the supported 64-bit range');
+      if (!Number.isFinite(value) || value < Number(MIN) || value >= Number(MAX) + 1) throw Error('整数値が符号付き64ビットの範囲外です');
       value = Math.trunc(value);
     }
     if (typeof value === 'string' && !/^[+-]?\d+$/.test(value)) throw Error('int への変換に失敗しました');
@@ -50,11 +74,11 @@
   function trimDataSpace(value) { return value.replace(/^[ \t\n\r\f\v\u00a0\u3000]+|[ \t\n\r\f\v\u00a0\u3000]+$/gu, ''); }
   function normalizeDataSpace(value) { return trimDataSpace(value.replace(/[ \t\n\r\f\v\u00a0\u3000]+/gu, ' ')); }
   function splitText(value, separator) {
-    if (!separator.length) throw Error('text.split separator must not be empty');
+    if (!separator.length) throw Error('text.splitの区切り文字は空にできません');
     return value.split(separator);
   }
   function replaceText(value, search, replacement) {
-    if (!search.length) throw Error('text.replace search must not be empty');
+    if (!search.length) throw Error('text.replaceの検索文字列は空にできません');
     return value.split(search).join(replacement);
   }
   const DEFAULT_SLOTS = ['far_left', 'left', 'center', 'right', 'far_right'];
@@ -88,7 +112,7 @@
   }
   function transitionWith(type, rawDuration) {
     const duration = rawDuration === undefined ? 500n : integer(rawDuration);
-    if (duration < 0n || duration > BigInt(MAX_TIME_MS)) throw Error('Invalid transition duration');
+    if (duration < 0n || duration > BigInt(MAX_TIME_MS)) throw Error('画面効果の時間が有効範囲外です');
     return { type, durationMs: Number(duration) };
   }
   function transitionFrom(args, offset = 0) {
@@ -98,7 +122,7 @@
       return transitionWith(args[offset], duration);
     }
     if (args[offset] === undefined) return { type: 'instant', durationMs: 0 };
-    throw Error(`Unknown transition '${args[offset]}'`);
+    throw Error(`未対応の画面効果です: ${args[offset]}`);
   }
   function resolveAssetName(program, type, reference) {
     const named = program?.assets?.find(asset => asset.type === type && asset.name === reference);
@@ -112,7 +136,7 @@
     const matches = (program?.assets || []).filter(asset => asset.type === type && (
       normalize(asset.path) === wanted || normalize(asset.path).split('/').at(-1) === wanted
     ));
-    if (matches.length > 1) throw Error(`Ambiguous ${type} asset filename '${reference}'`);
+    if (matches.length > 1) throw Error(`${type}素材のファイル名が重複しています: ${reference}`);
     return matches[0]?.name || reference;
   }
   function poseYOffset(program, characterName, poseName) {
@@ -143,7 +167,7 @@
     const target = targetKind === 'character' ? args[1] : 'bg';
     const byIndex = targetKind === 'character' ? 2 : 1;
     const start = byIndex + 1;
-    if (args[byIndex] !== 'by') throw Error('move requires by before pixel offsets');
+    if (args[byIndex] !== 'by') throw Error('moveでは画素単位の移動量の前にbyを指定してください');
     const delta = { x: 0, y: 0 };
     const axes = new Set();
     let index = start;
@@ -157,12 +181,12 @@
       axes.add(match[1]);
       delta[match[1]] = match[2] === '+' ? amount : -amount;
     }
-    if (!axes.size) throw Error('move requires at least one pixel offset');
+    if (!axes.size) throw Error('moveには画素単位の移動量が必要です');
     let durationMs = 0;
     if (index < args.length) {
-      if (index + 2 !== args.length || args[index] !== 'over') throw Error('move duration must use over <ms>');
+      if (index + 2 !== args.length || args[index] !== 'over') throw Error('moveの時間は over <ms> の形式で指定してください');
       const duration = integer(args[index + 1]);
-      if (duration < 0n || duration > BigInt(MAX_TIME_MS)) throw Error('Invalid move duration');
+      if (duration < 0n || duration > BigInt(MAX_TIME_MS)) throw Error('move command の duration は0〜2147483647 msの範囲で指定してください。');
       durationMs = Number(duration);
     }
     return { targetKind, target, delta, durationMs };
@@ -243,7 +267,7 @@
   }
   function advanceSceneTime(state, elapsedMs) {
     const elapsed = Number(elapsedMs);
-    if (!Number.isSafeInteger(elapsed) || elapsed < 0 || elapsed > MAX_TIME_MS) throw Error('Invalid scene time advance');
+    if (!Number.isSafeInteger(elapsed) || elapsed < 0 || elapsed > MAX_TIME_MS) throw Error('scene の経過時間が有効範囲外です');
     state.logicalTimeMs += elapsed;
     const visit = value => {
       if (!value || typeof value !== 'object') return;
@@ -318,10 +342,10 @@
     const assignedLayer = layerIndex >= 0 ? floating(args[layerIndex + 1]) : undefined;
     const cleanDisplayArgs = args.filter((argument, index) => argument !== '--only' && argument !== '--layer'
       && !(index > 0 && args[index - 1] === '--layer'));
-    if (assignedLayer !== undefined && (assignedLayer < 0 || assignedLayer >= 8 || Math.abs(Math.round(assignedLayer * 1000) - assignedLayer * 1000) > 1e-7)) throw Error('Layer must be between 0 and 7.999 in 0.001 steps');
+    if (assignedLayer !== undefined && (assignedLayer < 0 || assignedLayer >= 8 || Math.abs(Math.round(assignedLayer * 1000) - assignedLayer * 1000) > 1e-7)) throw Error('layer は0〜7.999の範囲で0.001刻みに指定してください');
     const boundedUnit = (value, label) => {
       const number = floating(value);
-      if (number < 0 || number > 1) throw Error(`${label} must be between 0.0 and 1.0`);
+      if (number < 0 || number > 1) throw Error(`${label}は0.0〜1.0の範囲で指定してください`);
       return number;
     };
     const playbackOptions = (kind, assetName, options) => {
@@ -332,7 +356,7 @@
     if (name === 'layer') {
       const category = args[0];
       const layer = floating(args[1]);
-      if (!Object.hasOwn(state.layers, category) || layer < 0 || layer >= 8 || Math.abs(Math.round(layer * 1000) - layer * 1000) > 1e-7) throw Error('Layer must be a known category and a 0.001 step between 0 and 8');
+      if (!Object.hasOwn(state.layers, category) || layer < 0 || layer >= 8 || Math.abs(Math.round(layer * 1000) - layer * 1000) > 1e-7) throw Error('layer は既知の分類に対して0〜8未満の範囲で0.001刻みに指定してください');
       state.layers[category] = layer;
       op.layer = { category, value: layer };
     } else if (name === 'volume') {
@@ -357,14 +381,14 @@
         zoom: floating(args[1]), focusX: Number(integer(args[3])), focusY: Number(integer(args[4])),
       };
       const duration = reset ? args[1] === 'over' ? integer(args[2]) : 0n : args[5] === 'over' ? integer(args[6]) : 0n;
-      if (to.zoom < 0.1 || to.zoom > 8) throw Error('Camera zoom must be between 0.1 and 8.0');
-      if (duration < 0n || duration > BigInt(MAX_TIME_MS)) throw Error('Invalid camera duration');
+      if (to.zoom < 0.1 || to.zoom > 8) throw Error('カメラの拡大率は0.1〜8.0の範囲で指定してください');
+      if (duration < 0n || duration > BigInt(MAX_TIME_MS)) throw Error('カメラ移動の時間が有効範囲外です');
       const actionId = duration ? `camera:${++state.revision}` : undefined;
       const transition = beginTransition(state, {
         type: 'camera', durationMs: Number(duration),
         ...(duration ? { interpolation: { property: 'camera', from, to } } : {}),
       }, actionId);
-      state.camera = { ...from, transition };
+      state.camera = { ...from, ...(duration ? {} : to), transition };
       sampleTransition(state.camera, transition);
       op.camera = { from, to, durationMs: Number(duration) };
       if (actionId) {
@@ -374,12 +398,12 @@
     } else if (name === 'move') {
       const move = moveOptions(args);
       const current = move.targetKind === 'bg' ? state.background : state.characters[move.target];
-      if (!current || (move.targetKind === 'character' && !current.visible)) throw Error(`move target '${move.target}' is not currently visible`);
+      if (!current || (move.targetKind === 'character' && !current.visible)) throw Error(`moveの対象「${move.target}」は表示されていません`);
       const fromX = current.offsetX || 0;
       const fromY = current.offsetY || 0;
       const toX = fromX + move.delta.x;
       const toY = fromY + move.delta.y;
-      if (Math.abs(toX) > 1_000_000 || Math.abs(toY) > 1_000_000) throw Error('move target position exceeds ±1000000 px');
+      if (Math.abs(toX) > 1_000_000 || Math.abs(toY) > 1_000_000) throw Error('moveの移動先は±1000000 px以内にしてください');
       const actionId = move.durationMs ? `move:${++state.revision}` : undefined;
       const transition = beginTransition(state, {
         type: 'move', durationMs: move.durationMs,
@@ -434,7 +458,7 @@
         const option = args[index++];
         if (option === 'volume') options.volume = args[index++];
         else if (option === 'crossfade') options.transition = transitionWith('crossfade', args[index++]);
-        else throw Error(`Unknown BGM option '${option}'`);
+        else throw Error(`未対応のBGMオプションです: ${option}`);
       }
       const transition = options.transition || transitionWith('instant', 0);
       const { gain } = playbackOptions('bgm', args[1], options);
@@ -448,7 +472,7 @@
       registerAction(state, { id: actionId, kind: 'bgm', asset: args[1], gain, startedAt: state.logicalTimeMs, blocking: false });
     } else if (name === 'play' && args[0] === 'se') {
       const options = {};
-      for (let index = 2; index < args.length;) { const option = args[index++]; if (option === 'volume') options.volume = args[index++]; else throw Error(`Unknown SE option '${option}'`); }
+      for (let index = 2; index < args.length;) { const option = args[index++]; if (option === 'volume') options.volume = args[index++]; else throw Error(`未対応のSEオプションです: ${option}`); }
       const { gain } = playbackOptions('se', args[1], options);
       const actionId = `se:${++state.revision}`;
       op.actionId = actionId;
@@ -457,7 +481,7 @@
       registerAction(state, { id: actionId, kind: 'se', asset: args[1], gain, startedAt: state.logicalTimeMs, blocking: false });
     } else if (name === 'play' && args[0] === 'voice') {
       const options = {};
-      for (let index = 2; index < args.length;) { const option = args[index++]; if (option === 'volume') options.volume = args[index++]; else if (option === 'character') options.characterId = args[index++]; else if (option === 'blocking' || option === 'async') options.mode = option; else throw Error(`Unknown voice option '${option}'`); }
+      for (let index = 2; index < args.length;) { const option = args[index++]; if (option === 'volume') options.volume = args[index++]; else if (option === 'character') options.characterId = args[index++]; else if (option === 'blocking' || option === 'async') options.mode = option; else throw Error(`未対応のVoiceオプションです: ${option}`); }
       const { gain, mode } = playbackOptions('voice', args[1], options);
       const actionId = `voice:${++state.revision}`;
       const blocking = mode === 'blocking';
@@ -593,7 +617,11 @@
     return op;
   }
   class Runtime {
-    constructor(host = {}) { this.host = host; this.globals = Object.create(null); this.frames = [this.globals]; this.loopFrames = new WeakSet(); this.readonlyFrames = new WeakMap(); this.functions = new Map(); this.program = null; this.currentSceneName = ''; this.currentSourceFile = ''; this.currentLine = 0; this.presentationDefaults = { audio: { ...DEFAULT_PRESENTATION_DEFAULTS.audio }, dialog: { ...DEFAULT_PRESENTATION_DEFAULTS.dialog } }; this.sceneState = createSceneState(); this.pendingSceneActionEvents = null; this.transitionProgressNotifications = new WeakMap(); }
+    constructor(host = {}) { this.host = host; this.globals = Object.create(null); this.frames = [this.globals]; this.loopFrames = new WeakSet(); this.readonlyFrames = new WeakMap(); this.functions = new Map(); this.program = null; this.currentSceneName = ''; this.currentSourceFile = ''; this.currentLine = 0; this.functionCallDepth = 0; this.loopDepth = 0; this.startWasCalled = false; this.suppressStartupStart = false; this.presentationDefaults = { audio: { ...DEFAULT_PRESENTATION_DEFAULTS.audio }, dialog: { ...DEFAULT_PRESENTATION_DEFAULTS.dialog } }; this.sceneState = createSceneState(); this.pendingSceneActionEvents = null; this.transitionProgressNotifications = new WeakMap(); }
+    assertSaveBoundary() {
+      if (this.functionCallDepth > 0) throw Error('\u95a2\u6570\u306e\u5b9f\u884c\u4e2d\u306f\u4fdd\u5b58\u3067\u304d\u307e\u305b\u3093');
+      if (this.loopDepth > 0) throw Error('loop\u306e\u5b9f\u884c\u4e2d\u306f\u4fdd\u5b58\u3067\u304d\u307e\u305b\u3093');
+    }
     configurePresentationDefaults(theme = {}) {
       this.presentationDefaults = {
         audio: { ...DEFAULT_PRESENTATION_DEFAULTS.audio, ...(theme.audio || {}) },
@@ -602,15 +630,15 @@
       };
       for (const kind of ['bgm', 'se', 'voice']) {
         const value = Number(this.presentationDefaults.audio[kind]);
-        if (!Number.isFinite(value) || value < 0 || value > 1) throw Error(`Invalid ${kind} volume default`);
+        if (!Number.isFinite(value) || value < 0 || value > 1) throw Error(`${kind}の音量既定値が正しくありません`);
         this.presentationDefaults.audio[kind] = value;
       }
       const opacity = Number(this.presentationDefaults.dialog.opacity);
-      if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) throw Error('Invalid dialog opacity default');
+      if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) throw Error('会話欄の不透明度の既定値が正しくありません');
       this.presentationDefaults.dialog.opacity = opacity;
       for (const [category, value] of Object.entries(this.presentationDefaults.layers)) {
         const layer = Number(value);
-        if (!Object.hasOwn(DEFAULT_PRESENTATION_DEFAULTS.layers, category) || !Number.isFinite(layer) || layer < 0 || layer >= 8 || Math.abs(Math.round(layer * 1000) - layer * 1000) > 1e-7) throw Error(`Invalid ${category} layer default`);
+        if (!Object.hasOwn(DEFAULT_PRESENTATION_DEFAULTS.layers, category) || !Number.isFinite(layer) || layer < 0 || layer >= 8 || Math.abs(Math.round(layer * 1000) - layer * 1000) > 1e-7) throw Error(`${category}のlayer既定値が正しくありません`);
         this.presentationDefaults.layers[category] = layer;
       }
       this.sceneState.layers = { ...this.presentationDefaults.layers };
@@ -741,7 +769,7 @@
         const [name, ...fields] = path.split('.');
         let replacement = this.get(name);
         for (const field of fields) {
-          if (!replacement || typeof replacement !== 'object' || !own(replacement, field)) throw Error(`存在しないフィールド '${path}' です`);
+          if (!replacement || typeof replacement !== 'object' || !own(replacement, field)) throw Error(`\u88dc\u9593\u5bfe\u8c61\u306efield '${path}' \u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093`);
           replacement = replacement[field];
         }
         return replacement && typeof replacement === 'object' ? serialized(replacement) : String(replacement ?? '');
@@ -778,10 +806,11 @@
       if (x.kind === 'index') {
         const target = await this.value(x.target), key = await this.value(x.key);
         if (Array.isArray(target)) {
-          if (typeof key !== 'bigint' || key < 0n || key >= BigInt(target.length)) throw Error(`List index out of range: ${key}`);
+          if (typeof key !== 'bigint') throw Error('list の添字は int で指定してください');
+          if (key < 0n || key >= BigInt(target.length)) throw Error(`list の添字が範囲外です: ${key}`);
           return target[Number(key)];
         }
-        if (!target || typeof target !== 'object' || !own(target, key)) throw Error(`\u5b58\u5728\u3057\u306a\u3044\u8f9e\u66f8\u30ad\u30fc '${key}' \u3067\u3059`);
+        if (!target || typeof target !== 'object' || !own(target, key)) throw Error(`dict key '${key}' が見つかりません`);
         return target[key];
       }
       if (x.kind === 'unary') {
@@ -826,78 +855,154 @@
       }
       if (x.kind === 'call') {
         const args = []; for (const a of x.args) args.push(await this.value(a));
-        if (x.name === 'str') return String(args[0]);
-        if (x.name === 'int') return integer(args[0]);
-        if (x.name === 'float') return floating(args[0]);
-        if (x.name === 'list.length') return BigInt(args[0].length);
-        if (x.name === 'list.append') return [...args[0], args[1]];
-        if (x.name === 'list.contains') return args[0].some(value => equal(value, args[1]));
-        if (x.name === 'text.trim') return trimDataSpace(args[0]);
-        if (x.name === 'text.normalize_space') return normalizeDataSpace(args[0]);
-        if (x.name === 'text.split') return splitText(args[0], args[1]);
-        if (x.name === 'text.replace') return replaceText(args[0], args[1], args[2]);
+        if (x.name === 'start') {
+          if (args.length) throw Error('start() \u306b\u5f15\u6570\u306f\u6307\u5b9a\u3067\u304d\u307e\u305b\u3093');
+          if (this.suppressStartupStart) return null;
+          if (!this.host.start) throw Error('start() \u306b\u5bfe\u5fdc\u3059\u308bscreen host\u304c\u3042\u308a\u307e\u305b\u3093');
+          this.startWasCalled = true;
+          await this.host.start(this);
+          return null;
+        }
+        if (x.name === 'str') {
+          if (args.length !== 1) throw Error('str() には引数を1つ指定してください');
+          return String(args[0]);
+        }
+        if (x.name === 'int') {
+          if (args.length !== 1) throw Error('int() には引数を1つ指定してください');
+          const argumentNode = x.args[0];
+          const integerLiteral = argumentNode?.kind === 'literal' && typeof args[0] === 'number' && Number.isInteger(args[0]);
+          if ((typeof args[0] !== 'number' && typeof args[0] !== 'string') || integerLiteral) throw Error('int() には float または str を指定してください');
+          return integer(args[0]);
+        }
+        if (x.name === 'float') {
+          if (args.length !== 1) throw Error('float() には引数を1つ指定してください');
+          return floating(args[0]);
+        }
+        if (x.name === '__intrinsic_sin' || x.name === '__intrinsic_cos') {
+          if (args.length !== 1) throw Error(`${x.name} には引数を1つ指定してください`);
+          const argumentNode = x.args[0];
+          const integerLiteral = argumentNode?.kind === 'literal' && typeof args[0] === 'number' && Number.isInteger(args[0]);
+          if (typeof args[0] !== 'number' || !Number.isFinite(args[0]) || integerLiteral) throw Error(`${x.name} には float を指定してください`);
+          return floating(x.name === '__intrinsic_sin' ? Math.sin(args[0]) : Math.cos(args[0]));
+        }
+        if (x.name === 'list.length') {
+          if (args.length !== 1 || !Array.isArray(args[0])) throw Error('list.length には list を1つ指定してください');
+          return BigInt(args[0].length);
+        }
+        if (x.name === 'list.append') {
+          if (args.length !== 2 || !Array.isArray(args[0])) throw Error('list.append には list と要素を指定してください');
+          if (!['bigint', 'number', 'string', 'boolean'].includes(typeof args[1])) throw Error('list.append には primitive type の要素を指定してください');
+          if (args[0].some(value => value === null || typeof value === 'object' || typeof value !== typeof args[1])) throw Error('list.append の list と要素の型が一致しません');
+          return [...args[0], args[1]];
+        }
+        if (x.name === 'list.contains') {
+          if (args.length !== 2 || !Array.isArray(args[0])) throw Error('list.contains には list と要素を指定してください');
+          if (!['bigint', 'number', 'string', 'boolean'].includes(typeof args[1])) throw Error('list.contains には primitive type の要素を指定してください');
+          if (args[0].some(value => value === null || typeof value === 'object' || typeof value !== typeof args[1])) throw Error('list.contains の list と要素の型が一致しません');
+          return args[0].some(value => equal(value, args[1]));
+        }
+        if (x.name === 'list.remove_all') {
+          if (args.length !== 2 || !Array.isArray(args[0])) throw Error('list.remove_all には list と要素を指定してください');
+          if (!['bigint', 'number', 'string', 'boolean'].includes(typeof args[1])) throw Error('list.remove_all には primitive type の要素を指定してください');
+          if (args[0].some(value => value === null || typeof value === 'object' || typeof value !== typeof args[1])) throw Error('list.remove_all の list と要素の型が一致しません');
+          if (args[0].length > 100000) throw Error('loop の実行回数が上限の100,000回を超えました');
+          return args[0].filter(value => !equal(value, args[1]));
+        }
+        if (x.name === 'text.trim') {
+          if (args.length !== 1 || typeof args[0] !== 'string') throw Error('text.trim には str を1つ指定してください');
+          return trimDataSpace(args[0]);
+        }
+        if (x.name === 'text.normalize_space') {
+          if (args.length !== 1 || typeof args[0] !== 'string') throw Error('text.normalize_space には str を1つ指定してください');
+          return normalizeDataSpace(args[0]);
+        }
+        if (x.name === 'text.split') {
+          if (args.length !== 2 || typeof args[0] !== 'string' || typeof args[1] !== 'string') throw Error('text.split には str を2つ指定してください');
+          return splitText(args[0], args[1]);
+        }
+        if (x.name === 'text.replace') {
+          if (args.length !== 3 || args.some(value => typeof value !== 'string')) throw Error('text.replace には str を3つ指定してください');
+          return replaceText(args[0], args[1], args[2]);
+        }
+        if (x.name === 'text.join') {
+          if (args.length !== 2 || !Array.isArray(args[0]) || typeof args[1] !== 'string' || args[0].some(value => typeof value !== 'string')) throw Error('text.join には list[str] と str を指定してください');
+          if (args[0].length > 100000) throw Error('loop の実行回数が上限の100,000回を超えました');
+          return args[0].join(args[1]);
+        }
         return this.call(x.name, args);
       }
-      throw Error(`未知の弁E'${x.kind}' です`);
+      throw Error(`未対応の式です: ${x.kind}`);
     }
     async call(name, args) {
+      if (name === 'start') {
+        if (args.length) throw Error('start() \u306b\u5f15\u6570\u306f\u6307\u5b9a\u3067\u304d\u307e\u305b\u3093');
+        if (this.suppressStartupStart) return null;
+        if (!this.host.start) throw Error('start() \u306b\u5bfe\u5fdc\u3059\u308bscreen host\u304c\u3042\u308a\u307e\u305b\u3093');
+        this.startWasCalled = true;
+        await this.host.start(this);
+        return null;
+      }
       if (name === 'runtime.state.characters.exists') {
-        if (args.length !== 1 || typeof args[0] !== 'string') throw Error('runtime.state.characters.exists expects one str argument');
+        if (args.length !== 1 || typeof args[0] !== 'string') throw Error('runtime.state.characters.existsには文字列の引数を1つ指定してください');
         return Object.values(this.sceneState.slots).includes(args[0]);
       }
       if (name === 'runtime.state.characters.list') {
-        if (args.length !== 0) throw Error('runtime.state.characters.list expects no arguments');
+        if (args.length !== 0) throw Error('runtime.state.characters.listに引数は指定できません');
         return [...new Set(Object.values(this.sceneState.slots).filter(value => typeof value === 'string'))].sort();
       }
       if (name === 'runtime.state.characters.position') {
-        if (args.length !== 1 || typeof args[0] !== 'string') throw Error('runtime.state.characters.position expects one str argument');
+        if (args.length !== 1 || typeof args[0] !== 'string') throw Error('runtime.state.characters.positionには文字列の引数を1つ指定してください');
         return Object.entries(this.sceneState.slots).find(([, character]) => character === args[0])?.[0] ?? '';
       }
       if (name === 'runtime.state.background.exists') {
-        if (args.length !== 0) throw Error('runtime.state.background.exists expects no arguments');
+        if (args.length !== 0) throw Error('runtime.state.background.existsに引数は指定できません');
         return typeof this.sceneState.background?.asset === 'string' && this.sceneState.background.asset.length > 0;
       }
       if (name === 'runtime.state.background.current') {
-        if (args.length !== 0) throw Error('runtime.state.background.current expects no arguments');
+        if (args.length !== 0) throw Error('runtime.state.background.currentに引数は指定できません');
         return this.sceneState.background?.asset ?? '';
       }
       if (name === 'runtime.state.audio.bgm_exists') {
-        if (args.length !== 0) throw Error('runtime.state.audio.bgm_exists expects no arguments');
+        if (args.length !== 0) throw Error('runtime.state.audio.bgm_existsに引数は指定できません');
         return typeof this.sceneState.audio.bgm?.asset === 'string' && this.sceneState.audio.bgm.asset.length > 0;
       }
       if (name === 'runtime.state.audio.current_bgm') {
-        if (args.length !== 0) throw Error('runtime.state.audio.current_bgm expects no arguments');
+        if (args.length !== 0) throw Error('runtime.state.audio.current_bgmに引数は指定できません');
         return this.sceneState.audio.bgm?.asset ?? '';
       }
       if (name === 'runtime.state.audio.volume') {
-        if (args.length !== 1 || !['bgm', 'se', 'voice'].includes(args[0])) throw Error('runtime.state.audio.volume expects one channel: bgm, se, or voice');
+        if (args.length !== 1 || !['bgm', 'se', 'voice'].includes(args[0])) throw Error('runtime.state.audio.volumeにはbgm、se、voiceのいずれかを指定してください');
         return this.sceneState.audio.volumeOverrides[args[0]] ?? this.sceneState.audio.volumes[args[0]] ?? this.presentationDefaults.audio[args[0]];
       }
       if (name === 'runtime.state.ui.dialog_opacity') {
-        if (args.length !== 0) throw Error('runtime.state.ui.dialog_opacity expects no arguments');
+        if (args.length !== 0) throw Error('runtime.state.ui.dialog_opacityに引数は指定できません');
         return this.sceneState.ui.dialogOpacity;
       }
       if (name === 'runtime.state.variables.exists') {
-        if (args.length !== 1 || typeof args[0] !== 'string') throw Error('runtime.state.variables.exists expects one str argument');
+        if (args.length !== 1 || typeof args[0] !== 'string') throw Error('runtime.state.variables.existsには文字列の引数を1つ指定してください');
         return this.frames.some(frame => own(frame, args[0]));
       }
       if (name === 'runtime.state.variables.names') {
-        if (args.length !== 0) throw Error('runtime.state.variables.names expects no arguments');
+        if (args.length !== 0) throw Error('runtime.state.variables.namesに引数は指定できません');
         return [...new Set(this.frames.flatMap(frame => Object.keys(frame)))].sort();
       }
-      if (name === 'runtime.state.execution.current_scene') { if (args.length) throw Error('runtime.state.execution.current_scene expects no arguments'); return this.currentSceneName; }
-      if (name === 'runtime.state.execution.current_file') { if (args.length) throw Error('runtime.state.execution.current_file expects no arguments'); return this.currentSceneName ? this.currentSourceFile : ''; }
-      if (name === 'runtime.state.execution.current_line') { if (args.length) throw Error('runtime.state.execution.current_line expects no arguments'); return BigInt(this.currentSceneName ? this.currentLine : 0); }
+      if (name === 'runtime.state.execution.current_scene') { if (args.length) throw Error('runtime.state.execution.current_sceneに引数は指定できません'); return this.currentSceneName; }
+      if (name === 'runtime.state.execution.current_file') { if (args.length) throw Error('runtime.state.execution.current_fileに引数は指定できません'); return this.currentSceneName ? this.currentSourceFile : ''; }
+      if (name === 'runtime.state.execution.current_line') { if (args.length) throw Error('runtime.state.execution.current_lineに引数は指定できません'); return BigInt(this.currentSceneName ? this.currentLine : 0); }
       const fn = this.functions.get(name);
       if (!fn) throw Error(`未定義の関数 '${name}' です`);
       const saved = this.frames, local = Object.create(null);
+      const savedSourceFile = this.currentSourceFile, savedLine = this.currentLine;
       fn.params.forEach((p, i) => { local[p.name] = args[i]; });
       this.frames = [this.globals, local];
+      this.functionCallDepth++;
       try {
         const result = await this.exec(fn.body);
         if (fn.returnType !== 'none' && (!result || result.kind !== 'return' || result.value === null)) throw Error(`関数 '${name}' が値を返しませんでした`);
+        this.currentSourceFile = savedSourceFile;
+        this.currentLine = savedLine;
         return result?.value ?? null;
-      } finally { this.frames = saved; }
+      } finally { this.functionCallDepth--; this.frames = saved; }
     }
     async exec(list, preserveGlobals = false) {
       for (const c of list) {
@@ -905,12 +1010,14 @@
         this.currentLine = this.currentSceneName && Number.isSafeInteger(c.line) ? c.line : 0;
         await this.host.beforeInstruction?.(c, this);
         if (c.op === 'parallel') {
-          if (!Array.isArray(c.body) || !c.body.length || c.body.some(instruction => instruction.op !== 'command')) throw Error('parallel requires timed visual commands');
+          if (!Array.isArray(c.body) || !c.body.length || c.body.some(instruction => instruction.op !== 'command')) throw Error('parallelには時間指定の画面演出命令が必要です');
           const priorState = cloneSceneValue(this.sceneState);
           const prepared = [];
           this.pendingSceneActionEvents = [];
           try {
             for (const instruction of c.body) {
+              this.currentSourceFile = this.currentSceneName ? instruction.file || this.program?.sourceFile || '' : '';
+              this.currentLine = this.currentSceneName && Number.isSafeInteger(instruction.line) ? instruction.line : 0;
               const args = [];
               for (const argument of instruction.args || []) args.push(await this.value(argument));
               const operation = sceneStateCommand(this.sceneState, instruction.name, args, this.program, this.presentationDefaults);
@@ -952,7 +1059,7 @@
         } else if (c.op === 'declare') {
           const frame = this.frames.findLast(f => !this.loopFrames.has(f));
           if (preserveGlobals && frame === this.globals && own(frame, c.name)) {
-            if (!matches(frame[c.name], c.type)) throw Error(`ファイル間で変数 '${c.name}' の型が一致しません`);
+      if (!matches(frame[c.name], c.type)) throw Error(`ファイル間でglobal variable '${c.name}' の type が一致しません`);
           } else frame[c.name] = c.initial ? await this.value(c.initial) : c.type === 'int' ? 0n : c.type === 'float' ? 0 : c.type === 'str' ? '' : c.type === 'bool' ? false : c.type?.kind === 'list' ? [] : Object.create(null);
           if (c.constant) { const names = this.readonlyFrames.get(frame) || new Set(); names.add(c.name); this.readonlyFrames.set(frame, names); }
         } else if (c.op === 'set') {
@@ -962,16 +1069,17 @@
           else {
             const key = await this.value(c.target.key), d = copy(this.get(c.target.target.name));
             if (Array.isArray(d)) {
-              if (typeof key !== 'bigint' || key < 0n || key >= BigInt(d.length)) throw Error(`List index out of range: ${key}`);
+              if (typeof key !== 'bigint') throw Error('list の添字は int で指定してください');
+              if (key < 0n || key >= BigInt(d.length)) throw Error(`list の添字が範囲外です: ${key}`);
               d[Number(key)] = val;
             } else d[key] = val;
             this.set(c.target.target.name, d);
           }
         } else if (c.op === 'unset') {
-          if (c.target.kind === 'load') throw Error('unset は辞書要素を指定してください');
+          if (c.target.kind === 'load') throw Error('unset には dict entry を指定してください');
           this.assertMutable(c.target);
           const k = await this.value(c.target.key), d = copy(this.get(c.target.target.name));
-          if (!own(d, k)) throw Error(`\u5b58\u5728\u3057\u306a\u3044\u8f9e\u66f8\u30ad\u30fc '${k}' \u3067\u3059`);
+          if (!own(d, k)) throw Error(`dict key '${k}' が見つかりません`);
           delete d[k];
           this.set(c.target.target.name, d);
         } else if (c.op === 'command') {
@@ -1048,7 +1156,7 @@
           const labels = []; for (const o of c.options) labels.push(await this.textAsync(await this.value(o.label)));
           const prompt = c.prompt ? await this.textAsync(await this.value(c.prompt)) : '';
           const index = await this.host.choice(prompt, labels);
-          if (!Number.isInteger(index) || !c.options[index]) throw Error('Invalid choice selection');
+          if (!Number.isInteger(index) || !c.options[index]) throw Error('選択肢の指定が正しくありません');
           const choice = { prompt, labels: labels.slice(), selectedIndex: index, selectedLabel: labels[index], at: this.sceneState.logicalTimeMs };
           this.sceneState.choices.push(choice);
           this.sceneState.revision++;
@@ -1058,34 +1166,39 @@
           finally { this.frames.pop(); }
         } else if (c.op === 'for') {
           const start = await this.value(c.start), stop = await this.value(c.stop), step = await this.value(c.step);
-          if (step === 0n || (start < stop && step < 0n) || (start > stop && step > 0n)) throw Error('Invalid for loop step');
+          if (step === 0n || (start < stop && step < 0n) || (start > stop && step > 0n)) throw Error('forの増分が正しくありません');
           const loopFrame = Object.create(null); this.loopFrames.add(loopFrame); this.frames.push(loopFrame);
+          this.loopDepth++;
           try {
             let count = 0;
             for (let i = start; step > 0n ? i <= stop : i >= stop; i += step) {
-              if (++count > 100000) throw Error('ループの最大反復回数を超過しました');
+              if (++count > 100000) throw Error('loop の実行回数が上限の100,000回を超えました');
               this.frames[this.frames.length - 1][c.name] = integer(i);
               const result = await this.exec(count === 1 && c.debugBody ? c.debugBody : c.body); if (result) return result;
             }
-          } finally { this.frames.pop(); }
+          } finally { this.loopDepth--; this.frames.pop(); }
         } else if (c.op === 'forEach') {
           const values = await this.value(c.iterable);
-          if (!Array.isArray(values)) throw Error('for-in requires a list');
+          if (!Array.isArray(values)) throw Error('for-in には list を指定してください');
           const loopFrame = Object.create(null); this.loopFrames.add(loopFrame); this.frames.push(loopFrame);
+          this.loopDepth++;
           try {
             let count = 0;
             for (const item of values) {
-              if (++count > 100000) throw Error('Loop limit exceeded');
+              if (++count > 100000) throw Error('loop の実行回数が上限の100,000回を超えました');
               loopFrame[c.name] = item;
               const result = await this.exec(count === 1 && c.debugBody ? c.debugBody : c.body); if (result) return result;
             }
-          } finally { this.frames.pop(); }
+          } finally { this.loopDepth--; this.frames.pop(); }
         } else if (c.op === 'while') {
+          this.loopDepth++;
           let count = 0;
-          while (await this.value(c.condition)) {
-            if (++count > 100000) throw Error('ループの最大反復回数を超過しました');
-            const result = await this.exec(count === 1 && c.debugBody ? c.debugBody : c.body); if (result) return result;
-          }
+          try {
+            while (await this.value(c.condition)) {
+              if (++count > 100000) throw Error('loop の実行回数が上限の100,000回を超えました');
+              const result = await this.exec(count === 1 && c.debugBody ? c.debugBody : c.body); if (result) return result;
+            }
+          } finally { this.loopDepth--; }
         } else throw Error(`未知の命令 '${c.op}' です`);
       }
       return null;
@@ -1093,10 +1206,11 @@
     async run(p, debug = null) {
       if (debug?.line !== undefined && debug.line !== null
         && (!Number.isSafeInteger(debug.line) || debug.line < 0))
-        throw Error('Debug line must be a non-negative safe integer.');
+        throw Error('debug line は0以上の安全な整数で指定してください');
       if (debug?.file !== undefined && debug.file !== null && typeof debug.file !== 'string')
-        throw Error('Debug source file must be a string.');
+        throw Error('debug file は文字列で指定してください');
       let transferred = false;
+      this.startWasCalled = false;
       this.currentSceneName = '';
       this.currentSourceFile = '';
       this.currentLine = 0;
@@ -1105,8 +1219,15 @@
       // the structure-preserving clone for persisted scene snapshots.
       this.sceneState = debug?.sceneState ? cloneSceneValue(debug.sceneState) : createSceneState();
       this.sceneState.layers = { ...this.presentationDefaults.layers, ...(this.sceneState.layers || {}) };
-      this.sceneState.audio.volumes = { ...this.presentationDefaults.audio };
-      this.sceneState.ui.dialogOpacity = this.presentationDefaults.dialog.opacity;
+      this.sceneState.audio ||= {};
+      this.sceneState.ui ||= {};
+      if (debug?.sceneState) {
+        this.sceneState.audio.volumes = { ...this.presentationDefaults.audio, ...(this.sceneState.audio.volumes || {}) };
+        this.sceneState.ui.dialogOpacity ??= this.presentationDefaults.dialog.opacity;
+      } else {
+        this.sceneState.audio.volumes = { ...this.presentationDefaults.audio };
+        this.sceneState.ui.dialogOpacity = this.presentationDefaults.dialog.opacity;
+      }
       let restored = false;
       const recordTransfer = async (target, external) => {
         const transfer = { target, external, at: this.sceneState.logicalTimeMs };
@@ -1115,13 +1236,17 @@
         await this.host.sceneState?.(this.sceneState, { name: 'goto', ...transfer }, this);
       };
       for (;;) {
-        if (p.version !== 2) throw Error('Unsupported program version');
+        if (p.version !== 2) throw Error('対応していないプログラム形式です');
         this.program = p;
         this.frames = [this.globals];
         this.loopFrames = new WeakSet();
         this.functions = new Map(p.functions.map(f => [f.name, f]));
         await this.host.program?.(p, this.sceneState);
-        let result = await this.exec(p.globals, transferred);
+        const resumingAtScene = !transferred && typeof debug?.scene === 'string' && debug.scene.length > 0;
+        this.suppressStartupStart = resumingAtScene;
+        let result;
+        try { result = await this.exec(p.globals, transferred); }
+        finally { this.suppressStartupStart = false; }
         const scenes = new Map(p.scenes.map(s => [s.name, s.instructions]));
         if (!transferred && debug?.variables) {
           for (const [name, value] of Object.entries(debug.variables)) this.globals[name] = value;
@@ -1135,7 +1260,7 @@
           }
         }
         const selectedScene = !transferred && debug?.scene ? p.scenes.find((scene) => scene.name === debug.scene) : null;
-        if (!transferred && debug?.scene && !selectedScene) throw Error(`Unknown debug scene '${debug.scene}'.`);
+        if (!transferred && debug?.scene && !selectedScene) throw Error(`debug 対象の scene が見つかりません: ${debug.scene}`);
         const firstScene = selectedScene || p.scenes[0];
         this.currentSceneName = firstScene?.name || '';
         if (!restored && debug?.sceneState) {
@@ -1145,7 +1270,7 @@
         const firstInstructions = !transferred && debug?.line && firstScene
           ? instructionsFromLine(firstScene.instructions,
             debug.file == null ? firstScene.file : debug.file.replace(/\\/g, '/'), debug.line) : null;
-        if (!transferred && debug?.line && !firstInstructions) throw Error(`Line ${debug.line} has no executable instruction in scene '${firstScene?.name || ''}'.`);
+        if (!transferred && debug?.line && !firstInstructions) throw Error(`${debug.line}行目の実行可能な命令がScene「${firstScene?.name || ''}」にありません`);
         if (!result && firstScene) result = await this.exec(firstInstructions || firstScene.instructions);
         while (result?.kind === 'goto' && scenes.has(result.scene)) {
           await recordTransfer(result.scene, false);
@@ -1153,7 +1278,7 @@
           result = await this.exec(scenes.get(result.scene));
         }
         if (!result) return;
-        if (result.kind !== 'goto' || !this.host.load) throw Error('Invalid scene transfer');
+        if (result.kind !== 'goto' || !this.host.load) throw Error('Sceneの遷移先が正しくありません');
         await recordTransfer(result.scene, true);
         p = await this.host.load(result.scene);
         transferred = true;

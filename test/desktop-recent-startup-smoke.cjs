@@ -38,13 +38,27 @@ async function stopChild(child) {
   ]);
 }
 
+async function waitForExit(child, timeoutMs = 10_000) {
+  if (child.exitCode !== null) return child.exitCode;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(Error('The duplicate Electron process did not exit after the single-instance handoff')), timeoutMs);
+    child.once('exit', (code) => { clearTimeout(timer); resolve(code); });
+  });
+}
+
 async function main() {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-recent-startup-smoke-'));
   const project = seedEmptyProject(path.join(tempRoot, 'remembered-project'));
+  const notProject = path.join(tempRoot, 'not-a-project');
+  await fs.mkdir(notProject);
   const recentFile = path.join(tempRoot, 'profile', 'recent.json');
   const debugPort = await availablePort();
   await fs.mkdir(path.dirname(recentFile), { recursive: true });
-  await fs.writeFile(recentFile, JSON.stringify({ paths: [project.projectRoot] }));
+  await fs.writeFile(recentFile, JSON.stringify({ paths: [
+    path.join(tempRoot, 'removed-project'),
+    notProject,
+    project.projectRoot,
+  ] }));
 
   const env = { ...process.env, PORT: '0', NOVEL_EDITOR_RECENT_FILE: recentFile };
   delete env.NOVEL_PROJECT_ROOT;
@@ -53,6 +67,7 @@ async function main() {
     cwd: path.resolve(__dirname, '..'), env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
+  let duplicateProcess;
   const collect = (chunk) => { output = (output + String(chunk)).slice(-16_000); };
   electron.stdout.on('data', collect);
   electron.stderr.on('data', collect);
@@ -78,8 +93,16 @@ async function main() {
     assert.equal(new URL(page.url()).searchParams.has('welcome'), false, 'startup opens the ordinary editor');
     assert.equal(await page.locator('#project-picker').count(), 0, 'the custom folder picker is removed');
     await page.waitForFunction(() => Boolean(document.querySelector('#scene-name')?.value));
+
+    duplicateProcess = spawn(require('electron'), [`--remote-debugging-port=${await availablePort()}`, path.join(__dirname, '..', 'Edit', 'electron-main.js')], {
+      cwd: path.resolve(__dirname, '..'), env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    await waitForExit(duplicateProcess);
+    assert.equal(await page.evaluate(() => window.closed), false, 'the first editor window remains open after a duplicate launch');
+    assert.equal(browser.contexts().flatMap(context => context.pages()).filter(candidate => candidate.url().startsWith(editorUrl)).length, 1, 'a duplicate launch focuses the existing window instead of creating another editor');
     console.log(`PASS Electron recent-project startup: ${activeProject.projectRoot}`);
   } finally {
+    await stopChild(duplicateProcess);
     if (browser) await browser.close().catch(() => {});
     await stopChild(electron);
     await fs.rm(tempRoot, { recursive: true, force: true });

@@ -33,7 +33,7 @@ character ayaka {
   pose dere = "asset/char/ayaka_dere_knee.png" y_offset = 56
   pose normal_knee_alt = "asset/char/ayaka_normal_knee.png" y_offset = 56
 }
-
+start()
 
 # Camera focal-point offsets move the whole game world while the dialogue UI stays fixed.
 fn shake_camera() -> none {
@@ -86,6 +86,7 @@ fn drift_background() -> none {
     set previous_x = offset_x
   }
 }
+int a = 0
 
 scene main {
   bg bedroom

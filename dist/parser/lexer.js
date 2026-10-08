@@ -43,7 +43,8 @@ class Lexer {
         }
         if (this.isAlpha(c))
             return this.readWord(start);
-        throw this.error(`Unexpected character '${c}'`, start);
+        const invalid = String.fromCodePoint(this.source.codePointAt(this.offset));
+        throw this.error(`不明な文字 '${invalid}' です`, start, invalid);
     }
     skipTrivia() {
         while (true) {
@@ -77,16 +78,22 @@ class Lexer {
         this.advance();
         let value = '';
         const unknownEscapes = [];
+        const unknownEscapeColumns = [];
+        const unknownEscapeEndColumns = [];
         const sourceColumns = [];
         while (true) {
             const c = this.peek();
             if (c === undefined || this.isLineBreak(c))
-                throw this.error('Unterminated string', start);
+                throw this.error('string literal が閉じられていません', start, this.source.slice(start.offset, this.offset));
             if (c === '"') {
                 this.advance();
                 const token = this.token('string', value, start);
                 if (unknownEscapes.length)
                     token.unknownEscapes = unknownEscapes;
+                if (unknownEscapeColumns.length)
+                    token.unknownEscapeColumns = unknownEscapeColumns;
+                if (unknownEscapeEndColumns.length)
+                    token.unknownEscapeEndColumns = unknownEscapeEndColumns;
                 token.sourceColumns = sourceColumns;
                 return token;
             }
@@ -99,7 +106,7 @@ class Lexer {
             this.advance();
             const escaped = this.peek();
             if (escaped === undefined || this.isLineBreak(escaped))
-                throw this.error('Unterminated string', start);
+                throw this.error('string literal が閉じられていません', start, this.source.slice(start.offset, this.offset));
             if (escaped === 'n') {
                 sourceColumns.push(escapeColumn);
                 value += '\n';
@@ -109,9 +116,18 @@ class Lexer {
                 value += escaped;
             }
             else {
+                const codePoint = String.fromCodePoint(this.source.codePointAt(this.offset));
+                const endColumn = this.column + codePoint.length;
                 sourceColumns.push(escapeColumn, escapeColumn + 1);
-                value += `\\${escaped}`;
-                unknownEscapes.push(escaped);
+                if (codePoint.length === 2)
+                    sourceColumns.push(escapeColumn + 2);
+                value += `\\${codePoint}`;
+                unknownEscapes.push(codePoint);
+                unknownEscapeColumns.push(escapeColumn + 1);
+                unknownEscapeEndColumns.push(endColumn);
+                for (let i = 0; i < codePoint.length; i++)
+                    this.advance();
+                continue;
             }
             this.advance();
         }
@@ -154,8 +170,20 @@ class Lexer {
     }
     else
         this.column++; return c; }
-    token(type, value, position) { return { type, value, ...position }; }
-    error(message, p) { return new SyntaxError(`${message} at line ${p.line}, column ${p.column}`); }
+    token(type, value, position) {
+        const sourceEndColumn = this.line === position.line ? this.column : position.column + this.offset - position.offset;
+        return { type, value, ...position, sourceEndColumn };
+    }
+    error(message, p, value = '') {
+        const error = new SyntaxError(`${message}（${p.line}行、${p.column}列）`);
+        // Keep the offending source span so IDE diagnostics can underline the
+        // actual bad character/string instead of the rest of the line.
+        const sourceEndColumn = value.startsWith('"')
+            ? (this.line === p.line ? this.column : p.column + this.offset - p.offset)
+            : p.column + Math.max(value.length, 1);
+        error.token = { type: value.startsWith('"') ? 'string' : 'symbol', value, ...p, sourceEndColumn };
+        return error;
+    }
 }
 exports.Lexer = Lexer;
 function tokenize(source) { const lexer = new Lexer(source); const result = []; while (true) {

@@ -22,6 +22,10 @@ const assetDocumentMetadataFields = Object.fromEntries(
   [...document.querySelectorAll('#asset-document-metadata [data-asset-meta]')]
     .map((field) => [field.dataset.assetMeta, field]),
 );
+const assetDocumentMetadataLabels = Object.fromEntries(
+  [...document.querySelectorAll('#asset-document-metadata [data-asset-label]')]
+    .map((field) => [field.dataset.assetLabel, field]),
+);
 const assetDocumentImage = document.querySelector('#asset-document-image');
 const assetDocumentVideo = document.querySelector('#asset-document-video');
 const assetDocumentAudio = document.querySelector('#asset-document-audio');
@@ -38,6 +42,55 @@ const closeMenus = () => {
   document.querySelectorAll('[data-menu-popup]').forEach((popup) => { popup.hidden = true; });
   document.querySelectorAll('[data-menu]').forEach((button) => button.setAttribute('aria-expanded', 'false'));
 };
+let activeEditorModal = null;
+function activateEditorModal(dialog, initialFocus, opener = document.activeElement, { backdrop = true } = {}) {
+  const heading = dialog.querySelector('h1, h2, h3, strong');
+  if (heading) {
+    if (!heading.id) heading.id = `editor-dialog-title-${Math.random().toString(36).slice(2)}`;
+    dialog.setAttribute('aria-labelledby', heading.id);
+  }
+  activeEditorModal = { dialog, opener };
+  document.body.classList.add('editor-modal-open');
+  document.body.classList.toggle('editor-modal-no-backdrop', !backdrop);
+  initialFocus?.focus();
+}
+function deactivateEditorModal(dialog, restoreFocus = true) {
+  if (activeEditorModal?.dialog !== dialog) return;
+  const { opener } = activeEditorModal;
+  activeEditorModal = null;
+  document.body.classList.remove('editor-modal-open', 'editor-modal-no-backdrop');
+  if (restoreFocus) {
+    if (opener?.isConnected && opener.getClientRects().length) {
+      opener.focus({ preventScroll: true });
+      if (document.activeElement !== opener) editor.focus({ preventScroll: true });
+    } else editor.focus({ preventScroll: true });
+  }
+}
+document.addEventListener('keydown', (event) => {
+  const modal = activeEditorModal;
+  if (!modal || !modal.dialog.isConnected || event.key !== 'Tab') return;
+  const controls = [...modal.dialog.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => !element.hidden && element.getAttribute('aria-hidden') !== 'true' && element.getClientRects().length);
+  if (!controls.length) {
+    event.preventDefault();
+    modal.dialog.focus();
+    return;
+  }
+  const first = controls[0], last = controls.at(-1), current = document.activeElement;
+  if (!modal.dialog.contains(current) || (event.shiftKey && current === first) || (!event.shiftKey && current === last)) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+  }
+}, true);
+new MutationObserver(() => {
+  if (activeEditorModal && !activeEditorModal.dialog.isConnected) {
+    const { opener } = activeEditorModal;
+    activeEditorModal = null;
+    document.body.classList.remove('editor-modal-open', 'editor-modal-no-backdrop');
+    if (opener?.isConnected && opener.getClientRects().length) opener.focus({ preventScroll: true });
+    else editor.focus({ preventScroll: true });
+  }
+}).observe(document.body, { childList: true, subtree: true });
 document.querySelectorAll('[data-menu]').forEach((button) => button.addEventListener('click', (event) => {
   event.stopPropagation();
   const popup = document.querySelector(`[data-menu-popup="${button.dataset.menu}"]`);
@@ -49,6 +102,38 @@ document.querySelectorAll('[data-menu]').forEach((button) => button.addEventList
     popup.querySelector('button')?.focus();
   }
 }));
+document.querySelectorAll('[data-menu]').forEach((button) => button.addEventListener('keydown', (event) => {
+  if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+  event.preventDefault();
+  const popup = document.querySelector(`[data-menu-popup="${button.dataset.menu}"]`);
+  if (popup?.hidden) {
+    button.click();
+    if (event.key === 'ArrowUp') [...popup.querySelectorAll('[role="menuitem"]:not(:disabled)')].at(-1)?.focus();
+  }
+  else {
+    const items = [...popup.querySelectorAll('[role="menuitem"]')].filter((item) => !item.disabled && item.getClientRects().length);
+    (event.key === 'ArrowUp' ? items.at(-1) : items[0])?.focus();
+  }
+}));
+document.addEventListener('keydown', (event) => {
+  const item = event.target.closest?.('[role="menuitem"]');
+  const popup = item?.closest('[data-menu-popup]');
+  if (!popup || popup.hidden) return;
+  const items = [...popup.querySelectorAll('[role="menuitem"]')].filter((entry) => !entry.disabled && entry.getClientRects().length);
+  const index = items.indexOf(item);
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeMenus();
+    document.querySelector(`[data-menu="${popup.dataset.menuPopup}"]`)?.focus();
+  } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    const step = event.key === 'ArrowDown' ? 1 : -1;
+    items[(index + step + items.length) % items.length]?.focus();
+  } else if (event.key === 'Home' || event.key === 'End') {
+    event.preventDefault();
+    (event.key === 'Home' ? items[0] : items.at(-1))?.focus();
+  }
+});
 document.addEventListener('click', (event) => { if (!event.target.closest('.menu-item')) closeMenus(); });
 
 let currentProjectRoot = '';
@@ -88,7 +173,9 @@ let suggestionRefreshId = 0;
 let validationTimer = null;
 let diagnosticText = '';
 let diagnostics = [];
+let documentNavigationSequence = 0;
 let fileInfoBase = null;
+let fileInfoRequestSequence = 0;
 let validationSequence = 0;
 let isDirty = false;
 let sceneRevision = '';
@@ -331,8 +418,10 @@ function setStatus(message, kind = '') {
   status.className = `status-chip ${kind}`.trim();
 }
 
+function splitEditorLines(source) { return String(source ?? '').split(/\r\n|[\r\n\u2028\u2029]/); }
+
 function updateLineNumbers() {
-  const count = editor.value.split('\n').length;
+  const count = splitEditorLines(editor.value).length;
   lineNumbers.textContent = Array.from({ length: count }, (_, index) => index + 1).join('\n');
 }
 
@@ -428,7 +517,7 @@ function adjustSelectionIndent(outdent = false) {
   const lastLineStart = end > firstLineStart && end === selectionEndLineStart ? Math.max(firstLineStart, selectionEndLineStart - 1) : selectionEndLineStart;
   const lineEnd = source.indexOf('\n', lastLineStart) < 0 ? source.length : source.indexOf('\n', lastLineStart);
   const before = source.slice(0, firstLineStart);
-  const selectedLines = source.slice(firstLineStart, lineEnd).split('\n');
+  const selectedLines = splitEditorLines(source.slice(firstLineStart, lineEnd));
   const changedLines = selectedLines.map((line) => {
     if (!outdent) return `  ${line}`;
     if (line.startsWith('\t')) return line.slice(1);
@@ -484,6 +573,7 @@ async function refreshScenes(selected = '') {
   const { scenes } = await request('/api/scenes');
   sceneNames = scenes;
   quickWorkspaceSymbolsPromise = null;
+  if (!quickAccessPanel?.hidden && quickAccessMode === 'workspace-symbol') renderQuickAccess();
   if (!sceneList) return refreshFiles();
   sceneList.replaceChildren();
   const root = { folders: new Map(), files: [] };
@@ -514,20 +604,28 @@ async function refreshFiles() {
   const { files, title, projectRoot, scenarioDir } = await request('/api/files');
   if (projectRoot) currentProjectRoot = projectRoot;
   if (scenarioDir) scenarioDirectory = scenarioDir;
-  document.querySelector('#project-title')?.replaceChildren(document.createTextNode(title || 'EXPLORER'));
+  document.querySelector('#project-title')?.replaceChildren(document.createTextNode(title || 'Explorer'));
   const pathNote = document.querySelector('#project-path');
   if (pathNote) {
-    pathNote.title = currentProjectRoot || '';
-    pathNote.replaceChildren(Object.assign(document.createElement('span'), { className: 'folder-icon', textContent: '▱' }), document.createTextNode(` ${currentProjectRoot || '作品フォルダー'}`));
+    pathNote.title = currentProjectRoot ? `Project Folder: ${currentProjectRoot}` : 'Project Folder';
+    pathNote.replaceChildren(Object.assign(document.createElement('span'), { className: 'folder-icon', textContent: '▱' }), document.createTextNode(` ${currentProjectRoot || 'Project Folder'}`));
   }
   const visible = files.map((file) => ({ ...file, displayPath: file.path }));
   const root = { folders: new Map(), files: [] };
   for (const file of visible) { const parts = file.displayPath.split('/'); let node = root; parts.forEach((part, index) => { if (index === parts.length - 1) { if (file.directory) { if (!node.folders.has(part)) node.folders.set(part, { folders: new Map(), files: [] }); } else node.files.push({ name: part, path: file.path }); } else { if (!node.folders.has(part)) node.folders.set(part, { folders: new Map(), files: [] }); node = node.folders.get(part); } }); }
-  const expandedFolders = new Set([...fileTree.querySelectorAll('.scene-folder')].filter((folder) => folder.nextElementSibling && !folder.nextElementSibling.hidden).map((folder) => folder.textContent.replace(/[›⌄+]/g, '').trim()));
+  const expandedFolders = new Set([...fileTree.querySelectorAll('.scene-folder')].filter((folder) => folder.nextElementSibling && !folder.nextElementSibling.hidden).map((folder) => folder.dataset.path));
   fileTree.replaceChildren();
+  let folderId = 0;
   const drawFile = (node, parent, depth = 0, folderPath = '') => {
     [...node.folders].sort().forEach(([name, child]) => {
-      const folder = document.createElement('div'); folder.className = 'scene-folder'; folder.style.paddingLeft = `${depth * 14}px`; folder.textContent = `› ${name}`; const path = folderPath ? `${folderPath}/${name}` : name; const contents = document.createElement('div'); contents.className = 'scene-folder-contents'; contents.hidden = true; folder.onclick = () => { contents.hidden = !contents.hidden; if (folder.firstChild) folder.firstChild.nodeValue = `${contents.hidden ? '›' : '⌄'} ${name}`; }; folder.dataset.path = path; folder.oncontextmenu = (event) => { event.preventDefault(); if (scenarioRelativePath(path) !== null) addSceneInUi(path).catch(showError); }; parent.append(folder, contents); drawFile(child, contents, depth + 1, path);
+      const path = folderPath ? `${folderPath}/${name}` : name;
+      const folder = document.createElement('div'); folder.className = 'scene-folder'; folder.style.paddingLeft = `${depth * 14}px`; folder.dataset.path = path;
+      const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'scene-folder-toggle'; toggle.textContent = `› ${name}`; toggle.setAttribute('aria-label', `${name} folder`); toggle.setAttribute('aria-expanded', 'false');
+      const contents = document.createElement('div'); contents.className = 'scene-folder-contents'; contents.id = `file-tree-folder-${folderId++}`; contents.setAttribute('role', 'group'); contents.setAttribute('aria-label', `${name} files`); contents.hidden = true;
+      toggle.setAttribute('aria-controls', contents.id);
+      toggle.onclick = () => { contents.hidden = !contents.hidden; toggle.setAttribute('aria-expanded', String(!contents.hidden)); toggle.textContent = `${contents.hidden ? '›' : '⌄'} ${name}`; };
+      folder.oncontextmenu = (event) => { event.preventDefault(); if (scenarioRelativePath(path) !== null) addSceneInUi(path).catch(showError); };
+      folder.append(toggle); parent.append(folder, contents); drawFile(child, contents, depth + 1, path);
     });
     node.files.sort((a, b) => a.name.localeCompare(b.name, 'ja')).forEach((file) => {
       const item = document.createElement('div');
@@ -538,12 +636,13 @@ async function refreshFiles() {
       openButton.className = 'scene-file-open';
       openButton.style.paddingLeft = `${depth * 14}px`;
       openButton.textContent = `≡ ${file.name}`;
+      openButton.setAttribute('aria-label', file.path);
       item.oncontextmenu = (event) => {
         event.preventDefault();
         showFileContextMenu(event, file.path);
       };
       if (scenarioRelativePath(file.path) !== null && /\.(tds|txt)$/i.test(file.path)) {
-        openButton.title = 'クリック: 左で開く / Shift+クリック: 右へ移動';
+        openButton.title = 'Click: open in the left pane / Shift+Click: move to the right pane';
         openButton.onclick = (event) => {
           const name = scenarioRelativePath(file.path);
           if (event.shiftKey) moveTabToRight(name).catch(showError);
@@ -555,10 +654,10 @@ async function refreshFiles() {
         openButton.onclick = () => openSettingFile(file.path).catch(showError);
       }
       if (file.path.startsWith('asset/')) {
-        openButton.title = assetMediaKind(file.path) ? 'クリック: エディター内で素材を開く' : '右クリック: ファイル操作';
+        openButton.title = assetMediaKind(file.path) ? 'Click to open asset in editor' : 'Right-click for file actions';
         openButton.onclick = () => assetMediaKind(file.path)
           ? openAssetDocument(file.path).catch(showError)
-          : setStatus('この形式はエディター内プレビューに対応していません', 'warning');
+          : setStatus('この形式はEditor内のPreviewに対応していません', 'warning');
       }
       item.append(openButton);
       parent.append(item);
@@ -566,11 +665,13 @@ async function refreshFiles() {
   };
   drawFile(root, fileTree);
   fileTree.querySelectorAll('.scene-folder').forEach((folder) => {
-    const label = folder.textContent.replace(/[›⌄+]/g, '').trim();
+    const label = folder.dataset.path;
     const contents = folder.nextElementSibling;
     if (expandedFolders.has(label) && contents?.classList.contains('scene-folder-contents')) {
       contents.hidden = false;
-      folder.textContent = `⌄ ${label}`;
+      const toggle = folder.querySelector('.scene-folder-toggle');
+      toggle?.setAttribute('aria-expanded', 'true');
+      if (toggle) toggle.textContent = `⌄ ${label.split('/').at(-1)}`;
     }
   });
   fileTree.querySelectorAll('.scene-file').forEach((item) => {
@@ -578,6 +679,7 @@ async function refreshFiles() {
     button.className = 'tree-action delete';
     button.textContent = '🗑';
     button.title = '削除';
+    button.setAttribute('aria-label', `${item.dataset.path}を削除`);
     button.onclick = async (event) => {
       event.stopPropagation();
       const path = item.dataset.path;
@@ -599,7 +701,8 @@ async function refreshFiles() {
     const button = document.createElement('button');
     button.className = 'tree-action';
     button.textContent = '+';
-    button.title = 'ファイル追加';
+    button.title = 'Add File';
+    button.setAttribute('aria-label', `Add file under ${folder.dataset.path}`);
     button.onclick = (event) => {
       event.stopPropagation();
       const name = folder.dataset.path;
@@ -642,12 +745,12 @@ function showFileContextMenu(event, filePath) {
   if (isScene) {
     const name = scenarioRelativePath(filePath);
     addAction('開く', () => openScene(name).catch(showError));
-    addAction('右ペインで開く', () => moveTabToRight(name).catch(showError));
-    addAction('ファイル情報を表示', () => showFileInfo(filePath).catch(showError));
+    addAction('Open in Right Pane', () => moveTabToRight(name).catch(showError));
+    addAction('View File Info', () => showFileInfo(filePath).catch(showError));
     separator();
   } else if (isAsset) {
     const mediaKind = assetMediaKind(filePath);
-    if (mediaKind) addAction(mediaKind === 'image' ? '画像をエディターで開く' : 'メディアをエディターで開く', () => openAssetDocument(filePath).catch(showError));
+    if (mediaKind) addAction(mediaKind === 'image' ? 'Open Image in Editor' : 'Open Media in Editor', () => openAssetDocument(filePath).catch(showError));
     separator();
   }
   addAction('相対パスをコピー', () => copyText(filePath).catch(showError));
@@ -672,7 +775,7 @@ function renderFileInfo() {
   if (!fileInfo) return;
   const info = fileInfoBase;
   if (!info || typeof info !== 'object') {
-    fileInfo.textContent = typeof info === 'string' && info ? info : 'シーンファイルを右クリックすると情報を表示';
+    fileInfo.textContent = typeof info === 'string' && info ? info : 'Right-click a Scene file to view its details';
     return;
   }
 
@@ -682,7 +785,7 @@ function renderFileInfo() {
   const title = document.createElement('div');
   title.className = 'file-info-title';
   const eyebrow = document.createElement('small');
-  eyebrow.textContent = 'ファイル情報';
+  eyebrow.textContent = 'File Info';
   const filename = document.createElement('strong');
   filename.textContent = fileLabel(info.path);
   filename.title = info.path || '';
@@ -701,9 +804,9 @@ function renderFileInfo() {
     error.textContent = info.error;
     stats.append(error);
   } else {
-    addStat('local', '遷移先', (info.localGotos || []).length + info.targets.length);
-    addStat('variables', '変数', info.variables.length);
-    if (info.reachable === false) addStat('warning', '未到達', '');
+    addStat('local', 'Destinations', (info.localGotos || []).length + info.targets.length);
+    addStat('variables', 'Variables', info.variables.length);
+    if (info.reachable === false) addStat('warning', 'Unreachable', '');
   }
   header.append(title, stats);
   fileInfo.append(header);
@@ -737,7 +840,7 @@ function renderFileInfo() {
       button.type = 'button';
       button.className = 'file-info-link file-info-link-scene';
       button.textContent = target.scene;
-      button.title = `${target.scene} のシーン定義へ移動`;
+      button.title = `Go to Scene definition: ${target.scene}`;
       button.addEventListener('click', () => jumpToScene(target.file, target.scene).catch(showError));
       const meta = document.createElement('small');
       meta.className = 'file-info-target-meta';
@@ -745,7 +848,7 @@ function renderFileInfo() {
       item.append(button, meta);
       return item;
     });
-    addSection('local-targets', '同一ファイルのシーン移動', localRows.length, localRows);
+    addSection('local-targets', 'Scenes in this file', localRows.length, localRows);
 
     const targetRows = info.targets.map((target) => {
       const item = document.createElement('li');
@@ -753,14 +856,14 @@ function renderFileInfo() {
       button.type = 'button';
       button.className = 'file-info-link file-info-link-file';
       button.textContent = target;
-      button.title = `遷移先 ${target} を開く`;
+      button.title = `Open destination ${target}`;
       button.addEventListener('click', () => openScene(target).catch(showError));
       item.append(button);
       return item;
     });
-    addSection('targets', '別ファイルへの移動', targetRows.length, targetRows);
+    addSection('targets', 'Destinations', targetRows.length, targetRows);
 
-    const scopeLabels = { global: '共通', function: '関数', scene: 'シーン', local: 'ローカル' };
+    const scopeLabels = { global: 'Global', function: 'Function', scene: 'Scene', local: 'Local' };
     const variableRows = [...info.variables]
       .sort((left, right) => String(left.scope).localeCompare(String(right.scope)) || left.name.localeCompare(right.name) || String(left.definedIn).localeCompare(String(right.definedIn)))
       .map((variable) => {
@@ -781,7 +884,7 @@ function renderFileInfo() {
           const button = document.createElement('button');
           button.type = 'button';
           button.className = 'file-info-variable-jump';
-          button.title = '定義位置へ移動';
+          button.title = 'Go to definition';
           button.append(label, type);
           button.addEventListener('click', () => jumpToLocation(definition, variable.name).catch(showError));
           item.append(button);
@@ -794,11 +897,11 @@ function renderFileInfo() {
         const meta = document.createElement('small');
         meta.className = 'file-info-variable-meta';
         const binding = variable.scope === 'global' || !container ? scopeLabels[variable.scope] || variable.scope : `${scopeLabels[variable.scope] || variable.scope}: ${container}`;
-        meta.textContent = `${binding} · このファイルの定義 ${definitions.length} · 参照 ${references.length}`;
+        meta.textContent = `${binding} · ${definitions.length} definitions · ${references.length} references`;
         item.append(meta);
         return item;
       });
-    addSection('variables', '変数', variableRows.length, variableRows);
+    addSection('variables', 'Variables', variableRows.length, variableRows);
   }
 
   if (info.unreachableRanges.length) {
@@ -807,17 +910,20 @@ function renderFileInfo() {
       item.textContent = range;
       return item;
     });
-    addSection('unreachable', '到達不能行', rows.length, rows);
+    addSection('unreachable', 'Unreachable lines', rows.length, rows);
   }
 }
 
 async function showFileInfo(path) {
   path = normalizedScenePath(path);
+  const requestId = ++fileInfoRequestSequence;
+  const isCurrentRequest = () => requestId === fileInfoRequestSequence && normalizedScenePath(sceneName.value) === path;
   const graph = await request('/api/scene-graph');
+  if (!isCurrentRequest()) return;
   const node = graph.nodes.find((item) => item.id === path);
   if (node?.error) {
-    if (normalizedScenePath(sceneName.value) === path) {
-      fileInfoBase = { path, error: '構文エラー', targets: [], localGotos: [], variables: [], reachable: node.reachable !== false, unreachableRanges: [] };
+    if (isCurrentRequest()) {
+      fileInfoBase = { path, error: 'syntax error', targets: [], localGotos: [], variables: [], reachable: node.reachable !== false, unreachableRanges: [] };
       renderFileInfo();
     }
     return;
@@ -827,12 +933,13 @@ async function showFileInfo(path) {
   if ((!node || node.error) && fileInfo) {
     try {
       const scene = await request(`/api/scene?name=${encodeURIComponent(path)}`);
+      if (!isCurrentRequest()) return;
       const source = String(scene.source || '');
       targets = [...source.matchAll(/^\s*goto\s+(?:"([^"]+)"|([^\s]+))/gmi)].map((m) => m[1] || m[2]);
       variables = [...source.matchAll(/^\s*(?:global\s+)?(?:const\s+)?(int|float|str|dict)\s+([A-Za-z_][A-Za-z0-9_]*)/gmi)].map((m) => ({ name: m[2], type: m[1], scope: 'global', definedIn: path, definitions: [], references: [] }));
     } catch { /* keep empty information */ }
   }
-  if (normalizedScenePath(sceneName.value) === path) {
+  if (isCurrentRequest()) {
     const unreachableRanges = fileInfoBase?.path === path ? fileInfoBase.unreachableRanges : [];
     fileInfoBase = { path, targets: [...new Set(targets)], localGotos: node?.localGotos || [], variables, reachable: node?.reachable !== false, unreachableRanges };
     renderFileInfo();
@@ -841,7 +948,7 @@ async function showFileInfo(path) {
 async function addSceneInUi(folder) {
   folder = scenarioRelativePath(folder);
   if (folder === null) return;
-  const name = await uiPrompt(`${folder} に追加するシーン名`, '');
+  const name = await uiPrompt(`${folder} · Scene name`, '');
   if (!name) return;
   const path = [folder, name.replace(/^\/+/, '')].filter(Boolean).join('/');
   await request('/api/scene', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: path, source: `# ${path}\n` }) });
@@ -875,7 +982,7 @@ async function refreshCatalog() {
     const [catData, assetData] = await Promise.all([request('/api/catalog'), request('/api/assets')]);
     catalog = catData.catalog || {};
     projectAssets = assetData.assets || [];
-    setStatus('素材設定を読み込みました', 'ok');
+    setStatus('Assetsを読み込みました', 'ok');
     updateSuggestions();
   } catch {
     catalog = {};
@@ -1076,6 +1183,13 @@ function candidatesFor(context) {
     const builtinMembers = {
       'list.': ['append()', 'contains()', 'length()'],
       'text.': ['normalize_space()', 'replace()', 'split()', 'trim()'],
+      'runtime.state.': ['audio.', 'background.', 'characters.', 'execution.', 'ui.', 'variables.'],
+      'runtime.state.audio.': ['bgm_exists()', 'current_bgm()', 'volume()'],
+      'runtime.state.background.': ['current()', 'exists()'],
+      'runtime.state.characters.': ['exists()', 'list()', 'position()'],
+      'runtime.state.execution.': ['current_file()', 'current_line()', 'current_scene()'],
+      'runtime.state.ui.': ['dialog_opacity()'],
+      'runtime.state.variables.': ['exists()', 'names()'],
     }[namespace] || [];
     const members = [
       ...includedFunctionNames.filter(name => name.startsWith(namespace)).map(name => name.slice(namespace.length)),
@@ -1135,7 +1249,7 @@ async function updateSuggestions() {
   suggestionIndex = 0;
   completionRange = context;
   const lineStart = editor.value.lastIndexOf('\n', editor.selectionStart - 1) + 1;
-  const line = editor.value.slice(0, editor.selectionStart).split('\n').length - 1;
+  const line = splitEditorLines(editor.value.slice(0, editor.selectionStart)).length - 1;
   const column = editor.selectionStart - lineStart;
   suggestionBox.style.left = `${78 + column * 8.4}px`;
   suggestionBox.style.top = `${21 + line * editorLineHeight() - editor.scrollTop + 25}px`;
@@ -1150,7 +1264,7 @@ function currentSourceVariable(name) {
   const declaration = new RegExp(`^\\s*(?:global\\s+)?(?:const\\s+)?(int|float|str|dict\\[(?:int|float|str)\\]|[A-Z][A-Za-z0-9_]*)\\s+${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=`, 'm');
   const match = declaration.exec(editor.value);
   if (!match) return null;
-  const line = editor.value.slice(0, match.index).split(/\r?\n/).length;
+  const line = splitEditorLines(editor.value.slice(0, match.index)).length;
   return {
     name,
     type: match[1],
@@ -1171,7 +1285,7 @@ function renderVariableTooltipDetails(event) {
   const charWidth = context.measureText('M').width || 8.4;
   const lineIndex = Math.floor((event.clientY - rect.top + editor.scrollTop - paddingTop) / lineHeight);
   const column = Math.floor((event.clientX - rect.left + editor.scrollLeft - paddingLeft) / charWidth);
-  const line = editor.value.split('\n')[lineIndex];
+  const line = splitEditorLines(editor.value)[lineIndex];
   if (!line || column < 0) return hideVariableTooltip();
   const match = [...line.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)].find((item) => column >= item.index && column <= item.index + item[0].length);
   if (!match) return hideVariableTooltip();
@@ -1224,7 +1338,7 @@ function showVariableTooltipLegacy(event) {
   const charWidth = context.measureText('M').width || 8.4;
   const lineIndex = Math.floor((event.clientY - rect.top + editor.scrollTop - paddingTop) / lineHeight);
   const column = Math.floor((event.clientX - rect.left + editor.scrollLeft - paddingLeft) / charWidth);
-  const sourceLine = editor.value.split('\n')[lineIndex];
+  const sourceLine = splitEditorLines(editor.value)[lineIndex];
   if (!sourceLine || column < 0) return hideVariableTooltip();
   const match = [...sourceLine.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)].find((item) => column >= item.index && column < item.index + item[0].length);
   if (!match) return hideVariableTooltip();
@@ -1297,9 +1411,9 @@ function sourceOffsetAtEvent(event) {
 function tokenAtSourceOffset(offset) {
   const before = editor.value.slice(0, offset);
   const lineStart = before.lastIndexOf('\n') + 1;
-  const line = before.split('\n').length;
+  const line = splitEditorLines(before).length;
   const column = offset - lineStart;
-  const sourceLine = editor.value.slice(lineStart).split(/\r?\n/, 1)[0] || '';
+  const sourceLine = splitEditorLines(editor.value.slice(lineStart))[0] || '';
   let inString = false; let escaped = false;
   for (let index = 0; index <= Math.min(column, sourceLine.length); index++) {
     const character = sourceLine[index];
@@ -1355,7 +1469,7 @@ function sourceTokenAtEvent(event) {
   const paddingLeft = Number.parseFloat(style.paddingLeft) || 25;
   const paddingTop = Number.parseFloat(style.paddingTop) || 21;
   const lineIndex = Math.floor((event.clientY - rect.top + editor.scrollTop - paddingTop) / lineHeight);
-  const sourceLine = editor.value.split(/\r?\n/)[lineIndex];
+  const sourceLine = splitEditorLines(editor.value)[lineIndex];
   if (sourceLine === undefined) return null;
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
@@ -1374,7 +1488,7 @@ function sourceTokenAtEvent(event) {
     pixel += width;
   }
   if (column < 0) return null;
-  const absolute = editor.value.split(/\r?\n/).slice(0, lineIndex).reduce((offset, value) => offset + value.length + 1, 0) + column;
+  const absolute = splitEditorLines(editor.value).slice(0, lineIndex).reduce((offset, value) => offset + value.length + 1, 0) + column;
   return tokenAtSourceOffset(absolute);
 }
 
@@ -1418,7 +1532,7 @@ async function compiledVariablesForCurrentSource(file, source) {
     body: JSON.stringify({ name: file, source }),
   }).then((response) => {
     if (!response.ok || !response.program?.variables) throw new Error(response.error || '変数の参照先を解析できませんでした');
-    if (sceneName.value !== file || editor.value !== source) throw new Error('解析中に編集中のシナリオが変更されました');
+    if (sceneName.value !== file || editor.value !== source) throw new Error('解析中に編集中のSceneが変更されました');
     analysis.variables = response.program.variables;
     analysis.promise = null;
     return enrichCurrentVariableEntries(file, analysis.variables);
@@ -1438,8 +1552,8 @@ async function editorSymbolsForCurrentSource(file, source) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: file, source }),
   }).then(response => {
-    if (!response.symbols) throw new Error(response.error || 'シンボル情報を解析できませんでした');
-    if (sceneName.value !== file || editor.value !== source) throw new Error('表示中のシナリオが変更されました');
+    if (!response.symbols) throw new Error(response.error || '\u30b7\u30f3\u30dc\u30eb\u60c5\u5831\u3092\u89e3\u6790\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f');
+    if (sceneName.value !== file || editor.value !== source) throw new Error('表示中のSceneが変更されました');
     entry.value = response.symbols;
     entry.promise = null;
     return entry.value;
@@ -1475,7 +1589,7 @@ function qualifiedTokenName(token) {
 }
 
 function editorContainerAtLine(source, targetLine) {
-  const lines = source.split(/\r?\n/);
+  const lines = splitEditorLines(source);
   let active = null;
   let depth = 0;
   for (let index = 0; index < lines.length; index++) {
@@ -1538,7 +1652,7 @@ async function showDeclarationTooltip(event, requestId, token) {
     const displayName = character.properties?.find(property => property.name === 'name');
     if (displayName) add('variable-tooltip-row', `表示名: ${expressionPreview(displayName.value)}`);
     for (const property of character.properties || []) if (property.name !== 'name') add('variable-tooltip-row', `${property.name}: ${expressionPreview(property.value)}`);
-    add('variable-tooltip-heading', `立ち絵ポーズ (${character.poses.length})`);
+    add('variable-tooltip-heading', `Character Poses (${character.poses.length})`);
     for (const pose of character.poses) add('variable-tooltip-row', `${pose.name} — ${pose.path}`);
     addDefinition(character);
   } else if (asset) {
@@ -1558,7 +1672,7 @@ async function showDeclarationTooltip(event, requestId, token) {
     addDefinition(include);
   } else if (scopedVariable && !declaration) {
     add('variable-tooltip-title', `${scopedVariable.name}: ${editorTypeName(scopedVariable.type)}`);
-    add('variable-tooltip-row', `スコープ: ${scopedVariable.scope}${scopedVariable.container ? ` (${scopedVariable.container})` : ''}`);
+    add('variable-tooltip-row', `Scope: ${scopedVariable.scope}${scopedVariable.container ? ` (${scopedVariable.container})` : ''}`);
     add('variable-tooltip-row', scopedVariable.constant ? '定数・読み取り専用' : '変更可能');
     addDefinition(scopedVariable);
   } else if (declaration) {
@@ -1611,7 +1725,7 @@ async function showVariableTooltip(event, requestId) {
   variableTooltip.append(title);
   const scope = document.createElement('div');
   scope.className = 'variable-tooltip-row';
-  scope.textContent = `スコープ: ${variable.scope}${variable.definedIn && variable.definedIn !== 'global' ? ` (${variable.definedIn})` : ''}`;
+  scope.textContent = `Scope: ${variable.scope}${variable.definedIn && variable.definedIn !== 'global' ? ` (${variable.definedIn})` : ''}`;
   variableTooltip.append(scope);
   if (declaration?.initial) {
     const initial = document.createElement('div');
@@ -1706,7 +1820,7 @@ function showSyntaxTooltip(event) {
     const example = document.createElement('pre'); example.className = 'syntax-tooltip-example'; example.textContent = recipe.snippet;
     variableTooltip.append(example);
   }
-  const guideButton = document.createElement('button'); guideButton.type = 'button'; guideButton.className = 'syntax-tooltip-link'; guideButton.textContent = '構文リファレンスを開く';
+  const guideButton = document.createElement('button'); guideButton.type = 'button'; guideButton.className = 'syntax-tooltip-link'; guideButton.textContent = 'Open Syntax Reference';
   guideButton.addEventListener('click', () => { hideVariableTooltip(); showLanguageGuide(); });
   variableTooltip.append(guideButton);
   variableTooltip.style.left = `${Math.max(8, Math.min(event.clientX + 14, window.innerWidth - 430))}px`;
@@ -1787,6 +1901,7 @@ function resetAssetDocumentMetadata() {
     field.textContent = '—';
     field.removeAttribute('title');
   }
+  if (assetDocumentMetadataLabels.orientation) assetDocumentMetadataLabels.orientation.textContent = 'Orientation';
 }
 
 function formatAssetSize(bytes) {
@@ -1820,21 +1935,24 @@ function setAssetDocumentDimensions(width, height) {
   setAssetDocumentMetadata('ratio', `${roundedWidth / a}:${roundedHeight / a}`);
   const pixelCount = roundedWidth * roundedHeight;
   setAssetDocumentMetadata('pixels', `${(pixelCount / 1_000_000).toLocaleString('ja-JP', { maximumFractionDigits: 2 })} MP (${pixelCount.toLocaleString('ja-JP')} px)`);
-  setAssetDocumentMetadata('orientation', roundedWidth === roundedHeight ? '正方形' : roundedWidth > roundedHeight ? '横長' : '縦長');
+  setAssetDocumentMetadata('orientation', roundedWidth === roundedHeight ? 'Square' : roundedWidth > roundedHeight ? 'Landscape' : 'Portrait');
 }
 
 function loadAssetDocumentMetadata(name, mediaKind) {
   resetAssetDocumentMetadata();
-  const extension = name.split('.').at(-1)?.toUpperCase() || '不明';
+  const extension = name.split('.').at(-1)?.toUpperCase() || 'Unknown';
   setAssetDocumentMetadata('format', extension);
-  if (mediaKind === 'audio') setAssetDocumentMetadata('orientation', '音声');
+  if (mediaKind === 'audio') {
+    if (assetDocumentMetadataLabels.orientation) assetDocumentMetadataLabels.orientation.textContent = 'Type';
+    setAssetDocumentMetadata('orientation', 'Audio');
+  }
   request(`/api/asset-info?path=${encodeURIComponent(name)}`).then((info) => {
     if (activeAssetDocument !== name) return;
     const mime = info.mimeType ? ` (${info.mimeType})` : '';
     setAssetDocumentMetadata('format', `${(info.extension || extension).toUpperCase()}${mime}`);
     setAssetDocumentMetadata('size', formatAssetSize(info.sizeBytes));
     const modified = new Date(info.modifiedAt);
-    setAssetDocumentMetadata('modified', Number.isNaN(modified.valueOf()) ? '不明' : new Intl.DateTimeFormat('ja-JP', {
+    setAssetDocumentMetadata('modified', Number.isNaN(modified.valueOf()) ? 'Unknown' : new Intl.DateTimeFormat('ja-JP', {
       year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
     }).format(modified));
   }).catch(() => {
@@ -1845,12 +1963,14 @@ function loadAssetDocumentMetadata(name, mediaKind) {
 }
 
 async function openAssetDocument(name) {
+  const navigationSequence = ++documentNavigationSequence;
   const normalized = String(name || '').replaceAll('\\', '/');
   const mediaKind = assetMediaKind(normalized);
-  if (!mediaKind) throw Error('エディター内で開ける画像・音声・動画ファイルではありません');
+  if (!mediaKind) throw Error('Editor内で開ける画像・音声・動画ファイルではありません');
   const url = assetDocumentUrl(normalized);
-  if (activeAssetDocument === normalized) return;
+  if (activeAssetDocument === normalized) return true;
   if (sceneName.value && sceneName.value !== normalized && isDirty) await saveScene();
+  if (navigationSequence !== documentNavigationSequence) return false;
   clearAssetDocumentView();
   activeSettingDocument = '';
   activeStandardLibraryDocument = '';
@@ -1917,13 +2037,17 @@ async function openAssetDocument(name) {
     assetDocumentAudio.src = url;
     assetDocumentAudio.hidden = false;
   }
-  setStatus(`${normalized} をエディター内で開きました`);
+  setStatus(`${normalized} をEditor内で開きました`);
+  return true;
 }
 
 async function openScene(name) {
+  const navigationSequence = ++documentNavigationSequence;
   if (isStandardLibraryPath(name)) return openStandardLibraryFile(name);
   if (sceneName?.value && sceneName.value !== name && isDirty) await saveScene();
+  if (navigationSequence !== documentNavigationSequence) return false;
   const scene = await request(`/api/scene?name=${encodeURIComponent(name)}`);
+  if (navigationSequence !== documentNavigationSequence) return false;
   clearAssetDocumentView();
   activeSettingDocument = '';
   activeStandardLibraryDocument = '';
@@ -1944,12 +2068,16 @@ result.textContent = '';
   renderEditorTabs(scene.name);
   showFileInfo(scene.name).catch(() => {});
   scheduleValidation();
+  return true;
 }
 
 async function openStandardLibraryFile(name) {
-  if (!isStandardLibraryPath(name)) throw Error('Invalid standard library path.');
+  const navigationSequence = ++documentNavigationSequence;
+  if (!isStandardLibraryPath(name)) throw Error('Standard Libraryのパスが不正です。');
   if (sceneName?.value && sceneName.value !== name && isDirty && !activeStandardLibraryDocument) await saveScene();
+  if (navigationSequence !== documentNavigationSequence) return false;
   const file = await request(`/api/standard-library-file?name=${encodeURIComponent(name)}`);
+  if (navigationSequence !== documentNavigationSequence) return false;
   clearAssetDocumentView();
   activeSettingDocument = '';
   activeStandardLibraryDocument = file.name;
@@ -1968,15 +2096,20 @@ async function openStandardLibraryFile(name) {
   updateHighlight();
   result.textContent = '';
   hideSuggestions();
-  setStatus(`${file.name} · 標準ライブラリ（読み取り専用）`);
+  setStatus(`${file.name} · Standard Library (read-only)`);
   renderEditorTabs(file.name);
+  return true;
 }
 
 async function openSettingFile(name) {
+  const navigationSequence = ++documentNavigationSequence;
   if (sceneName?.value && sceneName.value !== name && isDirty) await saveScene();
+  if (navigationSequence !== documentNavigationSequence) return false;
   const file = await request(`/api/setting-file?name=${encodeURIComponent(name)}`);
+  if (navigationSequence !== documentNavigationSequence) return false;
   clearAssetDocumentView();
   activeSettingDocument = file.name;
+  if (!openTabs.includes(file.name)) openTabs.push(file.name);
   activeStandardLibraryDocument = '';
   sceneName.value = file.name;
   editor.value = file.source;
@@ -1990,6 +2123,7 @@ async function openSettingFile(name) {
   result.textContent = '';
   hideSuggestions();
   setStatus(`${file.name} を開きました`);
+  return true;
 }
 
 async function openEditorDocument(name) {
@@ -2003,15 +2137,17 @@ async function openEditorDocument(name) {
 async function jumpToLocation(location, symbol = '') {
   const requestedFile = String(location.file || sceneName.value);
   const file = requestedFile === 'current' ? sceneName.value : scenarioRelativePath(requestedFile) ?? requestedFile;
-  if (file && isStandardLibraryPath(file) && normalizedScenePath(file) !== normalizedScenePath(sceneName.value)) await openStandardLibraryFile(file);
+  if (file && isStandardLibraryPath(file) && normalizedScenePath(file) !== normalizedScenePath(sceneName.value)) {
+    if (!(await openStandardLibraryFile(file))) return;
+  }
   else if (file && normalizedScenePath(file) !== normalizedScenePath(sceneName.value)) {
-    if (!sceneNames.includes(file)) { setStatus(`シナリオ '${file}' は現在の作品内にありません`, 'warning'); return; }
-    await openScene(file);
+    if (!sceneNames.includes(file)) { setStatus(`'${file}' は現在のプロジェクトにありません`, 'warning'); return; }
+    if (!(await openScene(file))) return;
   }
   const line = Math.max(1, Number(location.line) || 1);
   let column = Math.max(0, Number(location.column) - 1 || 0);
-  const lineStart = editor.value.split(/\r?\n/).slice(0, line - 1).reduce((total, value) => total + value.length + 1, 0);
-  const lineText = editor.value.split(/\r?\n/)[line - 1] || '';
+  const lineStart = splitEditorLines(editor.value).slice(0, line - 1).reduce((total, value) => total + value.length + 1, 0);
+  const lineText = splitEditorLines(editor.value)[line - 1] || '';
   const candidates = [...new Set([symbol, String(symbol).split('.').at(-1)].filter(Boolean))];
   let selected = 0;
   if (symbol && lineText.slice(column, column + symbol.length) === symbol) selected = symbol.length;
@@ -2032,9 +2168,9 @@ async function jumpToScene(file, scene) {
   if (targetFile && normalizedScenePath(targetFile) !== normalizedScenePath(sceneName.value)) await openScene(targetFile);
   const escaped = scene.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = new RegExp(`^\\s*scene\\s+${escaped}\\b`, 'm').exec(editor.value);
-  if (!match) throw Error(`シーン '${scene}' の定義が見つかりません`);
+  if (!match) throw Error(`Scene '${scene}' の定義が見つかりません`);
   const start = match.index + match[0].lastIndexOf(scene);
-  const line = editor.value.slice(0, start).split(/\r?\n/).length;
+  const line = splitEditorLines(editor.value.slice(0, start)).length;
   revealEditorRange(start, start + scene.length, line);
 }
 
@@ -2048,10 +2184,49 @@ function renderDiagnosticResult(summary, entries) {
     button.type = 'button';
     button.className = `diagnostic-link diagnostic-${entry.severity}`;
     button.textContent = entry.text;
-    button.title = 'クリックして該当行へ移動';
+    button.title = 'Click to jump to this line';
     button.addEventListener('click', () => jumpToLocation(entry.location).catch(showError));
     result.append(button);
   }
+}
+
+function showPersistentBuildWarnings(entries) {
+  const warnings = entries.filter(item => item.severity === 'warning' && item.buildBlocking);
+  document.querySelector('#build-warning-toast')?.remove();
+  if (!warnings.length) return;
+  const toast = document.createElement('section');
+  toast.id = 'build-warning-toast';
+  toast.className = 'build-warning-toast';
+  toast.setAttribute('role', 'alert');
+  toast.setAttribute('aria-labelledby', 'build-warning-title');
+  const header = document.createElement('header');
+  const title = document.createElement('h2');
+  title.id = 'build-warning-title';
+  title.textContent = `Build warnings · ${warnings.length}`;
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'build-warning-toast-close';
+  close.textContent = '×';
+  close.setAttribute('aria-label', '警告を閉じる');
+  close.addEventListener('click', () => toast.remove());
+  header.append(title, close);
+  const list = document.createElement('ul');
+  for (const warning of warnings) {
+    const item = document.createElement('li');
+    const location = document.createElement('button');
+    location.type = 'button';
+    location.className = 'build-warning-toast-location';
+    location.textContent = `${warning.file || '現在のファイル'}:${Number(warning.line) || 1}`;
+    location.title = `Open ${warning.file || 'current file'} at line ${Number(warning.line) || 1}`;
+    location.addEventListener('click', () => jumpToLocation(warning).catch(showError));
+    const message = document.createElement('span');
+    message.textContent = warning.message;
+    item.append(location, message);
+    list.append(item);
+  }
+  toast.append(header, list);
+  document.body.append(toast);
+  close.focus();
 }
 
 function renderEditorTabs(activeName = activeAssetDocument || sceneName?.value) {
@@ -2059,20 +2234,20 @@ function renderEditorTabs(activeName = activeAssetDocument || sceneName?.value) 
   editorTabs.replaceChildren(...openTabs.map((name) => {
     const tab = document.createElement('div');
     tab.className = `editor-tab${name === activeName ? ' active' : ''}`;
-    tab.setAttribute('role', 'tab'); tab.setAttribute('aria-selected', String(name === activeName));
     const select = document.createElement('button'); select.type = 'button'; select.className = 'editor-tab-name'; select.textContent = fileLabel(name); select.title = name;
+    select.setAttribute('aria-label', name); select.setAttribute('aria-pressed', String(name === activeName));
     select.addEventListener('click', (event) => {
       if (event.shiftKey && !String(name).startsWith('asset/')) moveTabToRight(name).catch(showError);
       else if (name !== sceneName.value) openEditorDocument(name).catch(showError);
     });
     if (!String(name).startsWith('asset/')) {
-      const split = document.createElement('button'); split.type = 'button'; split.className = 'editor-tab-split'; split.textContent = '→'; split.title = `${name}を右ペインで開く`;
+      const split = document.createElement('button'); split.type = 'button'; split.className = 'editor-tab-split'; split.textContent = '→'; split.title = `Open ${name} in Right Pane`; split.setAttribute('aria-label', `Open ${name} in Right Pane`);
       split.addEventListener('click', () => moveTabToRight(name).catch(showError));
       tab.append(select, split);
     } else {
       tab.append(select);
     }
-    const close = document.createElement('button'); close.type = 'button'; close.className = 'editor-tab-close'; close.textContent = '×'; close.title = `${name}を閉じる`;
+    const close = document.createElement('button'); close.type = 'button'; close.className = 'editor-tab-close'; close.textContent = '×'; close.title = `${name}を閉じる`; close.setAttribute('aria-label', `${name}を閉じる`);
     close.addEventListener('click', async () => {
       const activeName = activeAssetDocument || sceneName.value;
       if (isDirty && name === activeName && !window.confirm('未保存の変更があります。タブを閉じますか？')) return;
@@ -2333,42 +2508,53 @@ function formatCode() {
 
 async function saveScene() {
   if (activeAssetDocument) {
-    setStatus(`${activeAssetDocument} · 素材プレビューは読み取り専用です`);
+    setStatus(`${activeAssetDocument} · Asset previewは読み取り専用です`);
     return;
   }
   if (activeStandardLibraryDocument) {
-    setStatus(`${activeStandardLibraryDocument} · 標準ライブラリは読み取り専用です`);
+    setStatus(`${activeStandardLibraryDocument} · Standard Library is read-only`);
     return;
   }
   if (activeSettingDocument) {
+    const name = activeSettingDocument;
+    const submittedSource = editor.value;
+    const expectedRevision = sceneRevision;
     const saved = await request('/api/setting-file', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: activeSettingDocument, source: editor.value, ...(sceneRevision ? { expectedRevision: sceneRevision } : {}) }),
+      body: JSON.stringify({ name, source: submittedSource, ...(expectedRevision ? { expectedRevision } : {}) }),
     });
-    sceneRevision = String(saved.revision || '');
-    updateDirtyState(false);
-    setStatus(`${saved.name} を保存しました`, 'ok');
-    if (activeSettingDocument === 'setting/setting.txt') await refreshFiles();
+    const stillActive = activeSettingDocument === name && sceneRevision === expectedRevision;
+    if (stillActive) {
+      sceneRevision = String(saved.revision || '');
+      updateDirtyState(editor.value !== submittedSource);
+      setStatus(editor.value === submittedSource ? `${saved.name} を保存しました` : `${saved.name} の保存後に行った編集は未保存です`, editor.value === submittedSource ? 'ok' : 'warning');
+    }
+    if (name === 'setting/setting.txt') await refreshFiles();
     return;
   }
   // Saving is a durable boundary: persist the same canonical source that the
   // editor validates and previews, using the cursor-preserving formatter path.
   formatCode();
+  const name = sceneName.value;
+  const submittedSource = editor.value;
+  const expectedRevision = sceneRevision;
   const saved = await request('/api/scene', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: sceneName.value, source: editor.value, ...(sceneRevision ? { expectedRevision: sceneRevision } : {}) }),
+    body: JSON.stringify({ name, source: submittedSource, ...(expectedRevision ? { expectedRevision } : {}) }),
   });
-  sceneName.value = saved.name;
-  sceneRevision = String(saved.revision || '');
-  if (!openTabs.includes(saved.name)) openTabs.push(saved.name);
-  renderEditorTabs(saved.name);
-  updateDirtyState(false);
-  await refreshScenes(saved.name);
+  const stillActive = sceneName.value === name && !activeSettingDocument && sceneRevision === expectedRevision;
+  if (stillActive) {
+    sceneRevision = String(saved.revision || '');
+    if (!openTabs.includes(saved.name)) openTabs.push(saved.name);
+    renderEditorTabs(sceneName.value);
+    updateDirtyState(editor.value !== submittedSource);
+  }
+  await refreshScenes(sceneName.value);
   await refreshSceneGraph();
   const variableData = await request('/api/variables');
   setKnownVariableData(variableData);
-  setStatus(`${saved.name} を保存しました`, 'ok');
+  if (stillActive) setStatus(editor.value === submittedSource ? `${saved.name} を保存しました` : `${saved.name} の保存後に行った編集は未保存です`, editor.value === submittedSource ? 'ok' : 'warning');
 }
 
 async function saveAllScenes() {
@@ -2385,8 +2571,14 @@ async function saveAllScenes() {
     if (name && !savedNames.includes(name)) savedNames.push(name);
     notifySceneFlowRefresh();
   }
-  setStatus(savedNames.length ? `${savedNames.length} ファイルを保存しました` : 'すべて保存済みです', 'ok');
+  const hasUnsaved = isDirty || Boolean(splitApi?.isDirty?.());
+  setStatus(hasUnsaved ? '保存要求後に行った編集が残っています。再度保存してください' : savedNames.length ? `${savedNames.length} ファイルを保存しました` : 'すべて保存済みです', hasUnsaved ? 'warning' : 'ok');
   return savedNames;
+}
+
+function hasUnsavedSceneChanges() {
+  const splitApi = !splitGroup?.hidden ? splitFrame?.contentWindow?.novelEditorApi : null;
+  return isDirty || Boolean(splitApi?.isDirty?.());
 }
 
 async function formatProjectScenes() {
@@ -2394,6 +2586,7 @@ async function formatProjectScenes() {
   const splitApi = !splitGroup?.hidden ? splitFrame?.contentWindow?.novelEditorApi : null;
   splitApi?.formatCurrent?.();
   await saveAllScenes();
+  if (isDirty || splitApi?.isDirty?.()) throw Error('保存中に新しい編集がありました。保存し直してから Build を実行してください');
   const { scenes = [] } = await request('/api/scenes', { cache: 'no-store' });
   const updates = [];
   for (const name of scenes) {
@@ -2465,14 +2658,22 @@ window.novelEditorApi = {
   lastFormatProject: () => lastFormatProjectPromise,
 };
 
-async function validate(providedReport = null) {
-  if (activeAssetDocument) return;
+function captureEditorSnapshot() {
+  return { file: sceneName.value, source: editor.value };
+}
+function editorMatchesSnapshot(snapshot) {
+  return !activeAssetDocument && !activeSettingDocument
+    && sceneName.value === snapshot.file && editor.value === snapshot.source;
+}
+
+async function validate(providedReport = null, expectedSnapshot = null) {
+  if (activeAssetDocument) return false;
   const sequence = ++validationSequence;
   const sourceSnapshot = editor.value;
   const fileSnapshot = sceneName.value;
+  if (providedReport && expectedSnapshot && !editorMatchesSnapshot(expectedSnapshot)) return false;
   let report = providedReport;
   if (!report) {
-    setStatus('構文を検証中…');
     report = await request('/api/validate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2497,14 +2698,14 @@ async function validate(providedReport = null) {
     renderFileInfo();
   }
   if (!diagnostics.length && !report.ok) {
-    const message = String(report.error || '構文エラー');
+    const message = String(report.error || 'syntax error');
     const assetPath = message.match(/(?:asset|アセット)\s*'([^']+)'/)?.[1];
-    const assetLine = assetPath ? editor.value.split(/\r?\n/).findIndex((value) => value.includes(assetPath)) + 1 : 0;
+    const assetLine = assetPath ? splitEditorLines(editor.value).findIndex((value) => value.includes(assetPath)) + 1 : 0;
     const line = Number(message.match(/line\s+(\d+)/i)?.[1] || assetLine || 1);
     const column = Number(message.match(/column\s+(\d+)/i)?.[1] || 1);
     diagnostics = [{ severity: 'error', code: 'error', line, column, message }];
   }
-  const sourceLines = editor.value.split(/\r?\n/);
+  const sourceLines = splitEditorLines(editor.value);
   const unreachableSceneSpans = diagnostics
     .filter(diagnosticForCurrentFile)
     .filter((item) => item.code === 'unreachable-scene')
@@ -2529,7 +2730,7 @@ async function validate(providedReport = null) {
       index,
       severity: item.severity,
       location: item,
-      text: `${item.severity.toUpperCase()} ${item.code}  ${diagnosticForCurrentFile(item) ? '' : `${item.file} `}line ${item.line}:${item.column}  ${item.message}`,
+      text: `${({ error: 'Error', warning: 'Warning', info: 'Info' }[item.severity] || item.severity)} ${item.code}  ${diagnosticForCurrentFile(item) ? '' : `${item.file} `}行 ${item.line}:${item.column}  ${item.message}`,
     });
   });
   for (const group of unreachableGroups.values()) {
@@ -2541,7 +2742,7 @@ async function validate(providedReport = null) {
         index: group.index,
         severity: item.severity,
         location: { ...item, line: range.start },
-        text: `${item.severity.toUpperCase()} ${item.code}  ${diagnosticForCurrentFile(item) ? '' : `${item.file} `}${lineRangeLabel(range)}  ${item.message}`,
+      text: `${({ error: 'Error', warning: 'Warning', info: 'Info' }[item.severity] || item.severity)} ${item.code}  ${diagnosticForCurrentFile(item) ? '' : `${item.file} `}${lineRangeLabel(range)}  ${item.message}`,
       });
     }
   }
@@ -2552,22 +2753,26 @@ if (fileInfoBase && typeof fileInfoBase === 'object') {
   fileInfoBase.unreachableRanges = contiguousLineRanges(unreachableLines, sourceLines).map(lineRangeLabel);
   renderFileInfo();
 }
+  if (report.build) showPersistentBuildWarnings(diagnostics);
   if (report.ok) {
     const warningCount = displayedDiagnostics.filter((item) => item.severity === 'warning').length;
     const infoCount = displayedDiagnostics.filter((item) => item.severity === 'info').length;
+    const fileCountLabel = `${report.fileCount} file${report.fileCount === 1 ? '' : 's'}`;
     const summary = report.build
-      ? `コンパイル完了: 全 ${report.fileCount} ファイル / エラー 0 / 警告 ${warningCount} / 情報 ${infoCount}`
-      : `解析完了: エラー 0 / 警告 ${warningCount} / 情報 ${infoCount}`;
+      ? `Compile complete: ${fileCountLabel} / 0 errors / ${warningCount} warnings / ${infoCount} info`
+      : `Analysis complete: Error 0 / Warning ${warningCount} / Info ${infoCount}`;
     if (warningCount || infoCount) renderDiagnosticResult(summary, displayedDiagnostics);
     else if (report.build) result.textContent = `${summary}\n${report.name}\n${report.path}`;
-    else result.textContent = `問題ありません。\n文: ${report.statements}\nコンパイル命令: ${report.instructions}`;
-    if (report.build) setStatus(`${report.fileCount} ファイル精査完了 / ${report.name} を生成しました`, warningCount ? 'warning' : 'ok');
-    else setStatus(warningCount ? `警告が ${warningCount} 件あります` : '検証に成功しました', warningCount ? 'warning' : 'ok');
+     else result.textContent = `問題ありません。\nStatements: ${report.statements}\nInstructions: ${report.instructions}`;
+    if (report.build) setStatus(`Build complete: ${fileCountLabel} / Warning ${warningCount} / Info ${infoCount}`, warningCount ? 'warning' : 'ok');
+    else setStatus(`Validation complete: Error 0 / Warning ${warningCount} / Info ${infoCount}`, warningCount ? 'warning' : 'ok');
   } else {
     const errorCount = diagnostics.filter((item) => item.severity === 'error').length;
-    renderDiagnosticResult(report.build ? `コンパイル失敗: 全 ${report.fileCount} ファイル中 ${errorCount} 件` : `解析エラー ${errorCount} 件`, displayedDiagnostics);
-    setStatus('修正が必要な問題があります', 'error');
+    const fileCountLabel = `${report.fileCount} file${report.fileCount === 1 ? '' : 's'}`;
+    renderDiagnosticResult(report.build ? `Build failed: Error ${errorCount} / ${fileCountLabel}` : `Analysis error: ${errorCount}`, displayedDiagnostics);
+    setStatus(report.build ? `Build failed: Error ${errorCount} / ${fileCountLabel}` : `Validation error: ${errorCount}`, 'error');
   }
+  return true;
 }
 
 function scheduleValidation() {
@@ -2581,16 +2786,23 @@ async function saveAllFromMenu() {
   setStatus('すべて保存しました', 'ok');
 }
 async function compileProjectFromMenu() {
-  setStatus('全ファイルを精査してネイティブビルド中…');
+  setStatus('Native build: checking all files…');
+  // A previous build warning refers to an older source snapshot. Clear it as
+  // soon as another build starts, including when that response becomes stale.
+  document.querySelector('#build-warning-toast')?.remove();
   // Compilation is a durable project boundary: normalize every scene before
   // the build reads closed files, not only the scene currently in the editor.
   await formatProjectScenes();
+  const buildSnapshot = captureEditorSnapshot();
   const report = await request('/api/project-build', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: sceneName.value }),
   });
-  await validate(report);
+  if (!await validate(report, buildSnapshot)) {
+    scheduleValidation();
+     setStatus('Build が完了しました。現在の編集内容を検証しています…', 'warning');
+  }
 }
 const splitGroup = document.querySelector('#split-group');
 const splitFrame = document.querySelector('#split-frame');
@@ -2604,7 +2816,7 @@ function gotoAtEvent(event) {
   const lineHeight = Number.parseFloat(style.lineHeight) || editorLineHeight();
   const paddingTop = Number.parseFloat(style.paddingTop) || 21;
   const lineIndex = Math.floor((event.clientY - rect.top + editor.scrollTop - paddingTop) / lineHeight);
-  const sourceLine = editor.value.split(/\r?\n/)[lineIndex] || '';
+  const sourceLine = splitEditorLines(editor.value)[lineIndex] || '';
   const match = /^\s*goto\s+(?:"([^"]+)"|([A-Za-z0-9_./-]+))/.exec(sourceLine);
   return match ? (match[1] || match[2]) : '';
 }
@@ -2614,7 +2826,7 @@ function fileReferenceAtEvent(event) {
   if (exactOffset !== null) {
     const prefix = editor.value.slice(0, exactOffset);
     const lineStart = prefix.lastIndexOf('\n') + 1;
-    location = { line: prefix.split(/\r?\n/).length, column: exactOffset - lineStart, sourceLine: editor.value.slice(lineStart).split(/\r?\n/, 1)[0] || '' };
+    location = { line: splitEditorLines(prefix).length, column: exactOffset - lineStart, sourceLine: splitEditorLines(editor.value.slice(lineStart))[0] || '' };
   } else location = sourceTokenAtEvent(event);
   if (!location) return null;
   const { sourceLine, column } = location;
@@ -2640,7 +2852,7 @@ function fileReferenceAtEvent(event) {
 async function openFileReference(reference) {
   if (reference.kind === 'asset') {
     if (assetMediaKind(reference.path)) return openAssetDocument(reference.path);
-    setStatus('この素材形式はエディター内プレビューに対応していません', 'warning');
+    setStatus('このasset formatはEditor内でPreviewできません', 'warning');
     return;
   }
   if (isStandardLibraryPath(reference.path)) return openStandardLibraryFile(reference.path);
@@ -2789,7 +3001,7 @@ function showEditorContextMenu(event) {
     if (fileReference.kind !== 'asset' || mediaKind) {
       const label = fileReference.kind === 'include' ? 'include先を開く'
         : fileReference.kind === 'goto' ? '遷移ファイルを開く'
-          : mediaKind === 'image' ? '画像をエディターで開く' : 'メディアをエディターで開く';
+          : mediaKind === 'image' ? 'Open Image in Editor' : 'Open Media in Editor';
       addItem(label, '', () => openFileReference(fileReference));
     }
     addItem('相対パスをコピー', '', () => copyText(fileReference.path));
@@ -2801,7 +3013,7 @@ function showEditorContextMenu(event) {
   }
   if (token && !fileReference) {
     addItem('定義へ移動', 'F12', () => jumpToTokenDefinition(token).catch(showError));
-    addItem('シンボル情報を表示', '', () => showEditorSymbolInfo(event, token));
+    addItem('Show Symbol Info', '', () => showEditorSymbolInfo(event, token));
     hasNavigation = true;
   }
   if (hasNavigation) addSeparator();
@@ -2868,12 +3080,12 @@ function renderSplitTabs() {
   splitTabsElement.replaceChildren(...splitTabs.map((name) => {
     const tab = document.createElement('div');
     tab.className = `editor-tab${name === activeSplitScene ? ' active' : ''}`;
-    tab.setAttribute('role', 'tab'); tab.setAttribute('aria-selected', String(name === activeSplitScene));
     const select = document.createElement('button'); select.type = 'button'; select.className = 'editor-tab-name'; select.textContent = fileLabel(name); select.title = name;
+    select.setAttribute('aria-label', name); select.setAttribute('aria-pressed', String(name === activeSplitScene));
     select.addEventListener('click', () => openSplitScene(name));
-    const move = document.createElement('button'); move.type = 'button'; move.className = 'editor-tab-unsplit'; move.textContent = '←'; move.title = `${name}を左ペインへ移動`;
+    const move = document.createElement('button'); move.type = 'button'; move.className = 'editor-tab-unsplit'; move.textContent = '←'; move.title = `Move ${name} to Left Pane`; move.setAttribute('aria-label', `Move ${name} to Left Pane`);
     move.addEventListener('click', () => moveTabToLeft(name).catch(showError));
-    const close = document.createElement('button'); close.type = 'button'; close.className = 'editor-tab-close'; close.textContent = '×'; close.title = `${name}を閉じる`;
+    const close = document.createElement('button'); close.type = 'button'; close.className = 'editor-tab-close'; close.textContent = '×'; close.title = `${name}を閉じる`; close.setAttribute('aria-label', `${name}を閉じる`);
     close.addEventListener('click', () => closeRightTab(name));
     tab.append(select, move, close);
     return tab;
@@ -2881,7 +3093,7 @@ function renderSplitTabs() {
 }
 function canActivateSplit(name) {
   const api = splitFrame?.contentWindow?.novelEditorApi;
-  return !(activeSplitScene && activeSplitScene !== name && api?.isDirty?.() && !window.confirm('右ペインに未保存の変更があります。別のファイルを開きますか？'));
+  return !(activeSplitScene && activeSplitScene !== name && api?.isDirty?.() && !window.confirm('Right Paneに未保存の変更があります。別のファイルを開きますか？'));
 }
 function openSplitScene(name, skipDirtyCheck = false) {
   if (!splitFrame || !name) return;
@@ -2897,7 +3109,7 @@ function openSplitScene(name, skipDirtyCheck = false) {
 }
 function closeSplit(skipDirtyCheck = false) {
   const api = splitFrame?.contentWindow?.novelEditorApi;
-  if (!skipDirtyCheck && api?.isDirty?.() && !window.confirm('右ペインに未保存の変更があります。分割を閉じますか？')) return false;
+  if (!skipDirtyCheck && api?.isDirty?.() && !window.confirm('Right Paneに未保存の変更があります。分割を閉じますか？')) return false;
   splitGroup.hidden = true;
   splitFrame.src = 'about:blank';
   activeSplitScene = '';
@@ -2944,7 +3156,7 @@ function closeRightTab(name) {
   if (index < 0) return false;
   if (name === activeSplitScene) {
     const api = splitFrame?.contentWindow?.novelEditorApi;
-    if (api?.isDirty?.() && !window.confirm('右ペインに未保存の変更があります。タブを閉じますか？')) return false;
+    if (api?.isDirty?.() && !window.confirm('Right Paneに未保存の変更があります。タブを閉じますか？')) return false;
   }
   splitTabs.splice(index, 1);
   if (name === activeSplitScene) {
@@ -3002,26 +3214,54 @@ splitResizer?.addEventListener('keydown', (event) => {
 });
 async function playCurrentScene() {
   await saveAllScenes();
+  if (hasUnsavedSceneChanges()) {
+    setStatus('保存中に新しい編集がありました。保存し直してから再生してください', 'warning');
+    return { ok: false, unsavedChanges: true };
+  }
+  const savedSnapshot = captureEditorSnapshot();
   const buildState = await request('/api/project-build-status', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: sceneName.value }),
   });
+  if (!editorMatchesSnapshot(savedSnapshot)) {
+    scheduleValidation();
+    setStatus('保存後に編集内容が変わりました。再生前にもう一度保存してください', 'warning');
+    return { ok: false, changedWhileChecking: true };
+  }
   if (!buildState.built) {
     const changed = Array.isArray(buildState.changedFiles) && buildState.changedFiles.length
       ? `\n${buildState.changedFiles.slice(0, 8).join('\n')}${buildState.changedFiles.length > 8 ? `\nほか ${buildState.changedFiles.length - 8} ファイル` : ''}`
       : '';
-    if (!(await uiAsk(`ビルド済みシナリオと現在の内容が異なります。先にビルドしますか？${changed}`, 'ビルドして再生'))) return;
+    if (!(await uiAsk(`The built scenario differs from the current content. Build first?${changed}`, 'Build and Play'))) return;
+    if (!editorMatchesSnapshot(savedSnapshot)) {
+      scheduleValidation();
+      setStatus('確認中に編集内容が変わりました。再生前にもう一度保存してください', 'warning');
+      return { ok: false, changedWhileChecking: true };
+    }
+    const buildSnapshot = captureEditorSnapshot();
     const buildReport = await request('/api/project-build', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: sceneName.value }),
     });
     if (!buildReport.ok) {
-      await validate(buildReport);
+      if (!await validate(buildReport, buildSnapshot)) {
+        scheduleValidation();
+        setStatus('編集中に Build 対象が変更されました。現在の編集内容を検証しています…', 'warning');
+      }
       return buildReport;
     }
-    await validate(buildReport);
+    if (!await validate(buildReport, buildSnapshot)) {
+      scheduleValidation();
+      setStatus('編集中に Build 対象が変更されたため、再生を中止しました。', 'warning');
+      return { ...buildReport, ok: false, changedWhileBuilding: true };
+    }
+  }
+  if (!editorMatchesSnapshot(savedSnapshot)) {
+    scheduleValidation();
+    setStatus('再生前に編集内容が変わりました。再生を中止しました', 'warning');
+    return { ok: false, changedWhileChecking: true };
   }
   setStatus('native player を起動中…');
   const report = await request('/api/native-play', {
@@ -3042,7 +3282,7 @@ async function runNativeTool(action, label) {
 }
 async function runNativeTestSuite() {
   await saveAllScenes();
-  return runNativeTool('test', 'ビルドと全テスト');
+  return runNativeTool('test', 'Build and run all tests');
 }
 function createNewSceneDraft() {
   const baseName = 'chapter-new';
@@ -3266,7 +3506,84 @@ document.addEventListener('keydown', (event) => {
   }
   if (event.key === 'Escape') hideVariableTooltip();
 }, true);
-editor.addEventListener('scroll', () => { lineNumbers.scrollTop = editor.scrollTop; if (highlight) { highlight.scrollTop = editor.scrollTop; highlight.scrollLeft = editor.scrollLeft; } updateMiniMap(); updateSuggestions(); });
+const horizontalScrollbar = document.querySelector('#editor-horizontal-scrollbar');
+const horizontalThumb = horizontalScrollbar?.querySelector('.editor-horizontal-thumb');
+const updateHorizontalScrollbar = () => {
+  if (!horizontalScrollbar || !horizontalThumb) return;
+  const editorWrap = editor.closest('.editor-wrap');
+  const trackWidth = Math.max(0, (editorWrap?.clientWidth || 0) - 57);
+  horizontalScrollbar.style.width = `${trackWidth}px`;
+  const maxScroll = Math.max(0, editor.scrollWidth - editor.clientWidth);
+  const minimapWidth = document.querySelector('.app-shell.minimap-hidden') ? 0 : (document.querySelector('#minimap')?.getBoundingClientRect().width || 0);
+  const overlapsMinimap = editor.scrollWidth > editor.clientWidth - minimapWidth + 1;
+  const overflow = overlapsMinimap && !document.querySelector('.app-shell')?.classList.contains('word-wrap-on') && trackWidth > 0;
+  horizontalScrollbar.hidden = !overflow;
+  if (!overflow) { editor.closest('.editor-wrap')?.classList.remove('horizontal-scrollbar-visible'); return; }
+  const thumbWidth = Math.max(28, trackWidth * editor.clientWidth / editor.scrollWidth);
+  const travel = Math.max(0, trackWidth - thumbWidth);
+  horizontalThumb.style.width = `${Math.min(trackWidth, thumbWidth)}px`;
+  horizontalThumb.style.transform = `translateX(${maxScroll ? travel * editor.scrollLeft / maxScroll : 0}px)`;
+  horizontalScrollbar.setAttribute('aria-valuenow', String(Math.round(100 * editor.scrollLeft / maxScroll)));
+};
+let horizontalDrag = null;
+const setHorizontalScrollFromPointer = (event) => {
+  if (!horizontalDrag) return;
+  const maxScroll = Math.max(0, editor.scrollWidth - editor.clientWidth);
+  const travel = Math.max(1, horizontalScrollbar.clientWidth - horizontalThumb.getBoundingClientRect().width);
+  const deltaX = event.clientX - horizontalDrag.pointerX;
+  editor.scrollLeft = Math.max(0, Math.min(maxScroll, horizontalDrag.scrollLeft + deltaX * maxScroll / travel));
+};
+horizontalScrollbar?.addEventListener('pointerdown', (event) => {
+  event.preventDefault();
+  const thumbRect = horizontalThumb.getBoundingClientRect();
+  const onThumb = event.clientX >= thumbRect.left && event.clientX <= thumbRect.right;
+  horizontalDrag = { pointerX: event.clientX, scrollLeft: editor.scrollLeft };
+  if (!onThumb) {
+    const rect = horizontalScrollbar.getBoundingClientRect();
+    const travel = Math.max(1, rect.width - thumbRect.width);
+    const targetLeft = Math.max(0, Math.min(travel, event.clientX - rect.left - thumbRect.width / 2));
+    horizontalDrag.scrollLeft = targetLeft * Math.max(0, editor.scrollWidth - editor.clientWidth) / travel;
+  }
+  horizontalScrollbar.setPointerCapture(event.pointerId);
+  setHorizontalScrollFromPointer(event);
+});
+horizontalScrollbar?.addEventListener('pointermove', (event) => { if (horizontalScrollbar.hasPointerCapture(event.pointerId)) setHorizontalScrollFromPointer(event); });
+const endHorizontalDrag = (event) => { if (horizontalScrollbar?.hasPointerCapture(event.pointerId)) horizontalScrollbar.releasePointerCapture(event.pointerId); horizontalDrag = null; };
+horizontalScrollbar?.addEventListener('pointerup', endHorizontalDrag);
+horizontalScrollbar?.addEventListener('pointercancel', endHorizontalDrag);
+horizontalScrollbar?.addEventListener('keydown', (event) => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) return;
+  event.preventDefault();
+  const step = Math.max(40, editor.clientWidth * (event.key.startsWith('Page') ? 0.8 : 0.08));
+  if (event.key === 'Home') editor.scrollLeft = 0;
+  else if (event.key === 'End') editor.scrollLeft = editor.scrollWidth;
+  else editor.scrollLeft += event.key === 'ArrowLeft' || event.key === 'PageUp' ? -step : step;
+});
+const editorWrap = editor.closest('.editor-wrap');
+editorWrap?.addEventListener('pointermove', (event) => { updateHorizontalScrollbar(); if (!horizontalScrollbar?.hidden && event.clientY >= editorWrap.getBoundingClientRect().bottom - 20) editorWrap.classList.add('horizontal-scrollbar-visible'); });
+editorWrap?.addEventListener('pointerleave', () => editorWrap.classList.remove('horizontal-scrollbar-visible'));
+window.addEventListener('resize', updateHorizontalScrollbar);
+const revealCaretBeforeMinimap = () => {
+  const shell = document.querySelector('.app-shell');
+  if (shell?.classList.contains('minimap-hidden') || shell?.classList.contains('word-wrap-on')) return;
+  const caret = editor.selectionStart;
+  const lineStart = editor.value.lastIndexOf('\n', Math.max(0, caret - 1)) + 1;
+  const prefix = editor.value.slice(lineStart, caret);
+  const style = getComputedStyle(editor);
+  const canvas = revealCaretBeforeMinimap.canvas || (revealCaretBeforeMinimap.canvas = document.createElement('canvas'));
+  const context = canvas.getContext('2d');
+  context.font = style.font;
+  const textWidth = context.measureText(prefix.replace(/\t/g, '  ')).width;
+  const minimapWidth = document.querySelector('#minimap')?.getBoundingClientRect().width || 0;
+  const visibleRight = editor.clientWidth - minimapWidth - 12;
+  const caretRight = 25 + textWidth - editor.scrollLeft;
+  if (caretRight > visibleRight) editor.scrollLeft += caretRight - visibleRight + 12;
+};
+editor.addEventListener('input', () => { revealCaretBeforeMinimap(); updateHorizontalScrollbar(); });
+editor.addEventListener('keyup', revealCaretBeforeMinimap);
+editor.addEventListener('click', revealCaretBeforeMinimap);
+document.querySelector('#toggle-word-wrap')?.addEventListener('click', () => requestAnimationFrame(updateHorizontalScrollbar));
+editor.addEventListener('scroll', () => { lineNumbers.scrollTop = editor.scrollTop; if (highlight) { highlight.scrollTop = editor.scrollTop; highlight.scrollLeft = editor.scrollLeft; } updateMiniMap(); updateSuggestions(); updateHorizontalScrollbar(); });
 editor.addEventListener('scroll', () => { editorFindHighlights.scrollTop = editor.scrollTop; editorFindHighlights.scrollLeft = editor.scrollLeft; });
 const beginMiddleScroll = (event) => {
   if (event.button !== 1) return;
@@ -3596,6 +3913,16 @@ async function pollProjectChanges() {
     const sceneChanged = changes.reset || [...added, ...changed, ...removed].some((name) => name.startsWith(scenePrefix) && /\.tds$/i.test(name));
     const currentPath = sceneName.value ? `${scenePrefix}${sceneName.value}` : '';
     const currentChanged = changes.reset || (currentPath && [...added, ...changed, ...removed].includes(currentPath));
+    let removedOpenTab = false;
+    for (const removedPath of removed) {
+      const removedScene = scenarioRelativePath(removedPath);
+      if (!removedScene || !/\.tds$/i.test(removedScene) || removedScene === sceneName.value) continue;
+      const openIndex = openTabs.indexOf(removedScene);
+      if (openIndex >= 0) { openTabs.splice(openIndex, 1); removedOpenTab = true; }
+      const splitIndex = splitTabs.indexOf(removedScene);
+      if (splitIndex >= 0 && removedScene !== activeSplitScene) { splitTabs.splice(splitIndex, 1); removedOpenTab = true; }
+    }
+    if (removedOpenTab) { renderEditorTabs(activeAssetDocument || sceneName.value); renderSplitTabs(); }
     if (structural) await refreshScenes(sceneName.value);
     if (!workspaceReadyForPolling || root !== currentProjectRoot) return;
     if (sceneChanged) {
@@ -3640,9 +3967,9 @@ async function pollProjectChanges() {
   }
 }
 
-setInterval(() => pollProjectChanges().catch((error) => console.warn('Project change check failed:', error)), 4000);
+setInterval(() => pollProjectChanges().catch((error) => console.warn('作品の変更確認に失敗しました:', error)), 4000);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) pollProjectChanges().catch((error) => console.warn('Project change check failed:', error));
+  if (!document.hidden) pollProjectChanges().catch((error) => console.warn('作品の変更確認に失敗しました:', error));
 });
 
 async function postProjectOpen(folder) {
@@ -3658,7 +3985,7 @@ async function postProjectOpen(folder) {
 async function confirmProjectSwitch() {
   const splitApi = !splitGroup?.hidden ? splitFrame?.contentWindow?.novelEditorApi : null;
   if (!isDirty && !splitApi?.isDirty?.()) return true;
-  return uiAsk('未保存の変更があります。作品フォルダーを切り替えますか？', '切り替える');
+  return uiAsk('未保存の変更があります。Project Folderを切り替えますか？', '切り替える');
 }
 
 async function applyOpenedProject(info) {
@@ -3679,24 +4006,24 @@ async function applyOpenedProject(info) {
   diagnosticText = '';
   await loadWorkspace(false);
   const activeProject = await request('/api/project');
-  if (activeProject.projectRoot !== currentProjectRoot) throw new Error('選択した作品フォルダーへの切り替えを確認できませんでした。もう一度お試しください。');
+  if (activeProject.projectRoot !== currentProjectRoot) throw new Error('選択したProject Folderへの切り替えを確認できませんでした。もう一度お試しください。');
   window.dispatchEvent(new CustomEvent('novel-editor:workspace-ready', { detail: { projectRoot: currentProjectRoot, scenes: [...sceneNames] } }));
   setStatus(`${info.title || '作品'} を開きました`, 'ok');
   workspaceReadyForPolling = true;
-  pollProjectChanges().catch((error) => console.warn('Project change check failed:', error));
+  pollProjectChanges().catch((error) => console.warn('作品の変更確認に失敗しました:', error));
 }
 
 async function openProjectAt(folder) {
   if (!(await confirmProjectSwitch())) return;
   const result = await postProjectOpen(folder);
-  if (!result.ok) throw new Error(result.data.error || '作品フォルダーを開けませんでした。');
+  if (!result.ok) throw new Error(result.data.error || 'Project Folderを開けませんでした。');
   await applyOpenedProject(result.data);
 }
 
 async function chooseProjectFolder() {
   const folder = window.novelDesktop?.selectFolder
     ? await window.novelDesktop.selectFolder()
-    : await uiPrompt('開くフォルダーのパス', currentProjectRoot || '');
+    : await uiPrompt('Folder path to open', currentProjectRoot || '');
   if (!folder?.trim()) return;
   await openProjectAt(folder.trim());
 }
@@ -3707,7 +4034,7 @@ Promise.all([request('/api/project'), loadWorkspace(true)])
   .then(([project]) => {
     currentProjectRoot = project.projectRoot || '';
     workspaceReadyForPolling = true;
-    pollProjectChanges().catch((error) => console.warn('Project change check failed:', error));
+    pollProjectChanges().catch((error) => console.warn('作品の変更確認に失敗しました:', error));
     setStatus('編集を開始できます', 'ok');
     const startupProjectRoot = currentProjectRoot;
     const restoreStartupScene = () => {
@@ -3729,15 +4056,19 @@ const showHelpOnLoad = new URLSearchParams(location.search).get('help') === 'lan
 if (showHelpOnLoad) setTimeout(showLanguageGuide, 100);
 function revealEditorRange(start, end, lineNumber = null) {
   editor.focus(); editor.setSelectionRange(start, end);
-  const line = lineNumber || editor.value.slice(0, start).split(/\r?\n/).length;
+  const line = lineNumber || splitEditorLines(editor.value.slice(0, start)).length;
   editor.scrollTop = Math.max(0, (line - 3) * editorLineHeight());
   highlight && (highlight.scrollTop = editor.scrollTop);
   lineNumbers && (lineNumbers.scrollTop = editor.scrollTop);
 }
 function updateMiniMap() {
   if (!minimap || !minimapContent || !minimapViewport) return;
-  const lines = editor.value.split('\n');
-  minimapContent.innerHTML = lines.map((line) => highlightSource(line) || ' ').join('\n');
+  const lines = splitEditorLines(editor.value);
+  const prismLanguage = editorPrismLanguage();
+  const prismOutput = prismLanguage ? highlightWithPrism(editor.value, prismLanguage) : null;
+  minimapContent.classList.remove('language-markup', 'language-css');
+  if (prismOutput !== null) minimapContent.classList.add(`language-${prismLanguage}`);
+  minimapContent.innerHTML = prismOutput ?? lines.map((line) => highlightSource(line) || ' ').join('\n');
   // Keep short files packed at the top. When there are too many lines,
   // scale the minimap text down until every line fits in the available height.
   const baseLineHeight = 4;
@@ -3770,9 +4101,31 @@ if (typeof ResizeObserver !== 'undefined') {
   if (minimap) minimapResizeObserver.observe(minimap);
 }
 window.addEventListener('resize', scheduleMiniMapUpdate);
+function editorPrismLanguage() {
+  const file = String(activeSettingDocument || sceneName?.value || '').toLowerCase();
+  if (/\.html?$/.test(file)) return 'markup';
+  if (/\.css$/.test(file)) return 'css';
+  return '';
+}
+function highlightWithPrism(source, language) {
+  const grammar = window.Prism?.languages?.[language];
+  return grammar ? window.Prism.highlight(String(source ?? ''), grammar, language) : null;
+}
 function updateHighlight() {
   if (!highlight) return;
-  const lines = editor.value.split('\n');
+  const prismLanguage = editorPrismLanguage();
+  if (prismLanguage) {
+    const rendered = highlightWithPrism(editor.value, prismLanguage);
+    if (rendered !== null) {
+      highlight.classList.remove('language-markup', 'language-css');
+      highlight.classList.add(`language-${prismLanguage}`);
+      highlight.innerHTML = rendered;
+      updateMiniMap();
+      return;
+    }
+  }
+  highlight.classList.remove('language-markup', 'language-css');
+  const lines = splitEditorLines(editor.value);
   const visible = diagnostics.filter(diagnosticForCurrentFile);
   const byLine = new Map();
   const unreachableLines = new Set();
@@ -3805,42 +4158,42 @@ const dirtyStyle=document.createElement('style');dirtyStyle.textContent='.dirty-
 const thinDiagnosticStyle=document.createElement('style');thinDiagnosticStyle.textContent='.hl-error,.hl-warning,.hl-info{text-decoration-line:underline;text-decoration-style:wavy;text-decoration-thickness:1px!important;background:transparent!important}.hl-error{text-decoration-color:#e85b68!important}.hl-warning{text-decoration-color:#e3b35c!important}.hl-info{text-decoration-color:#6aa9d8!important}.status-chip.warning .status-dot{background:#e3b35c}';document.head.append(thinDiagnosticStyle);
 highlight?.addEventListener('mouseover', (event) => { const line = event.target.closest('.hl-error,.hl-warning,.hl-info'); if (line) { const lineNumber = [...highlight.children].indexOf(line) + 1; line.title = diagnostics.filter(diagnosticForCurrentFile).filter((item) => Number(item.line) === lineNumber).map((item) => `${item.severity}: ${item.message}`).join('\n'); } });
 const syntaxHints = {
-  path: 'ファイルパス（include / goto / asset / pose の指定値）',
+  path: 'file path（include / goto / asset / pose の指定値）',
   include: 'include "module.tds" as alias',
-  let: 'let <名前> = <式>', pose: 'pose <ポーズ名> = "<画像パス>"',
+  let: 'let <name> = <expression>', pose: 'pose <Pose Name> = "<Image Path>"',
   none: '関数の戻り値がないことを示す型です。',
-  asset: 'asset <種類> <名前> = "パス"',
-  character: 'character <名前> {\n  name = "表示名"\n  affection = 0\n  pose normal = "画像パス"\n}',
+  asset: 'asset <type> <name> = "<path>"',
+  character: 'character <Name> {\n  name = "<display name>"\n  affection = 0\n  pose normal = "<image path>"\n}',
   struct: 'struct <名前> {\n  name: str\n  score: int\n}',
-  int: 'int <名前> = <整数>',
-  float: 'float <名前> = <小数> 例: 0.5 / 1e-3',
-  str: 'str <名前> = "文字列"',
-  dict: 'dict[int|float|str] <名前> = { "key": <値> }',
-  const: 'const <型> <名前> = <値>',
-  global: 'global [const] <型> <名前> = <値>',
-  set: 'set <既存の変数> = <値>',
-  unset: 'unset <既存の変数> [キー]',
-  and: '<条件> and <条件>', or: '<条件> or <条件>', not: 'not <条件>',
-  say: 'say <文字列リテラルで始まるstr式> または say <話者> <str式>',
-  bg: 'bg <背景アセット>', bgm: 'bgm <BGMアセット>', se: 'play se <SEアセット>',
-  show: 'show <名前>.<ポーズ> <位置> [x+(式)] [y-(式)] [fade <ミリ秒>] [--only]', hide: 'hide <名前> [fade <ミリ秒>]',
-  move: 'move character <名前> by x+<px> y-<px> [over <ミリ秒>] / move bg by x+<px> y-<px> [over <ミリ秒>]',
+  int: 'int <name> = <integer>',
+  float: 'float <name> = <float>, e.g. 0.5 / 1e-3',
+  str: 'str <name> = "<string>"',
+  dict: 'dict[int|float|str] <name> = { "key": <value> }',
+  const: 'const <Type> <Name> = <value>',
+  global: 'global [const] <Type> <Name> = <value>',
+  set: 'set <existing variable> = <value>',
+  unset: 'unset <existing variable> [key]',
+  and: '<condition> and <condition>', or: '<condition> or <condition>', not: 'not <condition>',
+  say: 'say <str expression starting with a string literal> or say <speaker> <str expression>',
+  bg: 'bg <background asset>', bgm: 'bgm <BGM asset>', se: 'play se <SE asset>',
+  show: 'show <Character>.<Pose> <Position> [x+(<expression>)] [y-(<expression>)] [fade <ms>] [--only]', hide: 'hide <Character> [fade <ms>]',
+  move: 'move character <Name> by x+<px> y-<px> [over <ms>] / move bg by x+<px> y-<px> [over <ms>]',
   clear: 'clear bg | image | bgm',
-  image: 'asset image <名前> = "<画像パス>" / show image <名前> <位置> [--only]',
-  at: 'show <character.pose> at <position>',
-  async: 'play voice <名前> async', blocking: 'play voice <名前> blocking',
-  voice: 'play voice <名前> [blocking|async]', video: 'play video <名前|"ファイル名.mp4"> [blocking|async] [--only]',
-  true: '真を表す真偽値リテラルです。', false: '偽を表す真偽値リテラルです。',
-  if: 'if <条件> { ... } else { ... }', elif: 'elif <条件> { ... }', else: 'else { ... }',
-  for: 'for <変数> from <開始> to <終了> [step <幅>] { ... }',
+  image: 'asset image <Name> = "<Image Path>" / show image <Name> <Position> [--only]',
+  at: 'show <Character.Pose> at <Position>',
+  async: 'play voice <Name> async', blocking: 'play voice <Name> blocking',
+  voice: 'play voice <Name> [blocking|async]', video: 'play video <Name|"file.mp4"> [blocking|async] [--only]',
+  true: 'Boolean literal representing true.', false: 'Boolean literal representing false.',
+  if: 'if <condition> { ... } else { ... }', elif: 'elif <condition> { ... }', else: 'else { ... }',
+  for: 'for <variable> from <start> to <end> [step <width>] { ... }',
   while: 'while <条件> { ... }', choice: 'choice "質問" { "選択肢" { ... } }',
-  fn: 'fn <名前>(<引数>: <型>) -> <戻り値> { ... }', return: 'return [値]', goto: 'goto <シーン> または goto "<外部ファイルパス>"',
-  wait: 'wait <ミリ秒>', effect: 'effect fade <色> [ミリ秒]', play: 'play <種類> <アセット>'
+  fn: 'fn <name>(<argument>: <type>) -> <return type> { ... }', return: 'return [value]', goto: 'goto <scene> or goto "<external file path>"',
+  wait: 'wait <milliseconds>', effect: 'effect fade <color> [milliseconds]', play: 'play <kind> <asset>'
 };
 Object.assign(syntaxHints, {
   scene: 'scene <名前> { … }',
-  string: '文字列リテラル。式中では {変数名} による文字列補間ができます。',
-  number: '数値リテラル。整数はint、小数点または指数表記を含む値はfloatです。',
+  string: 'String literal. Use {variable} for string interpolation in expressions.',
+  number: 'Numeric literal. Integers use int; values with a decimal point or exponent use float.',
   '->': '関数の戻り値型を区切ります。例: fn score() -> int { … }',
   '==': '等しいかを比較します。条件式で使用します。', '!=': '等しくないかを比較します。',
   '<': '左辺が右辺より小さいかを比較します。', '>': '左辺が右辺より大きいかを比較します。',
@@ -3848,30 +4201,30 @@ Object.assign(syntaxHints, {
   '+': '加算です。str同士では文字列を連結します。', '-': '減算または数値の符号反転です。',
   '*': '数値の乗算です。', '/': '数値の除算です。', '%': '整数の剰余です。',
   '(': '関数呼び出しの引数、または式の括弧を開始します。', ')': '関数呼び出しの引数、または式の括弧を閉じます。',
-  '{': 'ブロックまたは辞書の開始です。対応する } までが範囲です。', '}': 'ブロックまたは辞書を閉じます。',
-  ':': '関数引数・構造体フィールドの型指定、または辞書キーと値の区切りです。',
+  '{': 'ブロックまたは dict の開始です。対応する } までが範囲です。', '}': 'ブロックまたは dict を閉じます。',
+  ':': '関数引数・struct field の型指定、または dict key と value の区切りです。',
   '=': '宣言時の初期値、またはasset/pose定義の値です。既存変数への代入はsetを使います。',
   comment: '# から行末まではコメントで、実行されません。',
 });
 const syntaxRecipes = {
-  path: { description: 'この位置では文字列ではなく、読み込み・遷移・素材参照に使うファイルパスを指定します。パス専用の値型を作らず、構文上の役割として扱います。' },
-  include: { description: '別ファイルをモジュールとして読み込み、関数名を alias.function() の形で参照します。読み込み先はシナリオフォルダー内の相対パスです。', snippet: 'include "std/math.tds" as math\nwait math.sin(angle)\n' },
-  unset: { description: '辞書のキーを削除します。変数そのものを宣言解除する命令ではありません。', snippet: 'unset inventory["key"]\n' },
+  path: { description: 'この位置では文字列ではなく、読み込み・遷移・asset referenceに使うfile pathを指定します。パス専用の値型を作らず、構文上の役割として扱います。' },
+  include: { description: '別ファイルをmoduleとして読み込み、functionを alias.function() の形で参照します。include pathはScenario Folderからのrelative pathです。', snippet: 'include "std/math.tds" as math\nwait math.sin(angle)\n' },
+  unset: { description: 'dict key を削除します。変数そのものを宣言解除する命令ではありません。', snippet: 'unset inventory["key"]\n' },
   move: { description: '表示中の立ち絵または背景を現在位置からpx単位で移動します。overを指定すると時間をかけて移動します。', snippet: 'move character hero by x+5 y-8 over 300\n' },
-  clear: { description: '指定した演出レイヤーを消去します。対象がない状態でも安全に使用できます。', snippet: 'clear bgm\n' },
-  scene: { description: 'gotoなどで遷移するシーンの入口を定義します。シーン名は同一ファイル内で一意にします。', snippet: 'scene chapter_start {\n  say "始めます"\n}\n' },
+  clear: { description: '指定した演出layerを消去します。対象がない状態でも安全に使用できます。', snippet: 'clear bgm\n' },
+  scene: { description: 'gotoなどで遷移するSceneの入口を定義します。Scene名は同一ファイル内で一意にします。', snippet: 'scene chapter_start {\n  say "始めます"\n}\n' },
   string: { description: '文字列内の {name} は変数値に置き換わります。式の結果が文字列でない場合は str(...) で変換します。', snippet: 'say narrator "好感度: {str(affection)}"\n' },
   let: { description: '型を式から推論するローカル変数宣言です。推論型は後から別の型に変えられません。', snippet: 'let count = 0\n' },
   and: { description: '左右の条件が両方とも真のとき真です。左が偽なら右側は短絡評価されません。', snippet: 'if ready and score > 0 {\n  wait 1\n}\n' },
   or: { description: '左右の条件のどちらかが真なら真です。左が真なら右側は短絡評価されません。', snippet: 'if ready or retry {\n  wait 1\n}\n' },
   not: { description: '条件の真偽を反転します。', snippet: 'if not finished {\n  wait 1\n}\n' },
-  asset: { description: '素材ファイルを名前で呼べるようにします。パスを書くのはこの宣言時だけです。', snippet: 'asset bg background = "asset/bg/¦.png"\n' },
-  character: { description: '立ち絵とポーズをまとめて定義します。', snippet: 'character hero {\n  name = "主人公"\n  pose normal = "asset/char/hero/¦.png"\n}\n' },
+  asset: { description: 'asset fileを名前で呼べるようにします。pathを書くのはこの宣言時だけです。', snippet: 'asset bg background = "asset/bg/¦.png"\n' },
+  character: { description: '立ち絵とposeをまとめて定義します。', snippet: 'character hero {\n  name = "主人公"\n  pose normal = "asset/char/hero/¦.png"\n}\n' },
   int: { description: '整数のローカル変数です。ファイル間で共有するなら global を付けます。', snippet: 'int count = ¦0\n' },
   float: { description: '小数の変数です。整数との混合演算には float(整数) を使います。', snippet: 'float ratio = ¦0.5\n' },
   str: { description: '文字列のローカル変数です。', snippet: 'str name = "¦"\n' },
   global: { description: '複数ファイルから参照できる共有変数です。トップレベルで宣言します。', snippet: 'global int score = ¦0\n' },
-  say: { description: '本文が文字列リテラルから始まる式なら話者を省略でき、narrator として扱います。変数や関数呼び出しから始める場合は話者を指定します。', snippet: 'say "¦本文"\n' },
+  say: { description: '本文がString literalから始まる式なら話者を省略でき、narrator として扱います。Variableやfunction callから始める場合は話者を指定します。', snippet: 'say "¦本文"\n' },
   bg: { description: 'asset bg で宣言済みの背景名を指定します。ここではパスを直接書きません。', snippet: 'bg ¦background\n' },
   bgm: { description: 'asset bgm で宣言済みの BGM 名を指定します。', snippet: 'bgm ¦music\n' },
   volume: { description: 'bgm / se / voice の以後の基準音量を0.0〜1.0で設定します。play行のvolumeはその再生だけの指定です。', snippet: 'volume bgm ¦0.5\n' },
@@ -3879,10 +4232,10 @@ const syntaxRecipes = {
   show: { description: 'character の pose を表示します。位置は far_left / left / center / right / far_right を使えます。', snippet: 'show hero.normal center¦\n' },
   hide: { description: '表示中の立ち絵を消します。', snippet: 'hide ¦hero\n' },
   if: { description: '条件が真のときだけブロックを実行します。', snippet: 'if ¦condition {\n  \n}\n' },
-  for: { description: '開始から終了まで繰り返します。step は省略できます。', snippet: 'for i from 0 to ¦10 {\n  \n}\n' },
-  while: { description: '条件が真の間、ブロックを繰り返します。', snippet: 'while ¦condition {\n  \n}\n' },
+  for: { description: '開始から終了まで繰り返すfor loopです。step は省略できます。', snippet: 'for i from 0 to ¦10 {\n  \n}\n' },
+  while: { description: '条件が真の間、ブロックを繰り返すwhile loopです。', snippet: 'while ¦condition {\n  \n}\n' },
   choice: { description: '選択肢ごとに実行する処理を書きます。', snippet: 'choice "質問" {\n  "¦選択肢" {\n    \n  }\n}\n' },
-  goto: { description: '同一ファイルのシーン名はそのまま、外部ファイルの相対パスは必ず引用符で囲んで指定します。', snippet: 'goto ¦next_scene\n' },
+  goto: { description: '同一ファイルのScene名はそのまま、外部ファイルの相対pathは必ず引用符で囲んで指定します。', snippet: 'goto ¦next_scene\n' },
   fn: { description: '戻り値の型を -> で必ず指定して関数を定義します。値を返さない関数は none を使います。', snippet: 'fn name() -> none {\n  ¦\n}\n' },
 };
 editor.addEventListener('mousemove', (event) => {
@@ -3928,6 +4281,7 @@ function showWorkbenchMessage(title, message) {
   close.focus();
 }
 async function showProjectSettings() {
+  const opener = document.activeElement;
   document.querySelector('.project-settings')?.remove();
   const [project, variableData, assetData] = await Promise.all([
     request('/api/project'), request('/api/variables'), request('/api/assets'),
@@ -3953,10 +4307,10 @@ async function showProjectSettings() {
     label.append(input); basic.append(label); fields[name] = input;
   };
   field('作品タイトル', 'title', project.settings?.title || project.title);
-  field('開始シーン', 'start_file', project.settings?.start_file || 'main.tds');
-  field('シナリオフォルダー', 'scenario_dir', project.settings?.scenario_dir || '');
-  field('素材フォルダー', 'asset_dir', project.settings?.asset_dir || '');
-  field('再生機UIテーマ', 'native_ui_theme', project.settings?.native_ui_theme || '');
+  field('Start Scene', 'start_file', project.settings?.start_file || 'main.tds');
+  field('Scenario Folder', 'scenario_dir', project.settings?.scenario_dir || '');
+  field('Asset Folder', 'asset_dir', project.settings?.asset_dir || '');
+  field('Player UI Theme', 'native_ui_theme', project.settings?.native_ui_theme || '');
   const basicNote = document.createElement('p'); basicNote.className = 'project-settings-note'; basicNote.textContent = 'フォルダー名を変更しても既存ファイルは移動しません。先にファイルを移動してから変更してください。';
   basic.append(basicNote);
   basic.prepend(basicTitle);
@@ -3979,7 +4333,7 @@ async function showProjectSettings() {
   variables.append(variableTitle, variableList, variableNote);
   const assets = document.createElement('section');
   assets.className = 'project-settings-section';
-  const assetTitle = document.createElement('h2'); assetTitle.textContent = '素材';
+  const assetTitle = document.createElement('h2'); assetTitle.textContent = 'Assets';
   const assetList = document.createElement('div'); assetList.className = 'project-settings-list project-assets-list';
   const listedAssets = Array.isArray(assetData.assets) ? assetData.assets : [];
   const assetDirectory = String(project.settings?.asset_dir || 'asset').replaceAll('\\', '/').replace(/\/$/, '');
@@ -3999,11 +4353,11 @@ async function showProjectSettings() {
       assetList.append(row);
     });
   } else {
-    const empty = document.createElement('div'); empty.className = 'project-settings-empty'; empty.textContent = '登録済みの素材はありません。';
+    const empty = document.createElement('div'); empty.className = 'project-settings-empty'; empty.textContent = '登録済みのassetsはありません。';
     assetList.append(empty);
   }
-  const assetNote = document.createElement('p'); assetNote.className = 'project-settings-note'; assetNote.textContent = '素材は asset フォルダーに置き、.tds の asset / character / pose 宣言で登録します。クリックするとエディター内で表示します。';
-  const checkImages = document.createElement('button'); checkImages.type = 'button'; checkImages.className = 'project-settings-save'; checkImages.textContent = '画像読込を検証'; checkImages.addEventListener('click', () => saveAllScenes().then(() => runNativeTool('images', '画像読込を検証')).catch(showError));
+  const assetNote = document.createElement('p'); assetNote.className = 'project-settings-note'; assetNote.textContent = 'AssetsはAsset Folderに置き、.tdsファイルでasset / character / poseを宣言して登録します。Editorで表示するにはクリックしてください。';
+  const checkImages = document.createElement('button'); checkImages.type = 'button'; checkImages.className = 'project-settings-save'; checkImages.textContent = 'Validate image loading'; checkImages.addEventListener('click', () => saveAllScenes().then(() => runNativeTool('images', 'Validate image loading')).catch(showError));
   assets.append(assetTitle, assetList, assetNote, checkImages);
   const footer = document.createElement('footer');
   const save = document.createElement('button'); save.type = 'button'; save.className = 'project-settings-save'; save.textContent = '作品設定を保存';
@@ -4020,33 +4374,33 @@ async function showProjectSettings() {
   footer.append(save);
   dialog.append(heading, close, path, basic, variables, assets, footer);
   document.body.append(dialog);
-  close.focus();
+  activateEditorModal(dialog, close, opener);
 }
 function showLanguageGuide() {
   document.querySelector('.workbench-message')?.remove();
   const dialog = document.createElement('section');
   dialog.className = 'editor-dialog workbench-message language-guide';
   dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true');
-  const heading = document.createElement('strong'); heading.textContent = '.tds 構文ヘルプ';
+  const heading = document.createElement('strong'); heading.textContent = '.tds Syntax Help';
   const close = document.createElement('button'); close.type = 'button'; close.className = 'guide-close'; close.setAttribute('aria-label', 'ヘルプを閉じる'); close.textContent = '×'; close.onclick = () => dialog.remove();
-  const intro = document.createElement('p'); intro.className = 'guide-intro'; intro.textContent = '構文を検索し、例を確認できます。「エディターへ挿入」はカーソル位置にコード例を挿入します。';
-  const reference = document.createElement('a'); reference.href = '/docs/tds-language-and-editor-guide.md'; reference.target = '_blank'; reference.rel = 'noopener'; reference.className = 'guide-reference'; reference.textContent = '詳しい構文リファレンスを開く';
+  const intro = document.createElement('p'); intro.className = 'guide-intro'; intro.textContent = '構文を検索し、例を確認できます。「Insert into Editor」はカーソル位置にコード例を挿入します。';
+  const reference = document.createElement('a'); reference.href = '/docs/tds-language-and-editor-guide.md'; reference.target = '_blank'; reference.rel = 'noopener'; reference.className = 'guide-reference'; reference.textContent = 'Open Full Syntax Reference';
   const search = document.createElement('input'); search.className = 'guide-search'; search.type = 'search'; search.placeholder = '構文・型・命令を検索'; search.setAttribute('aria-label', '構文ヘルプを検索');
   const sections = [
-    ['最小の作品・開始点', 'asset bg room = "asset/bg/room.jpg"\n\nscene main {\n  bg room\n  say narrator "こんにちは"\n}\n\nscene next {\n  say "次のシーン"\n}\n\n# シーン遷移\ngoto next', '開始ファイルの最初のsceneから実行します。sceneは自動連続再生されず、次へ進むにはgotoが必要です。命令は上から順番に実行されます。'],
-    ['ファイル分割・include', 'include "std/math.tds" as math\ninclude "common.tds" as common\n\nscene main {\n  wait math.sin(1.0)\n  common.start_route()\n}', 'include先は宣言・関数を再利用するモジュールです。必ず別名を付け、関数は alias.name(...) で呼びます。別シナリオへの移動は goto "chapter/next.tds"。'],
-    ['変数・型・代入', 'int score = 0\nfloat opacity = 0.85\nbool unlocked = false\nstr route = "common"\nconst int max_score = 10\nglobal list[str] endings = []\n\nset score = score + 1', '型と初期値を必ず宣言します。再代入はset。constは変更不可。intとfloatは暗黙変換されません。トップレベル変数はmain.tds以外で共有する場合globalを付けます。'],
-    ['辞書・リスト・struct', 'dict[int] stats = { "hp": 100 }\nlist[str] names = ["綾瀬", "美緒"]\n\nstruct Profile {\n  name: str\n  level: int\n}\nProfile player = { "name": "ユイ", "level": 1 }\nset stats["hp"] = 90\nset player.level = 2', '辞書のキーは文字列、値型は宣言時に固定です。リストは同型の値を並べます。struct初期化では定義済みフィールドをすべて指定します。添字は0始まり。'],
+    ['Minimal Project - Entry Point', 'asset bg room = "asset/bg/room.jpg"\n\nscene main {\n  bg room\n  say narrator "こんにちは"\n}\n\nscene next {\n  say "Next Scene"\n}\n\n# Scene transition\ngoto next', '開始ファイルの最初のsceneから実行します。sceneは自動連続再生されず、次へ進むにはgotoが必要です。命令は上から順番に実行されます。'],
+    ['File Split - include', 'include "std/math.tds" as math\ninclude "common.tds" as common\n\nscene main {\n  wait math.sin(1.0)\n  common.start_route()\n}', 'Include files are modules for reusing declarations and functions. Always add an alias, then call functions as alias.name(...). Use goto "chapter/next.tds" to move to another scenario.'],
+    ['Variables & Types', 'int score = 0\nfloat opacity = 0.85\nbool unlocked = false\nstr route = "common"\nconst int max_score = 10\nglobal list[str] endings = []\n\nset score = score + 1', 'Declare variables with int, float, bool, str, and typed collections. const declarations are immutable; global declarations persist across scenes.'],
+    ['dict · list · struct', 'dict[int] stats = { "hp": 100 }\nlist[str] names = ["綾瀬", "美緒"]\n\nstruct Profile {\n  name: str\n  level: int\n}\nProfile player = { "name": "ユイ", "level": 1 }\nset stats["hp"] = 90\nset player.level = 2', 'dictのkeyは文字列で、valueのtypeは宣言時に固定です。listには同じtypeの値を並べます。struct初期化では定義済みfieldをすべて指定します。indexは0始まりです。'],
     ['式・関数・戻り値', 'fn clamp_score(value: int) -> int {\n  if value > 100 { return 100 }\n  return value\n}\n\nint score = clamp_score(120)\nstr label = "score={score}"', '関数はトップレベルで宣言し、引数に型、戻り値に->型を指定します。戻り値なしは-> none。式では関数呼び出し、比較、and/or/not、算術演算を使えます。'],
-    ['台詞と変数・文字列', 'int score = 0\nstr route = "common"\n\nset score = score + 1\nsay narrator "点数: {score}"\nsay "点数: " + str(score)\nsay ayase "こんにちは"', '本文が文字列リテラルから始まる式なら話者を省略でき、narratorとして扱います。変数や関数式を本文にする場合は話者を指定します。文字列内の{式}は実行時に展開されます。'],
-    ['背景・キャラクター・画像', 'asset bg classroom = "asset/bg/classroom.png"\ncharacter ayase {\n  name = "綾瀬"\n  pose normal = "asset/char/ayase.png"\n}\nasset image logo = "asset/image/logo.png"\n\nscene main {\n  bg classroom\n  show ayase.normal center x+20 y+10 fade 300\n  show image logo right\n  hide ayase fade 200\n}', '素材はasset宣言で登録します。配置はfar_left / left / center / right / far_right。showのx/yはpx、fadeはミリ秒です。相対移動はmove character ... / move bg ... by x+... y-... over ...。'],
+    ['Dialogue, Variables & Strings', 'int score = 0\nstr route = "common"\n\nset score = score + 1\nsay narrator "点数: {score}"\nsay "点数: " + str(score)\nsay narrator "こんにちは"', '本文がString literalで始まる場合はspeakerを省略でき、narratorが使われます。本文がvariableやfunction callから始まる場合はspeakerを指定します。String interpolationではvariable、dotted field、引数なしfunction callを参照できます。'],
+    ['Background, Character & Image', 'asset bg classroom = "asset/bg/classroom.png"\ncharacter ayase {\n  name = "綾瀬"\n  pose normal = "asset/char/ayase.png"\n}\nasset image logo = "asset/image/logo.png"\n\nscene main {\n  bg classroom\n  show ayase.normal center x+20 y+10 fade 300\n  show image logo right\n  hide ayase fade 200\n}', 'Register assets with asset declarations. Positions are far_left / left / center / right / far_right. show x/y values use px; fade durations use milliseconds. Relative movement uses move character ... / move bg ... by x+... y-... over ... .'],
     ['分岐・選択肢', 'if score >= 10 and unlocked {\n  goto good_end\n} elif score > 0 {\n  goto normal_end\n} else {\n  goto bad_end\n}\n\nchoice "どうする？" {\n  "進む" { goto next }\n  "待つ" { wait 500 }\n}', '条件はbool式です。choiceの各ラベルに実行ブロックを書きます。選択後は選んだブロックだけを実行し、後続命令へ戻ります。'],
-    ['ループ', 'for i from 1 to 3 {\n  say narrator "{i}回目"\n}\nfor name in names {\n  say narrator name\n}\nwhile score < 3 {\n  set score = score + 1\n}', '数値forは両端を含み、stepで刻み幅を指定できます。for item in listは要素を順番に処理します。whileは条件がtrueの間繰り返すため、終了条件を更新してください。'],
+    ['Loops', 'for i from 1 to 3 {\n  say narrator "{i}回目"\n}\nfor name in names {\n  say narrator name\n}\nwhile score < 3 {\n  set score = score + 1\n}', '数値for loopは両端を含み、stepで刻み幅を指定できます。for item in listは要素を順番に処理します。while loopはconditionがtrueの間繰り返すため、終了条件を更新してください。'],
     ['音声・動画・音量', 'asset bgm morning = "asset/bgm/morning.ogg"\nasset se door = "asset/se/door.wav"\nasset voice line = "asset/voice/line.ogg"\n\nvolume bgm 0.6\nbgm morning volume 0.8\nplay se door volume 0.5\nplay voice line blocking\nplay video opening\nplay video opening async\nclear bgm', '音量は0.0〜1.0。volumeは以降の基準、再生命令のvolumeはその再生だけに適用します。動画は省略時blockingで終了まで物語と入力を止めます。動画を並行再生する場合はasyncを指定します。voiceは省略時asyncです。'],
     ['時間・画面効果', 'wait 500\neffect fade black 300\nshow ayase.smile left fade 250\nmove character ayase by x+30 y+10 over 400\nmove bg by x-5 y+0 over 800', 'wait / fade / overの時間はミリ秒の整数です。moveの座標はpx。完了待ちの時間付き命令は合計時間をブロックします。'],
-    ['標準ライブラリ・実行状態API', 'include "std/math.tds" as math\ninclude "std/motion/walk.tds" as walk\n\nif runtime.state.characters.exists("ayase") {\n  walk.character("ayase", 120.0, 2, 2.0, 6.0)\n}\nfloat x = math.clamp(1.5, 0.0, 1.0)', 'よく使う機能はstd/math、std/text、std/collections、std/motionにあります。runtime.stateは再生中の盤面状態を読むAPIです。walk.characterは表示中と証明できるキャラクターだけを動かし、証明できない呼び出しはIDEが警告します。'],
+    ['Standard Library & Runtime State API', 'include "std/math.tds" as math\ninclude "std/motion/walk.tds" as walk\n\nif runtime.state.characters.exists("ayase") {\n  walk.character("ayase", 120.0, 2, 2.0, 6.0)\n}\nfloat x = math.clamp(1.5, 0.0, 1.0)', 'Common modules are std/math, std/text, std/collections, and std/motion. runtime.state reads the current playback state. walk.character moves only Characters proven to be visible; the IDE warns when visibility cannot be proven.'],
     ['よくあるエラー', 'say narrator "正しい"\nset score = score + 1\n\n# 間違い: score = score + 1\n# 間違い: float ratio = 1\n# 間違い: goto chapter/next.tds', '再代入にはsetが必要です。floatには1.0のようなfloat値を使います。外部ファイルへのgotoは引用符付き相対パス。asset/include/gotoのファイル存在エラーは診断一覧で場所を確認します。'],
-    ['エディター操作', 'Ctrl+S       保存\nCtrl+Z / Ctrl+Y  Undo / Redo\nCtrl+Shift+F  現在のシーンを整形\nTab / Shift+Tab  インデント調整\nCtrl+Enter    ビルド', '整形・保存・ビルド時に解析されます。赤はエラー、黄は警告です。エラー箇所は診断をクリックすると該当位置へ移動できます。'],
+    ['Editor shortcuts', 'Ctrl+S       Save\nCtrl+Z / Ctrl+Y  Undo / Redo\nCtrl+Shift+F  Format current scene\nTab / Shift+Tab  Indent selection\nCtrl+Enter    Build', 'Format / Save / Build run validation. Click a diagnostic to jump to its source location.'],
   ];
   const list = document.createElement('div'); list.className = 'guide-sections';
   const book = document.createElement('div'); book.className = 'guide-book'; book.hidden = true;
@@ -4056,7 +4410,7 @@ function showLanguageGuide() {
   let bookSections = null;
   let selectedBookSection = -1;
   const appendMarkdownBlocks = (parent, source) => {
-    const lines = source.split(/\r?\n/);
+    const lines = splitEditorLines(source);
     for (let index = 0; index < lines.length;) {
       const line = lines[index];
       if (!line.trim()) { index++; continue; }
@@ -4119,8 +4473,8 @@ function showLanguageGuide() {
     if (bookSections && !book.hidden) {
       intro.hidden = false; list.hidden = false; book.hidden = true; dialog.classList.remove('is-book');
       search.value = '';
-      reference.textContent = 'Back to quick reference';
-      search.placeholder = 'Search syntax, types, commands, and descriptions'; return;
+      reference.textContent = 'Quick Reference';
+      search.placeholder = '構文・型・命令・説明を検索'; return;
     }
     try {
       if (!bookSections) {
@@ -4128,7 +4482,7 @@ function showLanguageGuide() {
         const response = await fetch('/docs/tds-language-and-editor-guide.md');
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const source = await response.text(); const parsed = []; let lines = [], title = '.tds Reference', inFence = false;
-        for (const line of source.split(/\r?\n/)) {
+        for (const line of splitEditorLines(source)) {
           if (/^\s*(?:~~~|```)/.test(line)) inFence = !inFence;
           const headingMatch = !inFence && /^(#{1,3})\s+(.+)$/.exec(line);
           if (headingMatch) {
@@ -4155,7 +4509,7 @@ function showLanguageGuide() {
     const actions = document.createElement('div'); actions.className = 'guide-actions';
     const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'コピー';
     copy.onclick = async () => { try { await navigator.clipboard.writeText(body); copy.textContent = 'コピーしました'; setTimeout(() => { if (copy.isConnected) copy.textContent = 'コピー'; }, 1200); } catch { copy.textContent = 'コピーできません'; } };
-    const insert = document.createElement('button'); insert.type = 'button'; insert.textContent = 'エディターへ挿入';
+    const insert = document.createElement('button'); insert.type = 'button'; insert.textContent = 'Insert into Editor';
     insert.onclick = () => { editor.focus(); editor.setRangeText(body, editor.selectionStart, editor.selectionEnd, 'end'); editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: body })); };
     actions.append(copy, insert);
     block.append(summary, description, pre, actions); list.append(block);
@@ -4165,10 +4519,11 @@ function showLanguageGuide() {
     const query = search.value.trim().toLocaleLowerCase();
     list.querySelectorAll('.guide-section').forEach(block => { block.hidden = Boolean(query) && !block.dataset.search.includes(query); if (query && !block.hidden) block.open = true; });
   });
-  document.body.append(dialog); close.focus();
+  document.body.append(dialog); activateEditorModal(dialog, close);
 }
 
 async function showGameScreenSettings() {
+  const opener = document.activeElement;
   document.querySelector('.game-screen-settings')?.remove();
   const [project, assetData, loaded] = await Promise.all([
     request('/api/project'), request('/api/assets'), request('/api/game-screens'),
@@ -4178,14 +4533,14 @@ async function showGameScreenSettings() {
   const dialog = document.createElement('section');
   dialog.className = 'editor-dialog game-screen-settings';
   dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true');
-  const heading = document.createElement('strong'); heading.textContent = 'タイトル・メニュー画面';
+  const heading = document.createElement('strong'); heading.textContent = 'Title / Menu Screens';
   const close = document.createElement('button'); close.type = 'button'; close.className = 'project-settings-close'; close.textContent = '×'; close.setAttribute('aria-label', '閉じる'); close.onclick = () => dialog.remove();
   const toolbar = document.createElement('div'); toolbar.className = 'game-screen-toolbar';
   const scaleModeSelect = document.createElement('select'); scaleModeSelect.className = 'game-screen-scale-mode'; scaleModeSelect.setAttribute('aria-label', '画面サイズへの適応');
   for (const [value, label] of [['contain', '比率を維持'], ['cover', '画面を覆う'], ['stretch', '引き伸ばす']]) {
     const option = document.createElement('option'); option.value = value; option.textContent = label; scaleModeSelect.append(option);
   }
-  const previewRatioSelect = document.createElement('select'); previewRatioSelect.className = 'game-screen-preview-ratio'; previewRatioSelect.setAttribute('aria-label', 'プレビュー画面比率');
+  const previewRatioSelect = document.createElement('select'); previewRatioSelect.className = 'game-screen-preview-ratio'; previewRatioSelect.setAttribute('aria-label', 'Preview Aspect Ratio');
   for (const [value, label] of [['canvas', '基準比率'], ['16:9', '16:9'], ['16:10', '16:10'], ['4:3', '4:3'], ['21:9', '21:9'], ['9:16', '9:16']]) {
     const option = document.createElement('option'); option.value = value; option.textContent = label; previewRatioSelect.append(option);
   }
@@ -4195,12 +4550,12 @@ async function showGameScreenSettings() {
   const sourceModeButton = document.createElement('button'); sourceModeButton.type = 'button'; sourceModeButton.textContent = 'HTML/CSSで編集';
   toolbar.append(screenSelect, scaleModeSelect, previewRatioSelect, addScreen, addButton, sourceModeButton);
   const workspace = document.createElement('div'); workspace.className = 'game-screen-workspace';
-  const preview = document.createElement('div'); preview.className = 'game-screen-preview'; preview.setAttribute('aria-label', '画面プレビュー');
+  const preview = document.createElement('div'); preview.className = 'game-screen-preview'; preview.setAttribute('aria-label', 'Screen Preview');
   const inspector = document.createElement('div'); inspector.className = 'game-screen-inspector';
   const status = document.createElement('div'); status.className = 'game-screen-status'; status.setAttribute('role', 'status');
   const save = document.createElement('button'); save.type = 'button'; save.className = 'project-settings-save'; save.textContent = '画面設定を保存';
   const footer = document.createElement('footer'); footer.append(status, save);
-  workspace.append(preview, inspector); dialog.append(heading, close, toolbar, workspace, footer); document.body.append(dialog);
+  workspace.append(preview, inspector); dialog.append(heading, close, toolbar, workspace, footer); document.body.append(dialog); activateEditorModal(dialog, close, opener);
 
   const assetDirectory = String(project.settings?.asset_dir || 'asset').replaceAll('\\', '/').replace(/\/$/, '');
   const imageAssets = (assetData.assets || []).filter(item => ['bg', 'image'].includes(item.type));
@@ -4313,7 +4668,7 @@ async function showGameScreenSettings() {
           roleSlot: (button, index, node) => {
             if (!node.children.length) {
               button.classList.add('game-screen-preview-slot');
-              button.textContent = `Slot ${String(index + 1).padStart(2, '0')} · セーブ枠プレビュー`;
+              button.textContent = `Slot ${String(index + 1).padStart(2, '0')} · Save Slot Preview`;
             }
           },
         }));
@@ -4356,18 +4711,36 @@ async function showGameScreenSettings() {
     scaleModeSelect.value = config.scaleMode || 'contain';
     if (sourceMode) {
       const heading = document.createElement('h2'); heading.textContent = '画面HTML / 共通CSS'; inspector.append(heading);
-      const htmlLabel = document.createElement('label'); htmlLabel.textContent = screen.template || 'HTML';
-      const htmlInput = document.createElement('textarea'); htmlInput.className = 'game-screen-source'; htmlInput.setAttribute('aria-label', '画面HTML'); htmlInput.spellcheck = false; htmlInput.value = documents[screen.template] || '';
-      htmlInput.addEventListener('input', () => { documents[screen.template] = htmlInput.value; status.textContent = ''; render(); }); htmlLabel.append(htmlInput); inspector.append(htmlLabel);
-      const cssLabel = document.createElement('label'); cssLabel.textContent = config.stylesheet || '共通CSS';
-      const cssInput = document.createElement('textarea'); cssInput.className = 'game-screen-source game-screen-source-css'; cssInput.setAttribute('aria-label', '共通CSS'); cssInput.spellcheck = false; cssInput.value = documents[config.stylesheet] || '';
-      cssInput.addEventListener('input', () => { documents[config.stylesheet] = cssInput.value; status.textContent = ''; render(); }); cssLabel.append(cssInput); inspector.append(cssLabel);
+      const sourceLinks = document.createElement('div'); sourceLinks.className = 'game-screen-source-links';
+      const htmlReference = screen.template || `screens/${screenSelect.value}.html`;
+      const cssReference = config.stylesheet || 'screens/shared.css';
+      const addSourceLink = (reference, ariaLabel) => {
+        const link = document.createElement('a'); link.className = 'game-screen-source-link'; link.href = `#${reference}`; link.textContent = reference; link.setAttribute('aria-label', ariaLabel);
+        link.addEventListener('click', async event => {
+          event.preventDefault();
+          try {
+            if (reference === htmlReference && !screen.template) createScreenDocument(screenSelect.value, screen);
+            status.textContent = '画面設定を保存しています…';
+            await request('/api/game-screens', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ screens: config, documents }) });
+            dialog.remove();
+            activateExplorerView();
+            await openSettingFile(`setting/${reference}`);
+          } catch (error) {
+            if (dialog.isConnected) status.textContent = error.message;
+            else showError(error);
+          }
+        });
+        sourceLinks.append(link);
+      };
+      addSourceLink(htmlReference, `HTMLをコード編集画面で開く: ${htmlReference}`);
+      addSourceLink(cssReference, `CSSをコード編集画面で開く: ${cssReference}`);
+      inspector.append(sourceLinks);
       return;
     }
     const title = document.createElement('h2'); title.textContent = selectedItem ? '選択中のボタン' : '画面'; inspector.append(title);
     if (!selectedItem) {
       const bgmAssets = (assetData.assets || []).filter(asset => asset.type === 'bgm');
-      selectField('Screen BGM', screen.music || '', [['', 'None'], ...bgmAssets.map(asset => [asset.name, `${asset.name}  ${asset.path}`])], value => { screen.music = value; render(); });
+      selectField('画面のBGM', screen.music || '', [['', 'なし'], ...bgmAssets.map(asset => [asset.name, `${asset.name}  ${asset.path}`])], value => { screen.music = value; render(); });
       selectField('共通の既定背景', config.defaultBackground || '', [['', 'なし'], ...imageAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { config.defaultBackground = value; render(); });
       field('画面タイトル', 'title', screen.title);
       field('説明文', 'description', screen.description || '');
@@ -4375,7 +4748,7 @@ async function showGameScreenSettings() {
       const backgroundOptions = [['__default__', `共通設定 (${config.defaultBackground || 'なし'})`], ['', 'なし'], ...imageAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])];
       selectField('背景画像', backgroundValue, backgroundOptions, value => { if (value === '__default__') delete screen.background; else screen.background = value; render(); });
       field('この画面のBGM（素材名）', 'music', screen.music || '');
-      selectField('画面の役割', screen.role || '', [['', '通常画面'], ['save-slots', 'セーブ枠'], ['load-slots', 'ロード枠']], value => {
+      selectField('Screen Role', screen.role || '', [['', '通常画面'], ['save-slots', 'Save Slots'], ['load-slots', 'Load Slots']], value => {
         for (const candidate of Object.values(config.screens)) if (candidate !== screen && candidate.role === value) delete candidate.role;
         if (value) screen.role = value; else delete screen.role;
         screen.slotLayout ||= { x: 420, y: 190, width: 440, height: 420, rowHeight: 42, gap: 8, count: 8 };
@@ -4392,27 +4765,14 @@ async function showGameScreenSettings() {
       }
       if (screen.role === 'save-slots' || screen.role === 'load-slots') {
         screen.slotStyle ||= {};
-        selectField('Slot image', screen.slotStyle.image || '', [['', 'Theme default'], ...buttonAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { screen.slotStyle.image = value; render(); });
-        selectField('Slot hover image', screen.slotStyle.hoverImage || '', [['', 'Use normal image'], ...buttonAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { screen.slotStyle.hoverImage = value; render(); });
+        selectField('Save Slot Image', screen.slotStyle.image || '', [['', 'Theme Default'], ...buttonAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { screen.slotStyle.image = value; render(); });
+        selectField('Save Slot Hover Image', screen.slotStyle.hoverImage || '', [['', 'Use Normal Image'], ...buttonAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { screen.slotStyle.hoverImage = value; render(); });
         for (const key of ['color', 'hoverColor', 'backgroundColor', 'hoverBackgroundColor', 'borderColor', 'hoverBorderColor', 'fontSize']) {
           const label = document.createElement('label'); label.textContent = `Slot ${key}`;
           const input = document.createElement('input'); input.type = key === 'fontSize' ? 'number' : 'text'; input.value = screen.slotStyle[key] ?? '';
           input.addEventListener('input', () => { screen.slotStyle[key] = key === 'fontSize' ? Number(input.value) : input.value; });
           label.append(input); inspector.append(label);
         }
-      }
-      if (screenSelect.value === config.initial) {
-        const titleScene = config.titleScene || { file: '', scene: '' };
-        const sceneLabel = document.createElement('h3'); sceneLabel.textContent = 'TDSタイトルシーン（任意）'; inspector.append(sceneLabel);
-        const sceneFile = document.createElement('input'); sceneFile.type = 'text'; sceneFile.value = titleScene.file || ''; sceneFile.placeholder = 'main.tds'; sceneFile.setAttribute('aria-label', 'TDSタイトルファイル');
-        const sceneName = document.createElement('input'); sceneName.type = 'text'; sceneName.value = titleScene.scene || ''; sceneName.placeholder = 'title'; sceneName.setAttribute('aria-label', 'TDSタイトルscene');
-        const fileLabel = document.createElement('label'); fileLabel.textContent = 'ファイル'; fileLabel.append(sceneFile); inspector.append(fileLabel);
-        const nameLabel = document.createElement('label'); nameLabel.textContent = 'scene名'; nameLabel.append(sceneName); inspector.append(nameLabel);
-        const updateTitleScene = () => {
-          if (!sceneFile.value.trim()) { delete config.titleScene; return; }
-          config.titleScene = { file: sceneFile.value.trim(), scene: sceneName.value.trim() || 'title' };
-        };
-        sceneFile.addEventListener('input', updateTitleScene); sceneName.addEventListener('input', updateTitleScene);
       }
       const makeInitial = document.createElement('button'); makeInitial.type = 'button'; makeInitial.textContent = 'この画面を開始画面にする'; makeInitial.disabled = config.initial === screenSelect.value;
       makeInitial.onclick = () => { config.initial = screenSelect.value; refreshScreenOptions(); renderInspector(); };
@@ -4427,9 +4787,9 @@ async function showGameScreenSettings() {
     field('ボタン文字', 'label', selectedItem.label);
     field('カーソル時の文字（任意）', 'hoverLabel', selectedItem.hoverLabel || '');
     for (const key of ['x', 'y', 'width', 'height']) field({ x: 'X', y: 'Y', width: '幅', height: '高さ' }[key], key, selectedItem[key], 'number');
-    selectField('動作', selectedItem.action, [['start', 'ゲーム開始'], ['continue', '前回の続きから'], ['resume', 'ゲームに戻る'], ['save', 'セーブ画面'], ['load', 'ロード画面'], ['open-screen', '別画面を開く'], ['back', '前の画面に戻る'], ['quit', '終了']], value => { selectedItem.action = value; if (value !== 'open-screen') delete selectedItem.target; renderInspector(); });
+    selectField('動作', selectedItem.action, [['start', 'ゲーム開始'], ['continue', '前回の続きから'], ['resume', 'ゲームに戻る'], ['save', 'Save Screen'], ['load', 'Load Screen'], ['open-screen', 'Open Screen'], ['back', '前の画面に戻る'], ['quit', '終了']], value => { selectedItem.action = value; if (value !== 'open-screen') delete selectedItem.target; renderInspector(); });
     if (selectedItem.action === 'open-screen') selectField('移動先', selectedItem.target, Object.keys(config.screens).filter(id => id !== screenSelect.value).map(id => [id, id]), value => { selectedItem.target = value; });
-    selectField('ボタン画像', selectedItem.image, [['', 'テーマ標準'], ...buttonAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { selectedItem.image = value; render(); });
+    selectField('Button Image', selectedItem.image, [['', 'Theme Default'], ...buttonAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { selectedItem.image = value; render(); });
     selectField('カーソル時の画像', selectedItem.hoverImage, [['', '通常画像を使用'], ...buttonAssets.map(asset => [assetRelative(asset.path), `${asset.type}  ${asset.name}`])], value => { selectedItem.hoverImage = value; render(); });
     selectField('画像と文字の表示', selectedItem.display || 'both', [['both', '文字と画像'], ['text', '文字のみ'], ['image', '画像のみ']], value => { selectedItem.display = value; render(); });
     field('文字サイズ', 'fontSize', selectedItem.fontSize ?? 22, 'number');
@@ -4528,7 +4888,7 @@ function refreshEditorFind() {
     editorFindActiveIndex = -1;
     editorFindPanel.classList.add('has-error');
     updateEditorFindCount();
-    editorFindCount.textContent = `正規表現エラー: ${error.message}`;
+    editorFindCount.textContent = `Regex Error: ${error.message}`;
     updateEditorFindHighlights();
     return;
   }
@@ -4600,7 +4960,7 @@ function selectEditorFindMatch(index) {
   editorFindActiveIndex = (index + editorFindMatches.length) % editorFindMatches.length;
   const match = editorFindMatches[editorFindActiveIndex];
   editor.setSelectionRange(match.start, match.end);
-  const line = editor.value.slice(0, match.start).split('\n').length;
+  const line = splitEditorLines(editor.value.slice(0, match.start)).length;
   const lineHeight = editorLineHeight();
   updateEditorFindCount();
   updateEditorFindHighlights();
@@ -4805,7 +5165,7 @@ async function showFlowStartPreview(file, line, focus = false) {
   flowStartPreviewLine = line;
   updateHighlight();
   if (focus) {
-    const lines = editor.value.split('\n');
+    const lines = splitEditorLines(editor.value);
     const start = lines.slice(0, line - 1).reduce((count, text) => count + text.length + 1, 0);
     const end = Math.min(editor.value.length, start + (lines[line - 1]?.length || 0));
     revealEditorRange(start, end, line);
@@ -4828,13 +5188,13 @@ function finishFlowLinePicker(line = null) {
 }
 async function beginFlowLinePicker(message) {
   if (!sceneNames.includes(message.file) || typeof message.scene !== 'string' || !Number.isSafeInteger(message.startLine)
-    || !Number.isSafeInteger(message.endLine) || message.startLine < 1 || message.endLine < message.startLine) throw Error('開始sceneを選び直してください');
+    || !Number.isSafeInteger(message.endLine) || message.startLine < 1 || message.endLine < message.startLine) throw Error('開始Sceneを選び直してください');
   hideSceneFlowView();
   activateExplorerView();
   await openScene(message.file);
   flowLinePicker = { file: message.file, scene: message.scene, startLine: message.startLine, endLine: message.endLine };
   flowPickHoverLine = message.startLine;
-  const lines = editor.value.split('\n');
+    const lines = splitEditorLines(editor.value);
   const start = lines.slice(0, message.startLine - 1).reduce((count, text) => count + text.length + 1, 0);
   revealEditorRange(start, start, message.startLine);
   updateHighlight();
@@ -4873,7 +5233,7 @@ lineNumbers.addEventListener('click', (event) => {
   if (flowLinePicker) acceptFlowLinePicker(flowPickerLineAt(lineNumbers, event));
 });
 async function startSceneFlowDebug(message) {
-  if (!sceneNames.includes(message.file)) throw Error('開始ノードが現在の作品にありません');
+  if (!sceneNames.includes(message.file)) throw Error('選択したnodeが現在の作品にありません');
   if (message.line !== null && (!Number.isSafeInteger(message.line) || message.line < 1)) throw Error('開始行が不正です');
   await saveAllScenes();
   if (flowNativeDebugSession) await stopSceneFlowDebug(false).catch(() => {});
@@ -4883,7 +5243,7 @@ async function startSceneFlowDebug(message) {
   flowNativeDebugLastLocationKey = '';
   flowNativeDebugActiveLoopKey = '';
   flowNativeDebugLoopSourceFile = '';
-  setStatus('ネイティブプレイヤーでテスト再生を準備中…');
+  setStatus('Native Playerでテスト再生を準備中…');
   const report = await request('/api/native-play', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -4892,11 +5252,11 @@ async function startSceneFlowDebug(message) {
       debugStart: { file: message.file, scene: message.scene, line: message.line, variables: message.variables || {} },
     }),
   });
-  if (!report.session || report.engine !== 'native') throw Error('ネイティブテストプレイヤーを開始できませんでした');
+  if (!report.session || report.engine !== 'native') throw Error('Native test Playerを開始できませんでした');
   flowNativeDebugSession = report.session;
   scheduleSceneFlowDebugPoll(report.session, 0);
-  setStatus('ネイティブプレイヤーでテスト再生中', 'ok');
-  notifySceneFlowDebugResult({ ok: true, active: true, message: 'ネイティブプレイヤーでテスト再生中です' });
+  setStatus('Native Playerでテスト再生中', 'ok');
+  notifySceneFlowDebugResult({ ok: true, active: true, message: 'Native Playerでテスト再生中です' });
 }
 
 function clearSceneFlowExecutionLine() {
@@ -4940,7 +5300,7 @@ function loopRangesForDebugSource(file, source) {
     if (opening < 0) continue;
     const closing = matchingClosingBrace(source, opening);
     if (closing < 0) continue;
-    const endLine = source.slice(0, closing).split('\n').length;
+  const endLine = splitEditorLines(source.slice(0, closing)).length;
     flowNativeDebugLoopRanges.push({ startLine: lineIndex + 1, endLine, key: `${file}:${lineIndex + 1}:${endLine}` });
   }
   return flowNativeDebugLoopRanges;
@@ -5006,7 +5366,7 @@ function scheduleSceneFlowDebugPoll(session, delay = 100) {
       await setSceneFlowExecutionLine(state.location);
       if (state.location) sceneFlowFrame?.contentWindow?.postMessage({ type: 'scene-flow:debug-location', location: state.location }, location.origin);
     } catch (error) {
-      if (flowNativeDebugSession === session) console.warn('Could not read native test playback location:', error);
+      if (flowNativeDebugSession === session) console.warn('Nativeテスト再生位置を読み取れませんでした:', error);
     } finally {
       flowNativeDebugPollBusy = false;
       if (flowNativeDebugSession === session) scheduleSceneFlowDebugPoll(session, 90);
@@ -5036,7 +5396,7 @@ async function stopSceneFlowDebug(notify = true) {
     body: JSON.stringify({ session }),
   });
   if (flowNativeDebugSession === session) flowNativeDebugSession = '';
-  const message = report.stopped ? 'テスト再生を停止しました' : 'テストプレイヤーはすでに終了しています';
+  const message = report.stopped ? 'テスト再生を停止しました' : 'Test Playerはすでに終了しています';
   setStatus(message, 'ok');
   if (notify) notifySceneFlowDebugResult({ ok: true, active: false, message });
   return report;
@@ -5066,6 +5426,9 @@ window.addEventListener('message', (event) => {
   } else if (message.type === 'scene-flow:view' && message.view === 'search') {
     hideSceneFlowView();
     activateSearchView();
+  } else if (message.type === 'scene-flow:view' && message.view === 'presentation') {
+    hideSceneFlowView();
+    activatePresentationView();
   } else if (message.type === 'scene-flow:open-scene' && typeof message.scene === 'string') {
     hideSceneFlowView();
     activateExplorerView();
@@ -5138,7 +5501,7 @@ async function runProjectSearch() {
   const files = await Promise.all(sceneNames.map(async (name) => {
     try {
       const data = await request(`/api/scene?name=${encodeURIComponent(name)}`); const matches = [];
-      String(data.source || '').split(/\r?\n/).forEach((line, index) => {
+      splitEditorLines(data.source || '').forEach((line, index) => {
         matcher.lastIndex = 0; let match;
         while ((match = matcher.exec(line))) {
           matches.push({ line: index + 1, text: line, start: match.index, length: Math.max(1, match[0].length) });
@@ -5163,7 +5526,7 @@ async function runProjectSearch() {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'search-match';
       const line = document.createElement('span'); line.className = 'search-line'; line.textContent = match.line;
       const preview = document.createElement('span'); preview.className = 'search-preview'; appendSearchPreview(preview, match.text, match.start, match.length); button.append(line, preview);
-      button.addEventListener('click', async () => { await openScene(file.name); const lines = editor.value.split(/\r?\n/); let start = 0; for (let index = 0; index < match.line - 1; index++) start += lines[index].length + 1; revealEditorRange(start + match.start, start + match.start + match.length, match.line); });
+      button.addEventListener('click', async () => { await openScene(file.name); const lines = splitEditorLines(editor.value); let start = 0; for (let index = 0; index < match.line - 1; index++) start += lines[index].length + 1; revealEditorRange(start + match.start, start + match.start + match.length, match.line); });
       body.append(button);
     }
     group.append(heading, body); searchResults.append(group);
@@ -5187,21 +5550,21 @@ const menuActions = {
   build: () => compileProjectFromMenu().catch(showError),
   compile: () => compileProjectFromMenu().catch(showError),
   play: () => playCurrentScene().catch(showError),
-  'native-build': () => runNativeTool('build', 'ネイティブビルド').catch(showError),
+  'native-build': () => runNativeTool('build', 'Native build').catch(showError),
   'native-test': () => runNativeTestSuite().catch(showError),
   language: () => showLanguageGuide(),
   syntax: () => showLanguageGuide(),
   globals: () => showLanguageGuide(),
-  about: () => showWorkbenchMessage('.tds シナリオエディタ', 'Title / asset / senario 構成のローカル開発環境です。')
+  about: () => showWorkbenchMessage('.tds Scenario Editor', 'Title・asset・scenarioを構成するローカル開発環境です。')
 };
 function toggleWordWrap() {
-  const disabled = document.querySelector('.app-shell')?.classList.toggle('word-wrap-off') || false;
-  try { localStorage.setItem('novel-editor.word-wrap.v1', disabled ? 'off' : 'on'); } catch { /* preference persistence is optional */ }
-  return disabled;
+  const enabled = document.querySelector('.app-shell')?.classList.toggle('word-wrap-on') || false;
+  try { localStorage.setItem('novel-editor.word-wrap.v1', enabled ? 'on' : 'off'); } catch { /* preference persistence is optional */ }
+  return enabled;
 }
 
 try {
-  if (localStorage.getItem('novel-editor.word-wrap.v1') === 'off') document.querySelector('.app-shell')?.classList.add('word-wrap-off');
+  if (localStorage.getItem('novel-editor.word-wrap.v1') === 'on') document.querySelector('.app-shell')?.classList.add('word-wrap-on');
 } catch { /* local storage may be disabled */ }
 
 function toggleLineComments(force = '') {
@@ -5213,7 +5576,7 @@ function toggleLineComments(force = '') {
   if (finalPosition > selectedStart && source[finalPosition - 1] === '\n') finalPosition -= 1;
   const newline = source.indexOf('\n', finalPosition);
   const blockEnd = newline < 0 ? source.length : newline;
-  const originalLines = source.slice(blockStart, blockEnd).split('\n');
+  const originalLines = splitEditorLines(source.slice(blockStart, blockEnd));
   const meaningful = originalLines.filter((line) => line.trim());
   if (!meaningful.length) return false;
   const removeComments = force === 'uncomment' || (force !== 'comment' && meaningful.every((line) => /^\s*(?:#|\/\/)/.test(line)));
@@ -5299,22 +5662,22 @@ const commandEntries = [
   ['open-project', 'フォルダーを開く', 'ファイル'],
   ['project-settings', '作品設定を開く', '設定'], ['save', 'すべて保存', 'ファイル', 'Ctrl+S'],
   ['undo', '元に戻す', '編集', 'Ctrl+Z'], ['redo', 'やり直す', '編集', 'Ctrl+Y'],
-  ['format', '現在のシーンを整形', '編集', 'Ctrl+Shift+F'], ['format-project', '全シーンを整形', '編集'],
+  ['format', 'Format current scene', '編集', 'Ctrl+Shift+F'], ['format-project', 'Format all scenes', '編集'],
   ['select-all', 'すべて選択', '選択', 'Ctrl+A'], ['select-line', '現在の行を選択', '選択'],
-  ['toggle-sidebar', 'サイドバーを切り替え', '表示', 'Ctrl+B'], ['toggle-minimap', 'ミニマップを切り替え', '表示'],
-  ['scene-flow', 'シーンフローを開く', '表示'], ['compile', 'プロジェクトを検証・コンパイル', '実行', 'Ctrl+Enter'],
-  ['play', '現在のシーンを再生', '実行'], ['native-build', 'ネイティブ版をビルド', '実行'],
-  ['native-test', 'ネイティブ版の全テスト', '実行'], ['language', '構文ガイドを開く', 'ヘルプ'],
+  ['toggle-sidebar', 'Toggle sidebar', '表示', 'Ctrl+B'], ['toggle-minimap', 'Toggle Minimap', '表示'],
+  ['scene-flow', 'Open Scene Flow', '表示'], ['compile', 'Validate / Compile project', '実行', 'Ctrl+Enter'],
+  ['play', 'Play current scene', '実行'], ['native-build', 'Build Native Player', '実行'],
+  ['native-test', 'Test Native Player', '実行'], ['language', 'Open Syntax Guide', 'ヘルプ'],
 ].map(([id, label, category, key]) => ({ id, label, category, key, run: menuActions[id] }));
 commandEntries.find((item) => item.id === 'open-project').key = 'Ctrl+O';
 commandEntries.push(
-  { id: 'new-scene', label: '新しいシーンを作成', category: 'ファイル', key: 'Ctrl+N', run: createNewSceneDraft },
-  { id: 'quick-open', label: 'シーンファイルを素早く開く', category: '移動', key: 'Ctrl+P', run: () => openQuickOpen() },
+  { id: 'new-scene', label: 'Create new scene', category: 'ファイル', key: 'Ctrl+N', run: createNewSceneDraft },
+  { id: 'quick-open', label: 'Quick Open Scene File', category: '移動', key: 'Ctrl+P', run: () => openQuickOpen() },
   { id: 'go-to-line', label: '行番号へ移動', category: '移動', key: 'Ctrl+G', run: () => openQuickOpen('line') },
   { id: 'find-in-file', label: '編集中ファイルを検索', category: '検索', key: 'Ctrl+F', run: () => openEditorFind(false) },
   { id: 'replace-in-file', label: '編集中ファイルを置換', category: '検索', key: 'Ctrl+H', run: () => openEditorFind(true) },
   { id: 'search-workspace', label: 'ワークスペースを検索', category: '検索', run: activateSearchView },
-  { id: 'show-explorer', label: 'エクスプローラーを表示', category: '表示', key: 'Ctrl+Shift+E', run: activateExplorerView },
+  { id: 'show-explorer', label: 'Show Explorer', category: '表示', key: 'Ctrl+Shift+E', run: activateExplorerView },
   { id: 'toggle-word-wrap', label: '行の折り返しを切り替え', category: '表示', key: 'Alt+Z', run: toggleWordWrap },
   { id: 'toggle-line-comments', label: '行コメントを切り替え', category: '編集', key: 'Ctrl+/', run: toggleLineComments },
   { id: 'open-settings', label: '作品・表示設定を開く', category: '設定', key: 'Ctrl+,', run: () => showProjectSettings().catch(showError) },
@@ -5372,11 +5735,13 @@ function paintQuickAccessItems(items, emptyMessage = '一致する項目はあ�
     empty.className = 'quick-access-empty';
     empty.textContent = emptyMessage;
     quickAccessResults.append(empty);
+    quickAccessInput.removeAttribute('aria-activedescendant');
     return;
   }
   items.forEach((item, index) => {
     const button = document.createElement('button');
     button.type = 'button';
+    button.id = `quick-access-option-${index}`;
     button.className = 'quick-access-item';
     button.setAttribute('role', 'option');
     button.setAttribute('aria-selected', String(index === quickAccessActiveIndex));
@@ -5390,11 +5755,15 @@ function paintQuickAccessItems(items, emptyMessage = '一致する項目はあ�
     button.addEventListener('click', () => runQuickAccessItem(index));
     quickAccessResults.append(button);
   });
-  quickAccessResults.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+  updateQuickAccessSelection();
 }
 
 function updateQuickAccessSelection() {
-  quickAccessResults.querySelectorAll('.quick-access-item').forEach((item, index) => item.setAttribute('aria-selected', String(index === quickAccessActiveIndex)));
+  const items = [...quickAccessResults.querySelectorAll('.quick-access-item')];
+  items.forEach((item, index) => item.setAttribute('aria-selected', String(index === quickAccessActiveIndex)));
+  const active = items[quickAccessActiveIndex];
+  if (active && !quickAccessPanel.hidden) quickAccessInput.setAttribute('aria-activedescendant', active.id);
+  else quickAccessInput.removeAttribute('aria-activedescendant');
   quickAccessResults.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
 }
 
@@ -5415,7 +5784,7 @@ function extractQuickSymbols(source, file) {
     ['character', /^\s*character\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/],
     ['variable', /^\s*(?:global\s+)?(?:const\s+)?(?:int|str|string|bool|float|dict(?:\[(?:int|str)\])?|[A-Z][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|$)/],
   ];
-  String(source).split(/\r?\n/).forEach((line, index) => {
+  splitEditorLines(source).forEach((line, index) => {
     for (const [kind, pattern] of patterns) {
       const match = pattern.exec(line);
       if (!match) continue;
@@ -5461,9 +5830,9 @@ async function renderQuickAccess() {
       : mode === 'symbol' || mode === 'workspace-symbol' ? value.slice(1) : value;
   quickAccessMode = mode;
   const modeLabels = {
-    command: ['⌘', '> コマンドを検索'], file: ['⌕', 'ファイルを検索'],
-    line: ['＃', ': 行番号へ移動'], symbol: ['@', '@ ファイル内シンボル'],
-    'workspace-symbol': ['#', '# ワークスペースシンボル'],
+    command: ['⌘', '> Search commands'], file: ['⌕', 'Search files'],
+    line: ['＃', ': 行番号へ移動'], symbol: ['@', '@ File Symbols'],
+    'workspace-symbol': ['#', '# Workspace Symbols'],
   };
   const [prefix, placeholder] = modeLabels[mode];
   quickAccessPrefix.textContent = prefix;
@@ -5507,7 +5876,7 @@ async function renderQuickAccess() {
       .map((item) => makeQuickAccessItem({ label: item.label, detail: `${item.kind} · ${item.file}:${item.line}`, run: () => jumpToLocation(item, item.label) })));
     return;
   }
-  quickAccessResults.replaceChildren(Object.assign(document.createElement('div'), { className: 'quick-access-empty', textContent: 'ワークスペースのシンボルを検索中…' }));
+  quickAccessResults.replaceChildren(Object.assign(document.createElement('div'), { className: 'quick-access-empty', textContent: 'Searching workspace symbols…' }));
   try {
     const symbols = await workspaceQuickSymbols();
     if (requestId !== quickAccessRequestId || quickAccessPanel.hidden) return;
@@ -5515,15 +5884,18 @@ async function renderQuickAccess() {
       .map((item) => makeQuickAccessItem({ label: item.label, detail: `${item.kind} · ${item.file}:${item.line}`, run: () => jumpToLocation(item, item.label) })));
   } catch (error) {
     if (requestId !== quickAccessRequestId) return;
-    paintQuickAccessItems([], error.message || 'シンボルを読み込めませんでした');
+    paintQuickAccessItems([], error.message || '\u30b7\u30f3\u30dc\u30eb\u3092\u8aad\u307f\u8fbc\u3081\u307e\u305b\u3093\u3067\u3057\u305f');
   }
 }
 
 function openQuickAccess(mode = 'command', seed = null) {
+  const opener = document.activeElement;
   closeMenus();
   quickAccessBaseMode = mode;
   quickAccessMode = mode;
   quickAccessPanel.hidden = false;
+  quickAccessInput.setAttribute('aria-expanded', 'true');
+  activateEditorModal(quickAccessPanel, quickAccessInput, opener, { backdrop: false });
   quickAccessInput.value = seed ?? ({ command: '>', line: ':', symbol: '@', 'workspace-symbol': '#' }[mode] || '');
   quickAccessActiveIndex = 0;
   renderQuickAccess();
@@ -5534,10 +5906,12 @@ function openQuickAccess(mode = 'command', seed = null) {
 function openCommandPalette() { openQuickAccess('command', '>'); }
 function openQuickOpen(mode = 'file') { openQuickAccess(mode, ({ line: ':', symbol: '@', 'workspace-symbol': '#' }[mode] || '')); }
 
-function closeQuickAccess(restoreEditorFocus = true) {
+function closeQuickAccess(restoreFocus = true) {
   quickAccessRequestId++;
+  deactivateEditorModal(quickAccessPanel, restoreFocus);
   quickAccessPanel.hidden = true;
-  if (restoreEditorFocus) editor.focus({ preventScroll: true });
+  quickAccessInput.setAttribute('aria-expanded', 'false');
+  quickAccessInput.removeAttribute('aria-activedescendant');
 }
 
 function runQuickAccessItem(index = quickAccessActiveIndex) {
@@ -5590,6 +5964,7 @@ document.querySelector('[data-presentation-action="game-screens"]')?.addEventLis
 document.querySelector('[data-presentation-action="project-settings"]')?.addEventListener('click', () => showProjectSettings().catch(showError));
 document.querySelector('.flow-link')?.addEventListener('click', (event) => { event.preventDefault(); showSceneFlowView(); });
 document.querySelector('#search-close')?.addEventListener('click', activateExplorerView);
+if (new URLSearchParams(location.search).get('view') === 'presentation') activatePresentationView();
 searchInput?.addEventListener('input', scheduleProjectSearch);
 document.querySelectorAll('[data-search-option]').forEach((button) => button.addEventListener('click', () => {
   const option = button.dataset.searchOption;

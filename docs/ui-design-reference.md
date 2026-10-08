@@ -1,6 +1,6 @@
 # Novel Script ゲームUI設計・実装リファレンス
 
-更新日: 2026-10-04  
+更新日: 2026-10-06
 対象: ゲーム内UI、タイトル/システム/セーブ画面、HTML/CSS画面定義、Browser/Nativeプレイヤー、UI素材、TDS演出命令、エディタの画面編集、テスト。
 
 この文書は「現在の実装」と「未実装/今後の設計課題」を分けて記す。HTML/CSSを画面記述に利用できるが、一般ブラウザの完全なHTML/CSSランタイムを内蔵しているわけではない。安全な画面定義を共通ツリーへコンパイルし、Browser DOMとSDL Nativeがそのツリーを別々に描画する。
@@ -28,7 +28,7 @@ Project/
 |---|---|
 | 画面設定の検証・既定値 | `Edit/game-screens.js` |
 | HTML/CSS subsetの解析、共有ツリー生成、共通座標 | `Edit/screen-document.js` |
-| エディタの画面設定/プレビュー | `Edit/editor.js` |
+| Editorの画面設定/プレビュー | `Edit/editor.js` |
 | BrowserプレイヤーのUIと画面操作 | `Edit/player.js`, `Edit/player.css` |
 | Native SDL描画・入力・保存画面 | `native/player.cpp`, `native/runtime.hpp` |
 | 作品サンプル設定 | `Title/setting/game-screens.json`, `Title/setting/screens/` |
@@ -93,8 +93,10 @@ Titleの参考画面を再現した実画面テンプレートは `Title/setting
 
 画面は1つのルート要素で囲み、許可タグだけを使う。主なタグは `main`, `section`, `article`, `aside`, `header`, `footer`, `nav`, `div`, `span`, 見出し/段落、`button`, `input`, `img`, `ul/ol/li`, `label` 等。
 
+各要素の内容はテキストのみ、または子要素のみで記述する。`<p>Before <strong>middle</strong> after</p>` のような混在コンテンツはBrowser/Native共通の画面compilerで拒否される。中間treeが要素内テキストと子要素を別々に保持し、DOM順序と共通レイアウトを保てないためである。子要素を使う場合は、各テキストをleaf要素へ分けて block layout として配置する。
+
 - `<script>`、イベント属性（`onclick`等）、外部URL、未許可タグ/属性は禁止。
-- `img src`はプロジェクトasset以下の相対パスに限る。絶対パスや`..`での逸脱は禁止。
+- `img src`はプロジェクトasset以下の相対パスに限る。絶対パスや`..`での逸脱は禁止。`img`には`alt`を必須とし、装飾画像には空の`alt=""`を指定する。
 - `<button data-action="...">`で許可済み操作に接続する。
 - 画面遷移には `data-action="open-screen" data-target="screen-id"` を使い、遷移先の存在をコンパイル時に検証する。
 - `input[type=range]` と `input[type=checkbox]` は許可設定キーだけに結び付く。任意のDOM状態や関数は実行できない。
@@ -104,11 +106,22 @@ Titleの参考画面を再現した実画面テンプレートは `Title/setting
 
 ### CSS
 
+- CSS `padding` は1〜4個の値を取るshorthandを受け付け、宣言順に共通の4方向のpaddingへ展開する。shorthandと各sideに負の値は指定できない。
+- 共通のwidth、height、gap、font-size、border-width、grid-auto-rows、flex-growには負の寸法を指定できない。position offsetには負の値も使える。
+- Grid trackのweightはfractional spaceを配分する前に正規化する。不正値、finiteでないtrack値、geometryのfinite範囲を超える固定trackの合計は拒否する。
+- 共通flex subsetでは数値の`flex`をmain axisのbasis 0として扱い、`flex-grow`は指定済みまたはintrinsicなbasisに対する追加成長として扱う。wrappingとshrinkは未対応。
+- Block/flex/gridの子要素にあるpercentageは、利用可能なcontaining boxを基準に一度だけ解決する。percentage指定のpadding、font-size、border-widthはBrowser/Nativeで描画する前に共通px値へ変換し、unitlessのfont-sizeとborder-widthはpxとして扱う。
+- `line-height`は共通text-paint subsetのproperty。unitless値はfont-sizeの倍率として継承し、`px`値は固定寸法として継承する。`%`値は宣言nodeのcomputed font-sizeを基準に解決してから固定寸法として継承する。範囲は0〜1,000,000で、0も有効。Browser CSSとNative SDLの行間は複数行fixtureで検証する。
+- `position: relative` offsets are applied to the shared rectangle before placing descendants; left/top take precedence over right/bottom.
+
 CSSはプロジェクトのテーマ表現に使うが、完全なCSSレイアウト/ペイントエンジンではない。現在は共通ツリーに変換できる安全なsubsetを採用する。
 
-- セレクタ: 単純なtag/class/id、および限定された `:hover`, `:focus`, `:focus-visible`。複雑な子孫/疑似要素等は共通機能として期待しない。
+- セレクタ: 単純なtag/class/id、および限定された `:hover`, `:focus`, `:focus-visible`。`:focus`は入力方法を問わないfocused control、`:focus-visible`はkeyboard focusに適用し、Browser/Nativeで状態を分けて描画する。複雑な子孫/疑似要素等は共通機能として期待しない。
+- Keyboard順序はscreen action、settings input、semantic buttonを対象とし、`tabindex`の正値を昇順、その後に既定値0を並べる。`tabindex="-1"`は順次focusから外す。Nativeはactionのないsemantic `<button>`もfocus状態を描画する。compiler-assigned `focusKey`でnodeを識別するため、HTML `id`の有無/重複に左右されない。任意のstatic nodeをOS accessibility targetにはしない。
+- inherited paint propertyの`color`、`font-size`、`line-height`、`text-align`は、親nodeの`:hover`、`:focus`、`:focus-visible`やslot stateで変化した場合も、子nodeに同じpropertyの宣言がなければ継承する。
 - 配置: absolute座標、寸法、限定的なflex/grid、gap、padding、z-index等。一般ブラウザの全レイアウト規則ではない。
 - ペイント: 色、opacity、画像、object-fit、基本border、text-align等。
+- `border` shorthandはborder width、style、colorとして解析する。widthのunitは共通px値へ変換し、Browser/Nativeで描画する前に対応するstyleとcolorを検証する。`--name`や`var()`などのCSS custom propertyは未対応。
 - 非対応または共通でない表現: transform、transition、shadow、clip、advanced font、複雑なselector、一般的なmargin/min-max/wrapping等。未対応宣言はコンパイル時拒否の対象。
 - 「parserの許可リストにある」ことだけではBrowser/Native共通実装を意味しない。最終契約は互換性表と両描画器のテスト。
 
@@ -163,11 +176,11 @@ Titleサンプルでは `Title/asset/ui/` 以下に背景、ボタン、コン�
 
 ### Title/Home
 
-起動時に`initial`画面を表示し、TDS title sceneが設定されている場合はゲーム開始操作と物語再生を区別する。Continueが使えない時は無効状態/非表示等の視覚反応を実アクションと揃える。背景美術と文字メニューを分離するとローカライズしやすい一方、hover/focus/selected演出、BGM開始、遷移演出の設計が要る。
+TDS entryは`start_file`で選び、entry実行中の`start()`が呼ばれた位置で`game-screens.json`の`initial`画面を開く。画面の開始操作後は同じTDS実行の次の命令へ戻る。起動時の自動表示や別title scene設定は使わない。Continueが使えない時は無効状態/非表示等の視覚反応を実アクションと揃える。背景美術と文字メニューを分離するとローカライズしやすい一方、hover/focus/selected演出、BGM開始、遷移演出の設計が要る。実行契約は[Startup flow](startup-flow.md)を参照。
 
 ### SYSTEM/SOUND
 
-設定UIは説明、現在値、選択状態、変更結果、保存先を一貫して示す。systemテンプレートの「サブクリック機能」欄は現在静的な表示で、実際の割当操作ではない。操作可能に見える場合は誤認を生む既知の課題として扱う。
+設定UIは説明、現在値、選択状態、変更結果、保存先を一貫して示す。SYSTEMの `Mouse Controls` 欄は右クリック割当がこの画面では利用できないことを伝える案内だけを表示し、割当操作は提供しない。
 
 サウンドページは共通チャンネル設定を意味付きrange/checkboxで操作する。Titleのキャラクター個別音量欄はサンプル人数分をHTMLへ手書きする構造であり、キャラクター集合を動的に列挙する汎用list componentではない。登場人物が増えた場合、件数、スクロール、検索、portrait欠損、長い名前、保存キーの一貫性を別途設計する必要がある。
 
@@ -216,7 +229,7 @@ play video op async opacity 0.5
 ## 10. エディタでの編集体験
 
 - Editorの画面設定UIはHTML/CSSを読み、screenを選択し、scale mode/preview ratioを変えてプレビューできる。
-- テンプレートを持つscreenではHTML/CSSが正本となり、現行UIではLegacy JSON itemのボタン追加/ドラッグ位置調整を停止し、ソースtextareaで編集する。
+- テンプレートを持つscreenではHTML/CSSが正本となり、現行UIではLegacy JSON itemのボタン追加/ドラッグ位置調整を停止する。HTML/CSSファイルへのsource linkからCode Editorで編集する。
 - そのため「自由記述へ移ると直接操作編集を失う」というワークフローの断絶がある。画面上の要素選択、ドラッグ/リサイズ、整列、z-order、数値インスペクタとHTML/CSSを同じ文書モデルで同期させるのが望ましい。
 - プレビュー領域が非表示/0×0の時は描画を保留し、可視化後のResizeObserver再描画で寸法を得る。0×0を例外としてページへ漏らしてはならない。
 - エディタプレビューとBrowser/Native本体のUI状態・データ差し込み・アクション動作は同じ契約を使うべき。プレビュー専用ダミーデータが実画面の操作可能性を偽らないようにする。
@@ -243,14 +256,13 @@ play video op async opacity 0.5
 - 固定基準キャンバスと多数のabsolute座標に依存し、縮小・長文・ローカライズに弱い。`cover`はreflowしない。
 - 共通CSSは一般ブラウザCSSではない。親制約、flex/grid、margin/min-max/wrapping等に制約がある。
 - テンプレートの直接配置/ドラッグ編集がなく、ソース編集と視覚編集が分かれている。
-- SYSTEMの右クリック割当欄はstatic表示で、機能設定になっていない。
+- SYSTEMの右クリック割当は未対応で、画面には利用できない旨を表示する。設定操作としては提供していない。
 - キャラクター音量UIは作品のキャラクター一覧から自動生成されない。
 - 部品/状態セットが薄い。Generic repeat/list、scroll container、radio/select/key capture、modal等は汎用意味付きコントロールとして不足。
 - Range/checkbox以外の広範な画像skin、9-slice、atlas、disabled/focus/pressed状態、animation、transform/shadow/clip等が制限される。
 - BrowserとNativeでフォント/標準widget/DPIが違い、pixel-identical renderingを保証しない。
 - BrowserとNativeのセーブサムネイル生成経路が異なり、特殊なCSS描画を完全一致させない場合がある。
-- CSS診断には未対応selector/propertyの由来（ファイル、行、selector、renderer）をより正確に示す余地がある。
-- 設定ページ構成の説明に仕様差がある。`Title/setting/screens/README.md` は音量・mute・会話欄opacityをsystem設定画面内にまとめると記す一方、実際の`game-screens.json`では`system`と`sound`が別screenで、音量と`ui.dialogOpacity`は`sound.html`にある。どちらを作品側の標準とするか決め、READMEと画面設定を揃える必要がある。
+- CSS診断はscreen ID、HTML/CSSファイルパス、selector、CSSルール先頭の行・列、問題のpropertyを示す。宣言内の細かな列位置はまだ報告しない。
 
 ### 構造的なリスク
 
@@ -298,6 +310,7 @@ absolute座標を残しつつ、anchor、親edge、padding/gap、min/max、scrol
 | Browser画面 | `node test/game-screens.browser.cjs` | template編集、preview、actions、save slot、legacy fallback |
 | Browser controls | `node test/ui-controls.browser.cjs` | image range/toggle、pointer interaction、persistence |
 | Native screens | `node test/game-screens-native.cjs` | SDL captures、audio controls、persistence、shortcut |
+| Browser/Native screen paint order | `node test/screen-focus-visual.browser.cjs` | Overlapping siblings retain authored focus order while z-index controls painted pixels in Edge and SDL |
 | Story visual/effects | `node test/player-visual-only.browser.cjs` | video-only、opacity、camera、dialog visibility/layer cleanup |
 | Native runtime/media | `node test/native-smoke.cjs` | media blocking/async、BGM crossfade、effects、debug-start parity |
 | Editor autocomplete/diagnostics | `node test/editor-analysis-check.cjs` | grammar-aware completion、diagnostics、syntax highlight、tooltips |
@@ -317,3 +330,7 @@ absolute座標を残しつつ、anchor、親edge、padding/gap、min/max、scrol
 - [UI素材調査](ui-assets-research.md) — skin素材の要件と限界。
 - [エディタ/プロジェクト全体仕様](editor-project-overview.md) — Editor、Compiler、Player、保存方式を含む総覧。
 
+
+### Border, padding, and nested screen elements
+
+The shared screen compiler stores each node rectangle as its painted outer box. Child rectangles begin inside the parent's border and padding; Browser DOM mounting subtracts the parent's border from the child-local coordinate because absolute positioning is relative to the parent's padding box. This keeps the DOM's containing-block origin aligned with the shared geometry and Native SDL rectangles.

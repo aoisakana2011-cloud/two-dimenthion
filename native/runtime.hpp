@@ -20,40 +20,40 @@ using Int = int64_t;
 inline Int integer(const std::string& s) {
     Int n{}; const char* first = s.data();
     if (!s.empty() && s[0] == '+') ++first;
-    if (first == s.data() + s.size() || (first != s.data() && (*first < '0' || *first > '9'))) throw std::runtime_error("Invalid int64 conversion: " + s);
+    if (first == s.data() + s.size() || (first != s.data() && (*first < '0' || *first > '9'))) throw std::runtime_error("64ビット整数に変換できません: " + s);
     auto result = std::from_chars(first, s.data() + s.size(), n);
-    if (result.ec != std::errc() || result.ptr != s.data() + s.size()) throw std::runtime_error("Invalid int64 conversion: " + s);
+    if (result.ec != std::errc() || result.ptr != s.data() + s.size()) throw std::runtime_error("64ビット整数に変換できません: " + s);
     return n;
 }
 inline Int add(Int a, Int b) {
-    if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b)) throw std::runtime_error("int64 overflow");
+    if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b)) throw std::runtime_error("64ビット整数の範囲を超えています");
     return a + b;
 }
 inline Int sub(Int a, Int b) {
-    if ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b)) throw std::runtime_error("int64 overflow");
+    if ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b)) throw std::runtime_error("64ビット整数の範囲を超えています");
     return a - b;
 }
 inline Int mul(Int a, Int b) {
-    if (a && b && ((a > 0 && b > 0 && a > INT64_MAX / b) || (a > 0 && b < 0 && b < INT64_MIN / a) || (a < 0 && b > 0 && a < INT64_MIN / b) || (a < 0 && b < 0 && a < INT64_MAX / b))) throw std::runtime_error("int64 overflow");
+    if (a && b && ((a > 0 && b > 0 && a > INT64_MAX / b) || (a > 0 && b < 0 && b < INT64_MIN / a) || (a < 0 && b > 0 && a < INT64_MIN / b) || (a < 0 && b < 0 && a < INT64_MAX / b))) throw std::runtime_error("64ビット整数の範囲を超えています");
     return a * b;
 }
 inline double floating(const std::string& s) {
-    if (s.empty() || s[0] == '+' && s.size() == 1) throw std::runtime_error("Invalid finite float: " + s);
+    if (s.empty() || s[0] == '+' && s.size() == 1) throw std::runtime_error("有限の浮動小数点数に変換できません: " + s);
     const size_t start = s[0] == '+' ? 1 : 0;
     double value{};
     const auto result = std::from_chars(s.data() + start, s.data() + s.size(), value, std::chars_format::general);
-    if (result.ec != std::errc{} || result.ptr != s.data() + s.size() || !std::isfinite(value)) throw std::runtime_error("Invalid finite float: " + s);
+    if (result.ec != std::errc{} || result.ptr != s.data() + s.size() || !std::isfinite(value)) throw std::runtime_error("有限の浮動小数点数に変換できません: " + s);
     return value == 0.0 ? 0.0 : value;
 }
 inline double finite(double value) {
-    if (!std::isfinite(value)) throw std::runtime_error("float must be finite");
+    if (!std::isfinite(value)) throw std::runtime_error("浮動小数点数は有限値である必要があります");
     return value == 0.0 ? 0.0 : value;
 }
 inline std::string floatText(double value) {
     if (value == 0.0) return "0";
     char buffer[64];
     const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value, std::chars_format::general);
-    if (result.ec != std::errc{}) throw std::runtime_error("Cannot format float");
+    if (result.ec != std::errc{}) throw std::runtime_error("浮動小数点数を文字列に変換できません");
     std::string source(buffer, result.ptr);
     const auto exponentAt = source.find_first_of("eE");
     if (exponentAt == std::string::npos) return source;
@@ -106,7 +106,7 @@ inline std::string normalizeDataSpace(const std::string& value, bool collapse) {
     return result;
 }
 inline json splitText(const std::string& value, const std::string& separator) {
-    if (separator.empty()) throw std::runtime_error("text.split separator must not be empty");
+    if (separator.empty()) throw std::runtime_error("text.split の区切り文字は空にできません");
     json result = json::array();
     size_t start = 0;
     for (;;) {
@@ -118,7 +118,7 @@ inline json splitText(const std::string& value, const std::string& separator) {
     return result;
 }
 inline std::string replaceText(const std::string& value, const std::string& search, const std::string& replacement) {
-    if (search.empty()) throw std::runtime_error("text.replace search must not be empty");
+    if (search.empty()) throw std::runtime_error("text.replace の検索文字列は空にできません");
     std::string result;
     size_t start = 0;
     for (;;) {
@@ -142,11 +142,20 @@ inline bool matches(const json& v, const json& type) {
     for (const auto& value : v) if (!matches(value, type.at("value"))) return false;
     return true;
 }
+inline bool samePrimitiveType(const json& left, const json& right) {
+    // Package JSON may represent positive integer literals as unsigned values,
+    // while computed TDS integers use the signed Int type. Both are TDS int.
+    if (left.is_number_integer() && right.is_number_integer()) return true;
+    return left.type() == right.type();
+}
 struct Signal { enum Kind { Next, Return, Goto, Restart } kind = Next; json value; };
 class Runtime {
 public:
     json globals = json::object(), program;
+    bool startWasCalled = false;
+    bool suppressStartupStart = false;
     std::function<void(const std::string&, const json&)> command;
+    std::function<void()> start;
     std::function<void(const json&)> parallel;
     std::function<size_t(const std::string&, const std::vector<std::string>&)> choice;
     std::function<json(const std::string&)> load;
@@ -156,6 +165,9 @@ public:
     json pendingLoad = nullptr;
     std::string currentSceneName, currentSourceFile;
     int64_t currentLine = 0;
+    int functionCallDepth = 0;
+    int loopDepth = 0;
+    struct DepthGuard { int& depth; explicit DepthGuard(int& value) : depth(value) { ++depth; } ~DepthGuard() { --depth; } };
     std::vector<json> locals;
     std::set<std::string> readonlyGlobals;
     std::vector<std::set<std::string>> readonlyLocals;
@@ -163,6 +175,10 @@ public:
     void popLocal() { loopScopes.erase(locals.size()-1); locals.pop_back(); readonlyLocals.pop_back(); }
     json& declarationFrame() { for(size_t i=locals.size();i>0;--i) if(!loopScopes.contains(i-1))return locals[i-1];return globals; }
     std::map<std::string, json> functions;
+    void assertSaveBoundary() const {
+        if (functionCallDepth > 0) throw std::runtime_error("\u95a2\u6570\u306e\u5b9f\u884c\u4e2d\u306f\u4fdd\u5b58\u3067\u304d\u307e\u305b\u3093");
+        if (loopDepth > 0) throw std::runtime_error("loop\u306e\u5b9f\u884c\u4e2d\u306f\u4fdd\u5b58\u3067\u304d\u307e\u305b\u3093");
+    }
     // Authoritative query-facing occupancy; updated after successful presentation commands.
     std::map<std::string, std::string> runtimeCharacterSlots;
     std::string runtimeBackground, runtimeBgm;
@@ -213,66 +229,66 @@ public:
     }
     json runtimeStateCall(const std::string& name, const json& args) const {
         if (name == "runtime.state.characters.exists") {
-            if (args.size() != 1 || !args.at(0).is_string()) throw std::runtime_error("runtime.state.characters.exists expects one str argument");
+            if (args.size() != 1 || !args.at(0).is_string()) throw std::runtime_error("runtime.state.characters.exists には文字列の引数が1つ必要です");
             return runtimeCharacterSlots.contains(args.at(0).get<std::string>());
         }
         if (name == "runtime.state.characters.list") {
-            if (!args.empty()) throw std::runtime_error("runtime.state.characters.list expects no arguments");
+            if (!args.empty()) throw std::runtime_error("runtime.state.characters.list に引数は指定できません");
             json result = json::array();
             for (const auto& [id, slot] : runtimeCharacterSlots) { (void)slot; result.push_back(id); }
             return result;
         }
         if (name == "runtime.state.characters.position") {
-            if (args.size() != 1 || !args.at(0).is_string()) throw std::runtime_error("runtime.state.characters.position expects one str argument");
+            if (args.size() != 1 || !args.at(0).is_string()) throw std::runtime_error("runtime.state.characters.position には文字列の引数が1つ必要です");
             const auto id = args.at(0).get<std::string>();
             for (const auto& [character, slot] : runtimeCharacterSlots) if (character == id) return slot;
             return "";
         }
-        if (name == "runtime.state.background.exists") { if (!args.empty()) throw std::runtime_error("runtime.state.background.exists expects no arguments"); return !runtimeBackground.empty(); }
-        if (name == "runtime.state.background.current") { if (!args.empty()) throw std::runtime_error("runtime.state.background.current expects no arguments"); return runtimeBackground; }
-        if (name == "runtime.state.audio.bgm_exists") { if (!args.empty()) throw std::runtime_error("runtime.state.audio.bgm_exists expects no arguments"); return !runtimeBgm.empty(); }
-        if (name == "runtime.state.audio.current_bgm") { if (!args.empty()) throw std::runtime_error("runtime.state.audio.current_bgm expects no arguments"); return runtimeBgm; }
-        if (name == "runtime.state.execution.current_scene") { if (!args.empty()) throw std::runtime_error("runtime.state.execution.current_scene expects no arguments"); return currentSceneName; }
-        if (name == "runtime.state.execution.current_file") { if (!args.empty()) throw std::runtime_error("runtime.state.execution.current_file expects no arguments"); return currentSceneName.empty() ? std::string() : currentSourceFile; }
-        if (name == "runtime.state.execution.current_line") { if (!args.empty()) throw std::runtime_error("runtime.state.execution.current_line expects no arguments"); return Int(currentSceneName.empty() ? 0 : currentLine); }
+        if (name == "runtime.state.background.exists") { if (!args.empty()) throw std::runtime_error("runtime.state.background.exists に引数は指定できません"); return !runtimeBackground.empty(); }
+        if (name == "runtime.state.background.current") { if (!args.empty()) throw std::runtime_error("runtime.state.background.current に引数は指定できません"); return runtimeBackground; }
+        if (name == "runtime.state.audio.bgm_exists") { if (!args.empty()) throw std::runtime_error("runtime.state.audio.bgm_exists に引数は指定できません"); return !runtimeBgm.empty(); }
+        if (name == "runtime.state.audio.current_bgm") { if (!args.empty()) throw std::runtime_error("runtime.state.audio.current_bgm に引数は指定できません"); return runtimeBgm; }
+        if (name == "runtime.state.execution.current_scene") { if (!args.empty()) throw std::runtime_error("runtime.state.execution.current_scene に引数は指定できません"); return currentSceneName; }
+        if (name == "runtime.state.execution.current_file") { if (!args.empty()) throw std::runtime_error("runtime.state.execution.current_file に引数は指定できません"); return currentSceneName.empty() ? std::string() : currentSourceFile; }
+        if (name == "runtime.state.execution.current_line") { if (!args.empty()) throw std::runtime_error("runtime.state.execution.current_line に引数は指定できません"); return Int(currentSceneName.empty() ? 0 : currentLine); }
         if (name == "runtime.state.ui.dialog_opacity") {
-            if (!args.empty()) throw std::runtime_error("runtime.state.ui.dialog_opacity expects no arguments");
+            if (!args.empty()) throw std::runtime_error("runtime.state.ui.dialog_opacity に引数は指定できません");
             if (runtimeStateProvider) if (auto provided = runtimeStateProvider(name, args)) return *provided;
             return runtimeDialogOpacity;
         }
         if (name == "runtime.state.audio.volume") {
-            if (args.size() != 1 || !args.at(0).is_string()) throw std::runtime_error("runtime.state.audio.volume expects one str argument");
+            if (args.size() != 1 || !args.at(0).is_string()) throw std::runtime_error("runtime.state.audio.volume には文字列の引数が1つ必要です");
             if (runtimeStateProvider) if (auto provided = runtimeStateProvider(name, args)) return *provided;
             const auto kind = args.at(0).get<std::string>();
-            if (!runtimeAudioVolumes.contains(kind)) throw std::runtime_error("runtime.state.audio.volume channel must be bgm, se, or voice");
+            if (!runtimeAudioVolumes.contains(kind)) throw std::runtime_error("runtime.state.audio.volume の種類には bgm、se、voice のいずれかを指定してください");
             const auto override = runtimeAudioVolumeOverrides.find(kind);
             return override == runtimeAudioVolumeOverrides.end() ? runtimeAudioVolumes.at(kind) : override->second;
         }
         if (name == "runtime.state.variables.exists") {
-            if (args.size() != 1 || !args.at(0).is_string()) throw std::runtime_error("runtime.state.variables.exists expects one str argument");
+            if (args.size() != 1 || !args.at(0).is_string()) throw std::runtime_error("runtime.state.variables.exists には文字列の引数が1つ必要です");
             const auto variable = args.at(0).get<std::string>();
             if (globals.contains(variable)) return true;
             return std::any_of(locals.begin(), locals.end(), [&](const json& frame) { return frame.contains(variable); });
         }
         if (name == "runtime.state.variables.names") {
-            if (!args.empty()) throw std::runtime_error("runtime.state.variables.names expects no arguments");
+            if (!args.empty()) throw std::runtime_error("runtime.state.variables.names に引数は指定できません");
             std::set<std::string> names;
             for (auto it = globals.begin(); it != globals.end(); ++it) names.insert(it.key());
             for (const auto& frame : locals) for (auto it = frame.begin(); it != frame.end(); ++it) names.insert(it.key());
             return std::vector<std::string>(names.begin(), names.end());
         }
         if (runtimeStateProvider) if (auto provided = runtimeStateProvider(name, args)) return *provided;
-        throw std::runtime_error("Unknown runtime state API: " + name);
+        throw std::runtime_error("未対応のRuntime State APIです: " + name);
     }
     json get(const std::string& name) const {
         for (auto i = locals.rbegin(); i != locals.rend(); ++i) if (i->contains(name)) return i->at(name);
-        if (!globals.contains(name)) throw std::runtime_error("Undefined variable: " + name);
+        if (!globals.contains(name)) throw std::runtime_error("未定義の変数です: " + name);
         return globals.at(name);
     }
     void set(const std::string& name, const json& v) {
-        for (size_t n = locals.size(); n > 0; --n) if (locals[n - 1].contains(name)) { if (readonlyLocals[n - 1].contains(name)) throw std::runtime_error("const variable cannot be changed: " + name); locals[n - 1][name] = v; return; }
-        if (!globals.contains(name)) throw std::runtime_error("Undefined variable: " + name);
-        if (readonlyGlobals.contains(name)) throw std::runtime_error("const variable cannot be changed: " + name);
+        for (size_t n = locals.size(); n > 0; --n) if (locals[n - 1].contains(name)) { if (readonlyLocals[n - 1].contains(name)) throw std::runtime_error("const変数は変更できません: " + name); locals[n - 1][name] = v; return; }
+        if (!globals.contains(name)) throw std::runtime_error("未定義の変数です: " + name);
+        if (readonlyGlobals.contains(name)) throw std::runtime_error("const変数は変更できません: " + name);
         globals[name] = v;
     }
     void assertMutable(const json& target) const {
@@ -280,8 +296,8 @@ public:
         if (target.at("kind") == "load") name = target.at("name").get<std::string>();
         else if (target.at("kind") == "index" && target.at("target").at("kind") == "load") name = target.at("target").at("name").get<std::string>();
         if (name.empty()) return;
-        for (size_t n = locals.size(); n > 0; --n) if (locals[n - 1].contains(name)) { if (readonlyLocals[n - 1].contains(name)) throw std::runtime_error("const variable cannot be changed: " + name); return; }
-        if (readonlyGlobals.contains(name)) throw std::runtime_error("const variable cannot be changed: " + name);
+        for (size_t n = locals.size(); n > 0; --n) if (locals[n - 1].contains(name)) { if (readonlyLocals[n - 1].contains(name)) throw std::runtime_error("const変数は変更できません: " + name); return; }
+        if (readonlyGlobals.contains(name)) throw std::runtime_error("const変数は変更できません: " + name);
     }
     std::string interpolate(const json& v) {
         const auto s = text(v); std::regex pattern(R"(\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\})");
@@ -291,7 +307,7 @@ public:
             json replacement = get(path.substr(0, dot)); size_t start = dot;
             while (start != std::string::npos) {
                 const auto next = path.find('.', start + 1); const auto field = path.substr(start + 1, next - start - 1);
-                if (!replacement.is_object() || !replacement.contains(field)) throw std::runtime_error("Missing interpolation field: " + path);
+                if (!replacement.is_object() || !replacement.contains(field)) throw std::runtime_error("\u88dc\u9593\u5bfe\u8c61\u306efield '" + path + "' \u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093");
                 replacement = replacement.at(field); start = next;
             }
             out += s.substr(offset, it->position() - offset) + text(replacement); offset = it->position() + it->length();
@@ -313,7 +329,7 @@ public:
         if (kind == "float") return floating(e.at("value").get<std::string>());
         if (kind == "literal") {
             auto v = e.at("value");
-            if (v.is_number_unsigned() && v.get<uint64_t>() > INT64_MAX) throw std::runtime_error("int64 overflow");
+            if (v.is_number_unsigned() && v.get<uint64_t>() > INT64_MAX) throw std::runtime_error("64ビット整数の範囲を超えています");
             return v;
         }
         if (kind == "load") return get(e.at("name"));
@@ -322,14 +338,14 @@ public:
         if (kind == "index") {
             auto d = value(e.at("target")); auto keyValue = value(e.at("key"));
             if (d.is_array()) {
-                if (!keyValue.is_number_integer()) throw std::runtime_error("List index must be an integer");
+                if (!keyValue.is_number_integer()) throw std::runtime_error("list の添字は int で指定してください");
                 const Int index = keyValue.get<Int>();
-                if (index < 0 || uint64_t(index) >= d.size()) throw std::runtime_error("List index out of range: " + std::to_string(index));
+                if (index < 0 || uint64_t(index) >= d.size()) throw std::runtime_error("list の添字が範囲外です: " + std::to_string(index));
                 return d.at(size_t(index));
             }
-            if (!keyValue.is_string()) throw std::runtime_error("Dictionary key must be a string");
+            if (!keyValue.is_string()) throw std::runtime_error("dict の key は string を指定してください");
             auto key = keyValue.get<std::string>();
-            if (!d.is_object() || !d.contains(key)) throw std::runtime_error("Missing dictionary key: " + key);
+            if (!d.is_object() || !d.contains(key)) throw std::runtime_error("dict key '" + key + "' が見つかりません");
             return d.at(key);
         }
         if (kind == "unary") {
@@ -353,7 +369,7 @@ public:
                 if (op == "+") return finite(x + y);
                 if (op == "-") return finite(x - y);
                 if (op == "*") return finite(x * y);
-                if (op == "/") { if (y == 0.0) throw std::runtime_error("Division by zero"); return finite(x / y); }
+                if (op == "/") { if (y == 0.0) throw std::runtime_error("ゼロで除算できません"); return finite(x / y); }
                 if (op == ">") return x > y;
                 if (op == ">=") return x >= y;
                 if (op == "<") return x < y;
@@ -364,8 +380,8 @@ public:
             if (op == "-") return sub(x, y);
             if (op == "*") return mul(x, y);
             if (op == "/" || op == "%") {
-                if (!y) throw std::runtime_error("Division by zero");
-                if (x == INT64_MIN && y == -1) { if (op == "%") return Int(0); throw std::runtime_error("int64 overflow"); }
+                if (!y) throw std::runtime_error("ゼロで除算できません");
+                if (x == INT64_MIN && y == -1) { if (op == "%") return Int(0); throw std::runtime_error("64ビット整数の範囲を超えています"); }
                 return op == "/" ? x / y : x % y;
             }
             if (op == ">") return x > y;
@@ -376,42 +392,126 @@ public:
         if (kind == "call") {
             json args = json::array(); for (const auto& a : e.at("args")) args.push_back(value(a));
             auto name = e.at("name").get<std::string>();
+            if (name == "start") {
+                if (!args.empty()) throw std::runtime_error("start() \u306b\u5f15\u6570\u306f\u6307\u5b9a\u3067\u304d\u307e\u305b\u3093");
+                if (suppressStartupStart) return nullptr;
+                if (!start) throw std::runtime_error("start() \u306b\u5bfe\u5fdc\u3059\u308bscreen host\u304c\u3042\u308a\u307e\u305b\u3093");
+                startWasCalled = true;
+                start(); return nullptr;
+            }
             if (name.rfind("runtime.state.", 0) == 0) return runtimeStateCall(name, args);
-            if (name == "str") return text(args.at(0));
+            if (name == "str") {
+                if (args.size() != 1) throw std::runtime_error("str() には引数を1つ指定してください");
+                return text(args.at(0));
+            }
             if (name == "int") {
+                if (args.size() != 1) throw std::runtime_error("int() には引数を1つ指定してください");
                 if (args.at(0).is_number_float()) {
                     const double number = args.at(0).get<double>();
-                    if (!std::isfinite(number) || number < double(INT64_MIN) || number >= double(INT64_MAX)) throw std::runtime_error("int64 overflow");
+                    if (!std::isfinite(number) || number < double(INT64_MIN) || number >= double(INT64_MAX)) throw std::runtime_error("64ビット整数の範囲を超えています");
                     return Int(std::trunc(number));
                 }
                 return integer(args.at(0).get<std::string>());
             }
             if (name == "float") {
+                if (args.size() != 1) throw std::runtime_error("float() には引数を1つ指定してください");
                 const auto& argument = args.at(0);
                 if (argument.is_string()) return floating(argument.get<std::string>());
                 if (argument.is_number_integer()) return finite(double(argument.get<Int>()));
                 if (argument.is_number_float()) return finite(argument.get<double>());
-                throw std::runtime_error("Invalid float conversion");
+                throw std::runtime_error("浮動小数点数に変換できません");
             }
-            if (name == "list.length") return Int(args.at(0).size());
-            if (name == "list.append") { auto result = args.at(0); result.push_back(args.at(1)); return result; }
-            if (name == "list.contains") { const auto& values = args.at(0); return std::find(values.begin(), values.end(), args.at(1)) != values.end(); }
-            if (name == "text.trim") return normalizeDataSpace(args.at(0).get<std::string>(), false);
-            if (name == "text.normalize_space") return normalizeDataSpace(args.at(0).get<std::string>(), true);
-            if (name == "text.split") return splitText(args.at(0).get<std::string>(), args.at(1).get<std::string>());
-            if (name == "text.replace") return replaceText(args.at(0).get<std::string>(), args.at(1).get<std::string>(), args.at(2).get<std::string>());
+            if (name == "__intrinsic_sin" || name == "__intrinsic_cos") {
+                if (args.size() != 1) throw std::runtime_error(name + " には引数を1つ指定してください");
+                if (!args.at(0).is_number_float()) throw std::runtime_error("三角関数の引数には浮動小数点数を指定してください");
+                const double angle = args.at(0).get<double>();
+                return finite(name == "__intrinsic_sin" ? std::sin(angle) : std::cos(angle));
+            }
+            if (name == "list.length") {
+                if (args.size() != 1 || !args.at(0).is_array()) throw std::runtime_error("list.length には list を1つ指定してください");
+                return Int(args.at(0).size());
+            }
+            if (name == "list.append") {
+                if (args.size() != 2) throw std::runtime_error("list.append には list と要素を指定してください");
+                const auto& values = args.at(0);
+                if (!values.is_array()) throw std::runtime_error("list.append には list を指定してください");
+                const auto& item = args.at(1);
+                if (!item.is_number() && !item.is_string() && !item.is_boolean()) throw std::runtime_error("list.append には primitive type の要素を指定してください");
+                for (const auto& value : values) if (!samePrimitiveType(value, item)) throw std::runtime_error("list.append の list と要素の型が一致しません");
+                auto result = values;
+                result.push_back(item);
+                return result;
+            }
+            if (name == "list.contains") {
+                if (args.size() != 2) throw std::runtime_error("list.contains には list と要素を指定してください");
+                const auto& values = args.at(0);
+                if (!values.is_array()) throw std::runtime_error("list.contains には list を指定してください");
+                const auto& target = args.at(1);
+                if (!target.is_number() && !target.is_string() && !target.is_boolean()) throw std::runtime_error("list.contains には primitive type の要素を指定してください");
+                for (const auto& value : values) if (!samePrimitiveType(value, target)) throw std::runtime_error("list.contains の list と要素の型が一致しません");
+                return std::find(values.begin(), values.end(), target) != values.end();
+            }
+            if (name == "list.remove_all") {
+                if (args.size() != 2) throw std::runtime_error("list.remove_all には list と要素を指定してください");
+                const auto& values = args.at(0);
+                if (!values.is_array()) throw std::runtime_error("list.remove_all には list を指定してください");
+                const auto& target = args.at(1);
+                if (!target.is_number() && !target.is_string() && !target.is_boolean()) throw std::runtime_error("list.remove_all には primitive type の要素を指定してください");
+                for (const auto& value : values) if (!samePrimitiveType(value, target)) throw std::runtime_error("list.remove_all の list と要素の型が一致しません");
+                if (values.size() > 100000) throw std::runtime_error("loop の実行回数が上限の100,000回を超えました");
+                json result = json::array();
+                for (const auto& value : values) if (value != target) result.push_back(value);
+                return result;
+            }
+            if (name == "text.trim") {
+                if (args.size() != 1 || !args.at(0).is_string()) throw std::runtime_error("text.trim には str を1つ指定してください");
+                return normalizeDataSpace(args.at(0).get<std::string>(), false);
+            }
+            if (name == "text.normalize_space") {
+                if (args.size() != 1 || !args.at(0).is_string()) throw std::runtime_error("text.normalize_space には str を1つ指定してください");
+                return normalizeDataSpace(args.at(0).get<std::string>(), true);
+            }
+            if (name == "text.split") {
+                if (args.size() != 2 || !args.at(0).is_string() || !args.at(1).is_string()) throw std::runtime_error("text.split には str を2つ指定してください");
+                return splitText(args.at(0).get<std::string>(), args.at(1).get<std::string>());
+            }
+            if (name == "text.replace") {
+                if (args.size() != 3 || !args.at(0).is_string() || !args.at(1).is_string() || !args.at(2).is_string()) throw std::runtime_error("text.replace には str を3つ指定してください");
+                return replaceText(args.at(0).get<std::string>(), args.at(1).get<std::string>(), args.at(2).get<std::string>());
+            }
+            if (name == "text.join") {
+                if (args.size() != 2) throw std::runtime_error("text.join には list[str] と str を指定してください");
+                const auto& values = args.at(0);
+                if (!values.is_array() || !args.at(1).is_string()) throw std::runtime_error("text.join には list[str] と str を指定してください");
+                if (values.size() > 100000) throw std::runtime_error("loop の実行回数が上限の100,000回を超えました");
+                const auto& separator = args.at(1).get_ref<const std::string&>();
+                std::string result;
+                size_t total = values.empty() ? 0 : separator.size() * (values.size() - 1);
+                for (const auto& value : values) {
+                    if (!value.is_string()) throw std::runtime_error("text.join には list[str] と str を指定してください");
+                    total += value.get_ref<const std::string&>().size();
+                }
+                result.reserve(total);
+                for (size_t index = 0; index < values.size(); ++index) {
+                    if (index) result += separator;
+                    result += values[index].get_ref<const std::string&>();
+                }
+                return result;
+            }
             return call(name, args);
         }
-        throw std::runtime_error("Unknown expression: " + kind);
+        throw std::runtime_error("未対応の式です: " + kind);
     }
     json call(const std::string& name, const json& args) {
-        if (!functions.contains(name)) throw std::runtime_error("Unknown function: " + name);
-        const auto fn = functions.at(name); auto saved = std::move(locals); auto savedReadonly = std::move(readonlyLocals); auto savedLoops = std::move(loopScopes); loopScopes.clear(); locals = {json::object()}; readonlyLocals = {std::set<std::string>{}};
+        ++functionCallDepth;
+        struct CallDepthGuard { int& depth; ~CallDepthGuard() { --depth; } } callDepthGuard{functionCallDepth};
+        if (!functions.contains(name)) throw std::runtime_error("未定義の関数です: " + name);
+        const auto fn = functions.at(name); const auto savedSourceFile = currentSourceFile; const auto savedLine = currentLine; auto saved = std::move(locals); auto savedReadonly = std::move(readonlyLocals); auto savedLoops = std::move(loopScopes); loopScopes.clear(); locals = {json::object()}; readonlyLocals = {std::set<std::string>{}};
         for (size_t i = 0; i < fn.at("params").size(); ++i) locals.back()[fn.at("params")[i].at("name").get<std::string>()] = args.at(i);
         try {
             auto r = exec(fn.at("body"));
-            if (fn.at("returnType") != "none" && (r.kind != Signal::Return || r.value.is_null())) throw std::runtime_error("Function did not return a value: " + name);
-            locals = std::move(saved); readonlyLocals = std::move(savedReadonly); loopScopes = std::move(savedLoops); return r.value;
+            if (fn.at("returnType") != "none" && (r.kind != Signal::Return || r.value.is_null())) throw std::runtime_error("関数が値を返しませんでした: " + name);
+            locals = std::move(saved); readonlyLocals = std::move(savedReadonly); loopScopes = std::move(savedLoops); currentSourceFile = savedSourceFile; currentLine = savedLine; return r.value;
         } catch (...) { locals = std::move(saved); readonlyLocals = std::move(savedReadonly); loopScopes = std::move(savedLoops); throw; }
     }
     Signal scoped(const json& body) {
@@ -427,7 +527,7 @@ public:
             if (op == "declare") {
                 auto name = c.at("name").get<std::string>();
                 if (preserve && locals.empty() && globals.contains(name)) {
-                    if (!matches(globals.at(name), c.at("type"))) throw std::runtime_error("Global type differs between files: " + name);
+                if (!matches(globals.at(name), c.at("type"))) throw std::runtime_error("ファイル間でglobal variable '" + name + "' の type が一致しません");
                     if (c.value("constant", false)) readonlyGlobals.insert(name);
                     continue;
                 }
@@ -439,7 +539,7 @@ public:
             } else if (op == "set" || op == "unset") {
                 auto t = c.at("target");
                 if (t.at("kind") == "load") {
-                    if (op == "unset") throw std::runtime_error("unset requires a dictionary element");
+                    if (op == "unset") throw std::runtime_error("unset には dict entry を指定してください");
                     auto assigned = value(c.at("value"));
                     assertMutable(t);
                     set(t.at("name"), assigned);
@@ -449,28 +549,30 @@ public:
                     assertMutable(t);
                     auto keyValue = value(t.at("key")); auto d = get(name);
                     if (d.is_array()) {
-                        if (op == "unset") throw std::runtime_error("unset requires a dictionary element");
-                        if (!keyValue.is_number_integer()) throw std::runtime_error("List index must be an integer");
+                        if (op == "unset") throw std::runtime_error("unset には dict entry を指定してください");
+                        if (!keyValue.is_number_integer()) throw std::runtime_error("list の添字は int で指定してください");
                         const Int index = keyValue.get<Int>();
-                        if (index < 0 || uint64_t(index) >= d.size()) throw std::runtime_error("List index out of range: " + std::to_string(index));
+                        if (index < 0 || uint64_t(index) >= d.size()) throw std::runtime_error("list の添字が範囲外です: " + std::to_string(index));
                         d.at(size_t(index)) = assigned;
                     } else {
-                        if (!keyValue.is_string()) throw std::runtime_error("Dictionary key must be a string");
+                        if (!keyValue.is_string()) throw std::runtime_error("dict の key は string を指定してください");
                         const auto key = keyValue.get<std::string>();
                         if (op == "set") d[key] = assigned;
-                        else { if (!d.contains(key)) throw std::runtime_error("Missing dictionary key: " + key); d.erase(key); }
+                        else { if (!d.contains(key)) throw std::runtime_error("dict key '" + key + "' が見つかりません"); d.erase(key); }
                     }
                     set(name, d);
                 }
             } else if (op == "parallel") {
                 json batch = json::array();
                 for (const auto& instruction : c.at("body")) {
-                    if (instruction.value("op", std::string()) != "command") throw std::runtime_error("parallel accepts timed visual commands only");
+                    if (instruction.value("op", std::string()) != "command") throw std::runtime_error("parallel では時間指定の視覚コマンドのみ使用できます");
+                    currentSourceFile = instruction.value("file", program.value("sourceFile", std::string()));
+                    currentLine = instruction.value("line", int64_t(0));
                     json args = json::array(); for (const auto& argument : instruction.at("args")) args.push_back(value(argument));
                     const auto name = instruction.at("name").get<std::string>();
                     batch.push_back({{"name", name}, {"args", args}});
                 }
-                if (batch.empty()) throw std::runtime_error("parallel requires at least one command");
+                if (batch.empty()) throw std::runtime_error("parallel にはコマンドを1つ以上指定してください");
                 if (parallel) parallel(batch);
                 else for (const auto& item : batch) command(item.at("name").get<std::string>(), item.at("args"));
                 for (const auto& item : batch) updateRuntimeState(item.at("name").get<std::string>(), item.at("args"));
@@ -491,20 +593,22 @@ public:
             } else if (op == "choice") {
                 std::vector<std::string> labels;
                 for (const auto& o : c.at("options")) labels.push_back(interpolate(value(o.at("label"))));
-                if (labels.empty()) throw std::runtime_error("Empty choice");
+                if (labels.empty()) throw std::runtime_error("選択肢がありません");
                 auto selected = choice(c.contains("prompt") ? interpolate(value(c.at("prompt"))) : "", labels);
                 auto r = scoped(c.at("options").at(selected).at("body")); if (r.kind != Signal::Next) return r;
             } else if (op == "while") {
+                DepthGuard loopGuard(loopDepth);
                 size_t count = 0;
-                while (value(c.at("condition")).get<bool>()) { if (++count > 100000) throw std::runtime_error("Loop limit exceeded"); auto r = exec(count == 1 && c.contains("debugBody") ? c.at("debugBody") : c.at("body")); if (r.kind != Signal::Next) return r; }
+                while (value(c.at("condition")).get<bool>()) { if (++count > 100000) throw std::runtime_error("loop の実行回数が上限の100,000回を超えました"); auto r = exec(count == 1 && c.contains("debugBody") ? c.at("debugBody") : c.at("body")); if (r.kind != Signal::Next) return r; }
             } else if (op == "for") {
+                DepthGuard loopGuard(loopDepth);
                 Int start = value(c.at("start")), stop = value(c.at("stop")), step = value(c.at("step"));
-                if (!step || (start < stop && step < 0) || (start > stop && step > 0)) throw std::runtime_error("Invalid for step");
+                if (!step || (start < stop && step < 0) || (start > stop && step > 0)) throw std::runtime_error("for の増分が不正です");
                 locals.push_back(json::object()); readonlyLocals.emplace_back(); loopScopes.insert(locals.size()-1);
                 try {
                     size_t count = 0;
                     for (Int i = start; step > 0 ? i <= stop : i >= stop;) {
-                        if (++count > 100000) throw std::runtime_error("Loop limit exceeded");
+                        if (++count > 100000) throw std::runtime_error("loop の実行回数が上限の100,000回を超えました");
                         locals.back()[c.at("name").get<std::string>()] = i;
                         auto r = exec(count == 1 && c.contains("debugBody") ? c.at("debugBody") : c.at("body")); if (r.kind != Signal::Next) { popLocal(); return r; }
                         if ((step > 0 && i > INT64_MAX - step) || (step < 0 && i < INT64_MIN - step)) break;
@@ -513,20 +617,22 @@ public:
                     popLocal();
                 } catch (...) { popLocal(); throw; }
             } else if (op == "forEach") {
+                DepthGuard loopGuard(loopDepth);
                 auto values = value(c.at("iterable"));
-                if (!values.is_array()) throw std::runtime_error("for-in requires a list");
+                if (!values.is_array()) throw std::runtime_error("for-in には list を指定してください");
                 locals.push_back(json::object()); readonlyLocals.emplace_back(); loopScopes.insert(locals.size()-1);
                 try {
                     size_t count = 0;
                     for (const auto& item : values) {
-                        if (++count > 100000) throw std::runtime_error("Loop limit exceeded");
+                        if (++count > 100000) throw std::runtime_error("loop の実行回数が上限の100,000回を超えました");
                         locals.back()[c.at("name").get<std::string>()] = item;
                         auto r = exec(count == 1 && c.contains("debugBody") ? c.at("debugBody") : c.at("body"));
                         if (r.kind != Signal::Next) { popLocal(); return r; }
                     }
                     popLocal();
                 } catch (...) { popLocal(); throw; }
-            } else throw std::runtime_error("Unknown instruction: " + op);
+            } else throw std::runtime_error("未対応の命令です: " + op);
+            if (pendingLoad.is_object()) { auto request = std::move(pendingLoad); pendingLoad = nullptr; return {Signal::Restart, std::move(request)}; }
         }
         return {};
     }
@@ -568,6 +674,7 @@ public:
     }
     void run(json p, json debug = nullptr) {
         bool transferred = false;
+        startWasCalled = false;
         runtimeCharacterSlots.clear();
         currentSceneName.clear(); currentSourceFile.clear(); currentLine = 0;
         runtimeBackground.clear(); runtimeBgm.clear();
@@ -577,10 +684,15 @@ public:
         runtimeAudioVolumeOverrides.clear();
         if (debug.is_object() && debug.contains("presentation")) restoreRuntimeState(debug.at("presentation"));
         for (;;) {
-            if (p.at("version") != 2) throw std::runtime_error("Unsupported program version");
+            if (p.at("version") != 2) throw std::runtime_error("未対応のプログラム形式バージョンです");
             program = p; functions.clear();
             for (const auto& fn : p.at("functions")) functions[fn.at("name")] = fn;
-            auto r = exec(p.at("globals"), transferred);
+            json globalInstructions = p.at("globals");
+            suppressStartupStart = !transferred && debug.is_object() && debug.contains("scene") && debug.at("scene").is_string();
+            Signal r;
+            try { r = exec(globalInstructions, transferred); }
+            catch (...) { suppressStartupStart = false; throw; }
+            suppressStartupStart = false;
             std::map<std::string, json> scenes;
             for (const auto& s : p.at("scenes")) scenes[s.at("name")] = s.at("instructions");
             if (!transferred && debug.is_object() && debug.contains("variables")) {
@@ -601,7 +713,7 @@ public:
             if (!transferred && debug.is_object() && debug.contains("scene")) {
                 first = nullptr;
                 for (const auto& scene : p.at("scenes")) if (scene.value("name", std::string()) == debug.at("scene").get<std::string>()) { first = &scene; break; }
-                if (!first) throw std::runtime_error("Unknown debug scene: " + debug.at("scene").get<std::string>());
+                if (!first) throw std::runtime_error("debug 対象の scene が見つかりません: " + debug.at("scene").get<std::string>());
             }
             currentSceneName = first ? first->value("name", std::string()) : std::string();
             if (!transferred && debug.is_object() && debug.contains("presentation")) {
@@ -613,7 +725,7 @@ public:
                 instructions = first->at("instructions");
                 if (!transferred && debug.is_object() && debug.contains("line") && !debug.at("line").is_null()) {
                     const auto suffix = instructionsFromLine(instructions, debug.value("file", std::string()), debug.at("line").get<int64_t>());
-                    if (suffix.is_null()) throw std::runtime_error("Debug line has no executable instruction in the selected scene");
+                    if (suffix.is_null()) throw std::runtime_error("選択したsceneのdebug lineに実行可能な命令がありません");
                     instructions = suffix;
                 }
             }
@@ -622,13 +734,13 @@ public:
             if (r.kind == Signal::Restart) {
                 debug = std::move(r.value);
                 const auto file = debug.value("file", std::string());
-                if (file.empty() || !load) throw std::runtime_error("Save slot is missing its scenario file");
+                if (file.empty() || !load) throw std::runtime_error("Save data に必要な scenario file の情報がありません");
                 runtimeCharacterSlots.clear();
                 if (debug.contains("presentation")) restoreRuntimeState(debug.at("presentation"));
                 p = load(file); transferred = false; continue;
             }
             if (r.kind == Signal::Next) return;
-            if (r.kind != Signal::Goto || !load) throw std::runtime_error("Invalid scene transfer");
+            if (r.kind != Signal::Goto || !load) throw std::runtime_error("シーン遷移の指定が不正です");
             p = load(r.value); transferred = true;
         }
     }

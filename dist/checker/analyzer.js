@@ -2223,25 +2223,25 @@ function analyzeExpression(expr, file, out, constants = new Map()) {
             const argument = constant(current.args[0], constants);
             let invalid;
             if (current.name === 'int' && typeof argument === 'string' && !/^[+-]?\d+$/.test(argument))
-                invalid = 'int() 変換エラー: 渡された文字列が整数形式ではありません';
+                invalid = 'int() conversion error: 渡された str が int 形式ではありません';
             if (current.name === 'int' && typeof argument === 'number' && Number.isFinite(argument)) {
                 const value = BigInt(Math.trunc(argument));
                 if (value < INT_MIN || value > INT_MAX)
-                    invalid = 'int() 変換エラー: 結果が64bit整数の範囲を超えます';
+                    invalid = 'int() conversion error: 結果が64-bit int の範囲を超えます';
             }
             if (current.name === 'float' && typeof argument === 'string') {
                 if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(argument) || !Number.isFinite(Number(argument)))
-                    invalid = 'float() 変換エラー: 渡された文字列が有限数値形式ではありません';
+                    invalid = 'float() conversion error: 渡された str が有限の float 形式ではありません';
             }
             if (current.name === 'float' && typeof argument === 'number' && !Number.isFinite(argument))
-                invalid = 'float() 変換エラー: 結果が有限値ではありません';
+                invalid = 'float() conversion error: 結果が有限値ではありません';
             if (invalid)
                 out.push(diagnostic(file, 'invalid-conversion', 'error', invalid, current));
         }
         if (current.kind === 'binary') {
             const right = constant(current.right, constants);
             if ((current.operator === '/' || current.operator === '%') && (right === 0n || right === 0)) {
-                out.push(diagnostic(file, 'division-by-zero', 'warning', '0 による除算または剰余は実行時エラーになります', current));
+                out.push(diagnostic(file, 'division-by-zero', 'warning', '0 による除算または剰余で runtime error が発生します', current));
             }
             if (['+', '-', '*', '/'].includes(current.operator)) {
                 const left = constant(current.left, constants);
@@ -2249,14 +2249,14 @@ function analyzeExpression(expr, file, out, constants = new Map()) {
                     const result = current.operator === '+' ? left + right : current.operator === '-' ? left - right
                         : current.operator === '*' ? left * right : right === 0 ? undefined : left / right;
                     if (result !== undefined && !Number.isFinite(result))
-                        out.push(diagnostic(file, 'float-overflow', 'error', '小数演算の結果が有限値の範囲を超えます', current));
+                        out.push(diagnostic(file, 'float-overflow', 'error', 'float の演算結果が表現可能な範囲を超えます', current));
                 }
             }
         }
         const value = constant(current, constants);
         const minimumMagnitude = current.kind === 'literal' && value === INT_MAX + 1n && parent?.kind === 'unary' && parent.operator === '-';
         if (typeof value === 'bigint' && (value < INT_MIN || value > INT_MAX) && !minimumMagnitude) {
-            out.push(diagnostic(file, 'integer-overflow', 'error', '定数式で64bit整数オーバーフローが発生します', current));
+            out.push(diagnostic(file, 'integer-overflow', 'error', '定数式で64bit integer overflowが発生します', current));
         }
         if (current.kind === 'binary') {
             walk(current.left, current);
@@ -2293,7 +2293,7 @@ function analyzeConstrainedConversions(expr, file, out, constants, constraints) 
                 const definitelyInvalid = bounds.max < minimum || bounds.min >= maximumExclusive;
                 const mayBeInvalid = definitelyInvalid || bounds.min < minimum || bounds.max >= maximumExclusive;
                 if (mayBeInvalid)
-                    out.push(diagnostic(file, 'invalid-conversion', definitelyInvalid ? 'error' : 'warning', 'int() の値域に64bit整数へ変換できない値が含まれます', current));
+                    out.push(diagnostic(file, 'invalid-conversion', definitelyInvalid ? 'error' : 'warning', 'int() の値域に64-bit int へ変換できない値が含まれます', current));
             }
             if (argument.kind === 'variable') {
                 const domain = constraints.get(argument.name);
@@ -2306,7 +2306,7 @@ function analyzeConstrainedConversions(expr, file, out, constants, constraints) 
                     });
                     const invalidCount = domain.values.size - valid.length;
                     if (invalidCount)
-                        out.push(diagnostic(file, 'invalid-conversion', valid.length ? 'warning' : 'error', 'int() の文字列候補に整数へ変換できない値が含まれます', current));
+                        out.push(diagnostic(file, 'invalid-conversion', valid.length ? 'warning' : 'error', 'int() の str 候補に変換できない値が含まれます', current));
                 }
             }
         }
@@ -2315,18 +2315,18 @@ function analyzeConstrainedConversions(expr, file, out, constants, constraints) 
             if (domain?.type === 'str' && domain.values?.size) {
                 const valid = [...domain.values].filter((value) => typeof value === 'string').filter(value => /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value) && Number.isFinite(Number(value)));
                 if (valid.length !== domain.values.size)
-                    out.push(diagnostic(file, 'invalid-conversion', valid.length ? 'warning' : 'error', 'float() の文字列候補に有限数へ変換できない値が含まれます', current));
+                    out.push(diagnostic(file, 'invalid-conversion', valid.length ? 'warning' : 'error', 'float() の str 候補に有限値へ変換できない値が含まれます', current));
             }
         }
     });
 }
 function constraintViolation(value, constraint) {
     if (constraint.type === 'int' && typeof value !== 'bigint')
-        return '整数';
+        return 'int';
     if (constraint.type === 'str' && typeof value !== 'string')
-        return '文字列';
+        return 'str';
     if (constraint.type === 'float' && typeof value !== 'number')
-        return '小数';
+        return 'float';
     if (constraint.type === 'float' && constraint.floatValues && typeof value === 'number' && !constraint.floatValues.has(value))
         return '許容値集合';
     if (constraint.type === 'float' && typeof value === 'number' && constraint.floatMin !== undefined && value < constraint.floatMin)
@@ -2753,7 +2753,7 @@ function analyzeRuntimeStateFlow(statements, file, out, initial = { slots: new M
                         const key = `${statement.line ?? 1}:${statement.column ?? 1}:${position}:${character}:${previous ?? ''}`;
                         if (previous && previous !== character && !emitted.has(key)) {
                             emitted.add(key);
-                            out.push(diagnostic(file, 'character-slot-conflict', 'warning', `position '${position}' already contains character '${previous}'; showing '${character}' replaces it`, statement));
+                            out.push(diagnostic(file, 'character-slot-conflict', 'warning', `位置 '${position}' にはすでにcharacter '${previous}' が表示されています。'${character}' の表示で置き換わります`, statement));
                         }
                         invalidateRuntimeExpressionFacts(state);
                         if (previous && previous !== character)
@@ -2768,7 +2768,7 @@ function analyzeRuntimeStateFlow(statements, file, out, initial = { slots: new M
                         const key = `${statement.line ?? 1}:${statement.column ?? 1}:${character}`;
                         if (!emitted.has(key)) {
                             emitted.add(key);
-                            out.push(diagnostic(file, 'hide-unshown-character', 'warning', `character '${character}' is hidden before it is statically shown`, statement));
+                            out.push(diagnostic(file, 'hide-unshown-character', 'warning', `character '${character}' は静的に表示が確認される前に非表示にされます`, statement));
                         }
                     }
                     invalidateRuntimeExpressionFacts(state);
@@ -2912,7 +2912,7 @@ function analyzeImageLayers(statements, file, out, initial = new Map(), emitted 
                     const key = `${statement.line ?? 1}:${statement.column ?? 1}:${slot}:${image}:${previous?.[0] ?? ''}`;
                     if (previous && !emitted.has(key)) {
                         emitted.add(key);
-                        out.push(diagnostic(file, 'image-slot-conflict', 'warning', `position '${slot}' already contains image '${previous[0]}'; showing '${image}' overlays it`, statement));
+                        out.push(diagnostic(file, 'image-slot-conflict', 'warning', `位置 '${slot}' にはすでに画像 '${previous[0]}' があります。画像 '${image}' が重ねて表示されます`, statement));
                     }
                     state.set(image, slot);
                 }
@@ -2922,7 +2922,7 @@ function analyzeImageLayers(statements, file, out, initial = new Map(), emitted 
                     const key = `${statement.line ?? 1}:${statement.column ?? 1}:${image}`;
                     if (!state.has(image) && !emitted.has(key)) {
                         emitted.add(key);
-                        out.push(diagnostic(file, 'clear-unshown-image', 'warning', `image '${image}' is cleared before it is statically shown`, statement));
+                        out.push(diagnostic(file, 'clear-unshown-image', 'warning', `画像 '${image}' は静的に表示が確認される前に消去されます`, statement));
                     }
                     state.delete(image);
                 }
@@ -3004,7 +3004,7 @@ function analyzeAssetReplacements(statements, file, out, kind, code, label, emit
                         const key = `${statement.line ?? 1}:${statement.column ?? 1}:${kind}:${current}:${assetName}`;
                         if (!emitted.has(key)) {
                             emitted.add(key);
-                            out.push(diagnostic(file, code, 'warning', `${label} '${current}' is replaced by '${assetName}' without an explicit clear`, statement));
+                            out.push(diagnostic(file, code, 'warning', `${label} '${current}' は明示的に消去されずに '${assetName}' へ置き換わります`, statement));
                         }
                     }
                     current = assetName;
@@ -3013,7 +3013,7 @@ function analyzeAssetReplacements(statements, file, out, kind, code, label, emit
                     const key = `${statement.line ?? 1}:${statement.column ?? 1}:bg`;
                     if (!emitted.has(key)) {
                         emitted.add(key);
-                        out.push(diagnostic(file, 'move-unset-background', 'warning', 'background is moved before it is statically set', statement));
+                        out.push(diagnostic(file, 'move-unset-background', 'warning', '背景は静的に設定が確認される前に移動されます', statement));
                     }
                 }
                 else if (command?.name === 'clear' && command.args[0]?.kind === 'literal' && command.args[0].value === kind) {
@@ -3063,7 +3063,7 @@ function analyzeVideoLayerReplacements(statements, file, out, emitted = new Set(
                         const key = `${statement.line ?? 1}:${statement.column ?? 1}`;
                         if (!emitted.has(key)) {
                             emitted.add(key);
-                            out.push(diagnostic(file, 'video-layer-replaced', 'warning', 'an active async video is replaced because the runtime has one video layer', statement));
+                            out.push(diagnostic(file, 'video-layer-replaced', 'warning', 'runtime の video layer は1つのため、再生中の非同期動画が置き換えられます', statement));
                         }
                     }
                     current = mode !== 'blocking';
@@ -3115,7 +3115,7 @@ function analyzeBgmClearDivergence(statements, file, out, emitted = new Set()) {
                 const key = `${statement.line ?? 1}:${statement.column ?? 1}`;
                 if (!emitted.has(key)) {
                     emitted.add(key);
-                    out.push(diagnostic(file, 'bgm-clear-path-dependent', 'warning', 'clear bgm is a no-op on some static paths because no BGM is active there', statement));
+                    out.push(diagnostic(file, 'bgm-clear-path-dependent', 'warning', '一部の静的経路ではBGMが再生されていないため、clear bgm は何も行いません', statement));
                 }
             }
             const next = [];
@@ -3171,7 +3171,7 @@ function analyzeBackgroundClearDivergence(statements, file, out, emitted = new S
                 const key = `${statement.line ?? 1}:${statement.column ?? 1}`;
                 if (!emitted.has(key)) {
                     emitted.add(key);
-                    out.push(diagnostic(file, 'background-clear-path-dependent', 'warning', 'clear bg is a no-op on some static paths because no background is active there', statement));
+                    out.push(diagnostic(file, 'background-clear-path-dependent', 'warning', '一部の静的経路では背景が設定されていないため、clear bg は何も行いません', statement));
                 }
             }
             const next = [];
@@ -3368,7 +3368,7 @@ function analyzeBlock(statements, file, out, reachable = true, constants = new M
         else if (statement.kind === 'while') {
             const value = conditionValue(statement.condition.expression, known, knownFacts, activeConstraints);
             if (value === false)
-                out.push(diagnostic(file, 'constant-condition', 'warning', 'while の条件は常に偽です。ループ本体には到達できません', statement.condition));
+                out.push(diagnostic(file, 'constant-condition', 'warning', 'while loop の条件は常に偽です。loop body には到達できません', statement.condition));
             const stable = loopConstants(statement, known);
             const stableConstraints = new Map(activeConstraints);
             invalidateConstraintState(statement, stableConstraints);
@@ -3376,14 +3376,14 @@ function analyzeBlock(statements, file, out, reachable = true, constants = new M
             recordCondition(bodyFacts, statement.condition.expression, true);
             const stableCondition = conditionValue(statement.condition.expression, stable, new Map(), stableConstraints);
             if (stableCondition === true && !blockTerminates(statement.body, stable, bodyFacts, stableConstraints))
-                out.push(diagnostic(file, 'infinite-loop', 'warning', 'while の条件は常に真で、ループ本体は後続へ進みません', statement.condition));
+                out.push(diagnostic(file, 'infinite-loop', 'warning', 'while loop の条件は常に真で、loop body は後続へ進みません', statement.condition));
             if (whileUpdateOverflows(statement, known)) {
-                out.push(diagnostic(file, 'integer-overflow', 'error', 'while ループの更新で64bit整数オーバーフローが発生します', statement.body[0]));
+                out.push(diagnostic(file, 'integer-overflow', 'error', 'while loop の更新で64bit integer overflowが発生します', statement.body[0]));
             }
             const iterations = whileIterationCount(statement, known);
             const iterationUpperBound = iterations === undefined ? whileIterationUpperBound(statement, known, activeConstraints) : undefined;
             if (iterations === 'non-terminating' || (typeof iterations === 'bigint' && iterations > 100000n) || iterationUpperBound === 'non-terminating' || (typeof iterationUpperBound === 'bigint' && iterationUpperBound > 100000n)) {
-                out.push(diagnostic(file, 'loop-limit', 'warning', 'この while ループは実行時の最大反復回数 100,000 回を超過します', statement));
+                out.push(diagnostic(file, 'loop-limit', 'warning', 'この while loop は実行時の最大反復回数 100,000 回を超過します', statement));
             }
             // A while body may execute zero times, so body-local narrowing must not
             // leak into the post-loop path.
@@ -3394,21 +3394,21 @@ function analyzeBlock(statements, file, out, reachable = true, constants = new M
         else if (statement.kind === 'for') {
             const execution = forExecution(statement, known);
             if (execution === 'invalid') {
-                out.push(diagnostic(file, 'invalid-for-step', 'error', 'この for ループの step では開始値から終了値へ進めません', statement));
+                out.push(diagnostic(file, 'invalid-for-step', 'error', 'この for loop の step では開始値から終了値へ進めません', statement));
             }
             const iterations = forIterationCount(statement, known);
             const iterationUpperBound = forIterationUpperBound(statement, known, activeConstraints);
             if ((iterations !== undefined && iterations > 100000n) || (iterations === undefined && iterationUpperBound !== undefined && iterationUpperBound > 100000n)) {
-                out.push(diagnostic(file, 'loop-limit', 'warning', 'この for ループは実行時の最大反復回数 100,000 回を超過します', statement));
+                out.push(diagnostic(file, 'loop-limit', 'warning', 'この for loop は実行時の最大反復回数 100,000 回を超過します', statement));
             }
             if (forFirstIterationOverflows(statement, known) || forRepeatedUpdateOverflows(statement, known)) {
-                out.push(diagnostic(file, 'integer-overflow', 'error', 'for ループの更新で64bit整数オーバーフローが発生します', statement.body[0]));
+                out.push(diagnostic(file, 'integer-overflow', 'error', 'for loop の更新で64bit integer overflowが発生します', statement.body[0]));
             }
             const constrainedOverflow = forConstraintUpdateOverflow(statement, known, activeConstraints);
             if (constrainedOverflow) {
                 out.push(diagnostic(file, 'integer-overflow', constrainedOverflow, constrainedOverflow === 'error'
-                    ? 'for ループの値域付き更新で64bit整数オーバーフローが発生します'
-                    : 'for ループの値域付き更新で64bit整数オーバーフローの可能性があります', statement.body[0]));
+                    ? 'for loop の値域付き更新で64bit integer overflowが発生します'
+                    : 'for loop の値域付き更新で64bit integer overflowの可能性があります', statement.body[0]));
             }
             const loopInputConstraints = forBodyConstraints(statement, known, activeConstraints);
             const loopResultConstraints = analyzeBlock(statement.body, file, out, canReach && execution !== 'invalid', loopConstants(statement, known), new Map(), loopInputConstraints);
@@ -3587,7 +3587,7 @@ function analyzeScript(script, file = 'current', externalGlobals = new Map(), ex
     script.scenes.forEach((scene) => {
         const reachable = reachableScenes.has(scene.name);
         if (!reachable)
-            out.push(diagnostic(file, 'unreachable-scene', 'warning', `シーン '${scene.name}' には到達できません`, scene));
+            out.push(diagnostic(file, 'unreachable-scene', 'warning', `scene '${scene.name}' には到達できません`, scene));
         // The scene-level warning already explains that this whole body cannot run.
         // Continue local analysis as reachable so we still report internal control-flow
         // mistakes without emitting a cascade of unreachable-code warnings per line.
@@ -3600,7 +3600,9 @@ function analyzeScript(script, file = 'current', externalGlobals = new Map(), ex
 function assertAnalyzed(script, file = 'current', externalGlobals = new Map(), externalCharacters = new Map()) {
     const diagnostics = analyzeScript(script, file, externalGlobals, externalCharacters);
     const first = diagnostics.find((item) => item.severity === 'error');
-    if (first)
-        throw new Error(`line ${first.line}, column ${first.column}: ${first.message}`);
+    if (first) {
+        const locationPrefix = new RegExp(`^line ${first.line}, column ${first.column}:\\s*`);
+        throw new Error(`line ${first.line}, column ${first.column}: ${first.message.replace(locationPrefix, '')}`);
+    }
     return diagnostics;
 }

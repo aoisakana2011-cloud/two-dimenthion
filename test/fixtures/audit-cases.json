@@ -9,7 +9,7 @@
     "source": "int x = 0\nint result = 0\nfn change() -> int { set x = 1\nreturn 1 }\nfn consume(n: int) -> none { }\nconsume(change())\nif x == 0 { set result = 99 } else { set result = 1 }"
   },
   "dictionary_alias": {
-    "source": "dict[int] a = {\"x\": 1}\ndict[int] b = a\nset b[\"x\"] = 2\nint result = a[\"x\"]"
+    "source": "dict[int] alias_source = {\"x\": 1}\ndict[int] alias_copy = alias_source\nset alias_copy[\"x\"] = 2\nint result = alias_source[\"x\"]"
   },
   "dictionary_parameter": {
     "source": "dict[int] a = {\"x\": 1}\nfn mutate(d: dict[int]) -> none { set d[\"x\"] = 2 }\nmutate(a)\nint result = a[\"x\"]"

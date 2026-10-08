@@ -8,14 +8,15 @@
   "controlSkins": {
     "volume": {
       "type": "range",
+      "orientation": "horizontal",
       "track": "ui/controls/audio/volume/track.png",
       "fill": "ui/controls/audio/volume/fill.png",
       "thumb": "ui/controls/audio/volume/thumb.png",
-      "thumbHover": "ui/controls/audio/volume/thumb-hover.png",
       "trackHeight": 8,
       "thumbWidth": 24,
       "thumbHeight": 24,
-      "inset": 12
+      "inset": 12,
+      "thumbHover": "ui/controls/audio/volume/thumb-hover.png"
     },
     "volumeVertical": {
       "type": "range",
@@ -23,11 +24,11 @@
       "track": "ui/controls/audio/volume/track.png",
       "fill": "ui/controls/audio/volume/fill.png",
       "thumb": "ui/controls/audio/volume/thumb.png",
-      "thumbHover": "ui/controls/audio/volume/thumb-hover.png",
       "trackHeight": 8,
       "thumbWidth": 24,
       "thumbHeight": 24,
-      "inset": 12
+      "inset": 12,
+      "thumbHover": "ui/controls/audio/volume/thumb-hover.png"
     },
     "mute": {
       "type": "checkbox",
@@ -36,10 +37,6 @@
       "offHover": "ui/controls/audio/volume/mute-off-hover.png",
       "onHover": "ui/controls/audio/volume/mute-on-hover.png"
     }
-  },
-  "canvas": {
-    "width": 1280,
-    "height": 720
   },
   "screens": {
     "title": {

@@ -7,15 +7,5 @@ fn split_words(value: str) -> list[str] {
 }
 
 fn join_words(items: list[str], separator: str) -> str {
-  str result = ""
-  bool first = true
-  for item in items {
-    if first {
-      set first = false
-    } else {
-      set result = result + separator
-    }
-    set result = result + item
-  }
-  return result
+  return text.join(items, separator)
 }

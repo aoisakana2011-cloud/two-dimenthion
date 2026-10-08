@@ -37,11 +37,11 @@ async function formatFiles(inputs) {
 if (require.main === module) {
   const inputs = process.argv.slice(2);
   if (!inputs.length) {
-    console.error('Usage: node tools/format.js <scene-file-or-directory> [...]');
+    console.error('Usage: node tools/format.js <scenario file or directory> [...]');
     process.exitCode = 2;
   } else {
     formatFiles(inputs).then(({ files, changed }) => {
-      console.log(`formatted ${changed.length}/${files.length} scene files`);
+      console.log(`Formatted scene files: ${changed.length}/${files.length} changed`);
     }).catch((error) => {
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;

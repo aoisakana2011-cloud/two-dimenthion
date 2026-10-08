@@ -22,7 +22,7 @@ function removeStartupWorkspace(tempRoot, projectRoot) {
   const target = path.resolve(projectRoot);
   const relative = path.relative(safeTempRoot, target);
   if (path.isAbsolute(relative) || relative.startsWith(`..${path.sep}`) || path.basename(target).startsWith(STARTUP_PREFIX) === false) {
-    throw new Error('Refusing to remove a non-startup workspace.');
+    throw new Error('起動用ではない作業フォルダーは削除できません。');
   }
   fs.rmSync(target, { recursive: true, force: true });
 }

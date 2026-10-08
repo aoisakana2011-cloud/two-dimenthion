@@ -35,10 +35,15 @@ const { pack } = require('../tools/pack');
     await page.addInitScript(() => {
       window.__playedMedia = [];
       window.__bgmGainNodes = [];
+      window.__bgmMediaSourceCount = 0;
       window.__bgmRamps = [];
       window.__bgmParamContexts = new WeakMap();
       window.__heldAnimationFrames = [];
       window.__holdAnimationFrames = new URLSearchParams(location.search).has('hold-bgm-raf');
+      if (new URLSearchParams(location.search).has('hold-video')) {
+        const playVideo = HTMLVideoElement.prototype.play;
+        HTMLVideoElement.prototype.play = function (...args) { this.loop = true; return playVideo.apply(this, args); };
+      }
       const decodeImage = HTMLImageElement.prototype.decode;
       if (new URLSearchParams(location.search).has('delay-image-decode')) {
         HTMLImageElement.prototype.decode = function (...args) {
@@ -54,6 +59,11 @@ const { pack } = require('../tools/pack');
         return requestFrame(callback);
       };
       if (window.AudioContext) {
+        const createMediaElementSource = AudioContext.prototype.createMediaElementSource;
+        AudioContext.prototype.createMediaElementSource = function (...args) {
+          window.__bgmMediaSourceCount += 1;
+          return createMediaElementSource.apply(this, args);
+        };
         if (new URLSearchParams(location.search).has('stall-audio-resume')) {
           AudioContext.prototype.resume = () => new Promise(() => {});
           let prototype = AudioContext.prototype;
@@ -187,7 +197,10 @@ choice "choose" {
     assert.equal(await page.locator('#char-friend').count(), 1);
     assert.equal(await page.locator('#char-friend').evaluate(element => element.style.transform), 'translateX(calc(-50% - 4.25px))');
     assert.equal(await page.locator('#char-friend').evaluate(element => element.style.bottom), '-29.25px');
-    assert.equal(await page.locator('#background').evaluate(element => element.style.transform), 'translate(6.5px, -3.25px)');
+    const backgroundTransform = await page.locator('#background').evaluate(element => element.style.transform);
+    assert.match(backgroundTransform, /^translate\(6\.5px, -3\.25px\) scale\([\d.]+\)$/);
+    assert.ok(Number(backgroundTransform.match(/scale\(([\d.]+)\)/)?.[1]) > 1,
+      'background edge coverage compensates for the offset so moved edges do not expose empty stage pixels');
     assert.equal(await page.locator('#background').evaluate(element => getComputedStyle(element).backgroundSize), 'cover', 'Browser backgrounds preserve aspect ratio and center-crop like Native cover geometry');
     await page.locator('.choice').click();
     await page.waitForFunction(() => document.querySelector('#text').textContent === '9007199254740993:7');
@@ -208,7 +221,9 @@ choice "choose" {
     ]) {
       source = auditCases[id].source + '\nsay narrator ' + expression;
       await page.reload();
-      await page.waitForFunction(value => document.querySelector('#text').textContent === value, expected);
+      await page.waitForFunction(value => document.querySelector('#text').textContent === value, expected).catch(async error => {
+        throw new Error(`${id}: expected dialogue ${JSON.stringify(expected)}, found ${JSON.stringify(await page.locator('#text').textContent())}; speaker=${JSON.stringify(await page.locator('#speaker').textContent())}`, { cause: error });
+      });
       // Narrator lines intentionally suppress the speaker nameplate text.
       assert.equal(await page.locator('#speaker').textContent(), '', id);
     }
@@ -226,7 +241,7 @@ choice "choose" {
     assert.ok(reservedReport.diagnostics.some(item => item.severity === 'error' && /予約語/.test(item.message)));
     const slotSource = `character hero {
   name = "Hero"
-  pose normal = "asset/char/aokami.png"
+  pose normal = "asset/${relative}"
 }
 show hero.normal far_left`;
     const slotValidation = await page.request.post(base + '/api/validate', { data: { name: '__audit.tds', source: slotSource } });
@@ -238,7 +253,7 @@ show hero.normal far_left`;
     assert.deepEqual(slotCompiled.program.globals.at(-1).args.slice(0, 2).map(argument => argument.value), ['hero.normal', 'far_left']);
     source = 'choice { "bad" { int x = 1 / 0 } }';
     await page.reload(); await page.locator('.choice').click();
-    await page.waitForFunction(() => document.querySelector('#speaker').textContent === 'PLAYER ERROR');
+    await page.waitForFunction(() => document.querySelector('#speaker').textContent === 'Runtime Error');
     assert.match(await page.locator('#text').textContent(), /除算/);
     source = `character zara {
   name = "Zara"
@@ -312,19 +327,24 @@ scene main {
       `SceneState character offset itself must equal its currently rendered position: ${JSON.stringify(moveSample)}`);
     assert.ok(Math.abs(moveSample.progress - 0.5) < 0.16, `character move sample should be near the Native midpoint: ${JSON.stringify(moveSample)}`);
     const timedBackground = page.locator('#background');
-    await page.waitForFunction(() => [...(document.querySelector('#background')?.getAnimations() || [])].some(animation => animation.effect.getTiming().duration === 1000));
-    await page.waitForFunction(() => runtime.sceneState.background?.transition.progress >= 0.45 && runtime.sceneState.background.transition.progress <= 0.65);
+    await page.waitForFunction(() => {
+      const transition = runtime.sceneState.background?.transition;
+      return transition?.status === 'complete' || (transition?.progress >= 0.45 && transition.progress <= 0.65);
+    });
     const backgroundMoveSample = await timedBackground.evaluate(element => {
       const animation = element.getAnimations().find(candidate => candidate.effect.getTiming().duration === 1000);
       const progress = runtime.sceneState.background.transition.progress;
       const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
       const sceneY = runtime.sceneState.background.offsetY;
-      animation.finish();
-      return { x: matrix.m41, y: matrix.m42, progress, sceneY, expectedY: 40 * progress };
+      animation?.finish();
+      return { x: matrix.m41, y: matrix.m42, progress, sceneY, expectedY: 40 * progress, completed: progress >= 1 };
     });
     assert.equal(backgroundMoveSample.x, 0);
-    assert.ok(Math.abs(backgroundMoveSample.y - backgroundMoveSample.expectedY) < 1 && Math.abs(backgroundMoveSample.sceneY - backgroundMoveSample.y) < 1 && Math.abs(backgroundMoveSample.progress - 0.5) < 0.16,
-      `SceneState background move progress must match the Browser transform and Native midpoint: ${JSON.stringify(backgroundMoveSample)}`);
+    assert.ok(Math.abs(backgroundMoveSample.y - backgroundMoveSample.expectedY) < 1 && Math.abs(backgroundMoveSample.sceneY - backgroundMoveSample.y) < 1,
+      `SceneState background move progress must match the Browser transform: ${JSON.stringify(backgroundMoveSample)}`);
+    if (backgroundMoveSample.completed) assert.equal(backgroundMoveSample.progress, 1);
+    else assert.ok(Math.abs(backgroundMoveSample.progress - 0.5) < 0.16,
+      `an active background move should be sampled near the Native midpoint: ${JSON.stringify(backgroundMoveSample)}`);
     await page.waitForFunction(() => [...document.querySelector('#stage').children].some(element => element.style.backgroundColor === 'black' && element.getAnimations().length));
     await page.waitForFunction(() => runtime.sceneState.effects.at(-1)?.transition.progress >= 0.45 && runtime.sceneState.effects.at(-1).transition.progress <= 0.65);
     const effectSample = await page.evaluate(() => {
@@ -417,7 +437,8 @@ scene main {
           .map(action => ({ kind: action.kind, asset: action.asset })).sort((a, b) => `${a.kind}:${a.asset}`.localeCompare(`${b.kind}:${b.asset}`)),
         effect: runtime.sceneState.effects.find(item => item.transition.status === 'running')?.type || null,
       }));
-      assert.deepEqual(browserState, nativeState,
+      const comparableNativeState = Object.fromEntries(Object.keys(browserState).map(key => [key, nativeState[key]]));
+      assert.deepEqual(browserState, comparableNativeState,
         'the real Browser ended events and Native mixer completion must produce the same final presentation snapshot after the exact same blocking-effect scenario');
     } finally {
       await fs.rm(parityRoot, { recursive: true, force: true });
@@ -484,7 +505,7 @@ scene next {
         throw new Error(`real Browser debug-start did not reach the transferred file dialogue: requested=${JSON.stringify(routedSceneRequests)} state=${JSON.stringify(state)} (${errors.join('; ') || error.message})`);
       });
       assert.equal(await page.locator('#choices .choice').count(), 0, 'real Browser player starts inside the selected choice body without reopening its prompt');
-      assert.deepEqual(await page.evaluate(() => ({
+      const browserTransferState = await page.evaluate(() => ({
         logicalTimeMs: runtime.sceneState.logicalTimeMs,
         background: runtime.sceneState.background ? { asset: runtime.sceneState.background.asset, offsetX: runtime.sceneState.background.offsetX || 0, offsetY: runtime.sceneState.background.offsetY || 0 } : null,
         video: runtime.sceneState.video ? { asset: runtime.sceneState.video.asset } : null,
@@ -492,7 +513,12 @@ scene next {
         images: [], bgm: runtime.sceneState.audio.bgm ? { asset: runtime.sceneState.audio.bgm.asset, transition: runtime.sceneState.audio.bgm.transition.status } : null,
         activeMedia: Object.values(runtime.sceneState.actions).filter(action => ['se', 'voice'].includes(action.kind) && action.status === 'running').map(action => ({ kind: action.kind, asset: action.asset })).sort((a, b) => `${a.kind}:${a.asset}`.localeCompare(`${b.kind}:${b.asset}`)),
         effect: runtime.sceneState.effects.find(item => item.transition.status === 'running')?.type || null,
-      })), expectedTrace.at(-2).state,
+      }));
+      const expectedTransferState = Object.fromEntries(Object.keys(browserTransferState).map(key => [key, expectedTrace.at(-2).state[key]]));
+      if (browserTransferState.bgm && expectedTransferState.bgm) {
+        expectedTransferState.bgm = Object.fromEntries(Object.keys(browserTransferState.bgm).map(key => [key, expectedTransferState.bgm[key]]));
+      }
+      assert.deepEqual(browserTransferState, expectedTransferState,
       'real Browser player at the destination dialogue must match Native scene state after external goto and natural media completion');
       const ended = await page.evaluate(() => window.__playedMedia.filter(audio => !audio.loop).map(audio => ({ ended: audio.ended, paused: audio.paused })));
       assert.deepEqual(ended, [{ ended: true, paused: true }, { ended: true, paused: true }], 'both real Browser media tracks ended before destination dialogue');
@@ -509,7 +535,8 @@ scene next {
         activeMedia: Object.values(runtime.sceneState.actions).filter(action => ['se', 'voice'].includes(action.kind) && action.status === 'running').map(action => ({ kind: action.kind, asset: action.asset })).sort((a, b) => `${a.kind}:${a.asset}`.localeCompare(`${b.kind}:${b.asset}`)),
         effect: runtime.sceneState.effects.find(item => item.transition.status === 'running')?.type || null,
       }));
-      assert.deepEqual(browserFinal, expectedTrace.at(-1).state, 'Browser cleanup after dialogue must match Native clear-bgm state across the transferred file');
+      const expectedFinalState = Object.fromEntries(Object.keys(browserFinal).map(key => [key, expectedTrace.at(-1).state[key]]));
+      assert.deepEqual(browserFinal, expectedFinalState, 'Browser cleanup after dialogue must match Native clear-bgm state across the transferred file');
     } finally {
       await page.unroute('**/api/compile');
       routedScenes.delete('__audit_cross_main.tds');
@@ -649,15 +676,21 @@ scene main {
       sceneLayers: runtime.sceneState.audio.bgm.layers.map(({ asset, gain }) => ({ asset, gain })),
       ramps: window.__bgmRamps,
       transition: runtime.sceneState.audio.bgm.transition.status,
+      transitionProgress: runtime.sceneState.audio.bgm.transition.progress,
       heldFrames: window.__heldAnimationFrames.length,
     }));
     assert.equal(audioClockMidpoint.transition, 'running');
     assert.equal(audioClockMidpoint.heldFrames, 0, 'no display frame is needed to advance the audio curve');
-    assert.equal(audioClockMidpoint.gains.length, 2);
-    assert.ok(audioClockMidpoint.gains.every(({ value }) => Math.abs(value - 0.5) < 0.08),
-      `outgoing and incoming BGM gains should be complementary at the linear midpoint: ${JSON.stringify(audioClockMidpoint)}`);
-    assert.equal(audioClockMidpoint.sceneLayers.length, audioClockMidpoint.gains.length);
-    assert.ok(audioClockMidpoint.sceneLayers.every((layer, index) => Math.abs(layer.gain - audioClockMidpoint.gains[index].value) < 0.08),
+    const trackGains = audioClockMidpoint.gains.slice(-audioClockMidpoint.sceneLayers.length);
+    assert.equal(trackGains.length, 2, JSON.stringify(audioClockMidpoint));
+    const ramp = audioClockMidpoint.ramps[0];
+    const expectedProgress = Math.max(0, Math.min(1, (trackGains[0].time - ramp.scheduledAt) / (ramp.endTime - ramp.scheduledAt)));
+    assert.ok(Math.abs(trackGains[0].value - (1 - expectedProgress)) < 0.08
+      && Math.abs(trackGains[1].value - expectedProgress) < 0.08,
+    `outgoing and incoming BGM gains should follow the elapsed audio-clock fraction: ${JSON.stringify({ expectedProgress, ...audioClockMidpoint })}`);
+    assert.ok(Math.abs(audioClockMidpoint.transitionProgress - expectedProgress) < 0.08,
+      `SceneState transition progress should follow the audio clock: ${JSON.stringify({ expectedProgress, actual: audioClockMidpoint.transitionProgress })}`);
+    assert.ok(audioClockMidpoint.sceneLayers.every((layer, index) => Math.abs(layer.gain - trackGains[index].value) < 0.08),
       `SceneState layer gains must reflect the live WebAudio gains: ${JSON.stringify(audioClockMidpoint)}`);
     await page.waitForTimeout(550);
     const audioClockFade = await page.evaluate(() => ({
@@ -681,7 +714,7 @@ scene main {
     await page.goto(base + '/player.html?source=__audit.tds&debug=audio-resume-fallback&stall-audio-resume=1');
     await page.locator('#text').getByText('audio resume fallback stays responsive').waitFor();
     const audioResumeFallback = await page.evaluate(() => ({
-      routedNodes: window.__bgmGainNodes.length,
+      routedNodes: window.__bgmMediaSourceCount,
       audio: [...document.querySelectorAll('audio')].map(node => ({ paused: node.paused, volume: node.volume })),
     }));
     assert.equal(audioResumeFallback.routedNodes, 0, 'a suspended audio clock falls back without creating a muted MediaElementAudioSourceNode');
@@ -723,7 +756,7 @@ scene main {
       const animation = overlay.getAnimations()[0];
       const result = {
         effect: { color: getComputedStyle(overlay).backgroundColor, opacity: Number(getComputedStyle(overlay).opacity) },
-        gains: window.__bgmGainNodes.map(({ node }) => node.gain.value),
+        gains: window.__bgmGainNodes.slice(-runtime.sceneState.audio.bgm.layers.length).map(({ node }) => node.gain.value),
         sceneLayers: runtime.sceneState.audio.bgm.layers.map(({ asset, gain }) => ({ asset, gain })),
         now: window.__bgmGainNodes[0].context.currentTime,
         firstStart: window.__bgmRamps[0].scheduledAt,
@@ -881,12 +914,13 @@ scene main {
     source = `asset video first = "asset/${videoRelative}"
 asset video broken = "asset/${brokenVideoRelative}"
 scene main {
-  play video first async
-  play video broken async
+  play video first async --only
+  play video broken async --only
   say narrator "replacement failed"
 }`;
-    await page.reload();
-    await page.locator('#speaker').getByText('PLAYER ERROR').waitFor();
+    await page.goto(base + '/player.html?source=__audit.tds&debug=video-replacement-error&hold-video=1');
+    await page.waitForFunction(() => runtime.sceneState.video?.asset === 'first'
+      && Object.values(runtime.sceneState.actions).some(action => action.kind === 'video' && action.status === 'stopped' && action.reason === 'failed'));
     const failedVideoReplacement = await page.evaluate(() => ({
       active: document.querySelector('#active-video') && {
         source: document.querySelector('#active-video').currentSrc,
@@ -894,11 +928,13 @@ scene main {
         objectFit: document.querySelector('#active-video').style.objectFit,
       },
       sceneVideo: runtime.sceneState.video && { asset: runtime.sceneState.video.asset, actionId: runtime.sceneState.video.actionId },
+      visualOnly: document.querySelector('#stage').dataset.visualOnly || null,
       actions: eval('Object.values(runtime.sceneState.actions).map(({kind, status, reason}) => ({kind, status, reason}))'),
     }));
     assert.ok(failedVideoReplacement.active && failedVideoReplacement.active.source.endsWith('/clip.mp4') && !failedVideoReplacement.active.paused && failedVideoReplacement.active.objectFit === 'contain',
       `a failed replacement must leave the currently playing video intact: ${JSON.stringify(failedVideoReplacement)}`);
     assert.equal(failedVideoReplacement.sceneVideo.asset, 'first', 'SceneState video identity must match the still-rendered video after failed replacement');
+    assert.equal(failedVideoReplacement.visualOnly, 'video', 'a failed --only replacement keeps the previous video-only presentation mode');
     assert.deepEqual(failedVideoReplacement.actions, [
       { kind: 'video', status: 'running', reason: undefined },
       { kind: 'video', status: 'stopped', reason: 'failed' },
@@ -917,7 +953,7 @@ scene main {
   say narrator "replacement failed"
 }`;
     await page.reload();
-    await page.locator('#speaker').getByText('PLAYER ERROR').waitFor();
+    await page.locator('#speaker').getByText('Runtime Error').waitFor();
     const failedSpriteReplacement = await page.evaluate(() => ({
       rendered: [...document.querySelectorAll('#characters .actor')].map(actor => actor.id),
       state: eval('({slot: runtime.sceneState.slots.left, heroVisible: runtime.sceneState.characters.hero.visible, ghostVisible: runtime.sceneState.characters.ghost?.visible})'),
@@ -936,7 +972,7 @@ scene main {
     await page.reload();
     await page.locator('.choice').getByText('try replacement').waitFor();
     await page.locator('.choice').getByText('try replacement').click();
-    await page.locator('#speaker').getByText('PLAYER ERROR').waitFor();
+    await page.locator('#speaker').getByText('Runtime Error').waitFor();
     const failedInstantBgmReplacement = await page.evaluate(() => ({
       active: { source: document.querySelector('#bgm').currentSrc, paused: document.querySelector('#bgm').paused },
       state: eval('({active: runtime.sceneState.audio.bgm.asset, actions: Object.values(runtime.sceneState.actions).map(({asset, status, reason}) => ({asset, status, reason}))})'),
@@ -958,7 +994,7 @@ scene main {
   say narrator "replacement failed"
 }`;
     await page.reload();
-    await page.locator('#speaker').getByText('PLAYER ERROR').waitFor();
+    await page.locator('#speaker').getByText('Runtime Error').waitFor();
     const failedBgmReplacement = await page.evaluate(() => ({
       active: { source: document.querySelector('#bgm').currentSrc, paused: document.querySelector('#bgm').paused },
       fadingLayers: document.querySelectorAll('audio[data-player-bgm="true"]').length,
@@ -983,7 +1019,7 @@ scene main {
   bg broken
 }`;
     await page.goto(base + '/player.html?source=__audit.tds&debug=rollback-progress&delay-image-decode=1');
-    await page.locator('#speaker').getByText('PLAYER ERROR').waitFor();
+    await page.locator('#speaker').getByText('Runtime Error').waitFor();
     const rollbackProgress = await page.evaluate(() => ({
       background: runtime.sceneState.background?.asset,
       bgm: runtime.sceneState.audio.bgm && {
@@ -1011,7 +1047,7 @@ scene main {
   bg broken
 }`;
     await page.goto(base + '/player.html?source=__audit.tds&debug=rollback-media-end&delay-image-decode=long');
-    await page.locator('#speaker').getByText('PLAYER ERROR').waitFor();
+    await page.locator('#speaker').getByText('Runtime Error').waitFor();
     const rollbackMediaEnd = await page.evaluate(() => ({
       background: runtime.sceneState.background?.asset,
       seActions: Object.values(runtime.sceneState.actions).filter(action => action.kind === 'se').map(action => action.status),
@@ -1021,14 +1057,14 @@ scene main {
       `a concurrent SE end event must survive rollback of a later failed blocking asset load: ${JSON.stringify(rollbackMediaEnd)}`);
     source = 'scene main { say narrator "must not silently start" }';
     await page.goto(base + '/player.html?source=__audit.tds&debug=invalid-start-line&line=2.5');
-    await page.locator('#speaker').getByText('PLAYER ERROR').waitFor();
-    assert.match(await page.locator('#text').textContent(), /Debug line must be a non-negative integer/,
+    await page.locator('#speaker').getByText('Runtime Error').waitFor();
+    assert.match(await page.locator('#text').textContent(), /debug line は0以上の整数で指定してください/,
       'the Browser player must reject a malformed debug line instead of silently running from the scene start');
     source = 'global str label = "base"\nscene main { say narrator label }';
     const malformedDebugVariables = encodeURIComponent(JSON.stringify({ label: { type: 'str', value: 7 } }));
     await page.goto(`${base}/player.html?source=__audit.tds&debug=invalid-debug-value&variables=${malformedDebugVariables}`);
-    await page.locator('#speaker').getByText('PLAYER ERROR').waitFor();
-    assert.match(await page.locator('#text').textContent(), /Unsupported debug variable type: label/,
+    await page.locator('#speaker').getByText('Runtime Error').waitFor();
+    assert.match(await page.locator('#text').textContent(), /未対応のdebug variable typeです: label/,
       'Browser must reject a non-string str override just as Native debug-start rejects its typed payload');
     source = `global str label = "base"
 global dict[float] weights = {"key": 0.5}

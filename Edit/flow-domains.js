@@ -24,11 +24,11 @@ function convertPrimitive(name, item) {
   if (name === 'str') return String(item);
   if (name === 'float') {
     const value = Number(item);
-    if (!Number.isFinite(value)) throw Error('invalid float');
+    if (!Number.isFinite(value)) throw Error('小数値が有効範囲外です');
     return value;
   }
   const value = typeof item === 'number' ? BigInt(Math.trunc(item)) : BigInt(item);
-  if (!withinInt(value)) throw Error('int overflow');
+  if (!withinInt(value)) throw Error('整数値が有効範囲外です');
   return value;
 }
 
@@ -73,10 +73,10 @@ function intrinsic(name, args) {
 
 function indexedValue(object, index) {
   if (Array.isArray(object)) {
-    if (typeof index !== 'bigint' || index < 0n || index >= BigInt(object.length)) throw Error('unknown list index');
+    if (typeof index !== 'bigint' || index < 0n || index >= BigInt(object.length)) throw Error('list index out of range');
     return object[Number(index)];
   }
-  if (!object || typeof object !== 'object' || !Object.hasOwn(object, index)) throw Error('unknown index');
+  if (!object || typeof object !== 'object' || !Object.hasOwn(object, index)) throw Error('添字に対応する値がありません');
   return object[index];
 }
 
@@ -168,15 +168,15 @@ function evaluate(expr, state, context = null) {
       case '+': return a + b;
       case '-': return a - b;
       case '*': return a * b;
-      case '/': if (b === 0n || b === 0) throw Error('division by zero'); return a / b;
-      case '%': if (b === 0n) throw Error('division by zero'); return a % b;
+      case '/': if (b === 0n || b === 0) throw Error('0では除算できません'); return a / b;
+      case '%': if (b === 0n) throw Error('0では剰余を計算できません'); return a % b;
       case '==': return key(a) === key(b);
       case '!=': return key(a) !== key(b);
       case '>': return a > b;
       case '>=': return a >= b;
       case '<': return a < b;
       case '<=': return a <= b;
-      default: throw Error('unsupported operator');
+      default: throw Error('未対応の演算子です');
     }
   });
 }
@@ -289,15 +289,15 @@ function evaluateWithEffects(expr, state, context = null) {
             case '+': return a + b;
             case '-': return a - b;
             case '*': return a * b;
-            case '/': if (b === 0n || b === 0) throw Error('division by zero'); return a / b;
-            case '%': if (b === 0n) throw Error('division by zero'); return a % b;
+            case '/': if (b === 0n || b === 0) throw Error('0では除算できません'); return a / b;
+            case '%': if (b === 0n) throw Error('0では剰余を計算できません'); return a % b;
             case '==': return key(a) === key(b);
             case '!=': return key(a) !== key(b);
             case '>': return a > b;
             case '>=': return a >= b;
             case '<': return a < b;
             case '<=': return a <= b;
-            default: throw Error('unsupported operator');
+            default: throw Error('未対応の演算子です');
           }
         }) });
       }
@@ -1272,7 +1272,7 @@ function sceneGlobalNames(scenes = []) {
 
 function analyzeStartDomains(script, sceneName, line, names, staticDeclarations = [], entryScene = true, constraints = new Map(), externalCharacters = [], externalGlobalNames = [], externalGlobalTypes = new Map()) {
   const scene = script.scenes.find((item) => item.name === sceneName);
-  if (!scene) throw Error(`Unknown scene: ${sceneName}`);
+  if (!scene) throw Error(`scene が見つかりません: ${sceneName}`);
   const mutableNames = new Set(names);
   const effects = functionWriteEffects(script);
   const globalNames = new Set([

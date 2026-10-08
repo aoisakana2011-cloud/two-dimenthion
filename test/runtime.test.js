@@ -14,6 +14,13 @@ const { readStaticVariables } = require('../tools/static-variables');
 const { seedEmptyProject, projectLayout } = require('../tools/project-layout');
 const { RUNTIME_STATE_APIS, IDE_ANALYSIS_RULES } = require('../dist/language/builtins');
 const program = source => JSON.parse(JSON.stringify(compile(parse(source))));
+function nativePackage(program, overrides = {}) {
+  const source = program.sourceFile || 'main.tds';
+  return {
+    format: 'novel-script-package', version: 1, source, program,
+    files: { [source]: program }, native_ui: {}, ...overrides,
+  };
+}
 async function nativeExecutableForTest(t) {
   if (process.env.NOVEL_NATIVE_EXE) {
     await fs.access(process.env.NOVEL_NATIVE_EXE);
@@ -63,6 +70,80 @@ async function run(source, host = {}) {
   await rt.run(program(source)); return rt;
 }
 
+test('optimizer retains code after a range loop that may execute zero times', () => {
+  const compiled = program('fn f(start: int, stop: int) -> none {\nfor i from start to stop { return }\nsay narrator "after"\n}');
+  assert.deepEqual(compiled.functions[0].body.map(instruction => instruction.op), ['for', 'command']);
+});
+
+test('resuming at a scene skips a top-level start call but preserves later scene start calls', async () => {
+  const source = 'start()\nscene main {\n  say narrator "resume target"\n  start()\n  say narrator "after resumed start"\n}';
+  const script = parse(source);
+  const compiled = compile(script);
+  const starts = [], dialogue = [];
+  const resumed = new Runtime({ start: async () => starts.push('screen'), command: async (name, args) => { if (name === 'say') dialogue.push(args[1]); } });
+  await resumed.run(compiled, { scene: 'main', line: script.scenes[0].body[0].line });
+  assert.deepEqual(starts, ['screen'], 'only the explicit start() reached after the restored scene position is shown');
+  assert.deepEqual(dialogue, ['resume target', 'after resumed start']);
+
+  const normalStarts = [];
+  const normal = new Runtime({ start: async () => normalStarts.push('screen'), command: async () => {} });
+  await normal.run(compiled);
+  assert.deepEqual(normalStarts, ['screen', 'screen'], 'normal entry still executes both top-level and scene-level start calls');
+});
+
+test('dynamic --layer values compile and are range checked when the command executes', async () => {
+  const source = 'asset image logo = "asset/logo.png"\nfloat layer = 0.1234\nscene main { show image logo center --layer layer }';
+  const compiled = program(source);
+  assert.equal(compiled.scenes[0].instructions[0].name, 'show');
+  await assert.rejects(
+    new Runtime({ command: async () => {} }).run(compiled),
+    /layer/,
+    'the runtime rejects a dynamically evaluated value that exceeds the 0.001 precision contract',
+  );
+});
+
+test('resuming at a scene suppresses start reached indirectly during global initialization', async () => {
+  const source = `fn initialize() -> bool {
+  start()
+  return true
+}
+global bool initialized = initialize()
+scene main {
+  say narrator "resumed"
+}`;
+  const script = parse(source);
+  const starts = [], dialogue = [];
+  const runtime = new Runtime({
+    start: async () => starts.push('screen'),
+    command: async (name, args) => { if (name === 'say') dialogue.push(args[1]); },
+  });
+  await runtime.run(compile(script), { scene: 'main', line: script.scenes[0].body[0].line });
+  assert.equal(runtime.globals.initialized, true, 'global initialization still runs on resume');
+  assert.deepEqual(starts, [], 'an indirect top-level start must not replay before the selected scene');
+  assert.deepEqual(dialogue, ['resumed']);
+});
+
+test('initial screen opens after globals have been initialized', async () => {
+  const source = 'global int ready = 7\nstart()\nscene main { say narrator str(ready) }';
+  let readyAtScreenOpen;
+  const runtime = new Runtime({
+    start: async activeRuntime => { readyAtScreenOpen = activeRuntime.globals.ready; },
+    command: async () => {},
+  });
+  await runtime.run(program(source));
+  assert.equal(readyAtScreenOpen, 7n, 'the screen callback observes initialized globals before the first scene runs');
+});
+
+test('start inside a called function suspends before the caller continues', async () => {
+  const events = [];
+  const rt = new Runtime({
+    start: async () => events.push('screen'),
+    command: async (name, args) => { if (name === 'say') events.push(args[1]); },
+  });
+  await rt.run(program('fn title() -> str { start()\nreturn "Title" }\nscene main { say narrator title() }'));
+  assert.deepEqual(events, ['screen', 'Title']);
+});
+
 test('runtime.state.characters exposes current presentation occupancy with shared Browser and Native semantics', async t => {
   const existsApi = RUNTIME_STATE_APIS.get('runtime.state.characters.exists');
   const backgroundApi = RUNTIME_STATE_APIS.get('runtime.state.background.current');
@@ -105,6 +186,8 @@ global int execution_line_at_entry = runtime.state.execution.current_line()
 global str execution_file_at_entry = runtime.state.execution.current_file()
 global float dialog_opacity_at_entry = runtime.state.ui.dialog_opacity()
 global float bgm_volume_at_entry = runtime.state.audio.volume("bgm")
+global float se_volume_at_entry = runtime.state.audio.volume("se")
+global float voice_volume_at_entry = runtime.state.audio.volume("voice")
 global bool watched_global_exists = runtime.state.variables.exists("initially_present")
 global bool future_global_exists = runtime.state.variables.exists("names_in_scene")
 global bool found_after_show = false
@@ -122,6 +205,8 @@ global int execution_line_in_scene = 0
 global str execution_file_in_scene = ""
 global float dialog_opacity_after_set = 0.0
 global float bgm_volume_after_set = 0.0
+global float se_volume_after_set = 0.0
+global float voice_volume_after_set = 0.0
 global bool function_parameter_exists = false
 global bool missing_variable_exists = true
 global list[str] names_in_scene = []
@@ -143,8 +228,12 @@ scene main {
   set execution_file_in_scene = runtime.state.execution.current_file()
   dialog opacity 0.65
   volume bgm 0.35
+  volume se 0.25
+  volume voice 0.75
   set dialog_opacity_after_set = runtime.state.ui.dialog_opacity()
   set bgm_volume_after_set = runtime.state.audio.volume("bgm")
+  set se_volume_after_set = runtime.state.audio.volume("se")
+  set voice_volume_after_set = runtime.state.audio.volume("voice")
   set function_parameter_exists = sees_parameter("name")
   set missing_variable_exists = runtime.state.variables.exists("not_declared")
   set names_in_scene = runtime.state.variables.names()
@@ -187,6 +276,8 @@ scene main {
   assert.equal(browser.get('execution_file_at_entry'), '');
   assert.equal(browser.get('dialog_opacity_at_entry'), 1);
   assert.equal(browser.get('bgm_volume_at_entry'), 1);
+  assert.equal(browser.get('se_volume_at_entry'), 1);
+  assert.equal(browser.get('voice_volume_at_entry'), 0.5);
   assert.equal(browser.get('watched_global_exists'), true);
   assert.equal(browser.get('future_global_exists'), false, 'global initializers execute in declaration order, not via a pre-populated table');
   assert.equal(browser.get('execution_scene_in_scene'), 'main');
@@ -194,6 +285,8 @@ scene main {
   assert.equal(browser.get('execution_line_in_scene'), BigInt(executionLine));
   assert.equal(browser.get('dialog_opacity_after_set'), 0.65);
   assert.equal(browser.get('bgm_volume_after_set'), 0.35);
+  assert.equal(browser.get('se_volume_after_set'), 0.25);
+  assert.equal(browser.get('voice_volume_after_set'), 0.75);
   assert.equal(browser.get('function_parameter_exists'), true);
   assert.equal(browser.get('missing_variable_exists'), false);
   assert.ok(browser.get('names_in_scene').includes('initially_present'));
@@ -214,11 +307,12 @@ scene main {
   assert.deepEqual(browser.get('after_hide_all'), []);
   assert.deepEqual(Object.values(browser.sceneState.slots).filter(Boolean), []);
 
-  assert.throws(() => program('global bool bad = runtime.state.characters.exists(1)'), /argument 1 must be str/);
-  assert.throws(() => program('global list[str] bad = runtime.state.characters.list("extra")'), /requires 0 argument/);
-  assert.throws(() => program('global str bad = runtime.state.characters.position(1)'), /argument 1 must be str/);
-  assert.throws(() => program('global bool bad = runtime.state.background.exists("extra")'), /requires 0 argument/);
-  assert.throws(() => program('global str bad = runtime.state.background.current("extra")'), /requires 0 argument/);
+  assert.throws(() => program('global bool bad = runtime.state.characters.exists(1)'), /\u7b2c 1 \u5f15\u6570\u306f str \u578b\u3067\u6307\u5b9a\u3057\u3066\u304f\u3060\u3055\u3044/);
+  assert.throws(() => program('global list[str] bad = runtime.state.characters.list("extra")'), /\u306e\u5f15\u6570\u306f 0 \u500b\u5fc5\u8981\u3067\u3059/);
+  assert.throws(() => program('global str bad = runtime.state.characters.position(1)'), /\u7b2c 1 \u5f15\u6570\u306f str \u578b\u3067\u6307\u5b9a\u3057\u3066\u304f\u3060\u3055\u3044/);
+  await assert.rejects(new Runtime({ command: async () => {} }).run(program('global float bad = runtime.state.audio.volume("master")')), /bgm\u3001se\u3001voice/);
+  assert.throws(() => program('global bool bad = runtime.state.background.exists("extra")'), /\u306e\u5f15\u6570\u306f 0 \u500b\u5fc5\u8981\u3067\u3059/);
+  assert.throws(() => program('global str bad = runtime.state.background.current("extra")'), /\u306e\u5f15\u6570\u306f 0 \u500b\u5fc5\u8981\u3067\u3059/);
   assert.throws(() => program('global bool bad = runtime.state.characters.unknown()'), /unknown|未定義の関数/i);
 
   assert.throws(() => program('global bool bad = compile.characters.always_visible("ayase")'), /unknown|未定義の関数/i,
@@ -247,7 +341,8 @@ scene main {
     'background_at_entry', 'background_at_entry_id', 'bgm_at_entry', 'bgm_at_entry_id',
     'execution_scene_at_entry', 'execution_line_at_entry', 'execution_file_at_entry',
     'execution_scene_in_scene', 'execution_line_in_scene', 'execution_file_in_scene',
-    'dialog_opacity_at_entry', 'bgm_volume_at_entry', 'dialog_opacity_after_set', 'bgm_volume_after_set',
+    'dialog_opacity_at_entry', 'bgm_volume_at_entry', 'se_volume_at_entry', 'voice_volume_at_entry',
+    'dialog_opacity_after_set', 'bgm_volume_after_set', 'se_volume_after_set', 'voice_volume_after_set',
     'watched_global_exists', 'future_global_exists', 'function_parameter_exists', 'missing_variable_exists', 'names_in_scene',
     'background_after_set', 'background_after_set_id', 'bgm_after_set', 'bgm_after_set_id',
     'background_after_clear', 'bgm_after_clear', 'found_after_show', 'found_missing', 'after_show', 'position_after_show',
@@ -346,6 +441,9 @@ global list[str] pieces = text.split(",a,,b,", ",")
 global str normalized = text.normalize_space("  a\t\u00a0b　 ")
 global str trimmed = text.trim("  keep\t spacing　 ")
 global str replaced = text.replace("red red", "red", "blue")
+global list[int] removalSource = [1, 2, 1, 3]
+global list[int] removed = list.remove_all(removalSource, 1)
+global str joined = text.join(["", "x", ""], "|")
 global list[int] empty = []
 global int total = 0
 fn sum(items: list[int]) -> int {
@@ -367,15 +465,53 @@ scene main {
   assert.deepEqual(runtime.get('values'), [1n, 4n, 3n, 7n]);
   assert.deepEqual(runtime.get('pieces'), ['', 'a', '', 'b', '']);
   assert.deepEqual(runtime.get('empty'), [9n]);
+  assert.deepEqual(runtime.get('removed'), [2n, 3n]);
+  assert.deepEqual(runtime.get('removalSource'), [1n, 2n, 1n, 3n], 'list.remove_all preserves its input');
+  assert.equal(runtime.get('joined'), '|x|');
   assert.equal(runtime.get('normalized'), 'a b');
   assert.equal(runtime.get('trimmed'), 'keep\t spacing');
   assert.equal(runtime.get('replaced'), 'blue blue');
   assert.equal(runtime.get('total'), 15n);
   assert.equal(dialogue, '15');
   assert.throws(() => program('global list[int] values = []\nscene main { set values = list.append(values, "bad") }'), /list\.append|type/i);
-  assert.throws(() => program('global list[str] values = text.split("x", "")'), /separator must not be empty/);
-  assert.throws(() => program('global str value = text.replace("x", "", "y")'), /search must not be empty/);
-  await assert.rejects(run('global list[int] values = [1]\nscene main { say narrator str(values[1]) }'), /out of range/);
+  assert.throws(() => program('global list[str] values = text.split("x", "")'), /text\.split \u306e\u533a\u5207\u308a\u6587\u5b57\u5217\u306f\u7a7a\u306b\u3067\u304d\u307e\u305b\u3093/);
+  assert.throws(() => program('global str value = text.replace("x", "", "y")'), /text\.replace \u306e\u691c\u7d22\u6587\u5b57\u5217\u306f\u7a7a\u306b\u3067\u304d\u307e\u305b\u3093/);
+  assert.throws(() => program('global list[int] invalid = list.remove_all([1], "1")'), /list\[str\]/);
+  assert.throws(() => program('global str invalid = text.join([1], ",")'), /list\[str\]/);
+  await assert.rejects(run('global list[int] values = [1]\nscene main { say narrator str(values[1]) }'), /\u7bc4\u56f2\u5916/);
+});
+
+test('list.remove_all and text.join preserve the 100,000-iteration ceiling in Browser and Native', async t => {
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
+  const compiled = program('global list[int] removed = list.remove_all([], 1)\nglobal str joined = text.join([], "|")\nscene main { }');
+  const removal = compiled.globals.find(item => item.name === 'removed').initial;
+  const join = compiled.globals.find(item => item.name === 'joined').initial;
+  const setSize = size => {
+    removal.args[0].items = Array.from({ length: size }, (_, index) => ({ kind: 'integer', value: index % 2 ? '1' : '2' }));
+    join.args[0].items = Array.from({ length: size }, () => ({ kind: 'literal', value: '' }));
+  };
+  const file = path.join(os.tmpdir(), `novel-linear-intrinsics-${process.pid}.nsp.json`);
+  t.after(() => fs.rm(file, { force: true }));
+  setSize(100000);
+  await fs.writeFile(file, JSON.stringify(nativePackage(compiled)));
+  const browser = new Runtime();
+  await browser.run(compiled);
+  assert.equal(browser.get('removed').length, 50000);
+  assert.equal(browser.get('joined').length, 99999);
+  const native = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(native.status, 0, native.stderr || native.error?.message);
+  const nativeGlobals = JSON.parse(native.stdout).globals;
+  assert.equal(nativeGlobals.removed.length, 50000);
+  assert.equal(nativeGlobals.joined.length, 99999);
+
+  setSize(100001);
+  await fs.writeFile(file, JSON.stringify(nativePackage(compiled)));
+  const limitMessage = 'loop の実行回数が上限の100,000回を超えました';
+  await assert.rejects(new Runtime().run(compiled), error => error.message === limitMessage);
+  const overLimit = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(overLimit.status, 1);
+  assert.equal(overLimit.stderr.trim(), `Player error: ${limitMessage}`);
 });
 
 test('float expressions remain distinct from exact int and drive pixel offsets', async () => {
@@ -419,6 +555,58 @@ scene main {
   assert.equal(runtime.get('total'), 5n);
 });
 
+test('save boundary rejects snapshots while a user function is executing', async () => {
+  const script = program(`fn helper() -> none {
+  say narrator "inside helper"
+}
+scene main {
+  helper()
+}`);
+  let rejectedInsideFunction = false;
+  const runtime = new Runtime({
+    command: async () => {},
+    beforeInstruction(_instruction, activeRuntime) {
+      if (activeRuntime.functionCallDepth > 0) {
+        assert.throws(() => activeRuntime.assertSaveBoundary(), /\u95a2\u6570\u306e\u5b9f\u884c\u4e2d\u306f\u4fdd\u5b58\u3067\u304d\u307e\u305b\u3093/);
+        rejectedInsideFunction = true;
+      } else activeRuntime.assertSaveBoundary();
+    },
+  });
+  await runtime.run(script);
+  assert.equal(rejectedInsideFunction, true);
+  assert.equal(runtime.functionCallDepth, 0, 'the function depth is cleared after return');
+  assert.doesNotThrow(() => runtime.assertSaveBoundary());
+});
+
+test('save boundary rejects snapshots in range, foreach and while loops', async () => {
+  const script = program(`global int condition = 1
+global list[int] values = [1]
+scene main {
+  for i from 1 to 1 { say narrator "range" }
+  for item in values { say narrator "foreach" }
+  while condition > 0 {
+    set condition = 0
+    say narrator "while"
+  }
+}`);
+  const rejectedInstructions = [];
+  const runtime = new Runtime({
+    command: async () => {},
+    beforeInstruction(instruction, activeRuntime) {
+      if (activeRuntime.loopDepth > 0) {
+        assert.throws(() => activeRuntime.assertSaveBoundary(), /loop\u306e\u5b9f\u884c\u4e2d\u306f\u4fdd\u5b58\u3067\u304d\u307e\u305b\u3093/);
+        rejectedInstructions.push({ line: instruction.line, op: instruction.op, name: instruction.name });
+      } else activeRuntime.assertSaveBoundary();
+    },
+  });
+  await runtime.run(script);
+  assert.equal(rejectedInstructions.filter(instruction => instruction.op === 'command' && instruction.name === 'say').length, 3,
+    'range, foreach and while bodies all reject saves');
+  assert.ok(rejectedInstructions.some(instruction => instruction.op === 'set'), 'the while condition update is also within the active loop boundary');
+  assert.equal(runtime.loopDepth, 0, 'loop depth is cleared after completion');
+  assert.doesNotThrow(() => runtime.assertSaveBoundary(), 'saving is available again outside the loops');
+});
+
 test('debug start inside nested while and for loops retains both loop scopes', async () => {
   const source = `global int outer = 0
 global int inner = 0
@@ -443,16 +631,31 @@ test('restored SceneState retains arrays for transitions, effects, and concurren
   sceneState.transfers.push({ target: 'saved', external: false, at: 12 });
   sceneState.effects.push({ type: 'fade', blocking: false });
   sceneState.audio.se.push({ asset: 'click', actionId: 'se-1' });
+  sceneState.audio.volumes.bgm = 0.24;
+  sceneState.ui.dialogOpacity = 0.42;
   let restored;
   const runtime = new Runtime({
     command: async () => {},
     sceneState: async (state, event) => { if (event.name === 'restore') restored = state; },
   });
+  runtime.configurePresentationDefaults({ audio: { bgm: 0.9 }, dialog: { opacity: 0.8 } });
   await runtime.run(program('scene main { wait 1 }'), { scene: 'main', sceneState });
   assert.ok(Array.isArray(restored.transfers));
   assert.ok(Array.isArray(restored.effects));
   assert.ok(Array.isArray(restored.audio.se));
+  assert.equal(restored.audio.volumes.bgm, 0.24, 'saved channel volume wins over the current presentation default');
+  assert.equal(restored.ui.dialogOpacity, 0.42, 'saved dialogue opacity survives resume');
   assert.deepEqual(restored.transfers[0], { target: 'saved', external: false, at: 12 });
+
+  const legacyState = createSceneState();
+  delete legacyState.audio.volumes;
+  delete legacyState.ui.dialogOpacity;
+  let legacyRestored;
+  const legacyRuntime = new Runtime({ sceneState: async (state, event) => { if (event.name === 'restore') legacyRestored = state; } });
+  legacyRuntime.configurePresentationDefaults({ audio: { bgm: 0.9 }, dialog: { opacity: 0.8 } });
+  await legacyRuntime.run(program('scene main {}'), { scene: 'main', sceneState: legacyState });
+  assert.equal(legacyRestored.audio.volumes.bgm, 0.9, 'legacy snapshots without channel values inherit current defaults');
+  assert.equal(legacyRestored.ui.dialogOpacity, 0.8, 'legacy snapshots without dialogue opacity inherit current defaults');
 });
 
 test('save cursor restoration preserves active choice-local values after the declaration line', async () => {
@@ -509,7 +712,7 @@ scene main {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-float-parity-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'float.nsp.json');
-  await fs.writeFile(file, JSON.stringify({ format: 'novel-script-package', version: 1, program: program(source) }));
+  await fs.writeFile(file, JSON.stringify(nativePackage(program(source))));
   const native = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
   assert.equal(native.status, 0, native.stderr || native.error?.message);
   const browser = await run(source);
@@ -522,7 +725,7 @@ scene main {
   assert.equal(actual.wide, browser.get('wide'));
   assert.equal(actual.signed, browser.get('signed'));
   const invalid = 'float result = 1.0\nscene main { set result = result / 0.0 }';
-  await fs.writeFile(file, JSON.stringify({ format: 'novel-script-package', version: 1, program: program(invalid) }));
+  await fs.writeFile(file, JSON.stringify(nativePackage(program(invalid))));
   assert.equal(spawnSync(exe, [file, '--headless'], { timeout: 10000 }).status, 1);
   await assert.rejects(run(invalid));
 });
@@ -655,6 +858,28 @@ test('editor validation returns file-aware syntax diagnostics before compilation
   assert.ok(report.diagnostics.every((diagnostic) => diagnostic.file === 'broken-editor.tds'));
 });
 
+test('editor validation locates syntax errors in included source files', async (t) => {
+  const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-included-diagnostic-'));
+  t.after(() => fs.rm(projectRoot, { recursive: true, force: true }));
+  seedEmptyProject(projectRoot);
+  const { scenesRoot } = projectLayout(projectRoot);
+  await fs.writeFile(path.join(scenesRoot, 'main.tds'), 'include broken.tds as broken\nscene main { wait 1 }', 'utf8');
+  await fs.writeFile(path.join(scenesRoot, 'broken.tds'), 'fn broken() -> none {\n  wait (\n}', 'utf8');
+  const serverPath = path.resolve(__dirname, '../Edit/server.js');
+  const childSource = `require(${JSON.stringify(serverPath)}).validate('include broken.tds as broken\\nscene main { wait 1 }', 'main.tds').then(report => process.stdout.write(JSON.stringify(report)))`;
+  const child = spawnSync(process.execPath, ['-e', childSource], {
+    encoding: 'utf8',
+    env: { ...process.env, NOVEL_PROJECT_ROOT: projectRoot },
+  });
+  assert.equal(child.status, 0, child.stderr);
+  const report = JSON.parse(child.stdout);
+  const diagnostic = report.diagnostics.find((item) => item.code === 'syntax-error');
+  assert.ok(diagnostic, JSON.stringify(report));
+  assert.equal(diagnostic.file, 'broken.tds');
+  assert.deepEqual([diagnostic.line, diagnostic.column], [2, 9]);
+  assert.ok(diagnostic.endColumn > diagnostic.column);
+});
+
 test('editor validation rejects unsupported timed voice modes', async () => {
   const report = await validateEditorSource('asset voice greeting = "asset/missing.wav"\nplay voice greeting later', 'voice-contract.tds');
   assert.equal(report.ok, false);
@@ -755,15 +980,73 @@ test('functions execute statements, preserve lexical scope and return falsy valu
   assert.throws(() => rt.get('choice_value'), /未定義/);
   assert.equal(rt.frames.length, 1);
 });
-test('runtime rejects malformed conversions, inherited dictionary keys and missing returns', async () => {
-  await assert.rejects(run('int a = int("12abc")'), /変換/);
-  await assert.rejects(run('dict[int] d = {"a": 1}\nint x = d["toString"]'), /辞書キー/);
+test('runtime rejects malformed conversions, inherited dictionary keys and missing returns', async t => {
+  await assert.rejects(run('int a = int("12abc")'), /conversion error/);
+  await assert.rejects(run('dict[int] d = {"a": 1}\nint x = d["toString"]'), /dict key 'toString' が見つかりません/);
+  const exe = await nativeExecutableForTest(t);
+  if (exe) {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-native-dict-key-'));
+    t.after(() => fs.rm(dir, { recursive: true, force: true }));
+    const file = path.join(dir, 'missing-dict-key.nsp.json');
+    const compiled = program('dict[int] d = {"a": 1}\nfn readMissing() -> int { return d["toString"] }\nscene main { readMissing() }');
+    await fs.writeFile(file, JSON.stringify(nativePackage(compiled)));
+    const native = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
+    assert.equal(native.status, 1);
+    assert.equal(native.stderr.trim(), "Player error: dict key 'toString' が見つかりません");
+  }
   await assert.rejects(run('fn f() -> int {\n}\nint x = f()'), /値を返し/);
   await assert.rejects(run('for i from 0 to 2 step -1 {\n}'), /step/);
 });
 test('dictionary interpolation uses the same JSON representation as the native runtime', async () => {
   const rt = await run('dict[int] values = { "one": 1 }');
   assert.equal(rt.text('{values}'), '{"one":1}');
+});
+test('list interpolation uses JSON arrays and matches the native runtime', async t => {
+  const rt = await run('list[int] values = [1, 2]');
+  assert.equal(rt.text('{values}'), '[1,2]');
+  assert.equal(rt.text([[3n], [4n]]), '[[3],[4]]');
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-native-list-text-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const scenesRoot = path.join(dir, 'scenes'), assetsRoot = path.join(dir, 'assets');
+  await fs.mkdir(scenesRoot); await fs.mkdir(assetsRoot);
+  const source = 'global list[int] values = [1, 2]\nscene main { say narrator "{values}" }';
+  const sourceFile = path.join(scenesRoot, 'main.tds'), packageFile = path.join(dir, 'list-text.nsp.json');
+  await fs.writeFile(sourceFile, source, 'utf8');
+  const packaged = await pack(sourceFile, packageFile, { scenesRoot, assetsRoot });
+  const browserLines = [];
+  const browser = new Runtime({ command: async (name, args, runtime) => { if (name === 'say') browserLines.push(await runtime.textAsync(args[1])); } });
+  await browser.run(packaged.program);
+  const native = spawnSync(exe, [packageFile, '--headless'], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(native.status, 0, native.stderr || native.error?.message);
+  const nativeLines = JSON.parse(native.stdout).commands.filter(command => command.name === 'say').map(command => command.args[1]);
+  assert.deepEqual(nativeLines, browserLines);
+  assert.deepEqual(browserLines, ['[1,2]']);
+});
+test('float list interpolation matches Native JSON number formatting', async t => {
+  const values = '[1.0, 10000.0, 1e14, 1e15, 1e16, 1e17, 0.0001, 1e-5, 1e-6, 1e-7, -0.0]';
+  const expected = '[1.0,10000.0,100000000000000.0,1e+15,1e+16,1e+17,0.0001,1e-05,1e-06,1e-07,0.0]';
+  const rt = await run(`list[float] values = ${values}`);
+  assert.equal(rt.text('{values}'), expected);
+
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-native-float-list-text-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const scenesRoot = path.join(dir, 'scenes'), assetsRoot = path.join(dir, 'assets');
+  await fs.mkdir(scenesRoot); await fs.mkdir(assetsRoot);
+  const sourceFile = path.join(scenesRoot, 'main.tds'), packageFile = path.join(dir, 'float-list-text.nsp.json');
+  await fs.writeFile(sourceFile, `global list[float] values = ${values}\nscene main { say narrator "{values}" }`, 'utf8');
+  const packaged = await pack(sourceFile, packageFile, { scenesRoot, assetsRoot });
+  const browserLines = [];
+  const browser = new Runtime({ command: async (name, args, runtime) => { if (name === 'say') browserLines.push(await runtime.textAsync(args[1])); } });
+  await browser.run(packaged.program);
+  const native = spawnSync(exe, [packageFile, '--headless'], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(native.status, 0, native.stderr || native.error?.message);
+  const nativeLines = JSON.parse(native.stdout).commands.filter(command => command.name === 'say').map(command => command.args[1]);
+  assert.deepEqual(browserLines, [expected]);
+  assert.deepEqual(nativeLines, browserLines);
 });
 test('dictionary assignment evaluates the right side before its key', async () => {
   const rt = await run(`
@@ -790,6 +1073,80 @@ test('character fields persist as runtime state and support dotted interpolation
   `);
   assert.deepEqual({ ...rt.get('ayase') }, { name: '綾瀬', affection: 2n });
   assert.equal(rt.text('{ayase.name}: {ayase.affection}'), '綾瀬: 2');
+});
+
+test('Native invalid theme path errors localize prose and retain the setting name', async t => {
+  const executable = await nativeExecutableForTest(t);
+  if (!executable) return;
+  const compiled = program('scene main { say narrator "ready" }');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-theme-error-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'theme-error.nsp.json');
+  await fs.writeFile(file, JSON.stringify(nativePackage(compiled, { native_ui: { native_ui_theme: '../outside.json' } })));
+  const child = spawnSync(executable, [file, '--smoke'], { encoding: 'utf8', timeout: 10000, env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' } });
+  assert.notEqual(child.status, 0, child.stdout);
+  assert.match(child.stderr, /Native UI theme\u306epath\u304c\u4e0d\u6b63\u3067\u3059/);
+});
+
+test('unsupported layer category errors match in Browser and Native', async t => {
+  const compiled = program('scene main { layer background 1 }');
+  compiled.scenes[0].instructions[0].args[0].value = 'unknown';
+  const browser = new Runtime({ command: () => {} });
+  await assert.rejects(browser.run(compiled), /layer \u306f\u65e2\u77e5\u306e\u5206\u985e/);
+  const executable = await nativeExecutableForTest(t);
+  if (!executable) return;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-layer-error-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'layer-error.nsp.json');
+  await fs.writeFile(file, JSON.stringify(nativePackage(compiled)));
+  const child = spawnSync(executable, [file, '--smoke'], { encoding: 'utf8', timeout: 10000, env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' } });
+  assert.notEqual(child.status, 0, child.stdout);
+  assert.match(child.stderr, /layer \u306f\u65e2\u77e5\u306e\u5206\u985e/);
+});
+
+test('Native ambiguous asset errors localize prose and preserve technical terms', async t => {
+  const executable = await nativeExecutableForTest(t);
+  if (!executable) return;
+  const compiled = program('asset bg first = "asset/one/shared.png"\nasset bg second = "asset/two/shared.png"\nscene main { bg first }');
+  compiled.scenes[0].instructions[0].args[0].value = 'shared.png';
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-asset-ambiguity-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'asset-ambiguity.nsp.json');
+  await fs.writeFile(file, JSON.stringify(nativePackage(compiled)));
+  const child = spawnSync(executable, [file, '--smoke'], { encoding: 'utf8', timeout: 10000, env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' } });
+  assert.notEqual(child.status, 0, child.stdout);
+  assert.match(child.stderr, /\u540c\u3058file name\u306easset\u304c\u8907\u6570\u3042\u308a\u307e\u3059: shared\.png/);
+});
+
+test('Native missing asset errors localize prose and preserve the asset term', async t => {
+  const executable = await nativeExecutableForTest(t);
+  if (!executable) return;
+  const compiled = program('asset bg known = "asset/known.png"\nscene main { bg known }');
+  compiled.scenes[0].instructions[0].args[0].value = 'missing';
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-asset-error-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'asset-error.nsp.json');
+  await fs.writeFile(file, JSON.stringify(nativePackage(compiled)));
+  const child = spawnSync(executable, [file, '--smoke'], { encoding: 'utf8', timeout: 10000, env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' } });
+  assert.notEqual(child.status, 0, child.stdout);
+  assert.match(child.stderr, /asset \u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093: missing/);
+});
+
+test('missing interpolated fields use Japanese runtime errors in Browser and Native', async t => {
+  const compiled = program('struct Profile { name: str }\nProfile profile = {"name": "A"}\nscene main { say narrator "{profile.name}" }');
+  compiled.globals[0].initial.entries = [];
+  const rt = new Runtime({ command: async (name, args, runtime) => { if (name === 'say') await runtime.textAsync(args[1]); } });
+  await assert.rejects(rt.run(compiled), /\u88dc\u9593\u5bfe\u8c61\u306efield 'profile\.name' \u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093/);
+
+  const executable = await nativeExecutableForTest(t);
+  if (!executable) return;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-runtime-error-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'runtime-error.nsp.json');
+  await fs.writeFile(file, JSON.stringify(nativePackage(compiled)));
+  const child = spawnSync(executable, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
+  assert.notEqual(child.status, 0, child.stdout);
+  assert.match(child.stderr, /\u88dc\u9593\u5bfe\u8c61\u306efield 'profile\.name' \u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093/);
 });
 test('evaluates zero-argument function calls in interpolated text', async () => {
   const rt = await run('fn ending_text() -> str { return "静かなエンディング" }\nsay narrator "{ending_text()}"', {
@@ -899,12 +1256,12 @@ test('file transfers work without scene declarations and preserve global state',
     load: async name => { visited.push(name); return program('int x = 0\nset x = x + 1'); }
   });
   assert.deepEqual(visited, ['next.tds']); assert.equal(rt.get('x'), 5n);
-  await assert.rejects(run('int x = 1\ngoto "next.tds"', { load: async () => program('str x = "a"') }), /型が一致/);
+  await assert.rejects(run('int x = 1\ngoto "next.tds"', { load: async () => program('str x = "a"') }), /type が一致/);
 });
 test('compiler rejects unknown commands, recursion in arguments and invalid pose paths', () => {
   assert.throws(() => program('nonsense'), /未知/);
   assert.throws(() => program('fn id(x: int) -> int { return x }\nfn f() -> int { return id(f()) }'), /再帰/);
-  assert.throws(() => program('character hero {\nname = "Hero"\npose normal = "C:/outside.exe"\n}'), /パス|拡張子/);
+  assert.throws(() => program('character hero {\nname = "Hero"\npose normal = "C:/outside.exe"\n}'), /asset path|file extension/i);
   assert.throws(() => program('clear'), /対象/);
 });
 
@@ -1802,6 +2159,54 @@ test('metadata binds identical names to their own scopes', () => {
   assert.deepEqual(global.references.map(r => r.container), ['main']);
   assert.deepEqual(param.references.map(r => r.container), ['f']);
 });
+test('resolved include metadata and execution source locations survive Native packaging in raw and optimized builds', async t => {
+  const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-include-source-provenance-'));
+  t.after(() => fs.rm(projectRoot, { recursive: true, force: true }));
+  seedEmptyProject(projectRoot);
+  const { scenesRoot, buildRoot } = projectLayout(projectRoot);
+  await fs.writeFile(path.join(scenesRoot, 'main.tds'), `include "lib.tds" as lib
+global str observed_file = ""
+scene main {
+  set observed_file = lib.get_file("")
+}
+`, 'utf8');
+  await fs.writeFile(path.join(scenesRoot, 'lib.tds'), `fn get_file(prefix: str) -> str {
+  str local_file = runtime.state.execution.current_file()
+  return prefix + local_file
+}
+`, 'utf8');
+
+  const native = await nativeExecutableForTest(t);
+  for (const debug of [false, true]) {
+    const packagePath = path.join(buildRoot, `include-${debug ? 'raw' : 'optimized'}.nsp.json`);
+    await pack(path.join(scenesRoot, 'main.tds'), packagePath, { projectRoot, debug });
+    const packaged = JSON.parse(await fs.readFile(packagePath, 'utf8'));
+    const metadata = packaged.files['main.tds'].variables.find(variable => variable.name === 'local_file');
+    assert.deepEqual(metadata.definitions.map(location => location.file), ['lib.tds']);
+    assert.deepEqual(metadata.references.map(location => location.file), ['lib.tds']);
+    const parameter = packaged.files['main.tds'].variables.find(variable => variable.name === 'prefix');
+    assert.deepEqual(parameter.definitions.map(location => location.file), ['lib.tds']);
+    assert.deepEqual(parameter.references.map(location => location.file), ['lib.tds']);
+
+    const browser = new Runtime();
+    await browser.run(packaged.program);
+    assert.equal(browser.get('observed_file'), 'lib.tds', `Browser ${debug ? 'raw' : 'optimized'} executes the included function at its source file`);
+    if (!native) continue;
+    const result = spawnSync(native, [packagePath, '--headless'], { encoding: 'utf8', timeout: 10000 });
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+    assert.equal(JSON.parse(result.stdout).globals.observed_file, 'lib.tds', `Native ${debug ? 'raw' : 'optimized'} executes the included function at its source file`);
+  }
+});
+test('compiled variable metadata preserves read-only status for external globals', () => {
+  const externalGlobals = new Map([['fixed_score', 'int'], ['live_score', 'int']]);
+  externalGlobals.readonlyNames = new Set(['fixed_score']);
+  const compiled = compile(parse('scene main { say narrator "{fixed_score} {live_score}" }'), externalGlobals);
+  assert.deepEqual(compiled.variables.map(({ name, mutable }) => [name, mutable]), [
+    ['fixed_score', false],
+    ['live_score', true],
+  ]);
+  assert.throws(() => compile(parse('scene main { set fixed_score = 1 }'), externalGlobals), /変更できません/);
+});
 test('metadata isolates sibling branch shadowing', () => {
   const p = program('int x = 1\nfn f(flag: int) -> none {\nif flag == 1 {\nint x = 2\nsay narrator "{x}"\n} else {\nsay narrator "{x}"\n}\n}');
   const global = p.variables.find((variable) => variable.name === 'x' && variable.scope === 'global');
@@ -1866,15 +2271,15 @@ test('type and metadata flow merge same-type shadowing on every branch', () => {
   assert.throws(() => program('int x = 0\nfn f(flag: int) -> none {\nif flag == 0 {\nconst int x = 1\n} else {\nint x = 2\n}\nset x = x + 1\n}'), /const|螟画峩/);
 });
 test('type flow rejects path-dependent while shadowing after the loop', () => {
-  assert.throws(() => program('str x = "global"\nfn f(flag: int) -> none {\nwhile flag == 0 {\nint x = 1\nset flag = 1\n}\nset x = x + "!"\n}'), /蝙九|int|str/);
+  assert.throws(() => program('str x = "global"\nfn f(flag: int) -> none {\nwhile flag == 0 {\nint x = 1\nset flag = 1\n}\nset x = x + "!"\n}'), /\u578b\u30a8\u30e9\u30fc|\u578b\u3092\u7279\u5b9a\u3067\u304d\u307e\u305b\u3093/);
   assert.doesNotThrow(() => program('str x = "global"\nfn f(flag: int) -> none {\nwhile flag == 0 {\nstr x = "local"\nset flag = 1\n}\nset x = x + "!"\n}'));
   assert.throws(() => program('int x = 0\nfn f(flag: int) -> none {\nwhile flag == 0 {\nconst int x = 1\nset flag = 1\n}\nset x = x + 1\n}'), /const|螟画峩/);
 });
 test('type flow tracks shadowing declarations across dynamic and fixed for loops', () => {
-  assert.throws(() => program('str x = "global"\nfn f(stop: int) -> none {\nfor i from 0 to stop step 1 {\nint x = 1\n}\nset x = x + "!"\n}'), /蝙九|int|str/);
+  assert.throws(() => program('str x = "global"\nfn f(stop: int) -> none {\nfor i from 0 to stop step 1 {\nint x = 1\n}\nset x = x + "!"\n}'), /\u578b\u30a8\u30e9\u30fc|\u578b\u3092\u7279\u5b9a\u3067\u304d\u307e\u305b\u3093/);
   assert.doesNotThrow(() => program('str x = "global"\nfn f(stop: int) -> none {\nfor i from 0 to stop step 1 {\nstr x = "local"\n}\nset x = x + "!"\n}'));
   assert.throws(() => program('int x = 0\nfn f(stop: int) -> none {\nfor i from 0 to stop step 1 {\nconst int x = 1\n}\nset x = x + 1\n}'), /const|螟画峩/);
-  assert.throws(() => program('str x = "global"\nfn f() -> none {\nfor i from 0 to 1 step 1 {\nint x = 1\n}\nset x = x + "!"\n}'), /蝙九|int|str/);
+  assert.throws(() => program('str x = "global"\nfn f() -> none {\nfor i from 0 to 1 step 1 {\nint x = 1\n}\nset x = x + "!"\n}'), /\u578b\u30a8\u30e9\u30fc|\u578b\u3092\u7279\u5b9a\u3067\u304d\u307e\u305b\u3093/);
 });
 test('type checking rejects redeclarations hidden in control-flow bodies', () => {
   assert.throws(() => program('int x = 0\nfn f(flag: int) -> none {\nif flag == 0 {\nint x = 1\n}\nint x = 2\n}'), /螟画焚|declare|再宣言/);
@@ -1887,6 +2292,27 @@ test('flow validation rejects disconnected files and accepts local bindings', ()
   const syntaxErrors = collectSyntaxDiagnostics('say narrator "unterminated\nwait (\nsay narrator "valid"', 'broken.tds');
   assert.deepEqual(syntaxErrors.map((item) => item.line), [1, 2]);
   assert.ok(syntaxErrors.every((item) => item.endColumn > item.column));
+  const invalidCharacter = collectSyntaxDiagnostics('say narrator "ok" § trailing text', 'invalid.tds')[0];
+  assert.deepEqual([invalidCharacter.line, invalidCharacter.column, invalidCharacter.endColumn], [1, 19, 20]);
+  const invalidEmoji = collectSyntaxDiagnostics('😀 trailing text', 'emoji.tds')[0];
+  assert.deepEqual([invalidEmoji.column, invalidEmoji.endColumn], [1, 3]);
+  const unknownEscape = collectSyntaxDiagnostics(String.raw`str value = "a\q"`, 'escape.tds')[0];
+  assert.deepEqual([unknownEscape.column, unknownEscape.endColumn], [16, 17], 'the diagnostic points to the unsupported escape character');
+  const unknownEscapeAfterDecodedNewline = collectSyntaxDiagnostics(String.raw`str value = "a\nb\q"`, 'escape-after-newline.tds')[0];
+  assert.deepEqual([unknownEscapeAfterDecodedNewline.column, unknownEscapeAfterDecodedNewline.endColumn], [19, 20], 'decoded escapes before the error do not shift its source position');
+  const endOfFileError = collectSyntaxDiagnostics('wait 1 +', 'eof.tds')[0];
+  assert.deepEqual([endOfFileError.column, endOfFileError.endColumn], [9, 10], 'an error at end of file retains a non-empty diagnostic range');
+  const sameLineErrors = collectSyntaxDiagnostics(`say narrator "ok" ${String.fromCharCode(0x00a7)} @`, 'same-line.tds');
+  assert.deepEqual(sameLineErrors.map((item) => item.column), [19, 21], 'IDE validation recovers independent syntax errors on the same line');
+  const belowSyntaxLimit = collectSyntaxDiagnostics('@ '.repeat(100), 'syntax-limit.tds');
+  assert.equal(belowSyntaxLimit.length, 100);
+  assert.ok(belowSyntaxLimit.every((item) => item.code === 'syntax-error'));
+  const beyondSyntaxLimit = collectSyntaxDiagnostics('@ '.repeat(105), 'syntax-truncated.tds');
+  assert.equal(beyondSyntaxLimit.filter((item) => item.code === 'syntax-error').length, 100);
+  assert.equal(beyondSyntaxLimit.at(-1).code, 'syntax-diagnostics-truncated');
+  assert.equal(beyondSyntaxLimit.at(-1).severity, 'warning');
+  const unterminated = collectSyntaxDiagnostics('say narrator "unfinished', 'string.tds')[0];
+  assert.deepEqual([unterminated.column, unterminated.endColumn], [14, 25]);
   const unicodeSyntaxErrors = collectSyntaxDiagnostics('say narrator "unterminated\u2028wait (\u2029say narrator "valid"', 'unicode.tds');
   assert.deepEqual(unicodeSyntaxErrors.map((item) => item.line), [1, 2]);
   const nodes = [{ id: 'a.tds', variables: [] }, { id: 'b.tds', variables: [] }];
@@ -1906,6 +2332,21 @@ test('flow validation rejects disconnected files and accepts local bindings', ()
   assert.equal(boundedResult.ok, true);
   assert.deepEqual(boundedResult.path, ['start.tds', 'end.tds']);
   assert.deepEqual(boundedResult.checked, ['start.tds', 'end.tds']);
+});
+
+test('IDE static file errors are localized in Japanese', async () => {
+  const { serveStatic } = require('../Edit/server');
+  async function request(pathname) {
+    const response = { status: 0, body: '' };
+    response.writeHead = status => { response.status = status; };
+    response.end = body => { response.body = body; };
+    await serveStatic(response, pathname);
+    return response;
+  }
+  const missing = await request('/missing-static-resource.js');
+  assert.deepEqual([missing.status, missing.body], [404, '要求されたファイルが見つかりません']);
+  const outsideAsset = await request('/asset/%2e%2e/outside.png');
+  assert.deepEqual([outsideAsset.status, outsideAsset.body], [403, '作品のassetフォルダー外は参照できません']);
 });
 
 test('flow validation does not treat module imports as scenario routes', () => {
@@ -2402,7 +2843,7 @@ test('scenario files are reached by goto and cannot be imported as modules', asy
   assert.equal(reachability.reachableScenes.has('main'), true);
   assert.equal(reachability.externalGotos.size, 1);
   assert.equal(analyzeScript(script).some((item) => item.code === 'unreachable-scene'), false);
-  await assert.rejects(resolveProjectScript('include chapters/chapter01.tds as chapter\nscene main { wait 1 }', dir, new Set(), 'main.tds'), /cannot declare scenes/);
+  await assert.rejects(resolveProjectScript('include chapters/chapter01.tds as chapter\nscene main { wait 1 }', dir, new Set(), 'main.tds'), /module.*Scene/);
 });
 
 test('imported module declarations retain their source file provenance', async t => {
@@ -2622,8 +3063,11 @@ test('module imports reject executable top-level commands and duplicate module p
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   await fs.writeFile(path.join(dir, 'commands.tds'), 'wait 1');
   await fs.writeFile(path.join(dir, 'declarations.tds'), 'fn value() -> int { return 1 }');
-  await assert.rejects(resolveProjectScript('include commands.tds as commands\nscene main { wait 1 }', dir, new Set(), 'main.tds'), /declarations only/);
-  await assert.rejects(resolveProjectScript('include declarations.tds as first\ninclude declarations.tds as second\nscene main { wait 1 }', dir, new Set(), 'main.tds'), /included more than once/);
+  await assert.rejects(resolveProjectScript('include commands.tds as commands\nscene main { wait 1 }', dir, new Set(), 'main.tds'), /\u5ba3\u8a00\u3060\u3051\u3092\u8a18\u8ff0\u3067\u304d\u307e\u3059/);
+  await assert.rejects(resolveProjectScript('include declarations.tds as first\ninclude declarations.tds as second\nscene main { wait 1 }', dir, new Set(), 'main.tds'), /重複してincludeされています/);
+  if (process.platform === 'win32') {
+    await assert.rejects(resolveProjectScript('include declarations.tds as first\ninclude DECLARATIONS.tds as second\nscene main { wait 1 }', dir, new Set(), 'main.tds'), /重複してincludeされています/);
+  }
 });
 test('package includes external scenes, validates assets and remains JSON serializable', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-regression-'));
@@ -2645,12 +3089,33 @@ test('package includes external scenes, validates assets and remains JSON serial
   assert.equal(directRuntime.get('hero').name, 'Hero', 'direct file playback initializes an external character definition');
   assert.equal(data.files['next.tds'].globals.find((entry) => entry.name === 'a').initial.value, '9007199254740993');
   assert.equal(data.files['next.tds'].globals.find((entry) => entry.name === 'say').args[1].name, 'str');
-  await assert.rejects(compileProject('asset bg x = "missing.png"', assetsRoot, scenesRoot), /アセット/);
+  await assert.rejects(compileProject('asset bg x = "missing.png"', assetsRoot, scenesRoot), /asset/);
   await fs.writeFile(path.join(scenesRoot, 'broken-main.tds'), 'str text = str(later)\ngoto "broken-next.tds"');
   await fs.writeFile(path.join(scenesRoot, 'broken-next.tds'), 'global int later = 1');
   await assert.rejects(pack(path.join(scenesRoot, 'broken-main.tds'), path.join(dir, 'out/broken.json'), { scenesRoot, assetsRoot }), /初期化前.*later/);
   await fs.writeFile(path.join(scenesRoot, 'duplicate.tds'), 'global int route = 9');
   await assert.rejects(pack(path.join(scenesRoot, 'main.tds'), path.join(dir, 'out/duplicate.json'), { scenesRoot, assetsRoot }), /route.*既に宣言.*set/);
+});
+
+test('pack refuses output paths that would replace scenario sources or referenced assets', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-pack-source-collision-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const scenesRoot = path.join(dir, 'scenes'), assetsRoot = path.join(dir, 'assets');
+  await fs.mkdir(scenesRoot); await fs.mkdir(assetsRoot);
+  const mainFile = path.join(scenesRoot, 'main.tds');
+  const imageFile = path.join(assetsRoot, 'pixel.png');
+  const source = 'asset image pixel = "asset/pixel.png"\nscene main { show image pixel center }';
+  await fs.writeFile(mainFile, source);
+  await fs.writeFile(imageFile, 'original image bytes');
+
+  await assert.rejects(pack(mainFile, mainFile, { scenesRoot, assetsRoot }), /Package output cannot overwrite a source file\./);
+  assert.equal(await fs.readFile(mainFile, 'utf8'), source);
+  if (process.platform === 'win32') {
+    await assert.rejects(pack(mainFile, path.join(scenesRoot, 'MAIN.TDS'), { scenesRoot, assetsRoot }), /Package output cannot overwrite a source file\./);
+    assert.equal(await fs.readFile(mainFile, 'utf8'), source);
+  }
+  await assert.rejects(pack(mainFile, imageFile, { scenesRoot, assetsRoot }), /Package output cannot overwrite a source file\./);
+  assert.equal(await fs.readFile(imageFile, 'utf8'), 'original image bytes');
 });
 
 test('project packaging resolves Windows separators in include and goto paths', async t => {
@@ -2755,6 +3220,11 @@ test('JSON static variables are typed globals with exact integer values', async 
   constrainedGlobals.constraints.set('score2', { type: 'int', min: 9223372036854775806n, max: 9223372036854775806n });
   const repeatedConstrainedOverflow = analyzeScript(parse('for i from 0 to 1 { set score2 = score2 + 1 }'), 'constraint-loop-repeated-overflow.tds', constrainedGlobals);
   assert.ok(repeatedConstrainedOverflow.some((item) => item.code === 'integer-overflow' && item.severity === 'error'));
+  constrainedGlobals.set('score3', 'int');
+  constrainedGlobals.constraints.set('score3', { type: 'int', min: 9223372036854775806n, max: 9223372036854775807n });
+  const possibleConstrainedOverflow = analyzeScript(parse('for i from 0 to 1 { set score3 = score3 + 1 }'), 'constraint-loop-possible-overflow.tds', constrainedGlobals);
+  assert.ok(possibleConstrainedOverflow.some((item) => item.code === 'integer-overflow' && item.severity === 'warning'));
+  assert.equal(possibleConstrainedOverflow.some((item) => item.code === 'integer-overflow' && item.severity === 'error'), false);
   const whileDiagnostics = analyzeScript(parse('while difficulty < 200001 { set difficulty = difficulty + 1 }'), 'constraint-while.tds', constrainedGlobals);
   assert.ok(whileDiagnostics.some((item) => item.code === 'loop-limit'));
   const stableWhileDiagnostics = analyzeScript(parse('while difficulty < 3 { wait 1 }'), 'constraint-stable-while.tds', constrainedGlobals);
@@ -2859,19 +3329,289 @@ test('native and browser runtimes agree on functions, loops, choice and scene tr
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-native-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'test.nsp.json');
-  await fs.writeFile(file, JSON.stringify({ format: 'novel-script-package', version: 1, program: program(scenario) }));
+  await fs.writeFile(file, JSON.stringify(nativePackage(program(scenario))));
   const child = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
   assert.equal(child.status, 0, child.stderr || child.error?.message);
   const actual = JSON.parse(child.stdout);
   assert.equal(actual.globals.result, (await run(scenario)).get('result'));
   const numeric = program('int large = 9007199254740992 + 1\nstr result = str(large)\nstr minimum = str(-9223372036854775808)');
-  await fs.writeFile(file, JSON.stringify({ format: 'novel-script-package', version: 1, program: numeric }));
+  await fs.writeFile(file, JSON.stringify(nativePackage(numeric)));
   const exact = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
   assert.equal(exact.status, 0, exact.stderr);
   assert.equal(JSON.parse(exact.stdout).globals.result, '9007199254740993');
   assert.equal(JSON.parse(exact.stdout).globals.minimum, '-9223372036854775808');
-  await fs.writeFile(file, JSON.stringify({ format: 'novel-script-package', version: 99, program: numeric }));
+  await fs.writeFile(file, JSON.stringify(nativePackage(numeric, { version: 99 })));
   assert.equal(spawnSync(exe, [file, '--headless'], { timeout: 10000 }).status, 1);
+});
+
+test('native and browser preserve global writes from parallel command arguments after optimization', async t => {
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-parallel-optimizer-parity-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'test.nsp.json');
+  const source = `
+global float zoom = 0.0
+global int result = 0
+fn mutate_zoom() -> float {
+  set zoom = 2.0
+  return 1.0
+}
+scene main {
+  set zoom = 1.0
+  parallel {
+    camera zoom mutate_zoom() at 640 360 over 1
+  }
+  if zoom == 1.0 {
+    set result = 1
+  } else {
+    set result = 2
+  }
+}
+`;
+  const outcomes = {};
+  for (const debug of [false, true]) {
+    const compiled = compile(parse(source), new Map(), new Map(), debug);
+    const browser = new Runtime({ command: async () => {}, parallel: async () => {} });
+    await browser.run(compiled);
+    await fs.writeFile(file, JSON.stringify(nativePackage(compiled)));
+    const child = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
+    assert.equal(child.status, 0, child.stderr || child.error?.message);
+    const native = JSON.parse(child.stdout).globals;
+    const outcome = {
+      zoom: browser.get('zoom'),
+      result: String(browser.get('result')),
+    };
+    assert.deepEqual(outcome, { zoom: native.zoom, result: String(native.result) }, `debug=${debug}`);
+    outcomes[debug ? 'raw' : 'optimized'] = outcome;
+  }
+  assert.deepEqual(outcomes.optimized, outcomes.raw);
+  assert.deepEqual(outcomes.optimized, { zoom: 2, result: '2' });
+});
+
+test('parallel command arguments use each child command source line in both runtimes and compiler modes', async t => {
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-parallel-source-line-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'test.nsp.json');
+  const source = `scene main {
+  parallel {
+    camera zoom float(runtime.state.execution.current_line()) at 0 0 over 0
+    effect fade black runtime.state.execution.current_line()
+  }
+}`;
+  const results = {};
+  for (const debug of [false, true]) {
+    const compiled = compile(parse(source), new Map(), new Map(), debug);
+    const browserCommands = [];
+    const browser = new Runtime({ command: async (name, args, _runtime, operation) => browserCommands.push({ name, args, operation }) });
+    await browser.run(compiled);
+    assert.deepEqual(browserCommands.map(command => Number(command.name === 'camera' ? command.args[1] : command.args[2])), [3, 4], `Browser command source lines, debug=${debug}`);
+    assert.equal(browser.sceneState.camera.zoom, 3, `Browser camera source line, debug=${debug}`);
+    assert.equal(browser.sceneState.effects[0].transition.durationMs, 4, `Browser effect source line, debug=${debug}`);
+
+    await fs.writeFile(file, JSON.stringify(nativePackage(compiled)));
+    const child = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
+    assert.equal(child.status, 0, child.stderr || child.error?.message);
+    const commands = JSON.parse(child.stdout).commands;
+    const sourceLines = commands.map(command => command.name === 'camera' ? command.args[1] : command.args[2]);
+    assert.deepEqual(sourceLines, [3, 4], `Native command argument source lines, debug=${debug}`);
+    results[debug ? 'raw' : 'optimized'] = sourceLines;
+  }
+  assert.deepEqual(results.raw, results.optimized);
+  assert.deepEqual(results.optimized, [3, 4]);
+});
+
+test('native and browser preserve ordered choice interpolation effects after optimization', async t => {
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-choice-optimizer-parity-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'test.nsp.json');
+  const source = `
+global str state = "initial"
+global str prompt_seen = ""
+global str selected = ""
+fn first_label() -> str {
+  set state = "first"
+  return "first label"
+}
+fn second_label() -> str {
+  set state = "second"
+  return "second label"
+}
+fn choice_prompt() -> str {
+  set prompt_seen = state
+  return state
+}
+scene main {
+  choice "{choice_prompt()}" {
+    "{first_label()}" { set selected = state }
+    "{second_label()}" { set selected = "wrong option" }
+  }
+}
+`;
+  const outcomes = {};
+  for (const debug of [false, true]) {
+    const compiled = compile(parse(source), new Map(), new Map(), debug);
+    let browserChoice;
+    const browser = new Runtime({ choice: async (prompt, labels) => { browserChoice = { prompt, labels }; return 0; } });
+    await browser.run(compiled);
+    await fs.writeFile(file, JSON.stringify(nativePackage(compiled)));
+    const child = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
+    assert.equal(child.status, 0, child.stderr || child.error?.message);
+    const native = JSON.parse(child.stdout).globals;
+    const outcome = {
+      browserChoice,
+      state: browser.get('state'),
+      prompt_seen: browser.get('prompt_seen'),
+      selected: browser.get('selected'),
+    };
+    assert.deepEqual(outcome, {
+      browserChoice: { prompt: 'second', labels: ['first label', 'second label'] },
+      state: native.state,
+      prompt_seen: native.prompt_seen,
+      selected: native.selected,
+    }, `Browser/Native mismatch, debug=${debug}`);
+    outcomes[debug ? 'raw' : 'optimized'] = outcome;
+  }
+  assert.deepEqual(outcomes.optimized, outcomes.raw);
+  assert.deepEqual(outcomes.optimized, {
+    browserChoice: { prompt: 'second', labels: ['first label', 'second label'] },
+    state: 'second', prompt_seen: 'second', selected: 'second',
+  });
+});
+
+test('native and browser preserve ordered for-bound effects after optimization', async t => {
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-for-bound-effects-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'test.nsp.json');
+  const source = `
+global int phase = 0
+global int result = 0
+fn start_bound() -> int {
+  set phase = phase + 1
+  return phase
+}
+fn stop_bound() -> int {
+  set phase = phase + 2
+  return phase
+}
+fn step_bound() -> int {
+  set phase = phase + 1
+  return 2
+}
+scene main {
+  for i from start_bound() to stop_bound() step step_bound() {
+    set result = result + i
+  }
+}
+`;
+  const outcomes = {};
+  for (const debug of [false, true]) {
+    const compiled = compile(parse(source), new Map(), new Map(), debug);
+    const browser = new Runtime();
+    await browser.run(compiled);
+    await fs.writeFile(file, JSON.stringify(nativePackage(compiled)));
+    const child = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
+    assert.equal(child.status, 0, child.stderr || child.error?.message);
+    const native = JSON.parse(child.stdout).globals;
+    const outcome = { phase: String(browser.get('phase')), result: String(browser.get('result')) };
+    assert.deepEqual(outcome, { phase: String(native.phase), result: String(native.result) }, `Browser/Native mismatch, debug=${debug}`);
+    outcomes[debug ? 'raw' : 'optimized'] = outcome;
+  }
+  assert.deepEqual(outcomes.optimized, outcomes.raw);
+  assert.deepEqual(outcomes.optimized, { phase: '4', result: '4' });
+});
+
+test('native and browser preserve side effects from an unset key expression after optimization', async t => {
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-unset-key-effects-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'test.nsp.json');
+  const source = `
+global dict[int] values = {"obsolete": 0, "target": 1, "keep": 0}
+global int marker = 0
+global int result = 0
+fn prepare() -> str {
+  set values = {"target": 2, "keep": 3}
+  set marker = 1
+  return "target"
+}
+scene main {
+  unset values[prepare()]
+  if marker == 1 {
+    set result = values["keep"]
+  } else {
+    set result = 9
+  }
+}
+`;
+  const outcomes = {};
+  for (const debug of [false, true]) {
+    const compiled = compile(parse(source), new Map(), new Map(), debug);
+    const browser = new Runtime();
+    await browser.run(compiled);
+    await fs.writeFile(file, JSON.stringify(nativePackage(compiled)));
+    const child = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
+    assert.equal(child.status, 0, child.stderr || child.error?.message);
+    const native = JSON.parse(child.stdout).globals;
+    const outcome = {
+      values: Object.fromEntries(Object.entries(browser.get('values')).map(([key, value]) => [key, String(value)])),
+      marker: String(browser.get('marker')),
+      result: String(browser.get('result')),
+    };
+    const nativeOutcome = { values: Object.fromEntries(Object.entries(native.values).map(([key, value]) => [key, String(value)])), marker: String(native.marker), result: String(native.result) };
+    assert.deepEqual(outcome, nativeOutcome, `Browser/Native mismatch, debug=${debug}`);
+    outcomes[debug ? 'raw' : 'optimized'] = outcome;
+  }
+  assert.deepEqual(outcomes.optimized, outcomes.raw);
+  assert.deepEqual(outcomes.optimized, { values: { keep: '3' }, marker: '1', result: '3' });
+});
+
+test('native and browser runtimes report matching loop-limit and for-in errors', async t => {
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-native-loop-errors-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'test.nsp.json');
+  const loopLimitMessage = 'loop の実行回数が上限の100,000回を超えました';
+  const loopLimitProgram = program('scene main {\n  while true {}\n}');
+  await assert.rejects(new Runtime().run(loopLimitProgram), error => error.message === loopLimitMessage);
+  await fs.writeFile(file, JSON.stringify(nativePackage(loopLimitProgram)));
+  const nativeLoopLimit = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(nativeLoopLimit.status, 1);
+  assert.equal(nativeLoopLimit.stderr.trim(), `Player error: ${loopLimitMessage}`);
+
+  const forInMessage = 'for-in には list を指定してください';
+  const invalidForInProgram = program('global list[int] values = [1]\nscene main {\n  for item in values {}\n}');
+  invalidForInProgram.globals[0].initial = { kind: 'integer', value: '1' };
+  await assert.rejects(new Runtime().run(invalidForInProgram), error => error.message === forInMessage);
+  await fs.writeFile(file, JSON.stringify(nativePackage(invalidForInProgram)));
+  const nativeForIn = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(nativeForIn.status, 1);
+  assert.equal(nativeForIn.stderr.trim(), `Player error: ${forInMessage}`);
+
+  const listIndexMessage = 'list の添字が範囲外です: 3';
+  const invalidListIndexProgram = program('global list[int] values = [1]\nfn readPastEnd() -> int { return values[3] }\nscene main { readPastEnd() }');
+  await assert.rejects(new Runtime().run(invalidListIndexProgram), error => error.message === listIndexMessage);
+  await fs.writeFile(file, JSON.stringify(nativePackage(invalidListIndexProgram)));
+  const nativeListIndex = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(nativeListIndex.status, 1);
+  assert.equal(nativeListIndex.stderr.trim(), `Player error: ${listIndexMessage}`);
+
+  const nonIntegerIndexMessage = 'list の添字は int で指定してください';
+  const nonIntegerListIndexProgram = program('global list[int] values = [1]\nfn readWithInvalidIndex() -> int { return values[0] }\nscene main { readWithInvalidIndex() }');
+  nonIntegerListIndexProgram.functions[0].body[0].value.key = { kind: 'literal', value: true };
+  await assert.rejects(new Runtime().run(nonIntegerListIndexProgram), error => error.message === nonIntegerIndexMessage);
+  await fs.writeFile(file, JSON.stringify(nativePackage(nonIntegerListIndexProgram)));
+  const nativeNonIntegerIndex = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(nativeNonIntegerIndex.status, 1);
+  assert.equal(nativeNonIntegerIndex.stderr.trim(), `Player error: ${nonIntegerIndexMessage}`);
 });
 
 test('native and browser runtimes agree on bool, typed lists, list loops, and text intrinsics', async t => {
@@ -2919,6 +3659,28 @@ scene main {
   assert.deepEqual(transcript.globals.values, browser.get('values').map(Number));
   assert.deepEqual(transcript.globals.flags, browser.get('flags'));
   assert.equal(transcript.globals.normalized, browser.get('normalized'));
+});
+
+test('native and browser runtimes serialize dictionary interpolation keys in Unicode order', async t => {
+  const exe = await nativeExecutableForTest(t);
+  if (!exe) return;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-native-dict-text-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const scenesRoot = path.join(dir, 'scenes'), assetsRoot = path.join(dir, 'assets');
+  await fs.mkdir(scenesRoot); await fs.mkdir(assetsRoot);
+  const source = `global dict[int] values = {"zeta": 1, "alpha": 2, "2": 20, "10": 10, "𐀀": 5, "": 4}
+scene main { say narrator "{values}" }`;
+  const sourceFile = path.join(scenesRoot, 'main.tds'), packageFile = path.join(dir, 'dict-text.nsp.json');
+  await fs.writeFile(sourceFile, source, 'utf8');
+  const packaged = await pack(sourceFile, packageFile, { scenesRoot, assetsRoot });
+  const browserLines = [];
+  const browser = new Runtime({ command: async (name, args, runtime) => { if (name === 'say') browserLines.push(await runtime.textAsync(args[1])); } });
+  await browser.run(packaged.program);
+  const native = spawnSync(exe, [packageFile, '--headless'], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(native.status, 0, native.stderr || native.error?.message);
+  const nativeLines = JSON.parse(native.stdout).commands.filter(command => command.name === 'say').map(command => command.args[1]);
+  assert.deepEqual(nativeLines, browserLines);
+  assert.deepEqual(browserLines, ['{"10":10,"2":20,"alpha":2,"zeta":1,"":4,"𐀀":5}']);
 });
 
 test('Browser and Native debug-start accept bool, list, dictionary, and struct overrides with matching types', async t => {
@@ -2984,7 +3746,7 @@ test('native and browser runtimes agree on nested interpolation side effects', a
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'novel-native-nested-interpolation-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'nested.nsp.json');
-  await fs.writeFile(file, JSON.stringify({ format: 'novel-script-package', version: 1, program: compiled }));
+  await fs.writeFile(file, JSON.stringify(nativePackage(compiled)));
   const child = spawnSync(exe, [file, '--headless'], { encoding: 'utf8', timeout: 10000 });
   assert.equal(child.status, 0, child.stderr || child.error?.message);
   assert.equal(JSON.parse(child.stdout).globals.state, Number(browser.get('state')));

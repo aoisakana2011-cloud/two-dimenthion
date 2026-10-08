@@ -1,15 +1,12 @@
 fn index_of_str(items: list[str], target: str) -> int {
   int index = 0
-  int result = -1
-  bool searching = true
   for item in items {
-    if searching and item == target {
-      set result = index
-      set searching = false
+    if item == target {
+      return index
     }
     set index = index + 1
   }
-  return result
+  return -1
 }
 
 fn append_unique_str(items: list[str], item: str) -> list[str] {
@@ -20,11 +17,5 @@ fn append_unique_str(items: list[str], item: str) -> list[str] {
 }
 
 fn remove_all_str(items: list[str], item: str) -> list[str] {
-  list[str] result = []
-  for current in items {
-    if current != item {
-      set result = list.append(result, current)
-    }
-  }
-  return result
+  return list.remove_all(items, item)
 }

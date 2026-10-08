@@ -4,7 +4,9 @@ include "std/math.tds" as math
 # Damped oscillation; progress is normalized to [0, 1].
 fn shake(amplitude: float, progress: float, cycles: float) -> float {
   float t = math.clamp(progress, 0.0, 1.0)
-  return amplitude * (1.0 - t) * math.sin(math.tau() * cycles * t)
+  float turns = cycles * t
+  float phase = math.tau() * (turns - math.floor(turns))
+  return amplitude * (1.0 - t) * math.sin(phase)
 }
 
 # One normalized breathing cycle, centered around zero.
@@ -15,10 +17,12 @@ fn breathe(amplitude: float, progress: float) -> float {
 # Parabolic hop that starts and ends at zero; upward displacement is negative Y.
 fn hop(height: float, progress: float) -> float {
   float t = math.clamp(progress, 0.0, 1.0)
-  return 0.0 - 4.0 * height * t * (1.0 - t)
+  return 0.0 - height * (4.0 * t * (1.0 - t))
 }
 
 # Small repeating background/foreground drift, in pixels.
 fn drift(amplitude: float, progress: float, cycles: float) -> float {
-  return amplitude * math.sin(math.tau() * cycles * math.clamp(progress, 0.0, 1.0))
+  float turns = cycles * math.clamp(progress, 0.0, 1.0)
+  float phase = math.tau() * (turns - math.floor(turns))
+  return amplitude * math.sin(phase)
 }

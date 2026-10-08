@@ -180,18 +180,40 @@ async function stopServer(child) {
     await editorPage.locator('[data-activity="presentation"]').click();
     await editorPage.locator('.sidebar.presentation-mode .presentation-view').waitFor();
     await editorPage.getByRole('button', { name: '再生画面を編集…' }).click();
-    await editorPage.locator('.project-settings').waitFor();
-    assert.equal(await editorPage.locator('.project-settings .player-ui-preview').count(), 1);
-    await editorPage.locator('.project-settings .project-settings-close').click();
+    await editorPage.locator('#ui-settings-page').waitFor({ state: 'visible' });
+    assert.equal(await editorPage.locator('#ui-settings-page').getAttribute('aria-label'), 'UI Theme Editor');
+    assert.match(await editorPage.locator('[data-ui-settings-section="backdrop"]').innerText(), /Background \/ Fog/);
+    assert.match(await editorPage.locator('[data-ui-settings-section="dialog"]').innerText(), /Dialog Panel/);
+    assert.equal(await editorPage.locator('#ui-settings-grid-toggle').textContent(), 'Grid');
+    assert.equal(await editorPage.locator('#ui-settings-grid-size').getAttribute('aria-label'), 'Grid spacing');
+    assert.equal(await editorPage.locator('#ui-settings-player-preview').count(), 1);
+    const themeWidth = editorPage.locator('#ui-settings-fields input[type="number"]').nth(0);
+    const themeHeight = editorPage.locator('#ui-settings-fields input[type="number"]').nth(1);
+    assert.deepEqual([await themeWidth.inputValue(), await themeHeight.inputValue()], ['1280', '720']);
+    await themeWidth.fill('1366');
+    await editorPage.waitForFunction(() => document.querySelector('#ui-settings-dimensions')?.textContent.includes('1366'));
+    assert.equal(await editorPage.locator('#ui-settings-dirty').isVisible(), true, 'editing a theme field marks the draft dirty');
+    await editorPage.locator('#ui-settings-save').click();
+    await editorPage.waitForFunction(() => document.querySelector('#ui-settings-dirty')?.hidden === true);
+    assert.equal((await editorPage.evaluate(async () => (await (await fetch('/api/player-ui')).json()).theme.screen.width)), 1366,
+      'saving the theme editor persists the edited canvas width');
+    await editorPage.locator('#ui-settings-fields input[type="number"]').nth(1).fill('768');
+    await editorPage.locator('#ui-settings-revert').click();
+    assert.deepEqual(await editorPage.locator('#ui-settings-fields input[type="number"]').evaluateAll(nodes => nodes.map(node => node.value)), ['1366', '720'],
+      'revert restores the most recently saved theme and updates the form');
+    assert.equal(await editorPage.locator('#ui-settings-dirty').isVisible(), false);
+    await editorPage.locator('[data-activity="presentation"]').click();
 
     await editorPage.locator('[data-menu="file"]').click();
     await editorPage.locator('[data-menu-action="project-settings"]').click();
     await editorPage.locator('.project-settings').waitFor();
     await editorPage.locator('.project-settings footer .project-settings-save').click();
     await editorPage.waitForFunction(() => document.querySelector('#status')?.textContent.includes('作品設定を保存しました'));
-    const savedTheme = await editorPage.evaluate(async () => (await (await fetch('/api/project')).json()).settings.native_ui_theme);
-    assert.equal(savedTheme, 'player-ui.json');
-    assert.equal(JSON.parse(await fs.readFile(path.join(projectRoot, 'setting', 'player-ui.json'), 'utf8')).version, 1);
+    const savedTheme = await editorPage.evaluate(async () => fetch('/api/player-ui').then(response => response.json()));
+    assert.equal(savedTheme.path, 'setting/player-ui.json');
+    assert.equal(savedTheme.theme.version, 1);
+    assert.equal(savedTheme.theme.screen.width, 1366);
+    assert.equal(savedTheme.theme.screen.height, 720);
 
     await editorPage.locator('[data-activity="explorer"]').click();
     await editorPage.locator('.scene-folder[data-path="senario"] .tree-action').click();
@@ -238,10 +260,10 @@ async function stopServer(child) {
       '}',
       '',
     ].join('\n');
-    const chapterSource = 'scene chapter {\n  say narrator "Chapter reached"\n}\n';
+    const chapterSource = 'scene chapter {\n  say narrator "Chapter reached"\n  start()\n}\n';
     const editor = editorPage.locator('#editor');
     await editor.fill(unformattedSource);
-    await editorPage.waitForFunction(() => document.querySelector('#status')?.textContent.includes('検証に成功しました')).catch(async (error) => {
+    await editorPage.waitForFunction(() => document.querySelector('#status')?.textContent.includes('Validation complete: Error 0 / Warning 0 / Info 0')).catch(async (error) => {
       const state = await editorPage.evaluate(() => ({ status: document.querySelector('#status')?.textContent, result: document.querySelector('#result')?.textContent }));
       throw Error(`live validation did not settle: ${JSON.stringify(state)} (${error.message})`);
     });
@@ -284,8 +306,8 @@ async function stopServer(child) {
     assert.equal(savedChapter, chapterSource);
     await editorPage.locator('.scene-file[data-path="senario/main.tds"] .scene-file-open').click();
     await editorPage.waitForFunction(() => document.querySelector('#scene-name')?.value === 'main.tds');
-    await fs.writeFile(path.join(projectRoot, 'senario', 'chapter.tds'), 'scene chapter{say narrator "Chapter reached"}\n', 'utf8');
-    const directFormattedChapter = await editorPage.evaluate(() => window.novelEditorApi.format('scene chapter{say narrator "Chapter reached"}\n'));
+    await fs.writeFile(path.join(projectRoot, 'senario', 'chapter.tds'), 'scene chapter{say narrator "Chapter reached"\nstart()}\n', 'utf8');
+    const directFormattedChapter = await editorPage.evaluate(() => window.novelEditorApi.format('scene chapter{say narrator "Chapter reached"\nstart()}\n'));
     assert.equal(directFormattedChapter, chapterSource, 'formatter API must canonicalize an unformatted closed scene');
     await editorPage.locator('[data-menu="edit"]').click();
     await editorPage.locator('[data-menu-action="format-project"]').click();
@@ -323,13 +345,28 @@ async function stopServer(child) {
 
     await fs.writeFile(path.join(projectRoot, 'senario', 'chapter.tds'), 'scene chapter{say narrator "Compile boundary"}\n', 'utf8');
     await editorPage.locator('[data-menu="run"]').click();
+    const blockedBuildResponse = editorPage.waitForResponse(response => response.url().includes('/api/project-build'));
     await editorPage.locator('[data-menu-action="build"]').click();
-    await editorPage.waitForFunction(() => document.querySelector('#status')?.textContent.includes('ファイル精査完了')).catch(async (error) => {
+    const blockedBuild = await (await blockedBuildResponse).json();
+    assert.equal(blockedBuild.ok, false, JSON.stringify(blockedBuild));
+    assert.ok(blockedBuild.diagnostics.some(item => item.code === 'start-screen-not-returned' && item.file === 'chapter.tds'));
+    await editorPage.locator('#build-warning-toast').waitFor({ state: 'visible' });
+    assert.match(await editorPage.locator('#build-warning-toast').textContent(), /chapter\.tds/);
+    assert.match(await editorPage.locator('#build-warning-toast').textContent(), /gotoまたはstart\(\)/);
+
+    await fs.writeFile(path.join(projectRoot, 'senario', 'chapter.tds'), 'scene chapter{say narrator "Compile boundary"\nstart()}\n', 'utf8');
+    await editorPage.locator('[data-menu="run"]').click();
+    const successfulBuildResponse = editorPage.waitForResponse(response => response.url().includes('/api/project-build'));
+    await editorPage.locator('[data-menu-action="build"]').click();
+    const successfulBuild = await (await successfulBuildResponse).json();
+    assert.equal(successfulBuild.ok, true, JSON.stringify(successfulBuild));
+    await editorPage.waitForFunction(() => document.querySelector('#result')?.textContent.includes('Compile complete:')).catch(async (error) => {
       const state = await editorPage.evaluate(() => ({ status: document.querySelector('#status')?.textContent, result: document.querySelector('#result')?.textContent }));
       throw Error(`project compile did not complete: ${JSON.stringify(state)} (${error.message})`);
     });
+    await editorPage.locator('#build-warning-toast').waitFor({ state: 'detached' });
     const compileFormattedChapter = await editorPage.evaluate(async () => (await (await fetch('/api/scene?name=chapter.tds', { cache: 'no-store' })).json()).source);
-    assert.equal(compileFormattedChapter, 'scene chapter {\n  say narrator "Compile boundary"\n}\n', 'compile must persist project-wide formatting');
+    assert.equal(compileFormattedChapter, 'scene chapter {\n  say narrator "Compile boundary"\n  start()\n}\n', 'compile must persist project-wide formatting');
     const packageFile = path.join(projectRoot, '.novel', 'build', 'main.nsp.json');
     const packageData = JSON.parse(await fs.readFile(packageFile, 'utf8'));
     assert.equal(packageData.program.scenes[0].name, 'main');

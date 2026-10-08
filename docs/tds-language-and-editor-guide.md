@@ -58,8 +58,8 @@ Project/
 
 | 対象 | DSLでの指定例 | 実ファイルの基準 |
 |---|---|---|
-| 宣言モジュール | `include "common.tds" as common` | `scenario_dir` |
-| 標準モジュール | `include "std/math.tds" as math` | エディター同梱の予約済み `std/` |
+| Declaration module | `include "common.tds" as common` | `scenario_dir` |
+| Standard module | `include "std/math.tds" as math` | エディター同梱の予約済み `std/` |
 | 外部goto | `goto "chapter/first.tds"` | `scenario_dir` |
 | 素材 | `"asset/bg/classroom.png"` | 作品ルートの `asset_dir`。`asset/` を付ける表記を推奨 |
 | 開始ファイル | `start_file = main.tds` | 作品ルートの `scenario_dir` |
@@ -102,7 +102,7 @@ scene main {
 }
 ~~~
 
-include は `include "functions.tds" as funcs` の形式で、必ず別名を指定します。関数は `funcs.add(1)` のように別名経由で呼び出します。引用符は省略できます。拡張子省略時は .tds が補われ、循環includeは禁止です。include先は宣言モジュールであり、シーンや実行命令は置けません。シナリオファイルへの移動には `goto "chapter/next.tds"` を使います。
+include は `include "functions.tds" as funcs` の形式で、必ず別名を指定します。関数は `funcs.add(1)` のように別名経由で呼び出します。引用符は省略できます。拡張子省略時は .tds が補われ、循環includeは禁止です。include先は declaration module であり、scene宣言や実行命令は置けません。シナリオファイルへの移動には `goto "chapter/next.tds"` を使います。
 
 `std/` は同梱標準ライブラリの予約パスです。`include "std/math.tds" as math`、`include "std/motion/walk.tds" as walk`、`include "std/text.tds" as strings`、`include "std/collections.tds" as collections` のように読み込み、別名経由で関数を呼び出します。関数一覧と引数の意味は [標準ライブラリガイド](../std/README.md) を参照してください。
 
@@ -307,9 +307,9 @@ dialog visible false
 dialog visible true
 ~~~
 
-### Simultaneous timed visuals
+### timed visual commandの同時実行
 
-Use `parallel { ... }` to start several timed visual commands together. The block completes after the longest animation, then the next script command runs. Supported commands are timed `bg` transitions, character `show`/`hide` fades, `move`, timed `camera` changes, and `effect fade`. Keep each target to one animation of the same property in a block.
+`parallel { ... }`を使うと、複数のtimed visual commandを同時に開始できます。blockは最も長いanimationが終わった後に完了し、次のscript commandへ進みます。対応commandはtimed `bg` transition、characterの`show`/`hide` fade、`move`、timed `camera` change、`effect fade`です。1つのblock内で同じtargetの同じpropertyを複数回animationしないでください。
 
 ~~~tds
 parallel {
@@ -317,21 +317,21 @@ parallel {
   show sister.normal left fade 400
   camera zoom 1.08 at 640 360 over 600
 }
-say sister "The scene changed together."
+say sister "場面が同時に切り替わりました。"
 ~~~
 
-A block accepts visual commands only; dialogue, choices, waits, assignments, and control flow stay outside it. Browser and Native playback use the same start-together, wait-for-all behavior.
+blockに含められるのはvisual commandだけです。dialogue、choice、wait、assignment、control flowはblockの外に置きます。BrowserとNativeは同じタイミングで開始し、すべてのanimationを待ってから次へ進みます。1つのblockで表示するcharacterはそれぞれ別のcharacter、別のslotにしてください。slotにはcharacterを1体だけ配置できるため、同じslotを使う表示はCheckerが拒否します。
 
-### Render layers
+### Render layer
 
-The player has eight render categories with defaults: background `0`, video `1`, character `2`, image `3`, bottom fog `4`, dialogue and choices `5`, player controls `6`, and menus/overlays `7`. The UI Settings IDE's Layers page changes these defaults and saves them with the player UI theme. A script can also set a category while it runs:
+Playerには8つのrender categoryがあり、既定値はbackground `0`、video `1`、character `2`、image `3`、bottom fog `4`、dialogue/choice `5`、player controls `6`、menu/overlay `7`です。UI Settings IDEのLayers pageで既定値を変更し、player UI themeと一緒に保存できます。scriptの実行中にcategoryを指定することもできます。
 
 ~~~tds
 layer dialogue 5.2
 layer menu 7.1
 ~~~
 
-Use `--layer <number>` on a displayed element to override its category default. It is supported by `bg`, `show <character>.<pose>`, `show image`, and `play video`:
+表示要素に`--layer <number>`を指定すると、categoryの既定値を上書きできます。`bg`、`show <character>.<pose>`、`show image`、`play video`で使えます。
 
 ~~~tds
 bg classroom --layer 0.3
@@ -340,7 +340,7 @@ show image sparkle center --layer 3.5
 play video rain async --layer 1.4
 ~~~
 
-Layer numbers range from `0` through `7.999`, with at most three decimal places. Higher values draw in front of lower values. Items with the same value keep their existing insertion order. `--only` can follow `--layer` when both options are used.
+Layer numbers range from `0` through `7.999`, with at most three decimal places. Statically known values are checked during compilation; expressions whose values depend on runtime state are checked when the command executes. Higher values draw in front of lower values. Items with the same value keep their existing insertion order. `--only` can follow `--layer` when both options are used.
 
 背景切替は `fade` / `crossfade` / `wipe-left` / `wipe-right` / `wipe-up` / `wipe-down` を指定できます。遷移中も次の命令へ進まず、時間はミリ秒です。動画の `opacity` は 0.0〜1.0。動画は背景より上、キャラクターより下に描画され、`async` と組み合わせると背後で物語を進行できます。`camera zoom` の焦点座標はゲーム画面（標準1280×720）のpxで、ズームは背景・動画・キャラクター・画像に適用され、会話欄とメニューUIは画面位置に残ります。`dialog visible` は会話欄と選択肢を一時的に隠し、再表示します。背景揺れなどの反復演出は専用命令を増やさず、`move` と `std/motion/effects.tds` の計算関数を組み合わせて表現します。
 

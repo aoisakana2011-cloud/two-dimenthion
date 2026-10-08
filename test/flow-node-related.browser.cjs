@@ -88,6 +88,23 @@ async function stopServer(child) {
     await page.locator('.flow-node[data-file="appendix/unused.tds"]').click();
     assert.equal(await page.locator('.flow-node.selected').count(), 1);
     assert.equal(await page.locator('.flow-node.related').count(), 0, 'selection change clears stale neighbor emphasis');
+    const selectedNode = page.locator('.flow-node[data-file="appendix/unused.tds"]');
+    await selectedNode.focus();
+    await selectedNode.press('Enter');
+    assert.equal(await selectedNode.getAttribute('aria-keyshortcuts'), 'F2');
+    await page.setViewportSize({ width: 1000, height: 800 });
+    assert.equal(await page.locator('.details').isVisible(), false, 'narrow layout hides Details but keeps the graph keyboard action');
+    await selectedNode.press('F2');
+    await page.waitForURL(/\?scene=appendix%2Funused\.tds$/);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${server.base}/flow.html`);
+    await page.waitForFunction(() => document.querySelectorAll('.flow-node').length === 12);
+    await page.locator('.flow-node[data-file="appendix/unused.tds"]').click();
+    const openScene = page.locator('#details .flow-open-scene');
+    assert.equal(await openScene.getAttribute('aria-label'), 'Open appendix/unused.tds in Editor');
+    await openScene.focus();
+    await openScene.press('Enter');
+    await page.waitForURL(/\?scene=appendix%2Funused\.tds$/);
     assert.deepEqual(errors, []);
     console.log('PASS Scene Flow selected-node and direct-neighbor emphasis');
   } finally {
